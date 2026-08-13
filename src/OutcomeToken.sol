@@ -19,14 +19,12 @@ contract OutcomeToken is ERC20 {
     }
 
     function mint(address to, uint256 amount) external {
-        to;
-        amount;
-        revert("NOT_IMPLEMENTED");
+        require(msg.sender == vault, "NOT_VAULT");
+        _mint(to, amount);
     }
 
     function burn(address from, uint256 amount) external {
-        from;
-        amount;
-        revert("NOT_IMPLEMENTED");
+        require(msg.sender == vault, "NOT_VAULT");
+        _burn(from, amount);
     }
 }
