@@ -113,4 +113,11 @@ contract OutcomeVaultTest is BaseTest {
         vm.expectRevert(bytes("NOT_SETTLED"));
         vault.pullSettledFunds();
     }
+
+    function test_SettleWhileDepositPendingReverts() public {
+        vm.prank(user);
+        vault.deposit(100e6);
+        vm.expectRevert(bytes("BUSY"));
+        vault.settle(1e18);
+    }
 }

@@ -163,10 +163,12 @@ contract OutcomeVault {
 
     /// Keeper relays the validator-final settlement fraction (design spec §5:
     /// the keeper merely relays a fact; Core settlement is deterministic).
+    /// Reverts while a deposit or redeem is in flight — pending slots must clear first, else the settlement sweep would strand their recovery proofs.
     function settle(uint256 fractionWad) external {
         require(msg.sender == keeper, "NOT_KEEPER");
         require(!settled, "ALREADY_SETTLED");
         require(fractionWad <= 1e18, "BAD_FRACTION");
+        _requireIdle();
         settled = true;
         settleFractionWad = fractionWad;
     }
