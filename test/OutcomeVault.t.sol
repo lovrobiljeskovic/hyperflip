@@ -96,4 +96,21 @@ contract OutcomeVaultTest is BaseTest {
         vm.expectRevert(bytes("MERGE_EXECUTED"));
         vault.cancelRedeem();
     }
+
+    function test_SettleFractionAboveOneReverts() public {
+        vm.expectRevert(bytes("BAD_FRACTION"));
+        vault.settle(1e18 + 1);
+    }
+
+    function test_DepositAfterSettleReverts() public {
+        vault.settle(1e18);
+        vm.prank(user);
+        vm.expectRevert(bytes("SETTLED"));
+        vault.deposit(100e6);
+    }
+
+    function test_PullBeforeSettleReverts() public {
+        vm.expectRevert(bytes("NOT_SETTLED"));
+        vault.pullSettledFunds();
+    }
 }

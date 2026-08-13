@@ -161,19 +161,30 @@ contract OutcomeVault {
         quote.safeTransfer(msg.sender, amount);
     }
 
+    /// Keeper relays the validator-final settlement fraction (design spec §5:
+    /// the keeper merely relays a fact; Core settlement is deterministic).
     function settle(uint256 fractionWad) external {
-        fractionWad;
-        revert("NOT_IMPLEMENTED");
+        require(msg.sender == keeper, "NOT_KEEPER");
+        require(!settled, "ALREADY_SETTLED");
+        require(fractionWad <= 1e18, "BAD_FRACTION");
+        settled = true;
+        settleFractionWad = fractionWad;
     }
 
+    /// Move the settled quote from the vault's Core account to the EVM side
+    /// so redeemSettled can pay. Permissionless; safe to call repeatedly.
     function pullSettledFunds() external {
-        revert("NOT_IMPLEMENTED");
+        require(settled, "NOT_SETTLED");
+        uint64 bal = _quoteCoreBalance();
+        require(bal > 0, "NOTHING_TO_PULL");
+        _sendRawAction(CoreConstants.encodeSpotSend(address(this), quoteTokenCoreIndex, bal));
     }
 
     function redeemSettled(bool isYes, uint256 amount) external {
-        isYes;
-        amount;
-        revert("NOT_IMPLEMENTED");
+        require(settled, "NOT_SETTLED");
+        (isYes ? oYes : oNo).burn(msg.sender, amount);
+        uint256 fraction = isYes ? settleFractionWad : 1e18 - settleFractionWad;
+        quote.safeTransfer(msg.sender, amount * fraction / 1e18);
     }
 
     function _requireIdle() internal view {
