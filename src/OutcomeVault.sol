@@ -98,8 +98,20 @@ contract OutcomeVault {
         oNo.mint(p.user, p.amount);
     }
 
+    /// Recovery when Core silently dropped the split: refund the depositor
+    /// from the vault's Core quote balance. Requires proof the split did not
+    /// execute AND that the EVM→Core credit landed (else the refund spotSend
+    /// would itself be silently rejected).
     function cancelDeposit() external {
-        revert("NOT_IMPLEMENTED");
+        PendingDeposit memory p = pendingDeposit;
+        require(p.user != address(0), "NO_PENDING");
+        require(block.timestamp > p.timestamp + CANCEL_TIMEOUT, "TOO_EARLY");
+        uint64 w = _toWei(p.amount);
+        require(_outcomeYesBalance() < p.outcomeYesBefore + w, "SPLIT_EXECUTED");
+        require(_quoteCoreBalance() >= p.quoteCoreBefore + w, "CREDIT_NOT_ARRIVED");
+        delete pendingDeposit;
+        owed[p.user] += p.amount;
+        _sendRawAction(CoreConstants.encodeSpotSend(address(this), quoteTokenCoreIndex, w));
     }
 
     function requestRedeem(uint256 amount) external {
@@ -112,7 +124,10 @@ contract OutcomeVault {
     }
 
     function withdraw() external {
-        revert("NOT_IMPLEMENTED");
+        uint256 amount = owed[msg.sender];
+        require(amount > 0, "NOTHING_OWED");
+        owed[msg.sender] = 0;
+        quote.safeTransfer(msg.sender, amount);
     }
 
     function settle(uint256 fractionWad) external {

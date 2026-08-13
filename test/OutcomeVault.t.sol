@@ -25,4 +25,29 @@ contract OutcomeVaultTest is BaseTest {
         vm.expectRevert(bytes("NO_PENDING"));
         vault.claimDeposit();
     }
+
+    function test_CancelBeforeTimeoutReverts() public {
+        vm.prank(user);
+        vault.deposit(100e6);
+        sim.processTransfersOnly();
+        sim.dropPendingActions();
+        vm.warp(block.timestamp + vault.CANCEL_TIMEOUT()); // exactly at limit: still too early
+        vm.expectRevert(bytes("TOO_EARLY"));
+        vault.cancelDeposit();
+    }
+
+    function test_CancelAfterSplitExecutedReverts() public {
+        vm.prank(user);
+        vault.deposit(100e6);
+        sim.processAll(); // split executed — only claim is legitimate
+        vm.warp(block.timestamp + vault.CANCEL_TIMEOUT() + 1);
+        vm.expectRevert(bytes("SPLIT_EXECUTED"));
+        vault.cancelDeposit();
+    }
+
+    function test_WithdrawNothingOwedReverts() public {
+        vm.prank(user);
+        vm.expectRevert(bytes("NOTHING_OWED"));
+        vault.withdraw();
+    }
 }
