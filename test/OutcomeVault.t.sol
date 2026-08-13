@@ -59,4 +59,41 @@ contract OutcomeVaultTest is BaseTest {
         vm.expectRevert(bytes("BUSY"));
         vault.requestRedeem(50e6);
     }
+
+    function test_ClaimRedeemBeforeMergeReverts() public {
+        depositAndClaim(100e6);
+        vm.prank(user);
+        vault.requestRedeem(100e6);
+        vm.expectRevert(bytes("MERGE_NOT_CONFIRMED"));
+        vault.claimRedeem();
+    }
+
+    function test_CancelRedeemBeforeTimeoutReverts() public {
+        depositAndClaim(100e6);
+        vm.prank(user);
+        vault.requestRedeem(100e6);
+        vm.expectRevert(bytes("TOO_EARLY"));
+        vault.cancelRedeem();
+    }
+
+    function test_CancelRedeemAfterDroppedMergeRemints() public {
+        depositAndClaim(100e6);
+        vm.prank(user);
+        vault.requestRedeem(100e6);
+        sim.dropPendingActions();
+        vm.warp(block.timestamp + vault.CANCEL_TIMEOUT() + 1);
+        vault.cancelRedeem();
+        assertEq(vault.oYes().balanceOf(user), 100e6);
+        assertEq(vault.oNo().balanceOf(user), 100e6);
+    }
+
+    function test_CancelRedeemAfterMergeExecutedReverts() public {
+        depositAndClaim(100e6);
+        vm.prank(user);
+        vault.requestRedeem(100e6);
+        sim.processAll();
+        vm.warp(block.timestamp + vault.CANCEL_TIMEOUT() + 1);
+        vm.expectRevert(bytes("MERGE_EXECUTED"));
+        vault.cancelRedeem();
+    }
 }

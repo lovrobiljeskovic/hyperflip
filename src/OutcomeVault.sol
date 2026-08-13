@@ -37,6 +37,7 @@ contract OutcomeVault {
         address user;
         uint256 amount;
         uint64 outcomeYesBefore;
+        uint256 timestamp;
     }
 
     PendingDeposit public pendingDeposit;
@@ -120,7 +121,12 @@ contract OutcomeVault {
         uint64 w = _toWei(amount);
         oYes.burn(msg.sender, amount);
         oNo.burn(msg.sender, amount);
-        pendingRedeem = PendingRedeem({user: msg.sender, amount: amount, outcomeYesBefore: _outcomeYesBalance()});
+        pendingRedeem = PendingRedeem({
+            user: msg.sender,
+            amount: amount,
+            outcomeYesBefore: _outcomeYesBalance(),
+            timestamp: block.timestamp
+        });
         _sendRawAction(CoreConstants.encodeOutcomeOp(CoreConstants.OP_MERGE_OUTCOME, question, outcome, w));
     }
 
@@ -132,6 +138,20 @@ contract OutcomeVault {
         delete pendingRedeem;
         owed[p.user] += p.amount;
         _sendRawAction(CoreConstants.encodeSpotSend(address(this), quoteTokenCoreIndex, w));
+    }
+
+    /// Recovery when Core never delivered the merge: re-mint the burned pair
+    /// to the redeemer after the timeout. Proof is the exact complement of
+    /// claimRedeem's, so the two paths can never both fire.
+    function cancelRedeem() external {
+        PendingRedeem memory p = pendingRedeem;
+        require(p.user != address(0), "NO_PENDING");
+        require(block.timestamp > p.timestamp + CANCEL_TIMEOUT, "TOO_EARLY");
+        uint64 w = _toWei(p.amount);
+        require(_outcomeYesBalance() + w > p.outcomeYesBefore, "MERGE_EXECUTED");
+        delete pendingRedeem;
+        oYes.mint(p.user, p.amount);
+        oNo.mint(p.user, p.amount);
     }
 
     function withdraw() external {
