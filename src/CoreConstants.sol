@@ -41,6 +41,14 @@ library CoreConstants {
         return encodeAction(ACTION_SPOT_SEND, abi.encode(destination, token, wei_));
     }
 
+    /// UNVERIFIED: outcome spot-token index formula (design spec §4: asset id
+    /// = 100_000_000 + 10*outcome + side) and whether the spot-balance
+    /// precompile serves outcome-token balances at all. Spike questions; the
+    /// async-verification design depends on the answer.
+    function outcomeTokenIndex(uint32 outcome, bool yes) internal pure returns (uint64) {
+        return 100_000_000 + 10 * uint64(outcome) + (yes ? 0 : 1);
+    }
+
     /// Read a Core spot balance via the precompile. Reverts if the precompile
     /// is absent (i.e. not running on HyperEVM or a test without the mock).
     function spotBalance(address user, uint64 token) internal view returns (uint64 total) {

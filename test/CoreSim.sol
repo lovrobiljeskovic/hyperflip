@@ -25,6 +25,8 @@ contract CoreSim {
     address public vault;
     uint256 public creditedTransferUnits;
     uint256 public splitOutstandingWei;
+    uint32 internal lastSplitOutcome;
+    bool internal haveSplit;
 
     constructor(MockQuote quote_, address systemAddress_, uint64 tokenIndex_, uint256 mult, uint256 div) {
         quote = quote_;
@@ -73,6 +75,10 @@ contract CoreSim {
     function creditSettlement() external {
         spot.set(vault, tokenIndex, coreBalance() + uint64(splitOutstandingWei));
         splitOutstandingWei = 0;
+        if (haveSplit) {
+            spot.set(vault, CoreConstants.outcomeTokenIndex(lastSplitOutcome, true), 0);
+            spot.set(vault, CoreConstants.outcomeTokenIndex(lastSplitOutcome, false), 0);
+        }
     }
 
     function toWei(uint256 evmUnits) public view returns (uint64) {
@@ -81,6 +87,14 @@ contract CoreSim {
 
     function toUnits(uint64 wei_) public view returns (uint256) {
         return uint256(wei_) * weiDivisor / weiMultiplier;
+    }
+
+    function _bumpOutcome(uint32 outcome_, uint64 wei_, bool up) internal {
+        for (uint256 i = 0; i < 2; i++) {
+            uint64 idx = CoreConstants.outcomeTokenIndex(outcome_, i == 0);
+            uint64 cur = spot.total(vault, idx);
+            spot.set(vault, idx, up ? cur + wei_ : cur - wei_);
+        }
     }
 
     function _apply(bytes memory p) internal {
@@ -92,16 +106,20 @@ contract CoreSim {
         }
 
         if (actionId == CoreConstants.ACTION_OUTCOME_OP) {
-            (uint8 op,,, uint64 wei_) = abi.decode(params, (uint8, uint32, uint32, uint64));
+            (uint8 op,, uint32 outcome_, uint64 wei_) = abi.decode(params, (uint8, uint32, uint32, uint64));
             if (op == CoreConstants.OP_SPLIT_OUTCOME) {
                 uint64 bal = coreBalance();
                 if (bal < wei_) return; // Core rejects silently — no error feedback
                 spot.set(vault, tokenIndex, bal - wei_);
                 splitOutstandingWei += wei_;
+                lastSplitOutcome = outcome_;
+                haveSplit = true;
+                _bumpOutcome(outcome_, wei_, true);
             } else if (op == CoreConstants.OP_MERGE_OUTCOME) {
                 if (splitOutstandingWei < wei_) return; // silent rejection
                 splitOutstandingWei -= wei_;
                 spot.set(vault, tokenIndex, coreBalance() + wei_);
+                _bumpOutcome(outcome_, wei_, false);
             }
         } else if (actionId == CoreConstants.ACTION_SPOT_SEND) {
             (,, uint64 wei_) = abi.decode(params, (address, uint64, uint64));
