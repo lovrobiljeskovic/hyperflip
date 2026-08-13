@@ -2,12 +2,16 @@
 pragma solidity ^0.8.24;
 
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
+import {CoreConstants, ICoreWriter} from "./CoreConstants.sol";
 import {OutcomeToken} from "./OutcomeToken.sol";
 
 /// Per-market vault wrapping a HIP-4 binary outcome as oYES/oNO ERC-20s.
-/// See docs/harness/spec.md §4.3 for the state machine and invariants.
+/// See ~/docs/superpowers/specs/2026-08-12-hyperevm-outcome-composability-design.md for the design spec.
 /// All mutating functions are stubs; the harness task graph implements them.
 contract OutcomeVault {
+    using SafeERC20 for IERC20;
+
     IERC20 public immutable quote;
     address public immutable coreSystemAddress;
     uint64 public immutable quoteTokenCoreIndex;
@@ -24,14 +28,15 @@ contract OutcomeVault {
     struct PendingDeposit {
         address user;
         uint256 amount;
-        uint64 coreBalanceBefore;
+        uint64 quoteCoreBefore;
+        uint64 outcomeYesBefore;
         uint256 timestamp;
     }
 
     struct PendingRedeem {
         address user;
         uint256 amount;
-        uint64 coreBalanceBefore;
+        uint64 outcomeYesBefore;
     }
 
     PendingDeposit public pendingDeposit;
@@ -69,12 +74,28 @@ contract OutcomeVault {
     }
 
     function deposit(uint256 amount) external {
-        amount;
-        revert("NOT_IMPLEMENTED");
+        require(!settled, "SETTLED");
+        _requireIdle();
+        uint64 w = _toWei(amount);
+        pendingDeposit = PendingDeposit({
+            user: msg.sender,
+            amount: amount,
+            quoteCoreBefore: _quoteCoreBalance(),
+            outcomeYesBefore: _outcomeYesBalance(),
+            timestamp: block.timestamp
+        });
+        quote.safeTransferFrom(msg.sender, address(this), amount);
+        quote.safeTransfer(coreSystemAddress, amount);
+        _sendRawAction(CoreConstants.encodeOutcomeOp(CoreConstants.OP_SPLIT_OUTCOME, question, outcome, w));
     }
 
     function claimDeposit() external {
-        revert("NOT_IMPLEMENTED");
+        PendingDeposit memory p = pendingDeposit;
+        require(p.user != address(0), "NO_PENDING");
+        require(_outcomeYesBalance() >= p.outcomeYesBefore + _toWei(p.amount), "SPLIT_NOT_CONFIRMED");
+        delete pendingDeposit;
+        oYes.mint(p.user, p.amount);
+        oNo.mint(p.user, p.amount);
     }
 
     function cancelDeposit() external {
@@ -107,5 +128,30 @@ contract OutcomeVault {
         isYes;
         amount;
         revert("NOT_IMPLEMENTED");
+    }
+
+    function _requireIdle() internal view {
+        require(pendingDeposit.user == address(0) && pendingRedeem.user == address(0), "BUSY");
+    }
+
+    /// EVM units → Core wei; reverts on zero, uint64 overflow, or dust that
+    /// would not round-trip.
+    function _toWei(uint256 amount) internal view returns (uint64) {
+        uint256 w = amount * weiMultiplier / weiDivisor;
+        require(w > 0 && w <= type(uint64).max, "BAD_AMOUNT");
+        require(w * weiDivisor / weiMultiplier == amount, "DUST");
+        return uint64(w);
+    }
+
+    function _quoteCoreBalance() internal view returns (uint64) {
+        return CoreConstants.spotBalance(address(this), quoteTokenCoreIndex);
+    }
+
+    function _outcomeYesBalance() internal view returns (uint64) {
+        return CoreConstants.spotBalance(address(this), CoreConstants.outcomeTokenIndex(outcome, true));
+    }
+
+    function _sendRawAction(bytes memory payload) internal {
+        ICoreWriter(CoreConstants.CORE_WRITER).sendRawAction(payload);
     }
 }
