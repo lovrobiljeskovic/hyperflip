@@ -50,4 +50,13 @@ contract OutcomeVaultTest is BaseTest {
         vm.expectRevert(bytes("NOTHING_OWED"));
         vault.withdraw();
     }
+
+    function test_RequestRedeemWhileDepositPendingReverts() public {
+        depositAndClaim(100e6);
+        vm.prank(user);
+        vault.deposit(100e6); // second deposit in flight
+        vm.prank(user);
+        vm.expectRevert(bytes("BUSY"));
+        vault.requestRedeem(50e6);
+    }
 }

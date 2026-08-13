@@ -115,12 +115,23 @@ contract OutcomeVault {
     }
 
     function requestRedeem(uint256 amount) external {
-        amount;
-        revert("NOT_IMPLEMENTED");
+        require(!settled, "SETTLED");
+        _requireIdle();
+        uint64 w = _toWei(amount);
+        oYes.burn(msg.sender, amount);
+        oNo.burn(msg.sender, amount);
+        pendingRedeem = PendingRedeem({user: msg.sender, amount: amount, outcomeYesBefore: _outcomeYesBalance()});
+        _sendRawAction(CoreConstants.encodeOutcomeOp(CoreConstants.OP_MERGE_OUTCOME, question, outcome, w));
     }
 
     function claimRedeem() external {
-        revert("NOT_IMPLEMENTED");
+        PendingRedeem memory p = pendingRedeem;
+        require(p.user != address(0), "NO_PENDING");
+        uint64 w = _toWei(p.amount);
+        require(_outcomeYesBalance() + w <= p.outcomeYesBefore, "MERGE_NOT_CONFIRMED");
+        delete pendingRedeem;
+        owed[p.user] += p.amount;
+        _sendRawAction(CoreConstants.encodeSpotSend(address(this), quoteTokenCoreIndex, w));
     }
 
     function withdraw() external {
