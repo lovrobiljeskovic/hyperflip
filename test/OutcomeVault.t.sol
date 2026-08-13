@@ -120,4 +120,13 @@ contract OutcomeVaultTest is BaseTest {
         vm.expectRevert(bytes("BUSY"));
         vault.settle(1e18);
     }
+
+    function test_CancelWithoutCreditReverts() public {
+        vm.prank(user);
+        vault.deposit(100e6);
+        sim.dropPendingActions(); // nothing credited, split dead
+        vm.warp(block.timestamp + vault.CANCEL_TIMEOUT() + 1);
+        vm.expectRevert(bytes("CREDIT_NOT_ARRIVED"));
+        vault.cancelDeposit();
+    }
 }

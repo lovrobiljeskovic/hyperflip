@@ -89,6 +89,7 @@ contract CoreSim {
         return uint256(wei_) * weiDivisor / weiMultiplier;
     }
 
+    /// One-outcome model: safe only while a single vault/outcome drives _apply.
     function _bumpOutcome(uint32 outcome_, uint64 wei_, bool up) internal {
         for (uint256 i = 0; i < 2; i++) {
             uint64 idx = CoreConstants.outcomeTokenIndex(outcome_, i == 0);

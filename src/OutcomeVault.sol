@@ -8,7 +8,10 @@ import {OutcomeToken} from "./OutcomeToken.sol";
 
 /// Per-market vault wrapping a HIP-4 binary outcome as oYES/oNO ERC-20s.
 /// See ~/docs/superpowers/specs/2026-08-12-hyperevm-outcome-composability-design.md for the design spec.
-/// All mutating functions are stubs; the harness task graph implements them.
+/// Known issue (pre-mainnet): baselines recorded while a prior operation's
+/// Core-side spotSend is still in flight can make a dropped split's recovery
+/// proofs unsatisfiable, wedging the pending slot and settle(). Fix before
+/// holding third-party funds: outbound dwell in _requireIdle.
 contract OutcomeVault {
     using SafeERC20 for IERC20;
 
@@ -174,7 +177,9 @@ contract OutcomeVault {
     }
 
     /// Move the settled quote from the vault's Core account to the EVM side
-    /// so redeemSettled can pay. Permissionless; safe to call repeatedly.
+    /// so redeemSettled can pay. Permissionless. A duplicate call before the
+    /// sweep lands queues a second full-balance send that Core silently
+    /// rejects; after the sweep it reverts NOTHING_TO_PULL.
     function pullSettledFunds() external {
         require(settled, "NOT_SETTLED");
         uint64 bal = _quoteCoreBalance();

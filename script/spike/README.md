@@ -8,6 +8,9 @@ wallet. Each finding is a one-line patch to CoreConstants; rerun
 Env: `TESTNET_RPC` (HyperEVM testnet RPC), `PRIVATE_KEY` (funded wallet).
 Core actions are async (seconds); wait between a write step and its
 read-back.
+Keeper runbook: after settlement, call pullSettledFunds only once all
+previously queued spotSends (cancel refunds, redeem payouts) have landed
+on the EVM side — the sweep takes the entire Core balance.
 
 ## Run order
 
@@ -40,6 +43,18 @@ read-back.
 6. **spotSend Core→EVM** (refund path): `spotSend($WALLET, quoteIdx, w)`
    → EVM balance credited ⇒ confirms `ACTION_SPOT_SEND = 6` and param
    layout. If not: consult docs for the correct id, patch CoreConstants.
+7. **Deposit-shaped ordering** (the product's core assumption): deploy the
+   real OutcomeVault to testnet and run one deposit in a single tx
+   (transfer to system address + queued split). Read back after a few
+   seconds: outcome legs credited ⇒ same-tx EVM→Core credit lands BEFORE
+   queued actions execute, and a fresh contract address works as a Core
+   account. If the split silently dropped instead, the ordering assumption
+   is false — every deposit would need the 1h cancel path; stop and
+   redesign before mainnet work.
+8. **Send ordering + rejection shape**: queue two spot sends where the
+   second overdraws the remaining balance. Confirm FIFO execution and that
+   the overdrawn send is rejected in FULL (no partial fill) — the owed[]
+   accounting and the settlement sweep both assume this.
 
 ## Findings → patches
 
@@ -50,3 +65,4 @@ read-back.
 | spot send id/layout | `CoreConstants.ACTION_SPOT_SEND`, `encodeSpotSend` |
 | outcome index formula | `CoreConstants.outcomeTokenIndex` |
 | outcome balances unreadable | redesign claim verification — stop, discuss |
+| Core→EVM destination is not address(this) | the three `address(this)` spotSend call sites in `src/OutcomeVault.sol` (cancelDeposit, claimRedeem, pullSettledFunds) |
