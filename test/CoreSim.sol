@@ -40,6 +40,11 @@ contract CoreSim {
     /// Core still executes, the keeper just stops reporting — the state the
     /// verifier swap exists to recover from.
     bool public keeperSilent;
+    /// Hold Core→EVM sends back so a test can land them one at a time — the
+    /// window in which a second send is queued before the first has landed.
+    bool public deferSpotSends;
+    bytes[] internal deferredSends;
+    uint256 public landedSends;
     /// FINDINGS.md #5: a live split+merge round trip lost 7 bps, unitemized.
     /// Off by default so the exact-round-trip anchors stay exact.
     uint256 public mergeFeeBps;
@@ -62,6 +67,17 @@ contract CoreSim {
 
     function setKeeperSilent(bool silent) external {
         keeperSilent = silent;
+    }
+
+    function setDeferSpotSends(bool defer) external {
+        deferSpotSends = defer;
+    }
+
+    /// Land the next `n` held-back sends, in queue order.
+    function processSpotSends(uint256 n) external {
+        for (uint256 i = 0; i < n && landedSends < deferredSends.length; i++) {
+            _applySpotSend(deferredSends[landedSends++]);
+        }
     }
 
     function setMergeFeeBps(uint256 bps) external {
@@ -181,12 +197,20 @@ contract CoreSim {
         }
 
         if (actionId == CoreConstants.ACTION_SPOT_SEND) {
-            (,, uint64 wei_) = abi.decode(params, (address, uint64, uint64));
-            uint64 bal = coreBalance();
-            if (bal < wei_) return (false, false); // silent rejection
-            _setCoreBalance(bal - wei_);
-            quote.mint(address(vault), toUnits(wei_));
+            if (deferSpotSends) {
+                deferredSends.push(params);
+            } else {
+                _applySpotSend(params);
+            }
         }
         return (false, false);
+    }
+
+    function _applySpotSend(bytes memory params) internal {
+        (,, uint64 wei_) = abi.decode(params, (address, uint64, uint64));
+        uint64 bal = coreBalance();
+        if (bal < wei_) return; // silent rejection
+        _setCoreBalance(bal - wei_);
+        quote.mint(address(vault), toUnits(wei_));
     }
 }

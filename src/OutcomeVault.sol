@@ -66,6 +66,9 @@ contract OutcomeVault {
     PendingDeposit public pendingDeposit;
     PendingRedeem public pendingRedeem;
     mapping(address => uint256) public owed;
+    /// Sum of `owed`: quote already promised to earlier claimants, which
+    /// settlement redemption must not treat as part of its pool.
+    uint256 public totalOwed;
     uint256 public nextOpId;
     bool public settled;
     uint256 public settleFractionWad;
@@ -75,6 +78,7 @@ contract OutcomeVault {
     /// stale, making a later refund proof unsatisfiable (the wedge bug), so
     /// new operations wait until the debit is observed.
     uint64 internal outboundTarget;
+    uint64 internal outboundWei;
     bool internal outboundPending;
 
     /// A payout is credited in full unless Core returned less than asked; both
@@ -131,6 +135,7 @@ contract OutcomeVault {
     function clearOutbound() external {
         require(msg.sender == owner, "NOT_OWNER");
         outboundPending = false;
+        outboundWei = 0;
     }
 
     function deposit(uint256 amount) external {
@@ -209,6 +214,7 @@ contract OutcomeVault {
         uint256 amount = owed[msg.sender];
         require(amount > 0, "NOTHING_OWED");
         owed[msg.sender] = 0;
+        totalOwed -= amount;
         quote.safeTransfer(msg.sender, amount);
     }
 
@@ -243,22 +249,39 @@ contract OutcomeVault {
         require(settled, "NOT_SETTLED");
         uint64 bal = _quoteCoreBalance();
         require(bal > 0, "NOTHING_TO_PULL");
-        _spotSendOut(bal, 0);
+        _spotSendOut(bal);
     }
 
     /// Payouts round down and, if the settled quote that came back is short of
     /// what the outstanding supply is owed, scale pro rata against what is
     /// actually here. Paying the early redeemers in full would leave the last
     /// one holding tokens the vault cannot honor at all.
+    ///
+    /// Blocked until the settlement sweep has landed — an empty Core account.
+    /// The sweep is asynchronous, and pro-rata against a pool that has not
+    /// arrived yet would haircut (or wipe out) whoever redeems first while the
+    /// stragglers over-collect. A stray Core credit re-blocks redemption, which
+    /// anyone can clear by calling the permissionless `pullSettledFunds`.
     function redeemSettled(bool isYes, uint256 amount) external {
         require(settled, "NOT_SETTLED");
+        require(_quoteCoreBalance() == 0, "SWEEP_PENDING");
         uint256 fraction = isYes ? settleFractionWad : 1e18 - settleFractionWad;
         uint256 payout = amount * fraction / 1e18;
         uint256 obligation = _settlementObligation();
-        uint256 available = quote.balanceOf(address(this));
+        uint256 available = _unreservedBalance();
         if (obligation > available) payout = payout * available / obligation;
+        // Never burn a position for nothing.
+        require(payout > 0, "NOTHING_TO_REDEEM");
         (isYes ? oYes : oNo).burn(msg.sender, amount);
         quote.safeTransfer(msg.sender, payout);
+    }
+
+    /// EVM quote that settlement may pay out: the balance less what withdraw()
+    /// still owes earlier claimants. Saturates because a payout's `owed` is
+    /// credited when it is queued, before the quote lands on the EVM side.
+    function _unreservedBalance() internal view returns (uint256) {
+        uint256 bal = quote.balanceOf(address(this));
+        return bal > totalOwed ? bal - totalOwed : 0;
     }
 
     /// What every outstanding oYES/oNO is entitled to at the settled fraction.
@@ -284,6 +307,7 @@ contract OutcomeVault {
         if (!outboundPending) return;
         require(_quoteCoreBalance() <= outboundTarget, "OUTBOUND_IN_FLIGHT");
         outboundPending = false;
+        outboundWei = 0;
     }
 
     /// Queue the Core→EVM leg of a payout and record what the user may
@@ -298,13 +322,23 @@ contract OutcomeVault {
         uint64 bal = _quoteCoreBalance();
         uint64 credited = requested > bal ? bal : requested;
         require(uint256(credited) * 10_000 >= uint256(requested) * PAYOUT_MIN_BPS, "CORE_CREDIT_SHORT");
-        owed[user] += CoreConstants.quoteWeiToEvm(credited, evmUnitsPerShare);
+        uint256 credit = CoreConstants.quoteWeiToEvm(credited, evmUnitsPerShare);
+        owed[user] += credit;
+        totalOwed += credit;
         emit Payout(user, requested, credited);
-        _spotSendOut(credited, bal - credited);
+        _spotSendOut(credited);
     }
 
-    function _spotSendOut(uint64 w, uint64 balanceAfter) internal {
-        outboundTarget = balanceAfter;
+    /// Sends stack: a second payout can be queued before the first debit lands,
+    /// and the balance read here still contains every unlanded debit. Summing
+    /// them and subtracting from the live balance therefore gives the balance
+    /// expected once ALL of them land, so the dwell cannot clear on a partial
+    /// landing. It saturates at 0 rather than reverting, which only makes the
+    /// dwell more conservative — `clearOutbound` is the escape either way.
+    function _spotSendOut(uint64 w) internal {
+        outboundWei += w;
+        uint64 bal = _quoteCoreBalance();
+        outboundTarget = bal > outboundWei ? bal - outboundWei : 0;
         outboundPending = true;
         _sendRawAction(CoreConstants.encodeSpotSend(coreSystemAddress, quoteTokenCoreIndex, w));
     }

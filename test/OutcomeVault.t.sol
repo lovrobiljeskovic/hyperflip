@@ -445,7 +445,7 @@ contract OutcomeVaultTest is BaseTest {
 
         vm.startPrank(user);
         vault.redeemSettled(true, 100e6);
-        assertEq(quote.balanceOf(user), 900e6 + 49.5e6, "early redeemer paid in full");
+        assertEq(quote.balanceOf(user), 900e6 + 49.5e6, "early redeemer did not take the pro-rata haircut");
         vault.redeemSettled(false, 100e6); // tail redeemer must still be payable
         vm.stopPrank();
 
@@ -461,7 +461,9 @@ contract OutcomeVaultTest is BaseTest {
         );
     }
 
-    /// Settled payouts round down — the remainder stays with the vault.
+    /// Settled payouts round down — the remainder stays with the vault — and a
+    /// payout that rounds to nothing is refused rather than burning the
+    /// position for free.
     function test_SettledRedemptionRoundsDownToVault() public {
         depositAndClaim(100e6);
         vault.settle(0.5e18);
@@ -471,8 +473,99 @@ contract OutcomeVaultTest is BaseTest {
 
         uint256 before = quote.balanceOf(user);
         vm.prank(user);
-        vault.redeemSettled(true, 1); // 1 unit * 0.5 rounds to 0
-        assertEq(quote.balanceOf(user), before);
-        assertEq(vault.oYes().balanceOf(user), 100e6 - 1);
+        vault.redeemSettled(true, 3); // 3 * 0.5 rounds down to 1
+        assertEq(quote.balanceOf(user), before + 1);
+        assertEq(vault.oYes().balanceOf(user), 100e6 - 3);
+
+        vm.prank(user);
+        vm.expectRevert(bytes("NOTHING_TO_REDEEM"));
+        vault.redeemSettled(true, 1); // 1 * 0.5 rounds to 0
+        assertEq(vault.oYes().balanceOf(user), 100e6 - 3, "position burned for nothing");
+    }
+
+    /// The settlement sweep is async. Redeeming inside that window used to burn
+    /// the position for a zero (or haircut) payout; it must wait instead.
+    function test_SettledRedemptionBlockedUntilSweepLands() public {
+        depositAndClaim(100e6);
+        vault.settle(0.5e18);
+        sim.creditSettlement();
+
+        vm.prank(user);
+        vm.expectRevert(bytes("SWEEP_PENDING")); // pull not even queued yet
+        vault.redeemSettled(true, 100e6);
+
+        vault.pullSettledFunds();
+        vm.prank(user);
+        vm.expectRevert(bytes("SWEEP_PENDING")); // queued, not landed
+        vault.redeemSettled(true, 100e6);
+        assertEq(vault.oYes().balanceOf(user), 100e6, "position survived the window");
+
+        sim.processAll();
+        vm.prank(user);
+        vault.redeemSettled(true, 100e6);
+        assertEq(quote.balanceOf(user), 900e6 + 50e6);
+    }
+
+    /// Unwithdrawn `owed` is not part of the settlement pool: paying it out
+    /// pro rata would leave the earlier claimant's withdraw() reverting.
+    function test_ProRataDoesNotSpendUnwithdrawnOwed() public {
+        vm.prank(user);
+        vault.deposit(200e6);
+        sim.processAll();
+        vault.claimDeposit();
+
+        sim.setMergeFeeBps(50); // 0.5% Core fee, inside payout tolerance
+        vm.prank(user);
+        vault.requestRedeem(50e6);
+        sim.processAll();
+        vault.claimRedeem(); // owed credited, deliberately not withdrawn
+        sim.processAll();
+        assertEq(vault.totalOwed(), 49.75e6);
+
+        vault.settle(0.5e18);
+        sim.creditSettlement();
+        vault.pullSettledFunds();
+        sim.processAll();
+
+        vm.startPrank(user);
+        vault.redeemSettled(true, 150e6);
+        vault.redeemSettled(false, 150e6);
+        vault.withdraw(); // must still be funded
+        vm.stopPrank();
+
+        assertEq(quote.balanceOf(user), 999e6);
+        assertEq(quote.balanceOf(address(vault)), 0);
+        assertEq(vault.totalOwed(), 0);
+    }
+
+    /// Stacked outbounds: a second payout queued before the first debit lands.
+    /// The dwell must not clear when only the first has landed, or the next
+    /// deposit records an inflated baseline and its refund proof is
+    /// unsatisfiable — which clearOutbound cannot undo.
+    function test_StackedOutboundsHoldTheDwell() public {
+        depositAndClaim(100e6);
+        sim.setDeferSpotSends(true);
+
+        vm.prank(user);
+        vault.requestRedeem(60e6);
+        sim.processAll();
+        vault.claimRedeem(); // outbound A queued (60)
+
+        vm.prank(user);
+        vault.requestRedeem(40e6);
+        sim.processAll(); // merge credits 40 while A is still unlanded
+        vault.claimRedeem(); // outbound B queued (40)
+        sim.processActions(); // both sends are now held, neither has landed
+
+        sim.processSpotSends(1); // only A lands
+        vm.prank(user);
+        vm.expectRevert(bytes("OUTBOUND_IN_FLIGHT"));
+        vault.deposit(100e6);
+
+        sim.processSpotSends(1); // B lands too
+        vm.prank(user);
+        vault.deposit(100e6);
+        (,,, uint64 baseline) = vault.pendingDeposit();
+        assertEq(baseline, 0, "baseline recorded over an unlanded transfer");
     }
 }
