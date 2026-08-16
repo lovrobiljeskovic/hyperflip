@@ -79,7 +79,14 @@ contract OutcomeVault {
     /// new operations wait until the debit is observed.
     uint64 internal outboundTarget;
     uint64 internal outboundWei;
-    bool internal outboundPending;
+
+    /// Cumulative EVM quote our Core→EVM sends should have delivered, and
+    /// cumulative EVM quote that has left the vault. Whatever the first exceeds
+    /// the second plus the balance on hand is still in the air. Both are
+    /// derived from the vault's own transfers, so unlike a Core-balance read
+    /// nobody can hold them false with a stray credit.
+    uint256 internal outboundExpectedEvm;
+    uint256 internal totalPaidOutEvm;
 
     /// A payout is credited in full unless Core returned less than asked; both
     /// numbers are logged so a shortfall is visible off-chain.
@@ -130,12 +137,14 @@ contract OutcomeVault {
         emit VerifierChanged(address(verifier_));
     }
 
-    /// Escape hatch for the dwell below: an unsolicited Core credit can hold
-    /// `_requireOutboundLanded` false forever, and only deposits depend on it.
+    /// Escape hatch for both outbound trackers. An unsolicited Core credit can
+    /// hold the unlanded accumulator above zero indefinitely (it masks the
+    /// balance drop that retires it), and a sweep whose spotSend Core dropped
+    /// on the floor would otherwise keep settlement redemption shut.
     function clearOutbound() external {
         require(msg.sender == owner, "NOT_OWNER");
-        outboundPending = false;
         outboundWei = 0;
+        outboundExpectedEvm = quote.balanceOf(address(this)) + totalPaidOutEvm;
     }
 
     function deposit(uint256 amount) external {
@@ -215,6 +224,7 @@ contract OutcomeVault {
         require(amount > 0, "NOTHING_OWED");
         owed[msg.sender] = 0;
         totalOwed -= amount;
+        totalPaidOutEvm += amount;
         quote.safeTransfer(msg.sender, amount);
     }
 
@@ -257,14 +267,16 @@ contract OutcomeVault {
     /// actually here. Paying the early redeemers in full would leave the last
     /// one holding tokens the vault cannot honor at all.
     ///
-    /// Blocked until the settlement sweep has landed — an empty Core account.
-    /// The sweep is asynchronous, and pro-rata against a pool that has not
-    /// arrived yet would haircut (or wipe out) whoever redeems first while the
-    /// stragglers over-collect. A stray Core credit re-blocks redemption, which
-    /// anyone can clear by calling the permissionless `pullSettledFunds`.
+    /// Blocked while a settlement sweep is still in the air: pro-rata against a
+    /// pool that has not arrived would haircut (or wipe out) whoever redeems
+    /// first while the stragglers over-collect. Arrival is measured on the EVM
+    /// side — the quote the sweep owes has shown up — never by reading the Core
+    /// balance, which anyone can perturb with a 1-wei credit. Once observed,
+    /// the expectation is retired, so a later stray cannot re-lock redemption;
+    /// a fresh `pullSettledFunds` is the only thing that arms it again.
     function redeemSettled(bool isYes, uint256 amount) external {
         require(settled, "NOT_SETTLED");
-        require(_quoteCoreBalance() == 0, "SWEEP_PENDING");
+        require(_unlandedEvm() == 0, "SWEEP_PENDING");
         uint256 fraction = isYes ? settleFractionWad : 1e18 - settleFractionWad;
         uint256 payout = amount * fraction / 1e18;
         uint256 obligation = _settlementObligation();
@@ -273,6 +285,7 @@ contract OutcomeVault {
         // Never burn a position for nothing.
         require(payout > 0, "NOTHING_TO_REDEEM");
         (isYes ? oYes : oNo).burn(msg.sender, amount);
+        totalPaidOutEvm += payout;
         quote.safeTransfer(msg.sender, payout);
     }
 
@@ -298,16 +311,28 @@ contract OutcomeVault {
     }
 
     /// Only `deposit` records a Core-balance baseline, so only `deposit` has to
-    /// wait for an in-flight outbound debit to land. The check is an absolute
-    /// balance snapshot, which anyone can hold false by sending the vault's
-    /// Core account a stray credit — hence `clearOutbound`, and hence the check
-    /// is kept off `requestRedeem`/`settle`, which take no baseline and must
-    /// never be blockable by a third party.
+    /// wait for outbound debits to land. Kept off `requestRedeem`/`settle`,
+    /// which take no baseline and must never be blockable by a third party.
+    /// The dwell reads the Core side because that is where a stale baseline
+    /// would do its damage, and a stray credit can only hold it SHUT — the safe
+    /// direction, escapable by `clearOutbound`. Note the accumulator is a
+    /// conservative ratchet, not an exact figure: it counts every send since
+    /// the last successful check, and a stray credit masks the balance drop
+    /// that would retire it. Nothing else may price against it; money
+    /// decisions use `_unlandedEvm`, which no third party can perturb.
     function _requireOutboundLanded() internal {
-        if (!outboundPending) return;
+        if (outboundWei == 0) return;
         require(_quoteCoreBalance() <= outboundTarget, "OUTBOUND_IN_FLIGHT");
-        outboundPending = false;
         outboundWei = 0;
+    }
+
+    /// EVM quote our own sends still owe us: what they should have delivered,
+    /// less what is on hand plus what has already been paid out. Donated quote
+    /// makes this retire early, but a donation is quote actually sitting in the
+    /// vault, so nothing is credited that cannot be honored.
+    function _unlandedEvm() internal view returns (uint256) {
+        uint256 arrived = quote.balanceOf(address(this)) + totalPaidOutEvm;
+        return outboundExpectedEvm > arrived ? outboundExpectedEvm - arrived : 0;
     }
 
     /// Queue the Core→EVM leg of a payout and record what the user may
@@ -318,28 +343,33 @@ contract OutcomeVault {
     /// that has not landed yet rather than a fee, so the call reverts and the
     /// pending slot survives for a retry instead of burning the user's claim.
     function _payOut(address user, uint256 amount) internal {
-        uint64 requested = _toQuoteWei(amount);
-        uint64 bal = _quoteCoreBalance();
-        uint64 credited = requested > bal ? bal : requested;
-        require(uint256(credited) * 10_000 >= uint256(requested) * PAYOUT_MIN_BPS, "CORE_CREDIT_SHORT");
-        uint256 credit = CoreConstants.quoteWeiToEvm(credited, evmUnitsPerShare);
+        // Quote already promised to a send that has not arrived is not ours to
+        // pay with: pricing against the raw Core balance would credit `owed`
+        // for quote that never lands (Core drops the oversized send in
+        // silence) and reserve it out of the settlement pool forever.
+        uint256 coreEvm = CoreConstants.quoteWeiToEvm(_quoteCoreBalance(), evmUnitsPerShare);
+        uint256 unlanded = _unlandedEvm();
+        uint256 available = coreEvm > unlanded ? coreEvm - unlanded : 0;
+        uint256 credit = amount > available ? available : amount;
+        require(credit * 10_000 >= amount * PAYOUT_MIN_BPS, "CORE_CREDIT_SHORT");
+        uint64 credited = _toQuoteWei(credit);
         owed[user] += credit;
         totalOwed += credit;
-        emit Payout(user, requested, credited);
+        emit Payout(user, _toQuoteWei(amount), credited);
         _spotSendOut(credited);
     }
 
     /// Sends stack: a second payout can be queued before the first debit lands,
     /// and the balance read here still contains every unlanded debit. Summing
     /// them and subtracting from the live balance therefore gives the balance
-    /// expected once ALL of them land, so the dwell cannot clear on a partial
-    /// landing. It saturates at 0 rather than reverting, which only makes the
-    /// dwell more conservative — `clearOutbound` is the escape either way.
+    /// expected once all counted sends land, so the dwell cannot clear on a
+    /// partial landing. Saturating at 0 rather than reverting only makes the
+    /// target harder to reach — never easier.
     function _spotSendOut(uint64 w) internal {
+        outboundExpectedEvm += CoreConstants.quoteWeiToEvm(w, evmUnitsPerShare);
         outboundWei += w;
         uint64 bal = _quoteCoreBalance();
         outboundTarget = bal > outboundWei ? bal - outboundWei : 0;
-        outboundPending = true;
         _sendRawAction(CoreConstants.encodeSpotSend(coreSystemAddress, quoteTokenCoreIndex, w));
     }
 

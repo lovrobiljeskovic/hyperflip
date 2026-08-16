@@ -453,6 +453,56 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(quote.balanceOf(address(vault)), 0);
     }
 
+    /// The sweep gate must key off quote the vault actually received, not off
+    /// an absolute Core-balance read: a 1-wei credit is cheap, repeatable, and
+    /// would otherwise hold settlement redemption shut forever.
+    function test_StrayCoreCreditCannotHoldSettlementShut() public {
+        depositAndClaim(100e6);
+        vault.settle(0.5e18);
+        sim.creditSettlement();
+        vault.pullSettledFunds();
+        sim.processAll(); // sweep has genuinely arrived
+        sim.creditStray(1); // griefer credits the vault's Core account
+
+        vm.prank(user);
+        vault.redeemSettled(true, 100e6);
+        assertEq(quote.balanceOf(user), 900e6 + 50e6);
+
+        sim.creditStray(1); // and again, between redemptions
+        vm.prank(user);
+        vault.redeemSettled(false, 100e6);
+        assertEq(quote.balanceOf(user), 1_000e6);
+    }
+
+    /// Pricing a payout against the raw Core balance counts quote a previous
+    /// unlanded send has already claimed. Core then drops the oversized send in
+    /// silence, leaving `owed` — and `totalOwed`, which reserves quote out of
+    /// the settlement pool — pointing at money that never arrives.
+    function test_StackedPayoutsCreditOnlyWhatCoreWillDeliver() public {
+        depositAndClaim(100e6);
+        sim.setMergeFeeBps(50); // 0.5% Core fee on each merge
+        sim.setDeferSpotSends(true);
+
+        vm.prank(user);
+        vault.requestRedeem(60e6);
+        sim.processAll();
+        vault.claimRedeem(); // A: 60 asked, 59.7 available
+
+        vm.prank(user);
+        vault.requestRedeem(40e6);
+        sim.processAll(); // A is still in the air
+        vault.claimRedeem(); // B must price against 39.8, not the full 99.5
+        sim.processActions();
+        sim.processSpotSends(2); // both sends land
+
+        assertEq(vault.owed(user), 99.5e6, "credited more than Core delivers");
+        assertEq(vault.totalOwed(), quote.balanceOf(address(vault)), "phantom quote reserved");
+        vm.prank(user);
+        vault.withdraw();
+        assertEq(quote.balanceOf(user), 900e6 + 99.5e6);
+        assertEq(quote.balanceOf(address(vault)), 0);
+    }
+
     function test_ConstructorRequiresDepositWalletCode() public {
         vm.etch(CoreConstants.CORE_DEPOSIT_WALLET, hex"");
         vm.expectRevert(bytes("NO_DEPOSIT_WALLET"));
@@ -491,7 +541,9 @@ contract OutcomeVaultTest is BaseTest {
         sim.creditSettlement();
 
         vm.prank(user);
-        vm.expectRevert(bytes("SWEEP_PENDING")); // pull not even queued yet
+        // Pull not even queued: the pool is empty, so the zero-payout backstop
+        // is what protects the position.
+        vm.expectRevert(bytes("NOTHING_TO_REDEEM"));
         vault.redeemSettled(true, 100e6);
 
         vault.pullSettledFunds();
