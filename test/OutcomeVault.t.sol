@@ -619,6 +619,25 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(vault.oYes().balanceOf(user), 100e6);
     }
 
+    /// Owner recovery for the Core-has-nothing-left corner: Core lost the
+    /// settlement credit, the pull was never cranked, and the owner refills
+    /// the pool EVM-side. clearOutbound must open the gate too — a donation
+    /// alone must not (that is the finding), but the owner's hand may.
+    function test_ClearOutboundArmsSettlementGate() public {
+        depositAndClaim(100e6);
+        vault.settle(0.5e18);
+        quote.mint(address(vault), 100e6); // owner refills the pool directly
+
+        vm.prank(user);
+        vm.expectRevert(bytes("SWEEP_PENDING"));
+        vault.redeemSettled(true, 100e6);
+
+        vault.clearOutbound(); // owner opens the gate
+        vm.prank(user);
+        vault.redeemSettled(true, 100e6);
+        assertEq(quote.balanceOf(user), 900e6 + 50e6);
+    }
+
     /// Unwithdrawn `owed` is not part of the settlement pool: paying it out
     /// pro rata would leave the earlier claimant's withdraw() reverting.
     function test_ProRataDoesNotSpendUnwithdrawnOwed() public {
