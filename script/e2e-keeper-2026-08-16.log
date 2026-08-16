@@ -1,0 +1,61 @@
+
+> outcomevault-keeper@1.0.0 start
+> tsx src/index.ts
+
+◇ injected env (4) from ../.env // tip: ⌁ auth for agents [www.vestauth.com]
+2026-08-16T20:21:31.479Z vault config 0xc04eff29106a4b4fafa129820b03161ff2066211 {
+  outcome: 12695,
+  question: 984,
+  verifier: '0xc19d502255852C3D2564C027b61556EB2E89e431'
+}
+2026-08-16T20:21:31.999Z keeper started { vaults: 1, pollIntervalMs: 5000 }
+2026-08-16T20:21:48.987Z ALERT settlement check failed 0xc04eff29106a4b4fafa129820b03161ff2066211 Request exceeds defined limit.
+
+URL: https://rpc.hyperliquid-testnet.xyz/evm
+Request body: {"method":"eth_call","params":[{"data":"0x0000000000000000000000000000000000000000000000000000000000003197","to":"0x0000000000000000000000000000000000000814"},"latest"]}
+ 
+Raw Call Arguments:
+  to:    0x0000000000000000000000000000000000000814
+  data:  0x0000000000000000000000000000000000000000000000000000000000003197
+
+Details: rate limited
+Version: viem@2.55.16
+2026-08-16T20:21:49.228Z ALERT watchContractEvent error 0xc04eff29106a4b4fafa129820b03161ff2066211 Request exceeds defined limit.
+
+URL: https://rpc.hyperliquid-testnet.xyz/evm
+Request body: {"method":"eth_getLogs","params":[{"address":"0xc04eff29106a4b4fafa129820b03161ff2066211","topics":["0x9fd93b7a9da597b5eef2eaf38ac0eebe5b924617febb476a4111552ead95198c"],"fromBlock":"0x3ae2549","toBlock":"0x3ae254e"}]}
+
+Details: rate limited
+Version: viem@2.55.16
+2026-08-16T20:21:59.882Z ALERT watchContractEvent error 0xc04eff29106a4b4fafa129820b03161ff2066211 Request exceeds defined limit.
+
+URL: https://rpc.hyperliquid-testnet.xyz/evm
+Request body: {"method":"eth_blockNumber"}
+
+Details: rate limited
+Version: viem@2.55.16
+2026-08-16T20:22:13.511Z tracking op 0xc04eff29106a4b4fafa129820b03161ff2066211 1 Split confident: true
+2026-08-16T20:22:26.287Z attested 0xc04eff29106a4b4fafa129820b03161ff2066211 1 true 0x7f18e459eec47cc3ecf2de13f3f0bea1420e0a515bbd34bc970e820725db5b3d
+2026-08-16T20:24:16.105Z tracking op 0xc04eff29106a4b4fafa129820b03161ff2066211 2 Merge confident: true
+2026-08-16T20:24:35.621Z attested 0xc04eff29106a4b4fafa129820b03161ff2066211 2 true 0x795fad66e5ff3b86584efdf226215f72f74129b3632c6c1f1b26ab952f08f59b
+
+> outcomevault-keeper@1.0.0 start
+> tsx src/index.ts
+
+◇ injected env (4) from ../.env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+2026-08-16T20:29:05.625Z vault config 0xc04eff29106a4b4fafa129820b03161ff2066211 {
+  outcome: 12695,
+  question: 984,
+  verifier: '0xc19d502255852C3D2564C027b61556EB2E89e431'
+}
+2026-08-16T20:29:06.011Z vault config 0x3E0E2baEf2a45359E23Df6BD5423226c2469BbE0 {
+  outcome: 12568,
+  question: 979,
+  verifier: '0xc19d502255852C3D2564C027b61556EB2E89e431'
+}
+2026-08-16T20:29:07.039Z keeper started { vaults: 2, pollIntervalMs: 5000 }
+2026-08-16T20:29:08.720Z ALERT outcome pruned before this keeper ever observed it settled — no trustworthy fraction to relay, manual recovery needed 0x3E0E2baEf2a45359E23Df6BD5423226c2469BbE0
+2026-08-16T20:29:15.262Z ALERT outcome pruned before this keeper ever observed it settled — no trustworthy fraction to relay, manual recovery needed 0x3E0E2baEf2a45359E23Df6BD5423226c2469BbE0
+2026-08-16T20:29:25.271Z ALERT outcome pruned before this keeper ever observed it settled — no trustworthy fraction to relay, manual recovery needed 0x3E0E2baEf2a45359E23Df6BD5423226c2469BbE0
+2026-08-16T20:29:31.525Z ALERT outcome pruned before this keeper ever observed it settled — no trustworthy fraction to relay, manual recovery needed 0x3E0E2baEf2a45359E23Df6BD5423226c2469BbE0
+2026-08-16T20:29:39.780Z ALERT outcome pruned before this keeper ever observed it settled — no trustworthy fraction to relay, manual recovery needed 0x3E0E2baEf2a45359E23Df6BD5423226c2469BbE0
