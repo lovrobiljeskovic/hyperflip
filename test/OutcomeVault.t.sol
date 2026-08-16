@@ -312,6 +312,29 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(vault.nextOpId(), 3);
     }
 
+    /// The dwell guards the deposit baseline, so it must read the Core side.
+    /// Donated EVM quote satisfies "what we sent has shown up" without the Core
+    /// debit having landed, and clearing on that would re-open the wedge: the
+    /// baseline records an unlanded debit and cancelDeposit's refund proof
+    /// becomes unsatisfiable, which clearOutbound cannot undo.
+    function test_DonatedQuoteCannotSatisfyTheDwell() public {
+        depositAndClaim(100e6);
+        sim.setDeferSpotSends(true);
+        vm.prank(user);
+        vault.requestRedeem(100e6);
+        sim.processAll();
+        vault.claimRedeem(); // send queued
+        sim.processActions(); // held, not landed
+
+        quote.mint(other, 100e6);
+        vm.prank(other);
+        quote.transfer(address(vault), 100e6); // donation covers what the send owes
+
+        vm.prank(user);
+        vm.expectRevert(bytes("OUTBOUND_IN_FLIGHT"));
+        vault.deposit(100e6);
+    }
+
     // --- verifier seam ----------------------------------------------------
 
     /// The architectural-integrity proof: Core executed, the keeper went dark,
