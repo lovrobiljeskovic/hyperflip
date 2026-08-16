@@ -128,3 +128,23 @@ test("newestSampleBefore CRITICAL: returns undefined (never a post-execution sam
   assert.equal(newestSampleBefore(samples, 4_000), undefined);
   assert.equal(newestSampleBefore([], 4_000), undefined);
 });
+
+test("newestSampleBefore CRITICAL: clock-skew margin excludes a sample that only qualifies without it", () => {
+  // A sample at 3_900 is <= the raw cutoff (4_000) but would be excluded once a keeper-clock-behind
+  // margin of 2_000ms is applied (effective cutoff 2_000) — this is exactly the case a keeper clock
+  // running behind chain time could otherwise misclassify as provably pre-op.
+  const samples = [
+    { readAt: 1_500, balance: 15n },
+    { readAt: 3_900, balance: 39n },
+  ];
+  assert.deepEqual(newestSampleBefore(samples, 4_000, 2_000), { readAt: 1_500, balance: 15n });
+  assert.deepEqual(newestSampleBefore(samples, 4_000), { readAt: 3_900, balance: 39n }); // no margin: default behavior unchanged
+});
+
+test("newestSampleBefore CRITICAL: MAX_SAMPLE_AGE excludes a stale sample even though it predates the cutoff", () => {
+  // A sample from long before the cutoff is provably pre-op but too stale to trust as "current" —
+  // a stalled sampler must not be able to serve an arbitrarily old balance as a confident baseline.
+  const samples = [{ readAt: 100, balance: 1n }];
+  assert.equal(newestSampleBefore(samples, 100_000, 0, 60_000), undefined);
+  assert.deepEqual(newestSampleBefore(samples, 100_000, 0, 200_000), { readAt: 100, balance: 1n });
+});

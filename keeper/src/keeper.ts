@@ -29,6 +29,16 @@ const RECEIPT_TIMEOUT_MS = 60_000;
  * watchContractEvent's ~4s default poll interval, so a sample provably pre-dating a just-detected
  * OpQueued block is almost always already in hand. See sampleBefore. */
 const HISTORY_LIMIT = 20;
+/** The provenance check compares a sample's `readAt` (keeper wall clock) against an OpQueued
+ * block's chain timestamp. If the keeper's clock runs behind chain time, `readAt` under-reports
+ * how late a sample actually was taken, which could make a post-execution sample look "provably
+ * pre-op". Subtracting this margin from the cutoff before comparing assumes the keeper clock is
+ * never behind by more than this much. */
+const CLOCK_SKEW_MARGIN_MS = 2_000;
+/** A qualifying sample must also be no older than this relative to the (skew-adjusted) cutoff, so
+ * a stalled sampler can't serve an arbitrarily old balance as a confident pre-op baseline; falls
+ * through to the unconfident/fallback path instead. */
+const MAX_SAMPLE_AGE_MS = 60_000;
 
 interface VaultInfo {
   outcome: number;
@@ -105,7 +115,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   }
 
   function sampleBefore(vault: Address, beforeMs: number): BalanceSample | undefined {
-    return newestSampleBefore(balanceHistory.get(vault) ?? [], beforeMs);
+    return newestSampleBefore(balanceHistory.get(vault) ?? [], beforeMs, CLOCK_SKEW_MARGIN_MS, MAX_SAMPLE_AGE_MS);
   }
 
   function track(

@@ -86,15 +86,32 @@ export interface BalanceSample {
   balance: bigint;
 }
 
-/** Newest sample read at or before `beforeMs` (a block timestamp in ms). Core cannot have
- * executed an action before the block containing it exists, so a sample whose read time predates
- * that block's own timestamp is provably pre-execution — independent of any assumption about
- * Core's actual processing latency. This is the crux of the live-baseline fix in keeper.ts
- * (resolveLiveBaseline): picking the wrong sample here silently reintroduces the race it fixes. */
-export function newestSampleBefore(samples: readonly BalanceSample[], beforeMs: number): BalanceSample | undefined {
+/** Newest sample read at or before `beforeMs` (a block timestamp in ms), within `maxAgeMs` of it.
+ * Core cannot have executed an action before the block containing it exists, so a sample whose
+ * read time predates that block's own timestamp is provably pre-execution — independent of any
+ * assumption about Core's actual processing latency. This is the crux of the live-baseline fix in
+ * keeper.ts (resolveLiveBaseline): picking the wrong sample here silently reintroduces the race it
+ * fixes.
+ *
+ * `marginMs` (default 0) is subtracted from `beforeMs` before comparing: `readAt` is the keeper's
+ * own wall clock (Date.now()) while `beforeMs` derives from a chain block timestamp, and a keeper
+ * clock running behind chain time would under-report `readAt`, making a post-execution sample look
+ * falsely pre-op. The margin assumes the keeper clock cannot be behind by more than that much.
+ *
+ * `maxAgeMs` (default Infinity) additionally requires `readAt >= cutoff - maxAgeMs`: without it a
+ * stalled sampler's arbitrarily old sample could still "qualify" as pre-op and serve as a baseline
+ * nobody actually vouches for as current. */
+export function newestSampleBefore(
+  samples: readonly BalanceSample[],
+  beforeMs: number,
+  marginMs = 0,
+  maxAgeMs = Infinity,
+): BalanceSample | undefined {
+  const cutoff = beforeMs - marginMs;
+  const floor = cutoff - maxAgeMs;
   let best: BalanceSample | undefined;
   for (const s of samples) {
-    if (s.readAt <= beforeMs && (!best || s.readAt > best.readAt)) best = s;
+    if (s.readAt <= cutoff && s.readAt >= floor && (!best || s.readAt > best.readAt)) best = s;
   }
   return best;
 }
