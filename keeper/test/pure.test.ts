@@ -9,6 +9,7 @@ import {
   opKey,
   parseCoinId,
   parseDecimalToUnits,
+  resolveBalanceCheck,
 } from "../src/pure.js";
 
 test("opKey matches Solidity keccak256(abi.encode(vault, opId))", () => {
@@ -78,4 +79,25 @@ test("fractionWadFromSettledValue scales 1e8 settledValue to 1e18 fractionWad", 
   assert.equal(fractionWadFromSettledValue(100_000_000n), 1_000_000_000_000_000_000n); // fraction 1.0
   assert.equal(fractionWadFromSettledValue(0n), 0n);
   assert.equal(fractionWadFromSettledValue(50_000_000n), 500_000_000_000_000_000n); // fraction 0.5
+});
+
+test("resolveBalanceCheck: matching delta always attests true, confidence irrelevant", () => {
+  assert.equal(resolveBalanceCheck(0n, 1_000_000n, 0, 1_000_000n, 999_999, 60_000, true), "attest-true");
+  assert.equal(resolveBalanceCheck(0n, 1_000_000n, 0, 1_000_000n, 999_999, 60_000, false), "attest-true");
+});
+
+test("resolveBalanceCheck: no delta, timeout not yet elapsed -> wait regardless of confidence", () => {
+  assert.equal(resolveBalanceCheck(0n, 0n, 0, 1_000_000n, 59_999, 60_000, true), "wait");
+  assert.equal(resolveBalanceCheck(0n, 0n, 0, 1_000_000n, 59_999, 60_000, false), "wait");
+});
+
+test("resolveBalanceCheck: no delta, timeout elapsed, confident baseline -> attest-false", () => {
+  assert.equal(resolveBalanceCheck(0n, 0n, 0, 1_000_000n, 60_001, 60_000, true), "attest-false");
+});
+
+test("resolveBalanceCheck CRITICAL: no delta, timeout elapsed, UNCONFIDENT baseline -> hold, never attest-false", () => {
+  // This is the regression test for the critical finding: a rebuilt op whose pre-op baseline
+  // status is unknown must never have "no delta observed" read as evidence of a drop.
+  assert.equal(resolveBalanceCheck(0n, 0n, 0, 1_000_000n, 60_001, 60_000, false), "hold");
+  assert.notEqual(resolveBalanceCheck(0n, 0n, 0, 1_000_000n, 10_000_000, 60_000, false), "attest-false");
 });

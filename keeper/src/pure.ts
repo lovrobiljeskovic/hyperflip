@@ -60,6 +60,27 @@ export function deltaMatches(baseline: bigint, current: bigint, opType: OpType, 
   return current - baseline === expectedDelta(opType, weiAmount);
 }
 
+export type BalanceVerdict = "attest-true" | "attest-false" | "hold" | "wait";
+
+/** Pure decision for one balanceLoop tick. CRITICAL invariant: "attest-false" is only ever
+ * returned when `confidentBaseline` is true — a low-confidence baseline (a rebuilt op whose
+ * pre-execution status is unknown, see keeper.ts track()) is not positive evidence of a drop, so
+ * a timeout there can only "hold" (keep waiting, alert once) rather than guess. See keeper.ts
+ * balanceLoop for the failed-attestation-rule rationale behind "attest-false" itself. */
+export function resolveBalanceCheck(
+  baseline: bigint,
+  current: bigint,
+  opType: OpType,
+  weiAmount: bigint,
+  elapsedMs: number,
+  timeoutMs: number,
+  confidentBaseline: boolean,
+): BalanceVerdict {
+  if (deltaMatches(baseline, current, opType, weiAmount)) return "attest-true";
+  if (elapsedMs <= timeoutMs) return "wait";
+  return confidentBaseline ? "attest-false" : "hold";
+}
+
 /** CoreConstants.outcomeStatus settledValue (scale 1e8) -> OutcomeVault.settleFractionWad (1e18). */
 export function fractionWadFromSettledValue(settledValue: bigint): bigint {
   return (settledValue * WAD) / SETTLED_VALUE_ONE;

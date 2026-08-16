@@ -13,14 +13,16 @@ import { OUTCOME_ACTIVE, OUTCOME_PRUNED, OUTCOME_SETTLED, readOutcomeStatus } fr
 import { fetchCoinBalanceWei } from "./infoApi.js";
 import {
   coinIdForOutcome,
-  deltaMatches,
   evmToOutcomeWei,
   fractionWadFromSettledValue,
   opKey,
+  resolveBalanceCheck,
   type OpType,
 } from "./pure.js";
 
 const STATUS_PENDING = 0;
+/** How long to wait for a submitted attest()/settle() tx to mine before treating it as failed. */
+const RECEIPT_TIMEOUT_MS = 60_000;
 
 interface VaultInfo {
   outcome: number;
@@ -37,6 +39,14 @@ interface PendingOp {
   coinId: bigint;
   baseline: bigint | null;
   firstSeenAt: number;
+  /** true only when the baseline was captured immediately on first observing the op (live
+   * OpQueued detection) — Core's few-second execution latency (FINDINGS.md) makes that baseline
+   * confidently pre-execution. false for ops rebuilt from pendingDeposit/pendingRedeem after a
+   * restart, where Core may already have executed before this process started, so "first
+   * observed" balance is NOT confidently pre-execution. See balanceLoop. */
+  confidentBaseline: boolean;
+  /** Suppresses repeat alerts once a low-confidence op has already been flagged as held. */
+  holdAlerted: boolean;
 }
 
 function log(...args: unknown[]): void {
@@ -80,10 +90,21 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     log("vault config", vault, { outcome: Number(outcome), question: Number(question), verifier });
   }
 
-  function track(vault: Address, opId: bigint, opType: OpType, weiAmount: bigint, info: VaultInfo): void {
+  // Baseline is captured HERE, synchronously, before this op is ever visible anywhere else — not
+  // deferred to the next balanceLoop tick. Core executes split/merge asynchronously ("a few
+  // seconds", FINDINGS.md); reading the baseline immediately on first observing the op, rather
+  // than up to a poll-interval-plus-event-latency later, is what keeps it pre-execution.
+  async function track(
+    vault: Address,
+    opId: bigint,
+    opType: OpType,
+    weiAmount: bigint,
+    info: VaultInfo,
+    confidentBaseline: boolean,
+  ): Promise<void> {
     const mapKey = `${vault}:${opId}`;
     if (pendingOps.has(mapKey)) return;
-    pendingOps.set(mapKey, {
+    const op: PendingOp = {
       vault,
       opId,
       opType,
@@ -91,8 +112,17 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
       coinId: coinIdForOutcome(info.outcome, true),
       baseline: null,
       firstSeenAt: Date.now(),
-    });
+      confidentBaseline,
+      holdAlerted: false,
+    };
+    pendingOps.set(mapKey, op); // reserve the slot before the await so a concurrent track() can't double-add
     log("tracking op", vault, opId.toString(), opType === 0 ? "Split" : "Merge");
+    try {
+      op.baseline = await fetchCoinBalanceWei(config.infoApiUrl, vault, op.coinId);
+    } catch (err) {
+      // Rare (info-API outage): leave baseline null, balanceLoop retries it every tick below.
+      alert("baseline read failed, will retry", vault, opId.toString(), (err as Error).message);
+    }
   }
 
   async function trackIfStillPending(vault: Address, opId: bigint, opType: OpType, weiAmount: bigint, info: VaultInfo): Promise<void> {
@@ -104,12 +134,12 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
       args: [key],
     });
     if (Number(status) !== STATUS_PENDING) return; // already attested (this or a prior run)
-    track(vault, opId, opType, weiAmount, info);
+    await track(vault, opId, opType, weiAmount, info, false); // rebuilt: baseline confidence unknown
   }
 
   // Stateless rebuild: the vault allows at most one open op at a time (_requireIdle), so its own
   // pendingDeposit/pendingRedeem state on-chain IS the pending-op set on restart — no OpQueued
-  // log replay needed. (See balanceLoop's baseline comment for the one gap this leaves.)
+  // log replay needed. (See balanceLoop for how a rebuilt op's uncertain baseline is handled.)
   async function seedPendingOps(vault: Address): Promise<void> {
     const info = vaultInfo.get(vault)!;
     const [depUser, depAmount, depOpId] = await readVault<[Address, bigint, bigint, bigint]>(vault, "pendingDeposit");
@@ -132,20 +162,25 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
       abi: outcomeVaultAbi,
       eventName: "OpQueued",
       onLogs: (logs) => {
-        for (const l of logs) {
-          const { args } = l as unknown as { args: { opId: bigint; opType: number; weiAmount: bigint } };
-          track(vault, args.opId, Number(args.opType) as OpType, args.weiAmount, info);
-        }
+        void (async () => {
+          for (const l of logs) {
+            const { args } = l as unknown as { args: { opId: bigint; opType: number; weiAmount: bigint } };
+            await track(vault, args.opId, Number(args.opType) as OpType, args.weiAmount, info, true);
+          }
+        })();
       },
       onError: (err) => alert("watchContractEvent error", vault, err.message),
     });
   }
 
-  async function attest(vault: Address, opId: bigint, executed: boolean): Promise<void> {
+  /** Submits attest(), waits for it to mine, and reports whether it actually landed. Returning
+   * false (rather than swallowing every error) lets balanceLoop keep retrying instead of
+   * abandoning the op — a transient RPC/nonce/gas error must not silently drop tracking. */
+  async function attest(vault: Address, opId: bigint, executed: boolean): Promise<boolean> {
     const info = vaultInfo.get(vault)!;
     const key = opKey(vault, opId);
     try {
-      await walletClient.writeContract({
+      const hash = await walletClient.writeContract({
         address: info.verifier,
         abi: keeperVerifierAbi,
         functionName: "attest",
@@ -153,34 +188,64 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
         chain,
         account,
       });
-      log("attested", vault, opId.toString(), executed);
+      const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
+      if (receipt.status !== "success") {
+        alert("attest tx reverted", vault, opId.toString(), hash);
+        return false;
+      }
+      log("attested", vault, opId.toString(), executed, hash);
+      return true;
     } catch (err) {
-      alert("attest failed", vault, opId.toString(), (err as Error).message);
+      const msg = (err as Error).message;
+      if (msg.includes("ALREADY_ATTESTED")) {
+        // A verdict is already recorded on-chain (this keeper's own earlier attempt, or a race)
+        // — nothing left for local retry to do, whatever that verdict was.
+        alert("already attested (prior attempt or race) — dropping local tracking", vault, opId.toString());
+        return true;
+      }
+      alert("attest failed", vault, opId.toString(), msg);
+      return false;
     }
   }
 
-  // Balance-verification loop. Baseline = the coin balance the first time we observe a pending
-  // op. Core executes split/merge asynchronously ("a few seconds", FINDINGS.md), so a baseline
-  // taken right when the op is first seen is pre-execution in practice for LIVE-detected ops.
-  //
-  // ponytail: known gap for ops REBUILT from pendingDeposit/pendingRedeem after a restart — if
-  // Core already executed the op before this process started, "first observed" balance is really
-  // the post-execution balance, and the delta check can never fire (false negative -> executed
-  // wrongly attested false after the timeout). Upgrade path: a small on-disk baseline cache keyed
-  // by opKey, written before the first balance read and consulted on boot, if this proves to
-  // matter in practice — the stateless design accepts the gap for v1.
+  // Balance-verification loop. Only ops with confidentBaseline (live-detected: baseline captured
+  // immediately in track(), pre-execution in practice) may reach attest(executed=false) on
+  // timeout — see the failed-attestation-rule comment below. Ops rebuilt after a restart cannot
+  // be sure their "first observed" balance predates execution (Core may have already run the op
+  // before this process started), so a timeout there only alerts and holds; it never guesses.
+  // ponytail: a held rebuilt op stays pending forever if it truly dropped on Core with no keeper
+  // ever seeing a confident pre-op baseline — recovery is manual/owner-driven (setVerifier), same
+  // as any other case this design defers to the owner rather than trusting elapsed time.
   async function balanceLoop(): Promise<void> {
     for (const [mapKey, op] of pendingOps) {
       try {
-        const current = await fetchCoinBalanceWei(config.infoApiUrl, op.vault, op.coinId);
         if (op.baseline === null) {
-          pendingOps.set(mapKey, { ...op, baseline: current });
+          op.baseline = await fetchCoinBalanceWei(config.infoApiUrl, op.vault, op.coinId);
+          continue; // just captured; compare against it starting next tick
+        }
+        const current = await fetchCoinBalanceWei(config.infoApiUrl, op.vault, op.coinId);
+        const verdict = resolveBalanceCheck(
+          op.baseline,
+          current,
+          op.opType,
+          op.weiAmount,
+          Date.now() - op.firstSeenAt,
+          config.balanceTimeoutMs,
+          op.confidentBaseline,
+        );
+        if (verdict === "wait") continue;
+        if (verdict === "hold") {
+          if (!op.holdAlerted) {
+            alert(
+              "balance timeout on a rebuilt op with an unconfirmed pre-op baseline — holding, not attesting false; check manually",
+              op.vault,
+              op.opId.toString(),
+            );
+            op.holdAlerted = true;
+          }
           continue;
         }
-        if (deltaMatches(op.baseline, current, op.opType, op.weiAmount)) {
-          await attest(op.vault, op.opId, true);
-          pendingOps.delete(mapKey);
-        } else if (Date.now() - op.firstSeenAt > config.balanceTimeoutMs) {
+        if (verdict === "attest-false") {
           // Failed-attestation rule: attest executed=false only on positive evidence of a
           // dropped op if such evidence exists. Core gives none — a rejected split/merge is
           // silent (FINDINGS.md step 5: oversized send rejected with no error, no event, no
@@ -189,18 +254,19 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
           // anything on its own. If the keeper is wrong here the owner can always swap it out via
           // OutcomeVault.setVerifier — that recovery path, not this timeout, is the trust anchor.
           alert("balance timeout with no delta, attesting executed=false", op.vault, op.opId.toString());
-          await attest(op.vault, op.opId, false);
-          pendingOps.delete(mapKey);
         }
+        if (await attest(op.vault, op.opId, verdict === "attest-true")) pendingOps.delete(mapKey);
       } catch (err) {
         alert("balance check failed", op.vault, op.opId.toString(), (err as Error).message);
       }
     }
   }
 
+  /** Submits settle() and waits for it to mine before returning, so settlementLoop's next tick
+   * for this vault can't fire a duplicate while the first is still in flight. */
   async function settle(vault: Address, fractionWad: bigint): Promise<void> {
     try {
-      await walletClient.writeContract({
+      const hash = await walletClient.writeContract({
         address: vault,
         abi: outcomeVaultAbi,
         functionName: "settle",
@@ -208,7 +274,12 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
         chain,
         account,
       });
-      log("settle() sent", vault, fractionWad.toString());
+      const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
+      if (receipt.status !== "success") {
+        alert("settle tx reverted", vault, hash);
+        return;
+      }
+      log("settle() confirmed", vault, fractionWad.toString(), hash);
     } catch (err) {
       const msg = (err as Error).message;
       if (msg.includes("ALREADY_SETTLED")) return; // race lost to a permissionless caller — fine
