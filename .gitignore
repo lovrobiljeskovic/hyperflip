@@ -18,3 +18,4 @@ docs/
 *.db
 .beads-credential-key
 .beads/proxieddb/
+.worktrees/
