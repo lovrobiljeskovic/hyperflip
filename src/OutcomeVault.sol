@@ -303,6 +303,16 @@ contract OutcomeVault {
         uint256 payout = amount * fraction / 1e18;
         uint256 obligation = _settlementObligation();
         uint256 available = _unreservedBalance();
+        // Pool-adequacy floor — the actual anti-burn property. Arming vectors
+        // for `swept` are a class (e.g. a sub-1-EVM-unit Core credit rounds to
+        // zero expected EVM, arming with nothing landed), and `payout > 0` is
+        // no backstop once pro-rata is in play: a 2-wei pool against a 100e6
+        // obligation still pays 1 wei for a full burn. So the pool itself must
+        // cover PAYOUT_MIN_BPS of the obligation the pro-rata scales against.
+        // Tradeoff (same as _payOut's floor): a genuine >1% settlement
+        // shortfall reverts rather than paying a haircut — recovery is the
+        // owner topping up the pool (and clearOutbound if the gate is stuck).
+        require(available * 10_000 >= obligation * PAYOUT_MIN_BPS, "SETTLEMENT_POOL_SHORT");
         if (obligation > available) payout = payout * available / obligation;
         // Never burn a position for nothing.
         require(payout > 0, "NOTHING_TO_REDEEM");

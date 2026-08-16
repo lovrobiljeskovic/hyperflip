@@ -452,28 +452,44 @@ contract OutcomeVaultTest is BaseTest {
         vault.pullSettledFunds();
     }
 
-    /// If the settled quote lands short, every holder takes the same haircut.
-    /// Paying the first redeemer in full would leave the last one unable to
-    /// redeem at all.
+    /// If the settled quote lands short — within the pool-adequacy floor —
+    /// every holder takes the same haircut. Paying the first redeemer in full
+    /// would leave the last one unable to redeem at all.
     function test_SettledRedemptionIsProRataWhenShort() public {
         depositAndClaim(100e6);
-        sim.setMergeFeeBps(100); // settlement credit lands 1% short
+        sim.setMergeFeeBps(50); // settlement credit lands 0.5% short (inside the 1% floor)
         vault.settle(0.5e18);
         sim.creditSettlement();
         vault.pullSettledFunds();
         sim.processAll();
 
         uint256 available = quote.balanceOf(address(vault));
-        assertEq(available, 99e6);
+        assertEq(available, 99.5e6);
 
         vm.startPrank(user);
         vault.redeemSettled(true, 100e6);
-        assertEq(quote.balanceOf(user), 900e6 + 49.5e6, "early redeemer did not take the pro-rata haircut");
+        assertEq(quote.balanceOf(user), 900e6 + 49.75e6, "early redeemer did not take the pro-rata haircut");
         vault.redeemSettled(false, 100e6); // tail redeemer must still be payable
         vm.stopPrank();
 
         assertEq(quote.balanceOf(user), 900e6 + available);
         assertEq(quote.balanceOf(address(vault)), 0);
+    }
+
+    /// Past the floor the haircut is no longer a fee, it is missing money:
+    /// redemption refuses to burn against a pool more than 1% short.
+    function test_SettledRedemptionRevertsWhenPoolTooShort() public {
+        depositAndClaim(100e6);
+        sim.setMergeFeeBps(200); // 2% short — beyond PAYOUT_MIN_BPS
+        vault.settle(0.5e18);
+        sim.creditSettlement();
+        vault.pullSettledFunds();
+        sim.processAll();
+
+        vm.prank(user);
+        vm.expectRevert(bytes("SETTLEMENT_POOL_SHORT"));
+        vault.redeemSettled(true, 100e6);
+        assertEq(vault.oYes().balanceOf(user), 100e6);
     }
 
     /// The sweep gate must key off quote the vault actually received, not off
@@ -637,6 +653,42 @@ contract OutcomeVaultTest is BaseTest {
 
         vm.prank(user);
         vm.expectRevert(bytes("SWEEP_PENDING"));
+        vault.redeemSettled(true, 100e6);
+        assertEq(vault.oYes().balanceOf(user), 100e6, "position burned for dust");
+    }
+
+    /// Arming vectors are a class: a 999-quote-wei Core credit rounds to zero
+    /// expected EVM, so the pull arms `swept` with nothing ever landing, and a
+    /// 2-wei donation then satisfies the gate. The pool-adequacy floor — not
+    /// the gate — is what must refuse the burn.
+    function test_SubUnitCoreCreditPlusDonationCannotForceRedemption() public {
+        depositAndClaim(100e6);
+        vault.settle(0.5e18);
+        sim.creditStray(999); // rounds to 0 EVM units
+        vault.pullSettledFunds(); // arms — nothing will ever land
+
+        quote.mint(other, 2);
+        vm.prank(other);
+        quote.transfer(address(vault), 2);
+
+        vm.prank(user);
+        vm.expectRevert(bytes("SETTLEMENT_POOL_SHORT"));
+        vault.redeemSettled(true, 100e6);
+        assertEq(vault.oYes().balanceOf(user), 100e6, "position burned for dust");
+    }
+
+    /// Same class without any EVM-side donation: a 2000-quote-wei stray credit
+    /// sweeps to a genuine 2-wei EVM landing, so the gate opens honestly — the
+    /// floor is the only thing standing between a dust pool and a full burn.
+    function test_StrayCreditSweptToDustCannotForceRedemption() public {
+        depositAndClaim(100e6);
+        vault.settle(0.5e18);
+        sim.creditStray(2000);
+        vault.pullSettledFunds();
+        sim.processAll(); // the 2-wei sweep lands; gate is honestly open
+
+        vm.prank(user);
+        vm.expectRevert(bytes("SETTLEMENT_POOL_SHORT"));
         vault.redeemSettled(true, 100e6);
         assertEq(vault.oYes().balanceOf(user), 100e6, "position burned for dust");
     }
