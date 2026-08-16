@@ -14,13 +14,12 @@ on the EVM side — the sweep takes the entire Core balance.
 
 ## Run order
 
-1. **Quote token identity** (design spec risk 1). Send a small amount of
-   the candidate quote token (USDC vs USDH) to the Core system address
-   from the wallet, then:
+1. **Quote token identity** (design spec risk 1). Quote is USDC (USDH is
+   sunset). Send a small amount of USDC to the Core system address from
+   the wallet, then:
    `--sig "readBalances(address,uint64[])" $WALLET '[0,1,2,3]'`
-   → whichever index credited is `quoteTokenCoreIndex`; the token that
-   works is the deposit asset. Also fixes `weiMultiplier/weiDivisor`
-   (credited wei vs sent EVM units).
+   → whichever index credited is `quoteTokenCoreIndex`. Also fixes
+   `weiMultiplier/weiDivisor` (credited wei vs sent EVM units).
 2. **Outcome ids**: pick a live HIP-4 testnet market; question/outcome
    ids come from the HIP-4 frontend/API (no on-chain discovery).
 3. **Split round-trip** (risk 2): fund Core account with quote, then
