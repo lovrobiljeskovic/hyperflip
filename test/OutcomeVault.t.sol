@@ -564,9 +564,9 @@ contract OutcomeVaultTest is BaseTest {
         sim.creditSettlement();
 
         vm.prank(user);
-        // Pull not even queued: the pool is empty, so the zero-payout backstop
-        // is what protects the position.
-        vm.expectRevert(bytes("NOTHING_TO_REDEEM"));
+        // Pull not even requested: the gate is unarmed, whatever the pool
+        // holds — the arrival check alone would pass trivially here.
+        vm.expectRevert(bytes("SWEEP_PENDING"));
         vault.redeemSettled(true, 100e6);
 
         vault.pullSettledFunds();
@@ -579,6 +579,44 @@ contract OutcomeVaultTest is BaseTest {
         vm.prank(user);
         vault.redeemSettled(true, 100e6);
         assertEq(quote.balanceOf(user), 900e6 + 50e6);
+    }
+
+    /// Before anyone cranks the pull, `_unlandedEvm() == 0` holds trivially,
+    /// and a 2-wei quote donation used to defeat the zero-payout backstop:
+    /// obligation 100e6, pool 2 wei, payout 1 wei — full position burned for
+    /// dust. The gate must be armed by the pull itself, not by arrivals.
+    function test_DonationBeforePullCannotForceSettledRedemption() public {
+        depositAndClaim(100e6);
+        vault.settle(0.5e18);
+        sim.creditSettlement();
+
+        quote.mint(other, 2);
+        vm.prank(other);
+        quote.transfer(address(vault), 2); // griefer's dust donation
+
+        vm.prank(user);
+        vm.expectRevert(bytes("SWEEP_PENDING"));
+        vault.redeemSettled(true, 100e6);
+        assertEq(vault.oYes().balanceOf(user), 100e6, "position burned for dust");
+    }
+
+    /// Pulling with nothing on Core still arms the gate: "nothing left to
+    /// sweep" IS the swept state, and the crank stays permissionless — the
+    /// zero-payout backstop (not the gate) is what guards an empty pool.
+    function test_PullWithZeroCoreBalanceArmsTheGate() public {
+        depositAndClaim(100e6);
+        vault.settle(0.5e18);
+        // Core never credits: its balance is already 0 at pull time.
+
+        vm.prank(user);
+        vm.expectRevert(bytes("SWEEP_PENDING"));
+        vault.redeemSettled(true, 100e6);
+
+        vault.pullSettledFunds(); // nothing to sweep, but the gate arms
+        vm.prank(user);
+        vm.expectRevert(bytes("NOTHING_TO_REDEEM")); // past the gate now
+        vault.redeemSettled(true, 100e6);
+        assertEq(vault.oYes().balanceOf(user), 100e6);
     }
 
     /// Unwithdrawn `owed` is not part of the settlement pool: paying it out

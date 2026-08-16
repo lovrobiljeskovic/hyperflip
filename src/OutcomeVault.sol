@@ -88,6 +88,14 @@ contract OutcomeVault {
     uint256 internal outboundExpectedEvm;
     uint256 internal totalPaidOutEvm;
 
+    /// Armed only by `pullSettledFunds` (and the owner's `clearOutbound`),
+    /// never by arrivals: before any pull, `_unlandedEvm() == 0` holds
+    /// trivially and a 2-wei quote donation (or stray EVM dust) would slip
+    /// past the zero-payout backstop, burning a full position for dust. The
+    /// flag says "a sweep was actually requested"; `_unlandedEvm()` then says
+    /// it landed. It never un-arms — a later stray can at most be swept again.
+    bool internal swept;
+
     /// A payout is credited in full unless Core returned less than asked; both
     /// numbers are logged so a shortfall is visible off-chain.
     uint256 internal constant PAYOUT_MIN_BPS = 9_900;
@@ -145,6 +153,9 @@ contract OutcomeVault {
         require(msg.sender == owner, "NOT_OWNER");
         outboundWei = 0;
         outboundExpectedEvm = quote.balanceOf(address(this)) + totalPaidOutEvm;
+        // Core-has-nothing-left corner: a settlement sweep Core dropped can
+        // never land, so the owner writing reality down also opens the gate.
+        if (settled) swept = true;
     }
 
     function deposit(uint256 amount) external {
@@ -254,12 +265,14 @@ contract OutcomeVault {
     }
 
     /// Move the settled quote from the vault's Core account to the EVM side so
-    /// redeemSettled can pay. Permissionless.
+    /// redeemSettled can pay. Permissionless — and the only thing that arms
+    /// the redemption gate, so cranking it is part of settling. A zero Core
+    /// balance still arms: nothing left to sweep IS the swept state.
     function pullSettledFunds() external {
         require(settled, "NOT_SETTLED");
+        swept = true;
         uint64 bal = _quoteCoreBalance();
-        require(bal > 0, "NOTHING_TO_PULL");
-        _spotSendOut(bal);
+        if (bal > 0) _spotSendOut(bal);
     }
 
     /// Payouts round down and, if the settled quote that came back is short of
@@ -267,16 +280,19 @@ contract OutcomeVault {
     /// actually here. Paying the early redeemers in full would leave the last
     /// one holding tokens the vault cannot honor at all.
     ///
-    /// Blocked while a settlement sweep is still in the air: pro-rata against a
-    /// pool that has not arrived would haircut (or wipe out) whoever redeems
-    /// first while the stragglers over-collect. Arrival is measured on the EVM
-    /// side — the quote the sweep owes has shown up — never by reading the Core
-    /// balance, which anyone can perturb with a 1-wei credit. Once observed,
-    /// the expectation is retired, so a later stray cannot re-lock redemption;
-    /// a fresh `pullSettledFunds` is the only thing that arms it again.
+    /// Blocked until a settlement sweep was requested (`swept`) AND is no
+    /// longer in the air (`_unlandedEvm() == 0`): pro-rata against a pool that
+    /// has not arrived would haircut (or wipe out) whoever redeems first while
+    /// the stragglers over-collect. Without the flag the arrival check holds
+    /// trivially before any pull, and dust donated to the vault defeats the
+    /// zero-payout backstop. Arrival is measured on the EVM side — the quote
+    /// the sweep owes has shown up — never by reading the Core balance, which
+    /// anyone can perturb with a 1-wei credit. Once observed, the expectation
+    /// is retired, so a later stray cannot re-lock redemption; a fresh
+    /// `pullSettledFunds` is the only thing that arms it again.
     function redeemSettled(bool isYes, uint256 amount) external {
         require(settled, "NOT_SETTLED");
-        require(_unlandedEvm() == 0, "SWEEP_PENDING");
+        require(swept && _unlandedEvm() == 0, "SWEEP_PENDING");
         uint256 fraction = isYes ? settleFractionWad : 1e18 - settleFractionWad;
         uint256 payout = amount * fraction / 1e18;
         uint256 obligation = _settlementObligation();
