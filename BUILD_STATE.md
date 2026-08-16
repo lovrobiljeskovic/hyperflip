@@ -1,6 +1,6 @@
 # OutcomeVault v1 — Build State (handoff)
 
-**As of:** 2026-08-16 · **Branch:** `outcomevault-v1-keeper` · **HEAD:** `e4bf189`
+**As of:** 2026-08-16 · **Branch:** `outcomevault-v1-keeper` · **HEAD:** post-final-review fix wave
 **Plan:** `~/docs/superpowers/specs/2026-08-16-outcomevault-v1-keeper-architecture.md`
 **Worktree:** `~/hype-evm/.worktrees/outcomevault-v1-keeper` (git worktree off `~/hype-evm`, base `f20bbaa` on `main`)
 **SDD ledger (rulings + per-round detail):** `.superpowers/sdd/2026-08-16-outcomevault-v1-keeper-architecture/progress.md` (git-ignored; this file duplicates the load-bearing bits so they survive `git clean`).
@@ -22,23 +22,21 @@ Old key `0xC1b15e354D5E4561B5692735070d874727001e48` retired (may hold Core-side
 |---|---|
 | 1 — IExecutionVerifier + KeeperVerifier + tests | ✅ complete, review clean |
 | 2 — CoreConstants spike patches | ✅ complete, review clean |
-| 3 — OutcomeVault rework + mocks + tests | ⏳ **fix committed, 82/82 green, awaiting one confirmation re-review of `e4bf189`** before marked complete |
-| 4 — `script/Deploy.s.sol` per-market deploy | ⛔ not started (brief written) |
-| 5 — `keeper/` TypeScript service | ⛔ not started (brief written) |
-| 6 — testnet e2e (chain 998) | ⛔ not started (brief written) |
-| Final whole-branch review + finish | ⛔ not started |
+| 3 — OutcomeVault rework + mocks + tests | ✅ complete, review clean |
+| 4 — `script/Deploy.s.sol` per-market deploy | ✅ complete, review clean |
+| 5 — `keeper/` TypeScript service | ✅ complete, review clean |
+| 6 — testnet e2e (chain 998) | ✅ complete, review clean |
+| Final whole-branch review + fix wave | ✅ complete — merge-ready |
 
 Task briefs: `task-1-brief.md` … `task-6-brief.md` in the SDD workspace dir. Reports: `task-N-report.md`.
 
 ## Task 3 — what happened (the hard part)
 
-Core deliverable. Went 5 review rounds + 1 post-breaker adjudicated round. Money-path defects found and closed, in order:
-1. Dwell used an absolute Core-balance target → 1-wei donation to the vault's Core account bricked deposit/redeem/settle. Fixed: dwell confined to `deposit()`, cumulative outbound accounting, owner `clearOutbound()` escape.
-2. `settle()` keeper fallback fired on a **live** market (status 0/1). Fixed: keeper relay only at 0x814 status==3 (pruned); trustless read at status 2; fixture default status → pruned to keep anchor DoD 8 green.
-3. `_payOut` silently capped a Core-side shortfall into permanent loss. Fixed: `PAYOUT_MIN_BPS`=9900 floor + `Payout` event.
-4. `redeemSettled` had no shortfall handling / then burned positions for zero payout in the async sweep window / then a dust Core credit (<100 quote wei rounds EVM→0) + permissionless pull re-opened the burn. **Final fix (`e4bf189`):** pool-adequacy floor `require(available*10_000 >= obligation*PAYOUT_MIN_BPS, "SETTLEMENT_POOL_SHORT")` on the same basis pro-rata scales against — dust pool reverts position-intact, real ≤7bps fee passes, anchor (mergeFeeBps=0) unaffected.
-5. `totalOwed` now tracked so short settlement redemptions can't drain quote reserved for prior claimants.
-6. EVM-side arrival tracking (`outboundExpectedEvm` vs `balance + totalPaidOutEvm`) replaced griefable Core-balance reads for pricing + unlock.
+Went 5 review rounds + 1 post-breaker adjudicated round to close a series of
+money-path defects (dwell-target donation attack, live-market keeper
+fallback, silent payout shortfall, settlement-sweep burn vectors) ending in a
+pool-adequacy floor on `redeemSettled`. Full round-by-round detail is in the
+SDD ledger (`progress.md`, search `Task 3:`), not duplicated here.
 
 `test/anchor/Anchor.t.sol` never edited (repo rule); anchor kept green by editing the `test/BaseTest.sol` fixture only.
 
@@ -49,15 +47,16 @@ Core deliverable. Went 5 review rounds + 1 post-breaker adjudicated round. Money
 - Task 3 broke the 5-round cap by one adjudicated round because the fix was a **known convergent structural fix** (pool floor), not a guess — dust-burn is the vault's central safety property, not deferrable.
 - Deferred to mainnet hardening: owner→timelock, 2-step owner handover, broader owner rescue/sweep, minDelay tuning, lying-keeper mitigation beyond setVerifier/pause.
 
-## Open technical risks carried into Task 6 (testnet)
+## Open technical risks — mainnet gates + parked Importants
 
-- `ACTION_SPOT_SEND` (CoreWriter action id 6, param layout) still **UNVERIFIED against real Core** — every payout depends on it; spike step 6 never ran. Confirm first thing in e2e.
-- ~7 bps round-trip loss observed on testnet — reproduce and attribute (split+merge vs spotSend leg).
-- If the Core→EVM `spotSend` leg charges a fee/rounds, `outboundExpectedEvm` ratchets a permanent deficit → `clearOutbound` is the owner escape; watch for it in e2e.
-- Lying keeper untested — accepted v1 trust model (single trusted keeper + minDelay + pause + setVerifier).
+Testnet e2e (Task 6) closed the original open-risk list (spotSend verified live, contract-address info-API shape confirmed, outcome-leg fee is not an attest risk, ~7bps round-trip loss attributed). What's left before mainnet, from the final whole-branch review:
+
+- **M1 (gate):** USDC EVM→Core deposit crediting via CoreDepositWallet did **not** credit on current testnet (22 USDC sunk in controls) — cause unconfirmed (testnet regression vs. a CCTP recipient-existence rule). Must be proven reliable for a contract recipient before the first real deposit; see `OutcomeVault.sol` header for the vault-wide wedge this causes if it recurs on mainnet.
+- **M2 (gate):** Vault Core account needs activation (Core-side spotSend of dust, 1 USDC sender-side fee) before it can receive anything — missing from all scripts/runbooks; add to the deploy runbook.
+- **M3 (gate):** spotSend fees are sender-side-on-top; a full-Core-balance send (as `_payOut`/`pullSettledFunds` do) has no fee headroom untested at the margin — could silently wedge the last claim until `clearOutbound`.
+- **Parked Important #2:** `pullSettledFunds` sends the vault's full Core balance with no fee margin — same mechanism as M3. Gated on M3's empirical verification; a wrong guess in either direction (add a margin vs. trust Core nets the fee) is worse than documenting and re-checking live. Probable code change once M3 is verified.
+- **Parked Important #3:** no `transferOwnership` on `OutcomeVault`/`KeeperVerifier` — owner→timelock is a contract change, not a config toggle. Carried to mainnet hardening, no testnet impact.
 
 ## Resume in a new session
 
-1. `cd ~/hype-evm/.worktrees/outcomevault-v1-keeper`; re-read the SDD ledger.
-2. Dispatch the pending confirmation re-review of `e4bf189` (diff package `review-968a901..e4bf189.diff` already built) → mark Task 3 complete.
-3. Tasks 4 → 5 → 6 with review gates, then final whole-branch review + `superpowers:finishing-a-development-branch`.
+Branch complete; final whole-branch review passed and the fix wave (header comment, keeper clock-skew margin + MAX_SAMPLE_AGE, floor-boundary test, this refresh, testnet minDelay restore) is done. See `.superpowers/sdd/2026-08-16-outcomevault-v1-keeper-architecture/progress.md` for the full ruling history and `task-6-report.md`'s "Final-review fix wave" section for fix-wave details. Next step is `superpowers:finishing-a-development-branch`.
