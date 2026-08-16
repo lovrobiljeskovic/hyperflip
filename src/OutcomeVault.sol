@@ -92,8 +92,8 @@ contract OutcomeVault {
     /// never by arrivals: before any pull, `_unlandedEvm() == 0` holds
     /// trivially and a 2-wei quote donation (or stray EVM dust) would slip
     /// past the zero-payout backstop, burning a full position for dust. The
-    /// flag says "a sweep was actually requested"; `_unlandedEvm()` then says
-    /// it landed. It never un-arms — a later stray can at most be swept again.
+    /// flag says "a sweep was actually sent"; `_unlandedEvm()` then says it
+    /// landed. It never un-arms — a later stray can at most be swept again.
     bool internal swept;
 
     /// A payout is credited in full unless Core returned less than asked; both
@@ -265,14 +265,20 @@ contract OutcomeVault {
     }
 
     /// Move the settled quote from the vault's Core account to the EVM side so
-    /// redeemSettled can pay. Permissionless — and the only thing that arms
-    /// the redemption gate, so cranking it is part of settling. A zero Core
-    /// balance still arms: nothing left to sweep IS the swept state.
+    /// redeemSettled can pay. Permissionless — and (with the owner's
+    /// clearOutbound) the only thing that arms the redemption gate, so
+    /// cranking it is part of settling. A zero-balance pull must NOT arm:
+    /// Core's balance is zero by construction until it credits settlement, so
+    /// a free premature pull would arm the gate with nothing swept and hand
+    /// the 2-wei donation attack right back. Pull again once the credit
+    /// lands; if Core never credits, recovery is the owner's clearOutbound.
     function pullSettledFunds() external {
         require(settled, "NOT_SETTLED");
-        swept = true;
         uint64 bal = _quoteCoreBalance();
-        if (bal > 0) _spotSendOut(bal);
+        if (bal > 0) {
+            swept = true;
+            _spotSendOut(bal);
+        }
     }
 
     /// Payouts round down and, if the settled quote that came back is short of

@@ -8,9 +8,12 @@ wallet. Each finding is a one-line patch to CoreConstants; rerun
 Env: `TESTNET_RPC` (HyperEVM testnet RPC), `PRIVATE_KEY` (funded wallet).
 Core actions are async (seconds); wait between a write step and its
 read-back.
-Keeper runbook: after settlement, call pullSettledFunds only once all
-previously queued spotSends (cancel refunds, redeem payouts) have landed
-on the EVM side — the sweep takes the entire Core balance.
+Keeper runbook: after settlement, call pullSettledFunds only once Core
+has credited the settlement AND all previously queued spotSends (cancel
+refunds, redeem payouts) have landed on the EVM side — the sweep takes
+the entire Core balance. A pull while the Core balance is still zero is
+a harmless no-op that does not open redemption; crank again after the
+credit lands.
 
 ## Run order
 

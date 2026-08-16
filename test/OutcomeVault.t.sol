@@ -600,23 +600,45 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(vault.oYes().balanceOf(user), 100e6, "position burned for dust");
     }
 
-    /// Pulling with nothing on Core still arms the gate: "nothing left to
-    /// sweep" IS the swept state, and the crank stays permissionless — the
-    /// zero-payout backstop (not the gate) is what guards an empty pool.
-    function test_PullWithZeroCoreBalanceArmsTheGate() public {
+    /// A zero-balance pull must NOT arm the gate: Core's balance is zero by
+    /// construction until it credits settlement, so a free premature crank
+    /// arming `swept` would resurrect the donation attack. The gate stays
+    /// shut until a pull actually sends something (or the owner clears).
+    function test_PullWithZeroCoreBalanceDoesNotArmTheGate() public {
         depositAndClaim(100e6);
         vault.settle(0.5e18);
-        // Core never credits: its balance is already 0 at pull time.
+        // Core has not credited settlement: balance is 0 at pull time.
+
+        vault.pullSettledFunds(); // premature crank — nothing swept
+        vm.prank(user);
+        vm.expectRevert(bytes("SWEEP_PENDING")); // still unarmed
+        vault.redeemSettled(true, 100e6);
+        assertEq(vault.oYes().balanceOf(user), 100e6);
+
+        sim.creditSettlement(); // Core credits; the crank now bites
+        vault.pullSettledFunds();
+        sim.processAll();
+        vm.prank(user);
+        vault.redeemSettled(true, 100e6);
+        assertEq(quote.balanceOf(user), 900e6 + 50e6);
+    }
+
+    /// The composed attack from the round-5 review: settle → free premature
+    /// pull (Core balance still zero) → 2-wei donation. If the empty pull
+    /// armed the gate, the donation would burn a full position for 1 wei.
+    function test_PrematurePullPlusDonationCannotForceRedemption() public {
+        depositAndClaim(100e6);
+        vault.settle(0.5e18);
+        vault.pullSettledFunds(); // griefer's free crank, nothing on Core
+
+        quote.mint(other, 2);
+        vm.prank(other);
+        quote.transfer(address(vault), 2); // griefer's dust donation
 
         vm.prank(user);
         vm.expectRevert(bytes("SWEEP_PENDING"));
         vault.redeemSettled(true, 100e6);
-
-        vault.pullSettledFunds(); // nothing to sweep, but the gate arms
-        vm.prank(user);
-        vm.expectRevert(bytes("NOTHING_TO_REDEEM")); // past the gate now
-        vault.redeemSettled(true, 100e6);
-        assertEq(vault.oYes().balanceOf(user), 100e6);
+        assertEq(vault.oYes().balanceOf(user), 100e6, "position burned for dust");
     }
 
     /// Owner recovery for the Core-has-nothing-left corner: Core lost the
