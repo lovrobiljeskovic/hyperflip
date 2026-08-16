@@ -57,7 +57,11 @@ abstract contract BaseTest is Test {
         outcomeStatus = MockOutcomeStatus(CoreConstants.OUTCOME_STATUS_PRECOMPILE);
         depositWallet = MockCoreDepositWallet(CoreConstants.CORE_DEPOSIT_WALLET);
         depositWallet.setQuote(IERC20(address(quote)));
-        outcomeStatus.set(CoreConstants.OUTCOME_ACTIVE, 0, QUESTION);
+        // Default: settled and already pruned by Core — the state where the
+        // keeper is allowed to relay the fraction it observed. A live market is
+        // not settleable by anyone, so an active default would make the
+        // settlement anchors unsatisfiable.
+        outcomeStatus.set(CoreConstants.OUTCOME_PRUNED, 0, QUESTION);
 
         sim = new CoreSim(quote, SYSTEM_ADDR, TOKEN_INDEX, QUOTE_MULT, DIV);
         verifier = new KeeperVerifier(address(sim));

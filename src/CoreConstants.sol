@@ -48,6 +48,7 @@ library CoreConstants {
     /// (settledValue readable), 3 settled-and-pruned (settledValue GONE).
     uint8 internal constant OUTCOME_ACTIVE = 1;
     uint8 internal constant OUTCOME_SETTLED = 2;
+    uint8 internal constant OUTCOME_PRUNED = 3;
     /// settledValue scale: 1e8 == fraction 1.0.
     uint64 internal constant SETTLED_VALUE_ONE = 1e8;
 

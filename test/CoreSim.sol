@@ -68,6 +68,12 @@ contract CoreSim {
         mergeFeeBps = bps;
     }
 
+    /// Anyone can spotSend to the vault's Core account — modeled so tests can
+    /// check that a stray credit cannot wedge the vault.
+    function creditStray(uint64 quoteWei) external {
+        _setCoreBalance(coreBalance() + quoteWei);
+    }
+
     function coreBalance() public view returns (uint64) {
         return spot.total(address(vault), tokenIndex);
     }
@@ -108,7 +114,8 @@ contract CoreSim {
 
     /// Stand-in for Core settling the vault's outcome tokens into quote.
     function creditSettlement() external {
-        _setCoreBalance(coreBalance() + uint64(splitOutstandingWei));
+        uint256 fee = splitOutstandingWei * mergeFeeBps / 10_000;
+        _setCoreBalance(coreBalance() + uint64(splitOutstandingWei - fee));
         splitOutstandingWei = 0;
     }
 

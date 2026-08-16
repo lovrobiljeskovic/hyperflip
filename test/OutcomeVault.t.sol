@@ -201,6 +201,9 @@ contract OutcomeVaultTest is BaseTest {
         vm.prank(user);
         vault.requestRedeem(100e6);
         sim.processAll();
+        uint64 requested = uint64(100e6 * QUOTE_MULT);
+        vm.expectEmit(true, true, true, true, address(vault));
+        emit OutcomeVault.Payout(user, requested, requested - requested * 7 / 10_000);
         vault.claimRedeem();
         sim.processAll();
 
@@ -210,6 +213,23 @@ contract OutcomeVaultTest is BaseTest {
         vault.withdraw();
         assertEq(quote.balanceOf(user), 900e6 + expected);
         assertEq(quote.balanceOf(address(vault)), 0, "vault paid out more than arrived");
+    }
+
+    /// Beyond fee size, a short balance means the credit has not landed yet.
+    /// Reverting keeps the pending slot (and the claim) alive for a retry
+    /// instead of silently converting the gap into a permanent loss.
+    function test_LargeShortfallRevertsAndKeepsTheClaimAlive() public {
+        depositAndClaim(100e6);
+        sim.setMergeFeeBps(200); // 2% — far past a plausible fee
+        vm.prank(user);
+        vault.requestRedeem(100e6);
+        sim.processAll();
+
+        vm.expectRevert(bytes("CORE_CREDIT_SHORT"));
+        vault.claimRedeem();
+        (address pendingUser,,) = vault.pendingRedeem();
+        assertEq(pendingUser, user, "pending slot lost");
+        assertEq(vault.owed(user), 0);
     }
 
     function test_RequestRedeemWhileDepositPendingReverts() public {
@@ -244,6 +264,52 @@ contract OutcomeVaultTest is BaseTest {
         sim.processAll();
         vm.prank(user);
         vault.deposit(100e6); // debit observed, baseline is safe again
+    }
+
+    /// A third party can hold the dwell's balance check false forever by
+    /// sending the vault's Core account a stray credit. That must cost at most
+    /// deposits — never redemptions, and never settlement.
+    function test_StrayCoreCreditDoesNotBlockRedeemOrSettle() public {
+        depositAndClaim(100e6);
+        vm.prank(user);
+        vault.requestRedeem(50e6);
+        sim.processAll();
+        vault.claimRedeem(); // outbound queued
+        sim.processAll(); // and landed
+        sim.creditStray(1); // griefer credits 1 wei — dwell can never clear now
+
+        vm.prank(user);
+        vault.requestRedeem(50e6); // takes no baseline, so it must not be blockable
+        sim.processAll();
+        vault.claimRedeem();
+        sim.processAll();
+        sim.creditStray(1);
+
+        vault.settle(1e18); // likewise settlement
+        assertTrue(vault.settled());
+    }
+
+    function test_ClearOutboundRecoversDepositsAfterStrayCredit() public {
+        depositAndClaim(100e6);
+        vm.prank(user);
+        vault.requestRedeem(100e6);
+        sim.processAll();
+        vault.claimRedeem();
+        sim.processAll();
+        sim.creditStray(1);
+
+        vm.prank(user);
+        vm.expectRevert(bytes("OUTBOUND_IN_FLIGHT"));
+        vault.deposit(100e6);
+
+        vm.prank(other);
+        vm.expectRevert(bytes("NOT_OWNER"));
+        vault.clearOutbound();
+
+        vault.clearOutbound(); // owner escape hatch
+        vm.prank(user);
+        vault.deposit(100e6);
+        assertEq(vault.nextOpId(), 3);
     }
 
     // --- verifier seam ----------------------------------------------------
@@ -334,6 +400,18 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(vault.settleFractionWad(), 0.6e18);
     }
 
+    /// The attack the pruned-only relay closes: a keeper fixing a payout on a
+    /// market Core has not resolved.
+    function test_SettleOnLiveMarketRevertsEvenForKeeper() public {
+        outcomeStatus.set(CoreConstants.OUTCOME_ACTIVE, 0, QUESTION);
+        vm.expectRevert(bytes("NOT_SETTLED_ON_CORE"));
+        vault.settle(1e18); // keeper == address(this)
+
+        outcomeStatus.set(0, 0, QUESTION); // never existed
+        vm.expectRevert(bytes("NOT_SETTLED_ON_CORE"));
+        vault.settle(1e18);
+    }
+
     function test_SettleFractionAboveOneReverts() public {
         vm.expectRevert(bytes("BAD_FRACTION"));
         vault.settle(1e18 + 1);
@@ -349,6 +427,38 @@ contract OutcomeVaultTest is BaseTest {
     function test_PullBeforeSettleReverts() public {
         vm.expectRevert(bytes("NOT_SETTLED"));
         vault.pullSettledFunds();
+    }
+
+    /// If the settled quote lands short, every holder takes the same haircut.
+    /// Paying the first redeemer in full would leave the last one unable to
+    /// redeem at all.
+    function test_SettledRedemptionIsProRataWhenShort() public {
+        depositAndClaim(100e6);
+        sim.setMergeFeeBps(100); // settlement credit lands 1% short
+        vault.settle(0.5e18);
+        sim.creditSettlement();
+        vault.pullSettledFunds();
+        sim.processAll();
+
+        uint256 available = quote.balanceOf(address(vault));
+        assertEq(available, 99e6);
+
+        vm.startPrank(user);
+        vault.redeemSettled(true, 100e6);
+        assertEq(quote.balanceOf(user), 900e6 + 49.5e6, "early redeemer paid in full");
+        vault.redeemSettled(false, 100e6); // tail redeemer must still be payable
+        vm.stopPrank();
+
+        assertEq(quote.balanceOf(user), 900e6 + available);
+        assertEq(quote.balanceOf(address(vault)), 0);
+    }
+
+    function test_ConstructorRequiresDepositWalletCode() public {
+        vm.etch(CoreConstants.CORE_DEPOSIT_WALLET, hex"");
+        vm.expectRevert(bytes("NO_DEPOSIT_WALLET"));
+        new OutcomeVault(
+            IERC20(address(quote)), SYSTEM_ADDR, TOKEN_INDEX, QUESTION, OUTCOME, keeper, verifier, "BTC100K", DECIMALS
+        );
     }
 
     /// Settled payouts round down — the remainder stays with the vault.
