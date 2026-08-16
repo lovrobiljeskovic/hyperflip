@@ -21,6 +21,24 @@ import {OutcomeToken} from "./OutcomeToken.sol";
 /// The one thing the vault still reads on-chain is its own Core *quote*
 /// balance (token 0 at 0x801), used to prove a refund is actually funded, and
 /// the settlement fraction at 0x814.
+///
+/// KNOWN ISSUE, pre-mainnet (mainnet gate M1, see task-6-report.md /
+/// progress.md): testnet e2e proved a deposit's EVM→Core USDC leg can be
+/// silently sent to the CoreDepositWallet and never credited (Core-side
+/// non-crediting, cause unconfirmed — testnet regression or a CCTP
+/// recipient-existence rule). If that happens to a live `pendingDeposit`,
+/// `cancelDeposit`'s `CREDIT_NOT_ARRIVED` guard above can never clear
+/// honestly (the credit that would satisfy it never lands), so the pending
+/// slot is stuck forever — and `_requireIdle` then blocks every other
+/// deposit/redeem/settle on this vault, stranding every other holder too,
+/// not just the wedged depositor. The only current recovery is the owner
+/// calling `setVerifier` with a verifier that attests this op `Failed`,
+/// which lets `cancelDeposit` return the EVM-side principal — but the
+/// matching Core-side split never happened, so this mints an unbacked
+/// oYES/oNO pair backed by nothing (dilutes every other holder's claim on
+/// the vault's Core balance). Mainnet needs M1 resolved (proof the deposit
+/// leg reliably credits for a contract recipient) and a proper owner
+/// recovery path that does not rely on minting unbacked pairs.
 contract OutcomeVault {
     using SafeERC20 for IERC20;
 
