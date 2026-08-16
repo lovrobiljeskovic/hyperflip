@@ -1,0 +1,22 @@
+{
+  "name": "outcomevault-keeper",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Off-chain keeper: watches OutcomeVault ops, verifies execution via the Hyperliquid info API, attests to KeeperVerifier, and cranks settlement.",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "check": "npm run typecheck && npm run test"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "viem": "^2.55.16"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.23.12",
+    "typescript": "^5.7.2"
+  }
+}
