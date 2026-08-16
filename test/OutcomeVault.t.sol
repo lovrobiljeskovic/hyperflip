@@ -492,6 +492,29 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(vault.oYes().balanceOf(user), 100e6);
     }
 
+    /// Pins the floor at exactly 99.00% (available*10_000 == obligation*PAYOUT_MIN_BPS):
+    /// the guard is `>=`, so a shortfall landing precisely on the floor must still pay
+    /// out, not revert. Kills a >=-to-> mutation on the SETTLEMENT_POOL_SHORT check.
+    function test_SettledRedemptionExactlyAtFloorPasses() public {
+        depositAndClaim(100e6);
+        sim.setMergeFeeBps(100); // exactly 1% short == the PAYOUT_MIN_BPS floor
+        vault.settle(0.5e18);
+        sim.creditSettlement();
+        vault.pullSettledFunds();
+        sim.processAll();
+
+        uint256 available = quote.balanceOf(address(vault));
+        assertEq(available, 99e6);
+
+        vm.startPrank(user);
+        vault.redeemSettled(true, 100e6);
+        vault.redeemSettled(false, 100e6);
+        vm.stopPrank();
+
+        assertEq(quote.balanceOf(user), 900e6 + available);
+        assertEq(quote.balanceOf(address(vault)), 0);
+    }
+
     /// The sweep gate must key off quote the vault actually received, not off
     /// an absolute Core-balance read: a 1-wei credit is cheap, repeatable, and
     /// would otherwise hold settlement redemption shut forever.
