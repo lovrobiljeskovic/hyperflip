@@ -35,19 +35,19 @@ contract Spike is Script {
     /// Verifies: action 17 op numbering (OP_SPLIT_OUTCOME = 0 UNVERIFIED),
     /// wei units, and silent-rejection behavior (send with insufficient
     /// balance, observe nothing happens and no revert).
-    function split(uint32 question, uint32 outcome, uint64 w) external {
+    function split(uint32 outcome, uint64 w) external {
         vm.startBroadcast();
         ICoreWriter(CoreConstants.CORE_WRITER).sendRawAction(
-            CoreConstants.encodeOutcomeOp(CoreConstants.OP_SPLIT_OUTCOME, question, outcome, w)
+            CoreConstants.encodeOutcomeOp(CoreConstants.OP_SPLIT_OUTCOME, outcome, w)
         );
         vm.stopBroadcast();
     }
 
     /// Verifies: OP_MERGE_OUTCOME numbering (UNVERIFIED = 1).
-    function merge(uint32 question, uint32 outcome, uint64 w) external {
+    function merge(uint32 outcome, uint64 w) external {
         vm.startBroadcast();
         ICoreWriter(CoreConstants.CORE_WRITER).sendRawAction(
-            CoreConstants.encodeOutcomeOp(CoreConstants.OP_MERGE_OUTCOME, question, outcome, w)
+            CoreConstants.encodeOutcomeOp(CoreConstants.OP_MERGE_OUTCOME, outcome, w)
         );
         vm.stopBroadcast();
     }

@@ -23,7 +23,7 @@ on the EVM side — the sweep takes the entire Core balance.
 2. **Outcome ids**: pick a live HIP-4 testnet market; question/outcome
    ids come from the HIP-4 frontend/API (no on-chain discovery).
 3. **Split round-trip** (risk 2): fund Core account with quote, then
-   `--broadcast --sig "split(uint32,uint32,uint64)" $Q $O $WEI` → wait →
+   `--broadcast --sig "split(uint32,uint64)" $O $WEI` → wait →
    `readBalances($WALLET, [quoteIdx, outcomeIdxYes, outcomeIdxYes+1])`
    with `outcomeIdxYes` from `--sig "outcomeIndexYes(uint32)" $O`.
    - Quote debited + outcome indices credited ⇒ confirms

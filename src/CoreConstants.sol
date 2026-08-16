@@ -33,30 +33,35 @@ library CoreConstants {
     uint8 internal constant OP_MERGE_QUESTION = 2;
     uint8 internal constant OP_NEGATE_OUTCOME = 3;
 
-    /// Outcome wei is 5-decimal: 1 share (1e6 EVM units, matching the 6-dec
-    /// USDC/oYES/oNO amount minted 1:1 on deposit) = 1e5 outcome wei = 1 USDC.
+    /// Outcome wei is 5-decimal: 1 share = 1e5 outcome wei = 1 USDC.
     /// FINDINGS.md #2 — the vault's prior quote-wei multiplier was 1000x wrong
     /// here; split/merge amounts must go through this conversion, not the
     /// quote one below.
     uint256 internal constant OUTCOME_WEI_PER_SHARE = 1e5;
-    uint256 internal constant EVM_UNITS_PER_SHARE = 1e6;
 
-    /// Quote wei is 8-decimal, EVM USDC is 6-decimal, so EVM→Core is x100.
-    /// Confirmed live: a 5.0 EVM USDC deposit credited exactly 500,000,000
-    /// Core wei (FINDINGS.md "wei ratio").
-    uint256 internal constant QUOTE_EVM_TO_CORE = 100;
+    /// Quote wei is 8-decimal: 1 share = 1 USDC = 1e8 quote wei. Confirmed
+    /// live: a 5.0 EVM USDC deposit (6-dec, so 1e6 EVM units per share)
+    /// credited exactly 500,000,000 Core wei (FINDINGS.md "wei ratio").
+    uint256 internal constant QUOTE_WEI_PER_SHARE = 1e8;
+
+    /// `outcomeStatus` status codes: 0 never existed, 1 active, 2 settled
+    /// (settledValue readable), 3 settled-and-pruned (settledValue GONE).
+    uint8 internal constant OUTCOME_ACTIVE = 1;
+    uint8 internal constant OUTCOME_SETTLED = 2;
+    /// settledValue scale: 1e8 == fraction 1.0.
+    uint64 internal constant SETTLED_VALUE_ONE = 1e8;
 
     /// 1 version byte ++ 3-byte big-endian action ID ++ abi-encoded params.
     function encodeAction(uint24 actionId, bytes memory params) internal pure returns (bytes memory) {
         return abi.encodePacked(ENCODING_VERSION, actionId, params);
     }
 
-    /// The question word is hardcoded to 0 regardless of the caller's input:
-    /// CoreWriter silently drops split/merge payloads with a non-zero unused
-    /// field (FINDINGS.md #1 — our first live split with question=976 no-oped
-    /// with no error). The parameter is intentionally unnamed/ignored rather
-    /// than removed, keeping call sites unchanged.
-    function encodeOutcomeOp(uint8 op, uint32, uint32 outcome, uint64 wei_) internal pure returns (bytes memory) {
+    /// Params are (op, question, outcome, wei) but the question word must be
+    /// 0: CoreWriter silently drops split/merge payloads with a non-zero
+    /// unused field (FINDINGS.md #1 — our first live split with question=976
+    /// no-oped with no error). There is therefore no question parameter; the
+    /// zero word is written unconditionally.
+    function encodeOutcomeOp(uint8 op, uint32 outcome, uint64 wei_) internal pure returns (bytes memory) {
         return encodeAction(ACTION_OUTCOME_OP, abi.encode(op, uint32(0), outcome, wei_));
     }
 
@@ -72,29 +77,36 @@ library CoreConstants {
         return abi.encodeWithSignature("deposit(uint256,uint32)", amount, CORE_DEPOSIT_SENTINEL);
     }
 
-    /// EVM units (6-dec, 1:1 with shares minted) → outcome wei (5-dec) for
-    /// split/merge amounts.
-    function evmToOutcomeWei(uint256 amountEvm) internal pure returns (uint64) {
-        uint256 w = amountEvm * OUTCOME_WEI_PER_SHARE / EVM_UNITS_PER_SHARE;
-        require(w <= type(uint64).max, "OUTCOME_WEI_OVERFLOW");
+    /// EVM quote units → outcome wei (5-dec) for split/merge amounts.
+    /// `evmUnitsPerShare` is 10**quoteDecimals (1 share = 1 quote unit-worth =
+    /// 1 USDC), a per-vault value: real USDC is 6-dec, but the conversion is
+    /// not allowed to assume it. Reverts on dust instead of truncating —
+    /// a truncated split would mint more shares than the collateral backs.
+    function evmToOutcomeWei(uint256 amountEvm, uint256 evmUnitsPerShare) internal pure returns (uint64) {
+        return _convert(amountEvm, OUTCOME_WEI_PER_SHARE, evmUnitsPerShare);
+    }
+
+    /// EVM quote units → Core quote wei (8-dec) for deposit/transfer amounts.
+    function evmToQuoteWei(uint256 amountEvm, uint256 evmUnitsPerShare) internal pure returns (uint64) {
+        return _convert(amountEvm, QUOTE_WEI_PER_SHARE, evmUnitsPerShare);
+    }
+
+    /// Core quote wei (8-dec) → EVM quote units, rounded down (the caller is
+    /// the vault crediting a user: dust stays with the vault).
+    function quoteWeiToEvm(uint64 quoteWei, uint256 evmUnitsPerShare) internal pure returns (uint256) {
+        return uint256(quoteWei) * evmUnitsPerShare / QUOTE_WEI_PER_SHARE;
+    }
+
+    function _convert(uint256 amountEvm, uint256 weiPerShare, uint256 evmUnitsPerShare)
+        internal
+        pure
+        returns (uint64)
+    {
+        uint256 scaled = amountEvm * weiPerShare;
+        uint256 w = scaled / evmUnitsPerShare;
+        require(w > 0 && w <= type(uint64).max, "BAD_AMOUNT");
+        require(w * evmUnitsPerShare == scaled, "DUST");
         return uint64(w);
-    }
-
-    /// Outcome wei (5-dec) → EVM units (6-dec).
-    function outcomeWeiToEvm(uint64 outcomeWei) internal pure returns (uint256) {
-        return uint256(outcomeWei) * EVM_UNITS_PER_SHARE / OUTCOME_WEI_PER_SHARE;
-    }
-
-    /// EVM USDC (6-dec) → Core quote wei (8-dec) for deposit/transfer amounts.
-    function evmToQuoteWei(uint256 amountEvm) internal pure returns (uint64) {
-        uint256 w = amountEvm * QUOTE_EVM_TO_CORE;
-        require(w <= type(uint64).max, "QUOTE_WEI_OVERFLOW");
-        return uint64(w);
-    }
-
-    /// Core quote wei (8-dec) → EVM USDC (6-dec).
-    function quoteWeiToEvm(uint64 quoteWei) internal pure returns (uint256) {
-        return uint256(quoteWei) / QUOTE_EVM_TO_CORE;
     }
 
     /// Order-book asset id (coin `#<id>`, token name `+<id>`), confirmed by
