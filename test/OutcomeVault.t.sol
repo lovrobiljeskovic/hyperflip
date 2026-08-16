@@ -160,6 +160,27 @@ contract OutcomeVaultTest is BaseTest {
         vault.cancelRedeem();
     }
 
+    /// FINDINGS.md #5: a live split+merge round trip lost 7 bps, unitemized.
+    /// The payout must survive a merge credit that lands short — send what is
+    /// actually there and credit the user exactly that, rather than
+    /// underflowing on the nominal amount and wedging the pending slot.
+    function test_MergeFeeShortfallPaysOnlyWhatArrived() public {
+        depositAndClaim(100e6);
+        sim.setMergeFeeBps(7);
+        vm.prank(user);
+        vault.requestRedeem(100e6);
+        sim.processAll();
+        vault.claimRedeem();
+        sim.processAll();
+
+        uint256 expected = 100e6 - (100e6 * 7 / 10_000);
+        assertEq(vault.owed(user), expected, "credited more than Core returned");
+        vm.prank(user);
+        vault.withdraw();
+        assertEq(quote.balanceOf(user), 900e6 + expected);
+        assertEq(quote.balanceOf(address(vault)), 0, "vault paid out more than arrived");
+    }
+
     function test_RequestRedeemWhileDepositPendingReverts() public {
         depositAndClaim(100e6);
         vm.prank(user);

@@ -40,6 +40,9 @@ contract CoreSim {
     /// Core still executes, the keeper just stops reporting — the state the
     /// verifier swap exists to recover from.
     bool public keeperSilent;
+    /// FINDINGS.md #5: a live split+merge round trip lost 7 bps, unitemized.
+    /// Off by default so the exact-round-trip anchors stay exact.
+    uint256 public mergeFeeBps;
 
     constructor(MockQuote quote_, address systemAddress_, uint64 tokenIndex_, uint256 mult, uint256 div) {
         quote = quote_;
@@ -59,6 +62,10 @@ contract CoreSim {
 
     function setKeeperSilent(bool silent) external {
         keeperSilent = silent;
+    }
+
+    function setMergeFeeBps(uint256 bps) external {
+        mergeFeeBps = bps;
     }
 
     function coreBalance() public view returns (uint64) {
@@ -160,7 +167,7 @@ contract CoreSim {
             if (op == CoreConstants.OP_MERGE_OUTCOME) {
                 if (splitOutstandingWei < collateral) return (true, false); // silent rejection
                 splitOutstandingWei -= collateral;
-                _setCoreBalance(coreBalance() + collateral);
+                _setCoreBalance(coreBalance() + collateral - uint64(uint256(collateral) * mergeFeeBps / 10_000));
                 return (true, true);
             }
             return (true, false);
