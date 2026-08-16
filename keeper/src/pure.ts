@@ -81,6 +81,24 @@ export function resolveBalanceCheck(
   return confidentBaseline ? "attest-false" : "hold";
 }
 
+export interface BalanceSample {
+  readAt: number;
+  balance: bigint;
+}
+
+/** Newest sample read at or before `beforeMs` (a block timestamp in ms). Core cannot have
+ * executed an action before the block containing it exists, so a sample whose read time predates
+ * that block's own timestamp is provably pre-execution — independent of any assumption about
+ * Core's actual processing latency. This is the crux of the live-baseline fix in keeper.ts
+ * (resolveLiveBaseline): picking the wrong sample here silently reintroduces the race it fixes. */
+export function newestSampleBefore(samples: readonly BalanceSample[], beforeMs: number): BalanceSample | undefined {
+  let best: BalanceSample | undefined;
+  for (const s of samples) {
+    if (s.readAt <= beforeMs && (!best || s.readAt > best.readAt)) best = s;
+  }
+  return best;
+}
+
 /** CoreConstants.outcomeStatus settledValue (scale 1e8) -> OutcomeVault.settleFractionWad (1e18). */
 export function fractionWadFromSettledValue(settledValue: bigint): bigint {
   return (settledValue * WAD) / SETTLED_VALUE_ONE;

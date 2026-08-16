@@ -6,6 +6,7 @@ import {
   evmToOutcomeWei,
   expectedDelta,
   fractionWadFromSettledValue,
+  newestSampleBefore,
   opKey,
   parseCoinId,
   parseDecimalToUnits,
@@ -100,4 +101,30 @@ test("resolveBalanceCheck CRITICAL: no delta, timeout elapsed, UNCONFIDENT basel
   // status is unknown must never have "no delta observed" read as evidence of a drop.
   assert.equal(resolveBalanceCheck(0n, 0n, 0, 1_000_000n, 60_001, 60_000, false), "hold");
   assert.notEqual(resolveBalanceCheck(0n, 0n, 0, 1_000_000n, 10_000_000, 60_000, false), "attest-false");
+});
+
+test("newestSampleBefore picks the latest qualifying sample, not just any one before the cutoff", () => {
+  const samples = [
+    { readAt: 1_000, balance: 10n },
+    { readAt: 3_000, balance: 30n },
+    { readAt: 5_000, balance: 50n }, // after cutoff, must be excluded
+  ];
+  assert.deepEqual(newestSampleBefore(samples, 4_000), { readAt: 3_000, balance: 30n });
+});
+
+test("newestSampleBefore includes a sample exactly at the cutoff (<=, not <)", () => {
+  const samples = [{ readAt: 2_000, balance: 20n }];
+  assert.deepEqual(newestSampleBefore(samples, 2_000), { readAt: 2_000, balance: 20n });
+});
+
+test("newestSampleBefore CRITICAL: returns undefined (never a post-execution sample) when nothing qualifies", () => {
+  // This is the regression test for the live-baseline fix: with no sample provably pre-dating the
+  // OpQueued block (e.g. right after startup), the caller must fall back explicitly rather than
+  // silently accepting a later, possibly post-execution, sample.
+  const samples = [
+    { readAt: 9_000, balance: 90n },
+    { readAt: 9_500, balance: 95n },
+  ];
+  assert.equal(newestSampleBefore(samples, 4_000), undefined);
+  assert.equal(newestSampleBefore([], 4_000), undefined);
 });
