@@ -40,6 +40,37 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(quote.balanceOf(address(vault)), 0);
     }
 
+    /// OpQueued is the keeper's whole input: without it there is nothing to
+    /// attest. opKey is derived from the opId it carries.
+    function test_DepositEmitsOpQueued() public {
+        vm.expectEmit(true, true, true, true, address(vault));
+        emit OutcomeVault.OpQueued(1, OutcomeVault.OpType.Split, QUESTION, OUTCOME, uint64(100e6));
+        vm.prank(user);
+        vault.deposit(100e6);
+    }
+
+    function test_RedeemEmitsOpQueued() public {
+        depositAndClaim(100e6);
+        vm.expectEmit(true, true, true, true, address(vault));
+        emit OutcomeVault.OpQueued(2, OutcomeVault.OpType.Merge, QUESTION, OUTCOME, uint64(100e6));
+        vm.prank(user);
+        vault.requestRedeem(100e6);
+    }
+
+    /// FINDINGS.md #4: Core→EVM spotSend goes to the token's system address,
+    /// never to the vault itself.
+    function test_PayoutSpotSendTargetsSystemAddress() public {
+        depositAndClaim(100e6);
+        vm.prank(user);
+        vault.requestRedeem(100e6);
+        sim.processAll();
+        vault.claimRedeem();
+
+        bytes memory payload = writer.lastPayload();
+        bytes memory expected = CoreConstants.encodeSpotSend(SYSTEM_ADDR, TOKEN_INDEX, uint64(100e6 * QUOTE_MULT));
+        assertEq(payload, expected, "spotSend destination/amount wrong");
+    }
+
     function test_DepositZeroReverts() public {
         vm.prank(user);
         vm.expectRevert(bytes("BAD_AMOUNT"));
