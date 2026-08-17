@@ -208,4 +208,16 @@ contract ParlayVault is ERC721, EIP712 {
         p.status = Status.Won;
         emit ParlayResolved(id, Status.Won);
     }
+
+    /// Pays maxPayout to the token's current owner. Auto-resolve means the
+    /// winner never needs a separate resolve tx. Burn before transfer is the
+    /// double-pay guard (status stays Won, but ownerOf reverts forever after).
+    function claim(uint256 id) external {
+        Parlay storage p = _parlays[id];
+        if (p.status == Status.Open) resolveParlay(id);
+        require(p.status == Status.Won, "NOT_WON");
+        require(msg.sender == ownerOf(id), "NOT_OWNER_OF");
+        _burn(id);
+        usdc.safeTransfer(msg.sender, p.maxPayout);
+    }
 }

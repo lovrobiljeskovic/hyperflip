@@ -339,4 +339,92 @@ contract ParlayVaultTest is BaseTest {
         plv.resolveParlay(id);
         assertEq(quote.balanceOf(other), PREMIUM);
     }
+
+    // --- Won + claim ---
+
+    function winLegs() internal {
+        settleLeg(vault, 1e18); // YES hit
+        settleLeg(vaultB, 0);   // NO hit
+    }
+
+    function test_resolveWonHoldsFunds() public {
+        uint256 id = mintDefault();
+        winLegs();
+        plv.resolveParlay(id);
+        assertEq(uint8(plv.parlay(id).status), uint8(ParlayVault.Status.Won));
+        assertEq(quote.balanceOf(address(plv)), MAX_PAYOUT); // pays on claim
+        assertEq(plv.ownerOf(id), user);
+    }
+
+    function test_claimPaysMaxPayoutAndBurns() public {
+        uint256 id = mintDefault();
+        winLegs();
+        plv.resolveParlay(id);
+        uint256 userBefore = quote.balanceOf(user);
+        vm.prank(user);
+        plv.claim(id);
+        assertEq(quote.balanceOf(user), userBefore + MAX_PAYOUT);
+        assertEq(quote.balanceOf(address(plv)), 0);
+        vm.expectRevert(); // burned
+        plv.ownerOf(id);
+    }
+
+    /// claim auto-resolves an Open parlay whose legs are all settled.
+    function test_claimAutoResolves() public {
+        uint256 id = mintDefault();
+        winLegs();
+        uint256 userBefore = quote.balanceOf(user);
+        vm.prank(user);
+        plv.claim(id);
+        assertEq(quote.balanceOf(user), userBefore + MAX_PAYOUT);
+    }
+
+    function test_claimRevertsForNonOwner() public {
+        uint256 id = mintDefault();
+        winLegs();
+        vm.prank(other);
+        vm.expectRevert("NOT_OWNER_OF");
+        plv.claim(id);
+    }
+
+    function test_claimRevertsWhenDead() public {
+        uint256 id = mintDefault();
+        settleLeg(vault, 0);
+        plv.resolveParlay(id);
+        vm.prank(user);
+        vm.expectRevert("NOT_WON");
+        plv.claim(id);
+    }
+
+    function test_claimRevertsWhenUnresolvable() public {
+        uint256 id = mintDefault();
+        vm.prank(user);
+        vm.expectRevert("NOT_RESOLVABLE");
+        plv.claim(id);
+    }
+
+    /// Transferred position pays the new owner; old owner can no longer claim.
+    function test_transferThenClaimPaysNewOwner() public {
+        uint256 id = mintDefault();
+        vm.prank(user);
+        plv.transferFrom(user, other, id);
+        winLegs();
+        vm.prank(user);
+        vm.expectRevert("NOT_OWNER_OF");
+        plv.claim(id);
+        vm.prank(other);
+        plv.claim(id);
+        assertEq(quote.balanceOf(other), MAX_PAYOUT);
+    }
+
+    /// Double-pay guard is the burn: second claim cannot find an owner.
+    function test_claimTwiceReverts() public {
+        uint256 id = mintDefault();
+        winLegs();
+        vm.prank(user);
+        plv.claim(id);
+        vm.prank(user);
+        vm.expectRevert(); // ERC721NonexistentToken from ownerOf
+        plv.claim(id);
+    }
 }
