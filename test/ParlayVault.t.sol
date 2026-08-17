@@ -102,9 +102,9 @@ contract ParlayVaultTest is BaseTest {
 
     function test_setMinPremiumBpsRejectsAbove100Pct() public {
         vm.expectRevert("BAD_BPS");
-        plv.setMinPremiumBps(10_001);
         plv.setMinPremiumBps(10_000);
-        assertEq(plv.minPremiumBps(), 10_000);
+        plv.setMinPremiumBps(9_999);
+        assertEq(plv.minPremiumBps(), 9_999);
     }
 
     function test_quoteDigestBindsFields() public view {

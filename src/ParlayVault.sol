@@ -107,11 +107,11 @@ contract ParlayVault is ERC721, EIP712 {
         emit WriterChanged(writer_);
     }
 
-    /// Bounded at 100%: a floor above that would brick minting, since
-    /// premium < maxPayout is also required.
+    /// Bounded below 100%: a floor at or above 100% would brick minting,
+    /// since premium < maxPayout is also required.
     function setMinPremiumBps(uint16 minPremiumBps_) external {
         require(msg.sender == owner, "NOT_OWNER");
-        require(minPremiumBps_ <= 10_000, "BAD_BPS");
+        require(minPremiumBps_ < 10_000, "BAD_BPS");
         minPremiumBps = minPremiumBps_;
         emit MinPremiumBpsChanged(minPremiumBps_);
     }
