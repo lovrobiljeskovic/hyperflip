@@ -41,6 +41,15 @@ contract ParlayVaultTest is BaseTest {
         v.settle(fractionWad);
     }
 
+    /// Compile-time anchor for resolveParlay's reentrancy argument: the leg
+    /// reads must be STATICCALLs. If OutcomeVault.settled/settleFractionWad
+    /// ever stop being view getters, this helper stops compiling and the
+    /// resolveParlay loop must be restructured (status write before external
+    /// calls) before the change lands.
+    function _legReadsAreView(OutcomeVault v) internal view returns (bool, uint256) {
+        return (v.settled(), v.settleFractionWad());
+    }
+
     /// Default slip: 2 legs (YES on vault, NO on vaultB), 10 → 100.
     function makeQuote() internal view returns (ParlayVault.Quote memory q) {
         ParlayVault.Leg[] memory legs = new ParlayVault.Leg[](2);
@@ -89,6 +98,13 @@ contract ParlayVaultTest is BaseTest {
     function test_constructorRejectsZeroSigner() public {
         vm.expectRevert("ZERO_SIGNER");
         new ParlayVault(IERC20(address(quote)), house, address(0), 100);
+    }
+
+    function test_setMinPremiumBpsRejectsAbove100Pct() public {
+        vm.expectRevert("BAD_BPS");
+        plv.setMinPremiumBps(10_001);
+        plv.setMinPremiumBps(10_000);
+        assertEq(plv.minPremiumBps(), 10_000);
     }
 
     function test_quoteDigestBindsFields() public view {
@@ -183,6 +199,28 @@ contract ParlayVaultTest is BaseTest {
         vm.prank(user);
         vm.expectRevert("PREMIUM_TOO_LOW");
         plv.mint(q, sig);
+    }
+
+    /// Premium exactly at the 1% floor mints.
+    function test_mintAcceptsPremiumExactlyAtFloor() public {
+        ParlayVault.Quote memory q = makeQuote();
+        q.premium = 1e5; // 1% of MAX_PAYOUT
+        bytes memory sig = signQuote(q);
+        vm.prank(user);
+        uint256 id = plv.mint(q, sig);
+        assertEq(plv.parlay(id).premium, 1e5);
+    }
+
+    /// A 1-leg parlay is allowed on-chain (design Q3: min-legs is frontend policy).
+    function test_mintAcceptsSingleLeg() public {
+        ParlayVault.Quote memory q = makeQuote();
+        ParlayVault.Leg[] memory legs = new ParlayVault.Leg[](1);
+        legs[0] = ParlayVault.Leg(address(vault), true);
+        q.legs = legs;
+        bytes memory sig = signQuote(q);
+        vm.prank(user);
+        uint256 id = plv.mint(q, sig);
+        assertEq(plv.parlay(id).legs.length, 1);
     }
 
     function test_mintRejectsPremiumGteMaxPayout() public {
@@ -385,6 +423,29 @@ contract ParlayVaultTest is BaseTest {
         vm.prank(other);
         vm.expectRevert("NOT_OWNER_OF");
         plv.claim(id);
+    }
+
+    /// claim on an unresolved Dead parlay reverts and rolls the auto-resolve
+    /// back: still Open, escrow untouched — resolveParlay is the right call.
+    function test_claimAutoResolveToDeadRevertsAndRollsBack() public {
+        uint256 id = mintDefault();
+        settleLeg(vault, 0);
+        vm.prank(user);
+        vm.expectRevert("NOT_WON");
+        plv.claim(id);
+        assertEq(uint8(plv.parlay(id).status), uint8(ParlayVault.Status.Open));
+        assertEq(quote.balanceOf(address(plv)), MAX_PAYOUT);
+    }
+
+    function test_claimAutoResolveToVoidRevertsAndRollsBack() public {
+        uint256 id = mintDefault();
+        settleLeg(vaultB, 0.5e18);
+        vm.prank(user);
+        vm.expectRevert("NOT_WON");
+        plv.claim(id);
+        assertEq(uint8(plv.parlay(id).status), uint8(ParlayVault.Status.Open));
+        assertEq(plv.ownerOf(id), user); // burn rolled back too
+        assertEq(quote.balanceOf(address(plv)), MAX_PAYOUT);
     }
 
     function test_claimRevertsWhenDead() public {

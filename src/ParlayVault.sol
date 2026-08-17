@@ -75,6 +75,9 @@ contract ParlayVault is ERC721, EIP712 {
 
     event ParlayMinted(uint256 indexed id, address indexed taker, bytes32 quoteId, uint96 premium, uint96 maxPayout);
     event ParlayResolved(uint256 indexed id, Status status);
+    event QuoteSignerChanged(address indexed quoteSigner);
+    event WriterChanged(address indexed writer);
+    event MinPremiumBpsChanged(uint16 minPremiumBps);
 
     constructor(IERC20 usdc_, address writer_, address quoteSigner_, uint16 minPremiumBps_)
         ERC721("Parlay Position", "PARLAY")
@@ -95,16 +98,22 @@ contract ParlayVault is ERC721, EIP712 {
         require(msg.sender == owner, "NOT_OWNER");
         require(quoteSigner_ != address(0), "ZERO_SIGNER");
         quoteSigner = quoteSigner_;
+        emit QuoteSignerChanged(quoteSigner_);
     }
 
     function setWriter(address writer_) external {
         require(msg.sender == owner, "NOT_OWNER");
         writer = writer_;
+        emit WriterChanged(writer_);
     }
 
+    /// Bounded at 100%: a floor above that would brick minting, since
+    /// premium < maxPayout is also required.
     function setMinPremiumBps(uint16 minPremiumBps_) external {
         require(msg.sender == owner, "NOT_OWNER");
+        require(minPremiumBps_ <= 10_000, "BAD_BPS");
         minPremiumBps = minPremiumBps_;
+        emit MinPremiumBpsChanged(minPremiumBps_);
     }
 
     /// Explicit getter: the auto-generated one cannot return the legs array.
@@ -178,6 +187,12 @@ contract ParlayVault is ERC721, EIP712 {
         require(p.status == Status.Open && p.maxPayout != 0, "NOT_OPEN");
         bool anyFractional;
         bool allSettled = true;
+        // Reentrancy safety for this loop rests on settled/settleFractionWad
+        // being public state-variable getters -> view -> STATICCALL, so a
+        // rogue leg vault cannot write state or reenter here even though the
+        // status write hasn't happened yet. If Layer 1 ever makes either
+        // getter state-mutating, this loop must be restructured to write
+        // status before any external call.
         for (uint256 i; i < p.legs.length; i++) {
             OutcomeVault v = OutcomeVault(p.legs[i].vault);
             if (!v.settled()) {
@@ -212,6 +227,11 @@ contract ParlayVault is ERC721, EIP712 {
     /// Pays maxPayout to the token's current owner. Auto-resolve means the
     /// winner never needs a separate resolve tx. Burn before transfer is the
     /// double-pay guard (status stays Won, but ownerOf reverts forever after).
+    /// If the auto-resolve lands on Dead or Void, the NOT_WON require below
+    /// reverts the whole transaction — the writer payout / premium refund /
+    /// burn that resolveParlay just did is rolled back with it. The parlay
+    /// stays Open; call resolveParlay directly to settle a Dead or Void
+    /// ticket, claim only ever pays a Won one.
     function claim(uint256 id) external {
         Parlay storage p = _parlays[id];
         if (p.status == Status.Open) resolveParlay(id);

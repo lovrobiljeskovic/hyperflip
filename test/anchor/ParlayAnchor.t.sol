@@ -75,4 +75,24 @@ contract ParlayAnchor is ParlayVaultTest {
         mintDefault();
         assertEq(quote.balanceOf(address(plv)), MAX_PAYOUT);
     }
+
+    /// Solvency isolation: resolving one parlay never touches another's
+    /// escrow — the contract always holds the sum of open maxPayouts.
+    function test_anchor_resolvingOneParlayNeverTouchesAnothers() public {
+        uint256 idA = mintDefault();
+        ParlayVault.Quote memory q = makeQuote();
+        q.quoteId = keccak256("q2");
+        bytes memory sig = signQuote(q);
+        vm.prank(user);
+        uint256 idB = plv.mint(q, sig);
+        assertEq(quote.balanceOf(address(plv)), 2 * uint256(MAX_PAYOUT));
+
+        settleLeg(vault, 0); // kills the YES leg of BOTH parlays
+        plv.resolveParlay(idA);
+        // B still fully escrowed after A's pot left
+        assertEq(quote.balanceOf(address(plv)), MAX_PAYOUT);
+        plv.resolveParlay(idB);
+        assertEq(quote.balanceOf(address(plv)), 0);
+        assertEq(uint8(plv.parlay(idB).status), uint8(ParlayVault.Status.Dead));
+    }
 }
