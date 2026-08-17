@@ -100,4 +100,136 @@ contract ParlayVaultTest is BaseTest {
         q.legs[0].isYes = false;
         assertTrue(plv.quoteDigest(q) != d1);
     }
+
+    // --- mint ---
+
+    function mintDefault() internal returns (uint256 id) {
+        ParlayVault.Quote memory q = makeQuote();
+        bytes memory sig = signQuote(q);
+        vm.prank(user);
+        id = plv.mint(q, sig);
+    }
+
+    function test_mintHappyPath() public {
+        uint256 userBefore = quote.balanceOf(user);
+        uint256 id = mintDefault();
+        assertEq(id, 1);
+        assertEq(plv.ownerOf(1), user);
+        assertEq(quote.balanceOf(user), userBefore - PREMIUM);
+        assertEq(quote.balanceOf(house), 10_000e5 - (MAX_PAYOUT - PREMIUM));
+        assertEq(quote.balanceOf(address(plv)), MAX_PAYOUT);
+        assertTrue(plv.usedQuotes(keccak256("q1")));
+        ParlayVault.Parlay memory p = plv.parlay(1);
+        assertEq(p.writer, house);
+        assertEq(p.premium, PREMIUM);
+        assertEq(p.maxPayout, MAX_PAYOUT);
+        assertEq(uint8(p.status), uint8(ParlayVault.Status.Open));
+        assertEq(p.legs.length, 2);
+        assertEq(p.legs[0].vault, address(vault));
+        assertTrue(p.legs[0].isYes);
+        assertEq(p.legs[1].vault, address(vaultB));
+        assertFalse(p.legs[1].isYes);
+    }
+
+    function test_mintRejectsReplay() public {
+        mintDefault();
+        ParlayVault.Quote memory q = makeQuote();
+        bytes memory sig = signQuote(q);
+        vm.prank(user);
+        vm.expectRevert("QUOTE_USED");
+        plv.mint(q, sig);
+    }
+
+    function test_mintRejectsExpiredQuote() public {
+        ParlayVault.Quote memory q = makeQuote();
+        bytes memory sig = signQuote(q);
+        vm.warp(q.deadline + 1);
+        vm.prank(user);
+        vm.expectRevert("QUOTE_EXPIRED");
+        plv.mint(q, sig);
+    }
+
+    function test_mintRejectsWrongTaker() public {
+        ParlayVault.Quote memory q = makeQuote();
+        bytes memory sig = signQuote(q);
+        vm.prank(other);
+        vm.expectRevert("NOT_TAKER");
+        plv.mint(q, sig);
+    }
+
+    function test_mintRejectsWrongSigner() public {
+        ParlayVault.Quote memory q = makeQuote();
+        (, uint256 wrongKey) = makeAddrAndKey("mallory");
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongKey, plv.quoteDigest(q));
+        vm.prank(user);
+        vm.expectRevert("BAD_SIG");
+        plv.mint(q, abi.encodePacked(r, s, v));
+    }
+
+    function test_mintRejectsTamperedQuote() public {
+        ParlayVault.Quote memory q = makeQuote();
+        bytes memory sig = signQuote(q);
+        q.maxPayout = MAX_PAYOUT * 10;
+        vm.prank(user);
+        vm.expectRevert("BAD_SIG");
+        plv.mint(q, sig);
+    }
+
+    function test_mintRejectsPremiumBelowFloor() public {
+        // floor is 1% of maxPayout = 1e5
+        ParlayVault.Quote memory q = makeQuote();
+        q.premium = 1e5 - 1;
+        bytes memory sig = signQuote(q);
+        vm.prank(user);
+        vm.expectRevert("PREMIUM_TOO_LOW");
+        plv.mint(q, sig);
+    }
+
+    function test_mintRejectsPremiumGteMaxPayout() public {
+        ParlayVault.Quote memory q = makeQuote();
+        q.premium = q.maxPayout;
+        bytes memory sig = signQuote(q);
+        vm.prank(user);
+        vm.expectRevert("BAD_PREMIUM");
+        plv.mint(q, sig);
+    }
+
+    function test_mintRejectsBadLegCount() public {
+        ParlayVault.Quote memory q = makeQuote();
+        q.legs = new ParlayVault.Leg[](0);
+        bytes memory sig = signQuote(q);
+        vm.prank(user);
+        vm.expectRevert("BAD_LEG_COUNT");
+        plv.mint(q, sig);
+
+        q.legs = new ParlayVault.Leg[](11);
+        for (uint256 i; i < 11; i++) {
+            q.legs[i] = ParlayVault.Leg(address(vault), true);
+        }
+        sig = signQuote(q);
+        vm.prank(user);
+        vm.expectRevert("BAD_LEG_COUNT");
+        plv.mint(q, sig);
+    }
+
+    function test_mintRejectsSettledLeg() public {
+        settleLeg(vault, 1e18);
+        ParlayVault.Quote memory q = makeQuote();
+        bytes memory sig = signQuote(q);
+        vm.prank(user);
+        vm.expectRevert("LEG_SETTLED");
+        plv.mint(q, sig);
+    }
+
+    /// "At capacity": writer allowance revoked = mint reverts in transferFrom.
+    /// No special handling — this IS the pause mechanism.
+    function test_mintRevertsWhenWriterAllowanceExhausted() public {
+        vm.prank(house);
+        quote.approve(address(plv), 0);
+        ParlayVault.Quote memory q = makeQuote();
+        bytes memory sig = signQuote(q);
+        vm.prank(user);
+        vm.expectRevert(); // OZ ERC20InsufficientAllowance
+        plv.mint(q, sig);
+    }
 }

@@ -133,4 +133,34 @@ contract ParlayVault is ERC721, EIP712 {
             )
         );
     }
+
+    /// Mint a parlay from a house-signed quote. Escrow model: premium from the
+    /// taker + (maxPayout − premium) from the writer's allowance, both held
+    /// here until resolution. A leg already settled at mint is a stale quote —
+    /// frontend requotes. Duplicate/rogue vault addresses are deliberately not
+    /// checked: quotes are house-signed and house-signed garbage only hurts
+    /// the house (design Q1, model A).
+    function mint(Quote calldata q, bytes calldata sig) external returns (uint256 id) {
+        require(ECDSA.recover(quoteDigest(q), sig) == quoteSigner, "BAD_SIG");
+        require(block.timestamp <= q.deadline, "QUOTE_EXPIRED");
+        require(msg.sender == q.taker, "NOT_TAKER");
+        require(!usedQuotes[q.quoteId], "QUOTE_USED");
+        require(q.legs.length >= 1 && q.legs.length <= MAX_LEGS, "BAD_LEG_COUNT");
+        require(q.premium < q.maxPayout, "BAD_PREMIUM");
+        require(uint256(q.premium) * 10_000 >= uint256(q.maxPayout) * minPremiumBps, "PREMIUM_TOO_LOW");
+        usedQuotes[q.quoteId] = true;
+        id = ++nextId;
+        Parlay storage p = _parlays[id];
+        for (uint256 i; i < q.legs.length; i++) {
+            require(!OutcomeVault(q.legs[i].vault).settled(), "LEG_SETTLED");
+            p.legs.push(q.legs[i]);
+        }
+        p.writer = writer;
+        p.premium = q.premium;
+        p.maxPayout = q.maxPayout;
+        usdc.safeTransferFrom(msg.sender, address(this), q.premium);
+        usdc.safeTransferFrom(writer, address(this), q.maxPayout - q.premium);
+        _mint(msg.sender, id);
+        emit ParlayMinted(id, msg.sender, q.quoteId, q.premium, q.maxPayout);
+    }
 }
