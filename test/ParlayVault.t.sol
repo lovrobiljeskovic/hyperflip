@@ -292,4 +292,51 @@ contract ParlayVaultTest is BaseTest {
         vm.expectRevert("NOT_OPEN");
         plv.resolveParlay(999);
     }
+
+    // --- resolveParlay: Void ---
+
+    function test_resolveVoidFractionalLeg() public {
+        uint256 id = mintDefault();
+        settleLeg(vault, 1e18);   // YES leg hit
+        settleLeg(vaultB, 0.5e18); // NO leg ambiguous
+        uint256 userBefore = quote.balanceOf(user);
+        uint256 houseBefore = quote.balanceOf(house);
+        plv.resolveParlay(id);
+        assertEq(uint8(plv.parlay(id).status), uint8(ParlayVault.Status.Void));
+        assertEq(quote.balanceOf(user), userBefore + PREMIUM); // full refund
+        assertEq(quote.balanceOf(house), houseBefore + (MAX_PAYOUT - PREMIUM));
+        assertEq(quote.balanceOf(address(plv)), 0);
+        vm.expectRevert(); // ERC721NonexistentToken — voided token is burned
+        plv.ownerOf(id);
+    }
+
+    /// Design: whole-parlay void fires on any settled fractional leg even
+    /// while a sibling is unsettled (no waiting for the open leg).
+    function test_resolveVoidWithUnsettledSibling() public {
+        uint256 id = mintDefault();
+        settleLeg(vaultB, 0.5e18);
+        plv.resolveParlay(id);
+        assertEq(uint8(plv.parlay(id).status), uint8(ParlayVault.Status.Void));
+    }
+
+    /// Lost beats fractional: one leg lost + one leg ambiguous = Dead, no refund.
+    function test_resolveOrderLostBeatsFractional() public {
+        uint256 id = mintDefault();
+        settleLeg(vault, 0);       // YES leg lost
+        settleLeg(vaultB, 0.5e18); // NO leg ambiguous
+        uint256 userBefore = quote.balanceOf(user);
+        plv.resolveParlay(id);
+        assertEq(uint8(plv.parlay(id).status), uint8(ParlayVault.Status.Dead));
+        assertEq(quote.balanceOf(user), userBefore); // no premium refund
+    }
+
+    /// Void refund follows token ownership at resolution time.
+    function test_resolveVoidPaysCurrentTokenOwner() public {
+        uint256 id = mintDefault();
+        vm.prank(user);
+        plv.transferFrom(user, other, id);
+        settleLeg(vaultB, 0.5e18);
+        plv.resolveParlay(id);
+        assertEq(quote.balanceOf(other), PREMIUM);
+    }
 }
