@@ -515,6 +515,27 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(quote.balanceOf(address(vault)), 0);
     }
 
+    /// Live M3 finding: Core drops any Core→EVM send whose wei amount is not a
+    /// whole number of EVM units (multiple of 100 for USDC). Core fees leave
+    /// sub-100-wei dust on the vault's balance (19 wei observed live), so a
+    /// raw full-balance sweep silently drops. The sweep must floor to the
+    /// representable amount and leave the dust behind.
+    function test_SweepFloorsUnrepresentableDust() public {
+        depositAndClaim(100e6);
+        vault.settle(0.5e18);
+        sim.creditSettlement();
+        sim.creditStray(19); // sub-EVM-unit fee residue on the Core balance
+        vault.pullSettledFunds();
+        sim.processAll();
+        assertEq(quote.balanceOf(address(vault)), 100e6, "sweep did not land");
+
+        vm.startPrank(user);
+        vault.redeemSettled(true, 100e6);
+        vault.redeemSettled(false, 100e6);
+        vm.stopPrank();
+        assertEq(quote.balanceOf(user), 1_000e6);
+    }
+
     /// The sweep gate must key off quote the vault actually received, not off
     /// an absolute Core-balance read: a 1-wei credit is cheap, repeatable, and
     /// would otherwise hold settlement redemption shut forever.
@@ -680,20 +701,31 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(vault.oYes().balanceOf(user), 100e6, "position burned for dust");
     }
 
-    /// Arming vectors are a class: a 999-quote-wei Core credit rounds to zero
-    /// expected EVM, so the pull arms `swept` with nothing ever landing, and a
-    /// 2-wei donation then satisfies the gate. The pool-adequacy floor — not
-    /// the gate — is what must refuse the burn.
+    /// Arming vectors are a class: pre-floor, a 999-quote-wei Core credit
+    /// (sub-unit at the fixture's 1000-wei-per-EVM-unit ratio) rounded to
+    /// zero expected EVM, so the pull armed `swept` with nothing ever
+    /// landing, and a 2-wei donation then satisfied the gate. The sweep floor
+    /// closes the class at the gate: a credit below one EVM unit does not arm
+    /// at all, and a larger stray arms honestly with a floored send in
+    /// flight — after it lands the pool-adequacy floor refuses the burn.
     function test_SubUnitCoreCreditPlusDonationCannotForceRedemption() public {
         depositAndClaim(100e6);
         vault.settle(0.5e18);
-        sim.creditStray(999); // rounds to 0 EVM units
-        vault.pullSettledFunds(); // arms — nothing will ever land
+        sim.creditStray(999); // below one EVM unit — floors to zero, must not arm
+        vault.pullSettledFunds();
 
         quote.mint(other, 2);
         vm.prank(other);
         quote.transfer(address(vault), 2);
 
+        vm.prank(user);
+        vm.expectRevert(bytes("SWEEP_PENDING")); // still unarmed
+        vault.redeemSettled(true, 100e6);
+        assertEq(vault.oYes().balanceOf(user), 100e6, "position burned for dust");
+
+        sim.creditStray(1001); // 2000 total — arms honestly, 2000 wei in flight
+        vault.pullSettledFunds();
+        sim.processAll();
         vm.prank(user);
         vm.expectRevert(bytes("SETTLEMENT_POOL_SHORT"));
         vault.redeemSettled(true, 100e6);

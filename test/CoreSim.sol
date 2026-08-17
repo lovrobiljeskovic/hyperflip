@@ -210,6 +210,10 @@ contract CoreSim {
         (,, uint64 wei_) = abi.decode(params, (address, uint64, uint64));
         uint64 bal = coreBalance();
         if (bal < wei_) return; // silent rejection
+        // Live M3 finding (2026-08-17): Core silently drops a Core→EVM send
+        // whose wei amount is not representable in the EVM token's decimals
+        // (USDC: 8 Core vs 6 EVM, so wei must be a multiple of 100).
+        if (toWei(toUnits(wei_)) != wei_) return;
         _setCoreBalance(bal - wei_);
         quote.mint(address(vault), toUnits(wei_));
     }

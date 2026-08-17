@@ -292,10 +292,17 @@ contract OutcomeVault {
     /// lands; if Core never credits, recovery is the owner's clearOutbound.
     function pullSettledFunds() external {
         require(settled, "NOT_SETTLED");
+        // Core silently drops a Core→EVM send whose wei amount is not a whole
+        // number of EVM units (multiple of 100 for USDC's 8→6 decimals; live
+        // M3 finding). Core fees leave sub-unit dust on the balance, so floor
+        // through the EVM-unit round trip and strand the dust rather than
+        // dropping the whole sweep. Guarding on the floored amount also means
+        // a sub-unit stray credit cannot arm the gate at all.
         uint64 bal = _quoteCoreBalance();
-        if (bal > 0) {
+        uint256 evm = CoreConstants.quoteWeiToEvm(bal, evmUnitsPerShare);
+        if (evm > 0) {
             swept = true;
-            _spotSendOut(bal);
+            _spotSendOut(_toQuoteWei(evm));
         }
     }
 
@@ -322,8 +329,9 @@ contract OutcomeVault {
         uint256 obligation = _settlementObligation();
         uint256 available = _unreservedBalance();
         // Pool-adequacy floor — the actual anti-burn property. Arming vectors
-        // for `swept` are a class (e.g. a sub-1-EVM-unit Core credit rounds to
-        // zero expected EVM, arming with nothing landed), and `payout > 0` is
+        // for `swept` are a class (the sub-1-EVM-unit stray credit is closed
+        // at the gate by the sweep's representability floor, but the class
+        // stays guarded here), and `payout > 0` is
         // no backstop once pro-rata is in play: a 2-wei pool against a 100e6
         // obligation still pays 1 wei for a full burn. So the pool itself must
         // cover PAYOUT_MIN_BPS of the obligation the pro-rata scales against.
@@ -409,6 +417,12 @@ contract OutcomeVault {
         _spotSendOut(credited);
     }
 
+    /// Operational requirement (M3, live-verified): Core charges the spotSend
+    /// fee ON TOP of `w`, never netted — from the vault's Core HYPE balance if
+    /// it holds any, else from the quote itself, in which case an
+    /// exact-balance send silently drops (recovery: clearOutbound). The
+    /// deploy runbook therefore keeps HYPE dust on the vault's Core account.
+    ///
     /// Sends stack: a second payout can be queued before the first debit lands,
     /// and the balance read here still contains every unlanded debit. Summing
     /// them and subtracting from the live balance therefore gives the balance

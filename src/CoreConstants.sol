@@ -25,7 +25,14 @@ library CoreConstants {
 
     uint8 internal constant ENCODING_VERSION = 1;
     uint24 internal constant ACTION_OUTCOME_OP = 17;
-    uint24 internal constant ACTION_SPOT_SEND = 6; // UNVERIFIED: action ID and param layout
+    /// VERIFIED live (e2e 2026-08-16, M3 spike 2026-08-17). Fee is charged on
+    /// top of the sent amount, sender side, never netted: in Core HYPE
+    /// (0.00002 observed) when the sender holds any, else in the sent token
+    /// (~$0.00056, floats with HYPE price). amount + fee > balance → silent
+    /// drop. Core→EVM sends additionally require the wei amount to be a whole
+    /// number of EVM token units (multiple of 100 for USDC's 8 Core vs 6 EVM
+    /// decimals, spotMeta `evm_extra_wei_decimals: -2`) — else silent drop.
+    uint24 internal constant ACTION_SPOT_SEND = 6;
 
     // UNVERIFIED: operation numbering within action 17
     uint8 internal constant OP_SPLIT_OUTCOME = 0;
@@ -66,7 +73,7 @@ library CoreConstants {
         return encodeAction(ACTION_OUTCOME_OP, abi.encode(op, uint32(0), outcome, wei_));
     }
 
-    // UNVERIFIED param layout: (destination, token index, wei)
+    /// Param layout (destination, token index, wei) — verified live.
     function encodeSpotSend(address destination, uint64 token, uint64 wei_) internal pure returns (bytes memory) {
         return encodeAction(ACTION_SPOT_SEND, abi.encode(destination, token, wei_));
     }
