@@ -163,4 +163,49 @@ contract ParlayVault is ERC721, EIP712 {
         _mint(msg.sender, id);
         emit ParlayMinted(id, msg.sender, q.quoteId, q.premium, q.maxPayout);
     }
+
+    /// Permissionless — the writer service pokes dead parlays to recycle its
+    /// bankroll. Leg-hit rule: YES hits iff fraction == 1e18, NO hits iff
+    /// == 0; strictly between is ambiguous. Resolution order: lost beats
+    /// fractional — a lost leg kills the ticket even when another leg voided.
+    /// Void (design decision A): whole-parlay void, premium back to holder,
+    /// remainder to writer, token burned. Dead: full pot to the snapshotted
+    /// writer immediately, token kept as receipt (never pays again — status
+    /// gate). Won: funds move on claim so the payout follows token ownership.
+    /// CEI: status write / burn before every transfer; USDC has no hooks.
+    function resolveParlay(uint256 id) public {
+        Parlay storage p = _parlays[id];
+        require(p.status == Status.Open && p.maxPayout != 0, "NOT_OPEN");
+        bool anyFractional;
+        bool allSettled = true;
+        for (uint256 i; i < p.legs.length; i++) {
+            OutcomeVault v = OutcomeVault(p.legs[i].vault);
+            if (!v.settled()) {
+                allSettled = false;
+                continue;
+            }
+            uint256 f = v.settleFractionWad();
+            bool lost = p.legs[i].isYes ? f == 0 : f == 1e18;
+            if (lost) {
+                p.status = Status.Dead;
+                emit ParlayResolved(id, Status.Dead);
+                usdc.safeTransfer(p.writer, p.maxPayout);
+                return;
+            }
+            bool hit = p.legs[i].isYes ? f == 1e18 : f == 0;
+            if (!hit) anyFractional = true;
+        }
+        if (anyFractional) {
+            p.status = Status.Void;
+            address holder = ownerOf(id);
+            emit ParlayResolved(id, Status.Void);
+            _burn(id);
+            usdc.safeTransfer(holder, p.premium);
+            usdc.safeTransfer(p.writer, p.maxPayout - p.premium);
+            return;
+        }
+        require(allSettled, "NOT_RESOLVABLE");
+        p.status = Status.Won;
+        emit ParlayResolved(id, Status.Won);
+    }
 }

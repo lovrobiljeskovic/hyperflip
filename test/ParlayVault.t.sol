@@ -232,4 +232,64 @@ contract ParlayVaultTest is BaseTest {
         vm.expectRevert(); // OZ ERC20InsufficientAllowance
         plv.mint(q, sig);
     }
+
+    // --- resolveParlay: Dead ---
+
+    function test_resolveDeadYesLegLost() public {
+        uint256 id = mintDefault();
+        settleLeg(vault, 0); // YES leg lost
+        uint256 houseBefore = quote.balanceOf(house);
+        plv.resolveParlay(id);
+        ParlayVault.Parlay memory p = plv.parlay(id);
+        assertEq(uint8(p.status), uint8(ParlayVault.Status.Dead));
+        assertEq(quote.balanceOf(house), houseBefore + MAX_PAYOUT); // full pot
+        assertEq(quote.balanceOf(address(plv)), 0);
+        assertEq(plv.ownerOf(id), user); // token kept as receipt
+    }
+
+    function test_resolveDeadNoLegLost() public {
+        uint256 id = mintDefault();
+        settleLeg(vaultB, 1e18); // NO leg lost (YES resolved true)
+        plv.resolveParlay(id);
+        assertEq(uint8(plv.parlay(id).status), uint8(ParlayVault.Status.Dead));
+    }
+
+    /// One lost settled leg kills the ticket even while the other is unsettled.
+    function test_resolveDeadWithUnsettledSibling() public {
+        uint256 id = mintDefault();
+        settleLeg(vault, 0);
+        assertFalse(vaultB.settled());
+        plv.resolveParlay(id);
+        assertEq(uint8(plv.parlay(id).status), uint8(ParlayVault.Status.Dead));
+    }
+
+    /// Dead pot goes to the writer snapshotted at mint, not current config.
+    function test_resolveDeadPaysSnapshottedWriter() public {
+        uint256 id = mintDefault();
+        address newHouse = makeAddr("newHouse");
+        plv.setWriter(newHouse);
+        settleLeg(vault, 0);
+        plv.resolveParlay(id);
+        assertEq(quote.balanceOf(newHouse), 0);
+        assertEq(quote.balanceOf(house), 10_000e5 - (MAX_PAYOUT - PREMIUM) + MAX_PAYOUT);
+    }
+
+    function test_resolveRevertsWhenNoLegSettled() public {
+        uint256 id = mintDefault();
+        vm.expectRevert("NOT_RESOLVABLE");
+        plv.resolveParlay(id);
+    }
+
+    function test_resolveRevertsOnDeadParlay() public {
+        uint256 id = mintDefault();
+        settleLeg(vault, 0);
+        plv.resolveParlay(id);
+        vm.expectRevert("NOT_OPEN");
+        plv.resolveParlay(id);
+    }
+
+    function test_resolveRevertsOnNonexistentId() public {
+        vm.expectRevert("NOT_OPEN");
+        plv.resolveParlay(999);
+    }
 }
