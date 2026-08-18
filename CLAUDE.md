@@ -18,3 +18,4 @@ HyperEVM outcome composability layer: wraps HIP-4 binary outcome markets as ERC-
 - `src/OutcomeVault.sol` — per-market vault: deposit/split, pair redemption, settlement
 - `test/anchor/Anchor.t.sol` — definition-of-done tests; do not edit
 - `test/CoreSim.sol` — simulated HyperCore for tests
+- `writer/` — house writer service: prices parlay premiums off the Core book, signs EIP-712 quotes, enforces exposure caps, pokes dead parlays (`cd writer && npm run check`)
