@@ -45,7 +45,7 @@ async function main(): Promise<void> {
   const pokerAccount = privateKeyToAccount(cfg.pokerKey);
   const walletClient = createWalletClient({ account: pokerAccount, transport: http(cfg.rpcUrl) });
 
-  const exposure = new ExposureBook();
+  const exposure = new ExposureBook((v) => cfg.markets.get(v)?.cluster);
   const metrics = newMetrics();
   let lastBookFetchMs = 0;
 

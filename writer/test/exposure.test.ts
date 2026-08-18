@@ -52,6 +52,24 @@ test("onResolved releases per-market exposure", () => {
   assert.equal(b.perMarket(V1, 0), 0n);
 });
 
+test("cluster cap counts reserved + open across same-cluster markets", () => {
+  const cluster = (v: string) => (v === V1 || v === V2 ? "crypto" : undefined);
+  const b = new ExposureBook(cluster);
+  b.reserve("q1", 30n, [V1], 10_000);
+  b.onMinted("q0", "7", 30n, [V2]);
+  // cluster total 60; cap 80 -> risk 25 breaches crypto cluster
+  const r = b.check(25n, [V1], 1000n, 1000n, 0, 80n);
+  assert.deepEqual(r, { ok: false, reason: "cluster-cap" });
+  // V3 has no cluster -> unaffected
+  assert.equal(b.check(25n, [V3], 1000n, 1000n, 0, 80n).ok, true);
+});
+
+test("check without perClusterCap skips cluster dimension", () => {
+  const b = new ExposureBook((_) => "crypto");
+  b.onMinted("q0", "1", 100n, [V1]);
+  assert.equal(b.check(50n, [V2], 1000n, 1000n, 0).ok, true);
+});
+
 test("release undoes a reservation that never minted (e.g. signing failed)", () => {
   const b = new ExposureBook();
   b.reserve("q1", 40n, [V1], 10_000);

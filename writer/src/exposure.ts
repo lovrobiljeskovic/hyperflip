@@ -18,6 +18,11 @@ export class ExposureBook {
   private reservations = new Map<string, Reservation>();
   private open = new Map<string, OpenParlay>();
 
+  /** Maps a lowercase vault address to its correlation cluster; injected so the
+   * book can bucket entries recorded before/after registry changes without
+   * storing cluster snapshots. Default: no clusters (cluster cap inert). */
+  constructor(private clusterOf: (vault: string) => string | undefined = () => undefined) {}
+
   private pruneExpired(now: number): void {
     for (const [id, r] of this.reservations) {
       if (r.expiresAt <= now) this.reservations.delete(id);
@@ -40,16 +45,36 @@ export class ExposureBook {
     return sum;
   }
 
+  perCluster(cluster: string, now: number): bigint {
+    this.pruneExpired(now);
+    const inCluster = (vs: string[]) => vs.some((v) => this.clusterOf(v) === cluster);
+    let sum = 0n;
+    for (const r of this.reservations.values()) if (inCluster(r.vaults)) sum += r.risk;
+    for (const o of this.open.values()) if (inCluster(o.vaults)) sum += o.risk;
+    return sum;
+  }
+
   check(
     risk: bigint,
     vaults: string[],
     allowance: bigint,
     perMarketCap: bigint,
     now: number,
-  ): { ok: true } | { ok: false; reason: "at-capacity" | "market-cap" } {
+    perClusterCap?: bigint,
+  ): { ok: true } | { ok: false; reason: "at-capacity" | "market-cap" | "cluster-cap" } {
     if (risk > allowance - this.reservedGlobal(now)) return { ok: false, reason: "at-capacity" };
     for (const v of vaults) {
       if (this.perMarket(v, now) + risk > perMarketCap) return { ok: false, reason: "market-cap" };
+    }
+    if (perClusterCap !== undefined) {
+      const clusters = new Set<string>();
+      for (const v of vaults) {
+        const c = this.clusterOf(v.toLowerCase());
+        if (c !== undefined) clusters.add(c);
+      }
+      for (const c of clusters) {
+        if (this.perCluster(c, now) + risk > perClusterCap) return { ok: false, reason: "cluster-cap" };
+      }
     }
     return { ok: true };
   }

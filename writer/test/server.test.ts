@@ -17,20 +17,22 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     quoteSignerKey: `0x${"11".repeat(32)}` as `0x${string}`,
     pokerKey: `0x${"22".repeat(32)}` as `0x${string}`,
     infoApiUrl: "", port: 0, edgeBps: 0n, minPremiumBps: 100n, minLegs: 2,
-    maxStake: 10_000_000n, perMarketCap: 1_000_000_000n, quoteTtlMs: 30_000,
+    maxStake: 10_000_000n, perMarketCap: 1_000_000_000n, perClusterCap: 1_000_000_000n,
+    clusterEdgeBps: 0n, quoteTtlMs: 30_000,
     lockoutMs: 600_000, pokerIntervalMs: 15_000, deployBlock: 0n,
     markets: new Map([
-      [V1.toLowerCase(), { vault: V1, coinYes: "+10", coinNo: "+11" }],
-      [V2.toLowerCase(), { vault: V2, coinYes: "+20", coinNo: "+21", expiryMs: 2_000_000 }],
+      [V1.toLowerCase(), { vault: V1, coinYes: "+10", coinNo: "+11", underlying: "BTC", cluster: "crypto" }],
+      [V2.toLowerCase(), { vault: V2, coinYes: "+20", coinNo: "+21", expiryMs: 2_000_000, underlying: "ETH", cluster: "crypto" }],
     ]),
     ...overrides,
   };
 }
 
 function deps(overrides: Partial<QuoteDeps> = {}): QuoteDeps {
+  const c = overrides.cfg ?? cfg();
   return {
-    cfg: cfg(),
-    exposure: new ExposureBook(),
+    cfg: c,
+    exposure: new ExposureBook((v) => c.markets.get(v)?.cluster),
     chainId: 31337,
     fetchLegPriceWad: async () => WAD / 2n,
     readAllowance: async () => 1_000_000_000n,
@@ -56,6 +58,34 @@ test("happy path: returns signed quote, reserves exposure", async () => {
   assert.equal(j.sig, "0xsig");
   assert.equal(d.exposure.reservedGlobal(d.now()), 3_000_000n); // maxPayout - premium
   assert.equal(d.metrics.quoted, 1);
+});
+
+test("validation: same-underlying legs rejected", () => {
+  const V3 = "0x4444444444444444444444444444444444444444" as Address;
+  const c = cfg();
+  c.markets.set(V3.toLowerCase(), { vault: V3, coinYes: "+30", coinNo: "+31", underlying: "BTC", cluster: "crypto" });
+  const r = validateQuoteRequest(
+    { taker: TAKER, legs: [{ vault: V1, isYes: true }, { vault: V3, isYes: true }], stake: "1000000" },
+    c, 0,
+  );
+  assert.deepEqual(r, { ok: false, status: 400, reason: "same-underlying" });
+});
+
+test("correlation haircut: same-cluster pair adds clusterEdgeBps to edge", async () => {
+  // Two 0.5 legs, one same-cluster pair, clusterEdgeBps 500 -> price = 0.25 * 1.05
+  const d = deps({ cfg: cfg({ clusterEdgeBps: 500n }) });
+  const r = await handleQuote(d, goodBody);
+  assert.equal(r.status, 200);
+  const j = r.json as { quote: { maxPayout: string } };
+  assert.equal(j.quote.maxPayout, "3809523"); // vs 4000000 without haircut
+});
+
+test("cluster cap: 409 when cluster exposure would exceed perClusterCap", async () => {
+  const d = deps({ cfg: cfg({ perClusterCap: 1_000_000n }) }); // risk 3_000_000 > cap
+  const r = await handleQuote(d, goodBody);
+  assert.equal(r.status, 409);
+  assert.equal(d.metrics.rejected["cluster-cap"], 1);
+  assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
 });
 
 test("validation: duplicate vault rejected", () => {

@@ -13,6 +13,13 @@ export interface MarketInfo {
   coinYes: string;
   /** Core l2Book coin string for the NO side (e.g. "+123851"). */
   coinNo: string;
+  /** Underlying asset (e.g. "BTC"). Two legs sharing an underlying are refused —
+   * correlation ≈ 100%, product pricing is meaningless. Also subsumes
+   * impossible/redundant strike combos without any strike parsing. */
+  underlying: string;
+  /** Correlation cluster (e.g. "crypto"). Same-cluster leg pairs get a pricing
+   * haircut and share a cluster exposure cap. */
+  cluster: string;
   /** Optional market expiry (ms epoch); legs inside the lockout window are refused. */
   expiryMs?: number;
 }
@@ -31,6 +38,10 @@ export interface WriterConfig {
   minLegs: number;
   maxStake: bigint;
   perMarketCap: bigint;
+  perClusterCap: bigint;
+  /** Extra edge (bps) charged per same-cluster leg pair — blunt correlation haircut.
+   * ponytail: flat per-pair bps; upgrade to per-pair rho estimates if volume justifies. */
+  clusterEdgeBps: bigint;
   quoteTtlMs: number;
   lockoutMs: number;
   pokerIntervalMs: number;
@@ -61,7 +72,7 @@ function requireAddress(name: string): Address {
   return v;
 }
 
-/** MARKETS env: JSON array of { vault, coinYes, coinNo, expiryMs? }. */
+/** MARKETS env: JSON array of { vault, coinYes, coinNo, underlying, cluster, expiryMs? }. */
 export function parseMarkets(raw: string): Map<string, MarketInfo> {
   const parsed = JSON.parse(raw);
   if (!Array.isArray(parsed)) throw new Error("MARKETS must be a JSON array");
@@ -71,10 +82,15 @@ export function parseMarkets(raw: string): Map<string, MarketInfo> {
     if (typeof m.coinYes !== "string" || typeof m.coinNo !== "string") {
       throw new Error(`market ${m.vault} missing coinYes/coinNo`);
     }
+    if (typeof m.underlying !== "string" || m.underlying === "" || typeof m.cluster !== "string" || m.cluster === "") {
+      throw new Error(`market ${m.vault} missing underlying/cluster`);
+    }
     map.set(m.vault.toLowerCase(), {
       vault: m.vault as Address,
       coinYes: m.coinYes,
       coinNo: m.coinNo,
+      underlying: m.underlying,
+      cluster: m.cluster,
       expiryMs: typeof m.expiryMs === "number" ? m.expiryMs : undefined,
     });
   }
@@ -95,6 +111,8 @@ export function loadConfig(): WriterConfig {
     minLegs: Number(process.env.MIN_LEGS ?? 2),
     maxStake: BigInt(requireEnv("MAX_STAKE")),
     perMarketCap: BigInt(requireEnv("PER_MARKET_CAP")),
+    perClusterCap: BigInt(requireEnv("PER_CLUSTER_CAP")),
+    clusterEdgeBps: BigInt(process.env.CLUSTER_EDGE_BPS ?? 300),
     quoteTtlMs: Number(process.env.QUOTE_TTL_MS ?? 30_000),
     lockoutMs: Number(process.env.LOCKOUT_MS ?? 600_000),
     pokerIntervalMs: Number(process.env.POKER_INTERVAL_MS ?? 15_000),

@@ -48,6 +48,7 @@ export function validateQuoteRequest(body: unknown, cfg: WriterConfig, now: numb
   }
   const legs: QuoteLeg[] = [];
   const seen = new Set<string>();
+  const seenUnderlying = new Set<string>();
   for (const l of b.legs as { vault?: unknown; isYes?: unknown }[]) {
     if (typeof l?.vault !== "string" || !isAddress(l.vault) || typeof l.isYes !== "boolean") {
       return { ok: false, status: 400, reason: "bad-leg" };
@@ -57,6 +58,10 @@ export function validateQuoteRequest(body: unknown, cfg: WriterConfig, now: numb
     seen.add(key);
     const market = cfg.markets.get(key);
     if (!market) return { ok: false, status: 400, reason: "unknown-vault" };
+    // Same-underlying legs are ~100% correlated (or contradictory); product
+    // pricing cannot express that, so the combo is refused outright.
+    if (seenUnderlying.has(market.underlying)) return { ok: false, status: 400, reason: "same-underlying" };
+    seenUnderlying.add(market.underlying);
     if (market.expiryMs !== undefined && now >= market.expiryMs - cfg.lockoutMs) {
       return { ok: false, status: 400, reason: "expiry-lockout" };
     }
@@ -109,7 +114,19 @@ export async function handleQuote(deps: QuoteDeps, body: unknown): Promise<{ sta
     return { status: 503, json: { error: "rpc-down" } };
   }
 
-  const priced = priceParlay(pricesWad, v.stake, cfg.edgeBps, cfg.minPremiumBps);
+  // Correlation haircut: same-cluster legs comove, so the naive product
+  // underprices the joint probability. Charge clusterEdgeBps extra edge per
+  // same-cluster pair — with n same-cluster legs that's n*(n-1)/2 pairs.
+  const clusterCounts = new Map<string, number>();
+  for (const l of v.legs) {
+    const c = cfg.markets.get(l.vault.toLowerCase())!.cluster;
+    clusterCounts.set(c, (clusterCounts.get(c) ?? 0) + 1);
+  }
+  let pairs = 0n;
+  for (const n of clusterCounts.values()) pairs += BigInt((n * (n - 1)) / 2);
+  const corrBps = cfg.clusterEdgeBps * pairs;
+
+  const priced = priceParlay(pricesWad, v.stake, cfg.edgeBps + corrBps, cfg.minPremiumBps);
   if (!priced.ok) {
     reject(metrics, priced.reason);
     return { status: 400, json: { error: priced.reason } };
@@ -119,7 +136,7 @@ export async function handleQuote(deps: QuoteDeps, body: unknown): Promise<{ sta
   // All chain/API reads happened above; the signing await happens after the reserve.
   const now = deps.now();
   const risk = priced.maxPayout - priced.premium;
-  const check = exposure.check(risk, vaults, allowance, cfg.perMarketCap, now);
+  const check = exposure.check(risk, vaults, allowance, cfg.perMarketCap, now, cfg.perClusterCap);
   if (!check.ok) {
     reject(metrics, check.reason);
     // Structured at-capacity log: the bankroll topup signal (spec §6).
