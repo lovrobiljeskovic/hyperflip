@@ -4,6 +4,7 @@ import { ExposureBook } from "../src/exposure.js";
 
 const V1 = "0x1111111111111111111111111111111111111111";
 const V2 = "0x2222222222222222222222222222222222222222";
+const V3 = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd";
 
 test("check fails at-capacity when risk exceeds allowance minus reservations", () => {
   const b = new ExposureBook();
@@ -20,10 +21,12 @@ test("expired reservations free capacity", () => {
 
 test("per-market cap counts reserved + open, case-insensitive", () => {
   const b = new ExposureBook();
-  b.reserve("q1", 30n, [V1.toUpperCase().replace("0X", "0x")], 10_000);
-  b.onMinted("q0", "7", 30n, [V1]);
-  // market total 60; cap 80 -> risk 25 breaches V1 but not global (allowance 1000)
-  const r = b.check(25n, [V1], 1000n, 80n, 0);
+  // reserved with a mixed/upper-case address (real hex letters, so this actually
+  // exercises case folding — V3 differs from its uppercase form, unlike an all-digit addr)
+  b.reserve("q1", 30n, [V3.toUpperCase().replace("0X", "0x")], 10_000);
+  b.onMinted("q0", "7", 30n, [V3]);
+  // market total 60; cap 80 -> risk 25 breaches V3 but not global (allowance 1000)
+  const r = b.check(25n, [V3], 1000n, 80n, 0);
   assert.deepEqual(r, { ok: false, reason: "market-cap" });
   assert.equal(b.check(25n, [V2], 1000n, 80n, 0).ok, true);
 });
