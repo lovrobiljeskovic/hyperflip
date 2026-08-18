@@ -67,3 +67,37 @@ test("tick: won/unsettled parlays are not poked", async () => {
   await poker.tick();
   assert.deepEqual(resolved, []);
 });
+
+test("tick: a failing resolve() does not abort poking the rest of the batch", async () => {
+  const V2 = "0x2222222222222222222222222222222222222222" as Address;
+  const attempted: bigint[] = [];
+  const deps: PokerDeps = {
+    publicClient: null as unknown as PokerDeps["publicClient"],
+    parlayVault: VAULT,
+    exposure: new ExposureBook(),
+    metrics: newMetrics(),
+    fromBlock: 0n,
+    resolve: async (id) => {
+      attempted.push(id);
+      if (id === 1n) throw new Error("rpc hiccup");
+    },
+    log: () => {},
+    fetchEvents: async () => ({
+      minted: [
+        { id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n },
+        { id: 2n, quoteId: "0xq2", premium: 1n, maxPayout: 4n },
+      ],
+      resolvedIds: [],
+      toBlock: 10n,
+    }),
+    fetchLegs: async (id) => [{ vault: id === 1n ? V1 : V2, isYes: true }],
+    fetchLegStates: async () =>
+      new Map([
+        [V1.toLowerCase(), { settled: true, fractionWad: 0n }],
+        [V2.toLowerCase(), { settled: true, fractionWad: 0n }],
+      ]),
+  };
+  const poker = new Poker(deps);
+  await poker.tick();
+  assert.deepEqual(attempted, [1n, 2n]); // both attempted despite id 1 throwing
+});

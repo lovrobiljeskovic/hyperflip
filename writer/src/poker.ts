@@ -107,8 +107,12 @@ export class Poker {
     for (const [id, legs] of this.open) {
       if (parlayIsDead(legs, states)) {
         log({ event: "poking-dead-parlay", id: id.toString() });
-        await this.deps.resolve(id);
-        // open-set removal happens when the ParlayResolved event lands next tick.
+        try {
+          await this.deps.resolve(id);
+          // open-set removal happens when the ParlayResolved event lands next tick.
+        } catch (err) {
+          log({ event: "poke-failed", id: id.toString(), err: String(err) });
+        }
       }
     }
   }
