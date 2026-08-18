@@ -3,6 +3,7 @@ import { parlayVaultAbi } from "./abi.js";
 import { ExposureBook } from "./exposure.js";
 import type { Metrics } from "./server.js";
 import { parlayIsDead, readLegStates, type LegState } from "./settlement.js";
+import { blockRanges } from "./pure.js";
 import type { QuoteLeg } from "./quotes.js";
 
 interface MintedEvent {
@@ -54,20 +55,26 @@ export class Poker {
     const { publicClient, parlayVault } = this.deps;
     const toBlock = await publicClient.getBlockNumber();
     if (toBlock < fromBlock) return { minted: [], resolvedIds: [], toBlock: fromBlock - 1n };
-    const [mintLogs, resolveLogs] = await Promise.all([
-      publicClient.getLogs({ address: parlayVault, event: MINTED, fromBlock, toBlock }),
-      publicClient.getLogs({ address: parlayVault, event: RESOLVED, fromBlock, toBlock }),
-    ]);
-    return {
-      minted: mintLogs.map((l) => ({
-        id: l.args.id!,
-        quoteId: l.args.quoteId!,
-        premium: l.args.premium!,
-        maxPayout: l.args.maxPayout!,
-      })),
-      resolvedIds: resolveLogs.map((l) => l.args.id!),
-      toBlock,
-    };
+    const minted: MintedEvent[] = [];
+    const resolvedIds: bigint[] = [];
+    // Testnet RPC caps getLogs at 1000 blocks per query; an unchunked scan bricks
+    // every tick once the gap since fromBlock exceeds that (found in the 8/18 e2e).
+    for (const r of blockRanges(fromBlock, toBlock, 1000n)) {
+      const [mintLogs, resolveLogs] = await Promise.all([
+        publicClient.getLogs({ address: parlayVault, event: MINTED, fromBlock: r.from, toBlock: r.to }),
+        publicClient.getLogs({ address: parlayVault, event: RESOLVED, fromBlock: r.from, toBlock: r.to }),
+      ]);
+      minted.push(
+        ...mintLogs.map((l) => ({
+          id: l.args.id!,
+          quoteId: l.args.quoteId!,
+          premium: l.args.premium!,
+          maxPayout: l.args.maxPayout!,
+        })),
+      );
+      resolvedIds.push(...resolveLogs.map((l) => l.args.id!));
+    }
+    return { minted, resolvedIds, toBlock };
   }
 
   private async fetchLegs(id: bigint): Promise<QuoteLeg[]> {
