@@ -51,3 +51,10 @@ test("onResolved releases per-market exposure", () => {
   b.onResolved("1");
   assert.equal(b.perMarket(V1, 0), 0n);
 });
+
+test("release undoes a reservation that never minted (e.g. signing failed)", () => {
+  const b = new ExposureBook();
+  b.reserve("q1", 40n, [V1], 10_000);
+  b.release("q1");
+  assert.equal(b.reservedGlobal(0), 0n);
+});

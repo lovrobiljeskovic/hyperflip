@@ -137,7 +137,14 @@ export async function handleQuote(deps: QuoteDeps, body: unknown): Promise<{ sta
     deadline: BigInt(Math.floor((now + cfg.quoteTtlMs) / 1000)),
     quoteId,
   };
-  const sig = await deps.sign(quote);
+  let sig: Hex;
+  try {
+    sig = await deps.sign(quote);
+  } catch {
+    exposure.release(quoteId);
+    reject(metrics, "sign-failed");
+    return { status: 503, json: { error: "sign-failed" } };
+  }
   metrics.quoted++;
   return {
     status: 200,
@@ -157,6 +164,15 @@ export async function handleQuote(deps: QuoteDeps, body: unknown): Promise<{ sta
 
 export function startServer(deps: QuoteDeps, port: number, health: () => unknown): http.Server {
   const server = http.createServer((req, res) => {
+    // Unhandled 'error' on req/res (e.g. client resets mid-upload) is otherwise an
+    // uncaught exception that kills the whole process — log and drop just this request.
+    req.on("error", (err) => {
+      console.error(new Date().toISOString(), "request stream error", err);
+      req.destroy();
+    });
+    res.on("error", (err) => {
+      console.error(new Date().toISOString(), "response stream error", err);
+    });
     const send = (status: number, json: unknown) => {
       res.writeHead(status, { "Content-Type": "application/json" });
       res.end(JSON.stringify(json));

@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import type { AddressInfo } from "node:net";
 import type { Address, Hex } from "viem";
-import { handleQuote, validateQuoteRequest, newMetrics, type QuoteDeps } from "../src/server.js";
+import { handleQuote, validateQuoteRequest, newMetrics, startServer, type QuoteDeps } from "../src/server.js";
 import { ExposureBook } from "../src/exposure.js";
 import { WAD } from "../src/pure.js";
 import type { WriterConfig } from "../src/config.js";
@@ -96,4 +97,52 @@ test("at-capacity: 409, metrics counted", async () => {
   assert.equal(r.status, 409);
   assert.equal(d.metrics.rejected["at-capacity"], 1);
   assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
+});
+
+test("sign failure: 503, reservation released, metrics counted", async () => {
+  const d = deps({
+    sign: async () => {
+      throw new Error("hsm down");
+    },
+  });
+  const r = await handleQuote(d, goodBody);
+  assert.equal(r.status, 503);
+  assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
+  assert.equal(d.metrics.rejected["sign-failed"], 1);
+});
+
+test("HTTP smoke: /quote, /health, /metrics, bad-json, unknown route", async () => {
+  const d = deps();
+  const server = startServer(d, 0, () => ({ ok: true }));
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const port = (server.address() as AddressInfo).port;
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const badJson = await fetch(`${base}/quote`, { method: "POST", body: "{not json" });
+    assert.equal(badJson.status, 400);
+    assert.deepEqual(await badJson.json(), { error: "bad-json" });
+
+    const quoteRes = await fetch(`${base}/quote`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(goodBody),
+    });
+    assert.equal(quoteRes.status, 200);
+    const qj = (await quoteRes.json()) as { sig: string };
+    assert.equal(qj.sig, "0xsig");
+
+    const health = await fetch(`${base}/health`);
+    assert.equal(health.status, 200);
+    assert.deepEqual(await health.json(), { ok: true });
+
+    const metrics = await fetch(`${base}/metrics`);
+    assert.equal(metrics.status, 200);
+    const mj = (await metrics.json()) as { quoted: number };
+    assert.equal(mj.quoted, 1);
+
+    const notFound = await fetch(`${base}/nope`);
+    assert.equal(notFound.status, 404);
+  } finally {
+    server.close();
+  }
 });

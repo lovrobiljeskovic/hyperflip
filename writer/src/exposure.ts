@@ -58,6 +58,11 @@ export class ExposureBook {
     this.reservations.set(quoteId, { risk, vaults: vaults.map((v) => v.toLowerCase()), expiresAt });
   }
 
+  /** Undo a reservation that never became a mint (e.g. signing failed after reserve). */
+  release(quoteId: string): void {
+    this.reservations.delete(quoteId);
+  }
+
   onMinted(quoteId: string, parlayId: string, risk: bigint, vaults: string[]): void {
     this.reservations.delete(quoteId);
     this.open.set(parlayId, { risk, vaults: vaults.map((v) => v.toLowerCase()) });
