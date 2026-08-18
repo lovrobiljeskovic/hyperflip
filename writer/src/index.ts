@@ -20,6 +20,28 @@ async function main(): Promise<void> {
     functionName: "usdc",
   })) as `0x${string}`;
 
+  // minPremiumBps is owner-settable on-chain; the env value is only a startup default.
+  // The chain value always wins for pricing — override cfg and warn on drift so a stale
+  // env doesn't silently under/over-price quotes.
+  const chainMinPremiumBps = BigInt(
+    (await publicClient.readContract({
+      address: cfg.parlayVault,
+      abi: parlayVaultAbi,
+      functionName: "minPremiumBps",
+    })) as number,
+  );
+  if (chainMinPremiumBps !== cfg.minPremiumBps) {
+    console.log(
+      JSON.stringify({
+        at: new Date().toISOString(),
+        event: "minpremiumbps-env-mismatch",
+        env: cfg.minPremiumBps.toString(),
+        chain: chainMinPremiumBps.toString(),
+      }),
+    );
+  }
+  cfg.minPremiumBps = chainMinPremiumBps;
+
   const pokerAccount = privateKeyToAccount(cfg.pokerKey);
   const walletClient = createWalletClient({ account: pokerAccount, transport: http(cfg.rpcUrl) });
 

@@ -25,5 +25,9 @@ contract QuoteDigestVectorTest is Test {
         console2.log("vault:", address(v));
         console2.log("chainid:", block.chainid);
         console2.logBytes32(v.quoteDigest(q));
+        // Locks the digest against contract-side EIP-712 drift; must match FORGE_DIGEST
+        // in writer/test/quotes.test.ts. If this fails after an intentional struct/domain
+        // change, regenerate both from the logged bytes32 above.
+        assertEq(v.quoteDigest(q), bytes32(0x538daa513e74bc97f666f097c513700d7f35eec2c77c18e1da82259be34e07e8));
     }
 }

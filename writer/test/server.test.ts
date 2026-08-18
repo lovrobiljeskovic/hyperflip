@@ -146,3 +146,33 @@ test("HTTP smoke: /quote, /health, /metrics, bad-json, unknown route", async () 
     server.close();
   }
 });
+
+test("HTTP smoke: oversized body rejected with 413, server keeps serving", async () => {
+  const d = deps();
+  const server = startServer(d, 0, () => ({ ok: true }));
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const port = (server.address() as AddressInfo).port;
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const huge = "a".repeat(65 * 1024);
+    let big: Response | undefined;
+    try {
+      big = await fetch(`${base}/quote`, { method: "POST", body: huge });
+    } catch {
+      // Destroying the socket mid-request can also surface as a fetch failure — acceptable.
+    }
+    if (big) {
+      assert.equal(big.status, 413);
+      assert.deepEqual(await big.json(), { error: "body-too-large" });
+    }
+
+    const quoteRes = await fetch(`${base}/quote`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(goodBody),
+    });
+    assert.equal(quoteRes.status, 200);
+  } finally {
+    server.close();
+  }
+});

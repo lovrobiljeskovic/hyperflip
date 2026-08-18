@@ -162,6 +162,8 @@ export async function handleQuote(deps: QuoteDeps, body: unknown): Promise<{ sta
   };
 }
 
+const MAX_BODY = 64 * 1024;
+
 export function startServer(deps: QuoteDeps, port: number, health: () => unknown): http.Server {
   const server = http.createServer((req, res) => {
     // Unhandled 'error' on req/res (e.g. client resets mid-upload) is otherwise an
@@ -181,8 +183,18 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
     if (req.method === "GET" && req.url === "/metrics") return send(200, deps.metrics);
     if (req.method === "POST" && req.url === "/quote") {
       let raw = "";
-      req.on("data", (c) => (raw += c));
+      let tooLarge = false;
+      req.on("data", (c) => {
+        if (tooLarge) return;
+        raw += c;
+        if (raw.length > MAX_BODY) {
+          tooLarge = true;
+          send(413, { error: "body-too-large" });
+          req.destroy();
+        }
+      });
       req.on("end", async () => {
+        if (tooLarge) return;
         let body: unknown;
         try {
           body = JSON.parse(raw);
