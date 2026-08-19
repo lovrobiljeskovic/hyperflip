@@ -5,7 +5,12 @@ import { DEPLOY_BLOCK, PARLAY_VAULT, parlayMintedEvent } from "./contracts";
  * indexer if beta history ever makes first-load scans slow. */
 export async function scanParlayIds(client: PublicClient, taker: `0x${string}`): Promise<bigint[]> {
   const key = `parlayScan:${taker.toLowerCase()}`;
-  const cached = JSON.parse(localStorage.getItem(key) ?? "null") as { last: string; ids: string[] } | null;
+  let cached: { last: string; ids: string[] } | null = null;
+  try {
+    cached = JSON.parse(localStorage.getItem(key) ?? "null");
+  } catch {
+    localStorage.removeItem(key); // corrupt/incompatible checkpoint — scan from DEPLOY_BLOCK instead of bricking every load
+  }
   const ids = new Set(cached?.ids ?? []);
   let from = cached ? BigInt(cached.last) + 1n : DEPLOY_BLOCK;
   const head = await client.getBlockNumber();

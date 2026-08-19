@@ -185,7 +185,13 @@ export default function PositionsPage() {
     setRows(null);
     try {
       const ids = await scanParlayIds(publicClient, address);
-      const loaded = await Promise.all(ids.map((id) => loadRow(publicClient, id)));
+      // ponytail: sequential row loads (one parlay at a time; leg reads within
+      // a row still run in parallel) to avoid M×(2+2L) simultaneous RPC calls
+      // against the same rate-limited testnet endpoint the scan checkpoint
+      // exists for. Batch via multicall if position counts grow enough to
+      // make this slow.
+      const loaded: Row[] = [];
+      for (const id of ids) loaded.push(await loadRow(publicClient, id));
       loaded.sort((a, b) => (a.id > b.id ? -1 : a.id < b.id ? 1 : 0)); // newest first
       setRows(loaded);
     } catch {
