@@ -2,6 +2,7 @@
 
 import { PrivyProvider } from "@privy-io/react-auth";
 import { WagmiProvider, createConfig } from "@privy-io/wagmi";
+import { WagmiProvider as WagmiProviderNoPrivy, createConfig as createWagmiConfigNoPrivy } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http } from "viem";
 import { hyperEvmTestnet } from "@/lib/chain";
@@ -11,16 +12,28 @@ const wagmiConfig = createConfig({
   transports: { [hyperEvmTestnet.id]: http() },
 });
 
+// Fallback config for when no Privy app id is set (below): @privy-io/wagmi's
+// WagmiProvider renders a connector that calls @privy-io/react-auth hooks
+// internally, which throw without a PrivyProvider ancestor. Plain wagmi's
+// WagmiProvider needs no such ancestor — same chain, zero connectors, so
+// wagmi hooks (useAccount, usePublicClient, useReadContract, ...) resolve
+// instead of crashing, with wallet-connect features simply inert.
+const wagmiConfigNoPrivy = createWagmiConfigNoPrivy({
+  chains: [hyperEvmTestnet],
+  transports: { [hyperEvmTestnet.id]: http() },
+});
+
 const queryClient = new QueryClient();
 
 const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? "";
 
 export function Providers({ children }: { children: React.ReactNode }) {
-  // No Privy app id configured yet (see web/.env.example) — render the tree
-  // with wallet features inert instead of mounting PrivyProvider, which
-  // throws on an invalid/empty appId and would crash prerendering.
   if (!privyAppId) {
-    return <>{children}</>;
+    return (
+      <QueryClientProvider client={queryClient}>
+        <WagmiProviderNoPrivy config={wagmiConfigNoPrivy}>{children}</WagmiProviderNoPrivy>
+      </QueryClientProvider>
+    );
   }
 
   return (
