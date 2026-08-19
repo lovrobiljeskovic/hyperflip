@@ -1,7 +1,13 @@
 import { parseAbi, parseAbiItem } from "viem";
 
+function requireEnv(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`missing required env var ${name}`);
+  return v;
+}
+
 export const PARLAY_VAULT = process.env.NEXT_PUBLIC_PARLAY_VAULT as `0x${string}`;
-export const DEPLOY_BLOCK = BigInt(process.env.NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK ?? "0");
+export const DEPLOY_BLOCK = BigInt(requireEnv("NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK"));
 
 export const parlayVaultAbi = parseAbi([
   "struct Leg { address vault; bool isYes; }",

@@ -76,6 +76,7 @@ function shortMintError(err: unknown): string {
 /** Writer error → ticket-facing message. Falls back to the writer's reason
  * verbatim (e.g. stake-too-big) rather than pre-validating client-side. */
 function errorMessage(res: Extract<QuoteResult, { ok: false }>): string {
+  if (res.error === "clock-skew") return "Quote expired immediately — check your clock.";
   if (res.status === 0 || res.status === 503) return "Writer unreachable — retrying.";
   if (res.status === 403) return "Invite code rejected — check it on the landing page.";
   if (res.status === 409) {
@@ -131,6 +132,10 @@ export function Ticket({
 
   const stakeBase = tryParseStake(stake);
   const requestSeq = useRef(0);
+  // True once we've already auto-requoted a quote that was expired on its very first
+  // tick (client clock ahead of the writer) — caps that auto-requote at one shot so a
+  // sustained skew can't loop POSTs. Reset on a fresh ticket config and on manual Retry.
+  const clockSkewRetried = useRef(false);
 
   const runQuote = useCallback(async () => {
     if (display) return;
@@ -161,29 +166,43 @@ export function Ticket({
     if (display) return;
     setQuoteResult(null);
     setMintState("idle"); // user action (leg/stake change) clears any stale note
+    clockSkewRetried.current = false;
     const t = setTimeout(() => void runQuote(), QUOTE_DEBOUNCE_MS);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [legs, stake, address, inviteCode, display]);
 
   // TTL countdown against the live quote's deadline; drop + auto-requote at 0.
+  // Suspended while a mint is in flight or just landed: requoting mid-wallet-confirmation
+  // is pointless, and requoting right after "done" would wipe the confirmation CTA within
+  // TTL_SECONDS. If a freshly-landed quote is already expired on its first tick (client
+  // clock ahead of the writer), auto-requote once; if the retry lands pre-expired too,
+  // stop looping and surface a manual-retry error instead of hammering the writer.
   useEffect(() => {
     if (display || !quoteResult?.ok) {
       setTtlLeft(0);
       return;
     }
+    if (mintState === "pending" || mintState === "done") return; // freeze — don't requote under a mint
+    let firstTick = true;
     const tick = () => {
       const left = secondsLeft(BigInt(quoteResult.quote.deadline), Date.now());
       setTtlLeft(left);
       if (left <= 0) {
+        if (firstTick && clockSkewRetried.current) {
+          setQuoteResult({ ok: false, status: 0, error: "clock-skew" });
+          return;
+        }
+        if (firstTick) clockSkewRetried.current = true;
         setQuoteResult(null);
         void runQuote();
       }
+      firstTick = false;
     };
     tick();
     const id = setInterval(tick, 250);
     return () => clearInterval(id);
-  }, [display, quoteResult, runQuote]);
+  }, [display, quoteResult, mintState, runQuote]);
 
   async function mintQuoted(q: WriterQuote, sig: `0x${string}`) {
     setMintState("pending");
@@ -366,6 +385,7 @@ export function Ticket({
                   type="button"
                   onClick={() => {
                     setMintState("idle"); // user action — clear any stale requoted/error note
+                    clockSkewRetried.current = false;
                     void runQuote();
                   }}
                   className="mt-2 rounded-[4px] border border-line px-2 py-1 font-mono text-[11px] text-dim transition-colors hover:text-fg"

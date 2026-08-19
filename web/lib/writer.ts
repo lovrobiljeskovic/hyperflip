@@ -25,7 +25,8 @@ const BASE = process.env.NEXT_PUBLIC_WRITER_URL ?? "";
 export async function fetchMarkets(): Promise<Market[]> {
   const r = await fetch(`${BASE}/markets`);
   if (!r.ok) throw new Error(`markets ${r.status}`);
-  return (await r.json()).markets as Market[];
+  const j = (await r.json()) as Market[] | { markets: Market[] };
+  return Array.isArray(j) ? j : j.markets;
 }
 
 export async function requestQuote(req: {

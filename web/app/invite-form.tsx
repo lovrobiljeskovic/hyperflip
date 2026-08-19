@@ -20,7 +20,7 @@ export function InviteForm() {
   function submit(e: FormEvent) {
     e.preventDefault();
     const trimmed = code.trim();
-    if (trimmed.length < 4) {
+    if (!trimmed) {
       setError("Enter the code from your invite.");
       return;
     }
