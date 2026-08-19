@@ -149,13 +149,18 @@ export function Ticket({
     if (seq !== requestSeq.current) return; // superseded by a newer request
     setQuoting(false);
     setQuoteResult(res);
-    setMintState("idle");
+    // Preserve "requoted" (set by the LEG_SETTLED/QUOTE_EXPIRED mint retry)
+    // so its note stays visible alongside the refreshed CTA — but only when
+    // the retry actually succeeded; any other trigger (or a failed retry)
+    // clears it.
+    setMintState((s) => (s === "requoted" && res.ok ? "requoted" : "idle"));
   }, [display, legs, stake, address, inviteCode]);
 
   // Debounced (re)quote whenever the ticket's inputs change.
   useEffect(() => {
     if (display) return;
     setQuoteResult(null);
+    setMintState("idle"); // user action (leg/stake change) clears any stale note
     const t = setTimeout(() => void runQuote(), QUOTE_DEBOUNCE_MS);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -353,11 +358,16 @@ export function Ticket({
           {quoteResult && !quoteResult.ok && (
             <div className="mt-4 rounded-[4px] border border-no/30 bg-no/5 p-3">
               <p className="text-no">{errorMessage(quoteResult)}</p>
-              <p className="mt-1 font-mono text-[11px] text-no/70">{quoteResult.error}</p>
+              {errorMessage(quoteResult) !== quoteResult.error && (
+                <p className="mt-1 font-mono text-[11px] text-no/70">{quoteResult.error}</p>
+              )}
               {(quoteResult.status === 0 || quoteResult.status === 503) && (
                 <button
                   type="button"
-                  onClick={() => void runQuote()}
+                  onClick={() => {
+                    setMintState("idle"); // user action — clear any stale requoted/error note
+                    void runQuote();
+                  }}
                   className="mt-2 rounded-[4px] border border-line px-2 py-1 font-mono text-[11px] text-dim transition-colors hover:text-fg"
                 >
                   Retry
