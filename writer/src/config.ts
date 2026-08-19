@@ -21,6 +21,10 @@ export interface MarketInfo {
   /** Correlation cluster (e.g. "crypto"). Same-cluster leg pairs get a pricing
    * haircut and share a cluster exposure cap. */
   cluster: string;
+  /** Which way YES bets the underlying: "up" (above-strike), "down" (below-strike),
+   * "band" (between-strikes, direction-neutral). Same-cluster legs betting the same
+   * way are refused — comovement makes naive product pricing badly underprice them. */
+  direction: "up" | "down" | "band";
   /** Optional market expiry (ms epoch); legs inside the lockout window are refused. */
   expiryMs?: number;
   /** Human-readable market question, shown by the frontend. */
@@ -82,7 +86,7 @@ function requireAddress(name: string): Address {
 }
 
 /** Registry: JSON array, or { markets: [...] }, of
- * { vault, coinYes, coinNo, underlying, cluster, title, category, expiryMs? }. */
+ * { vault, coinYes, coinNo, underlying, cluster, direction, title, category, expiryMs? }. */
 export function parseMarkets(raw: string): Map<string, MarketInfo> {
   const parsed = JSON.parse(raw);
   const list = Array.isArray(parsed) ? parsed : parsed?.markets;
@@ -96,6 +100,9 @@ export function parseMarkets(raw: string): Map<string, MarketInfo> {
     if (typeof m.underlying !== "string" || m.underlying === "" || typeof m.cluster !== "string" || m.cluster === "") {
       throw new Error(`market ${m.vault} missing underlying/cluster`);
     }
+    if (m.direction !== "up" && m.direction !== "down" && m.direction !== "band") {
+      throw new Error(`market ${m.vault} direction must be "up", "down", or "band"`);
+    }
     if (typeof m.title !== "string" || m.title === "" || typeof m.category !== "string" || m.category === "") {
       throw new Error(`market ${m.vault} missing title/category`);
     }
@@ -105,6 +112,7 @@ export function parseMarkets(raw: string): Map<string, MarketInfo> {
       coinNo: m.coinNo,
       underlying: m.underlying,
       cluster: m.cluster,
+      direction: m.direction,
       title: m.title,
       category: m.category,
       expiryMs: typeof m.expiryMs === "number" ? m.expiryMs : undefined,

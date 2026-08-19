@@ -52,6 +52,7 @@ export function validateQuoteRequest(body: unknown, cfg: WriterConfig, now: numb
   const legs: QuoteLeg[] = [];
   const seen = new Set<string>();
   const seenUnderlying = new Set<string>();
+  const seenStance = new Set<string>();
   for (const l of b.legs as { vault?: unknown; isYes?: unknown }[]) {
     if (typeof l?.vault !== "string" || !isAddress(l.vault) || typeof l.isYes !== "boolean") {
       return { ok: false, status: 400, reason: "bad-leg" };
@@ -65,6 +66,15 @@ export function validateQuoteRequest(body: unknown, cfg: WriterConfig, now: numb
     // pricing cannot express that, so the combo is refused outright.
     if (seenUnderlying.has(market.underlying)) return { ok: false, status: 400, reason: "same-underlying" };
     seenUnderlying.add(market.underlying);
+    // Same-cluster legs betting the same way (e.g. BTC-up + ETH-up) comove
+    // strongly, so the naive product badly underprices the joint probability
+    // — refuse the combo. Opposite stances are anti-correlated (house-
+    // favorable) and stay allowed; "band" legs are direction-neutral.
+    if (market.direction !== "band") {
+      const stance = `${market.cluster}:${(market.direction === "up") === l.isYes ? "bull" : "bear"}`;
+      if (seenStance.has(stance)) return { ok: false, status: 400, reason: "correlated-direction" };
+      seenStance.add(stance);
+    }
     if (market.expiryMs !== undefined && now >= market.expiryMs - cfg.lockoutMs) {
       return { ok: false, status: 400, reason: "expiry-lockout" };
     }

@@ -22,8 +22,8 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     lockoutMs: 600_000, pokerIntervalMs: 15_000, deployBlock: 0n,
     inviteCodes: new Set(["beta-test"]),
     markets: new Map([
-      [V1.toLowerCase(), { vault: V1, coinYes: "+10", coinNo: "+11", underlying: "BTC", cluster: "crypto", title: "Will BTC close above X?", category: "crypto" }],
-      [V2.toLowerCase(), { vault: V2, coinYes: "+20", coinNo: "+21", expiryMs: 2_000_000, underlying: "ETH", cluster: "crypto", title: "Will ETH close above X?", category: "crypto" }],
+      [V1.toLowerCase(), { vault: V1, coinYes: "+10", coinNo: "+11", underlying: "BTC", cluster: "crypto", direction: "up" as const, title: "Will BTC close above X?", category: "crypto" }],
+      [V2.toLowerCase(), { vault: V2, coinYes: "+20", coinNo: "+21", expiryMs: 2_000_000, underlying: "ETH", cluster: "crypto", direction: "up" as const, title: "Will ETH close above X?", category: "crypto" }],
     ]),
     registryJson: "{}",
     ...overrides,
@@ -65,12 +65,32 @@ test("happy path: returns signed quote, reserves exposure", async () => {
 test("validation: same-underlying legs rejected", () => {
   const V3 = "0x4444444444444444444444444444444444444444" as Address;
   const c = cfg();
-  c.markets.set(V3.toLowerCase(), { vault: V3, coinYes: "+30", coinNo: "+31", underlying: "BTC", cluster: "crypto", title: "Will BTC close above Y?", category: "crypto" });
+  c.markets.set(V3.toLowerCase(), { vault: V3, coinYes: "+30", coinNo: "+31", underlying: "BTC", cluster: "crypto", direction: "up", title: "Will BTC close above Y?", category: "crypto" });
   const r = validateQuoteRequest(
     { taker: TAKER, legs: [{ vault: V1, isYes: true }, { vault: V3, isYes: true }], stake: "1000000", inviteCode: "beta-test" },
     c, 0,
   );
   assert.deepEqual(r, { ok: false, status: 400, reason: "same-underlying" });
+});
+
+test("validation: same-cluster same-direction legs rejected", () => {
+  const c = cfg();
+  // V1 and V2 are both "up" markets in cluster crypto: YES+YES = two bulls.
+  const bulls = { ...goodBody, legs: [{ vault: V1, isYes: true }, { vault: V2, isYes: true }] };
+  assert.deepEqual(validateQuoteRequest(bulls, c, 0), { ok: false, status: 400, reason: "correlated-direction" });
+  // NO+NO = two bears, same problem.
+  const bears = { ...goodBody, legs: [{ vault: V1, isYes: false }, { vault: V2, isYes: false }] };
+  assert.deepEqual(validateQuoteRequest(bears, c, 0), { ok: false, status: 400, reason: "correlated-direction" });
+  // A "down" market's NO is a bull: rejected against V1 YES.
+  const V3 = "0x4444444444444444444444444444444444444444" as Address;
+  c.markets.set(V3.toLowerCase(), { vault: V3, coinYes: "+30", coinNo: "+31", underlying: "SOL", cluster: "crypto", direction: "down", title: "Will SOL close below X?", category: "crypto" });
+  const flipped = { ...goodBody, legs: [{ vault: V1, isYes: true }, { vault: V3, isYes: false }] };
+  assert.deepEqual(validateQuoteRequest(flipped, c, 0), { ok: false, status: 400, reason: "correlated-direction" });
+  // "band" legs are direction-neutral: allowed next to a bull.
+  const V4 = "0x5555555555555555555555555555555555555555" as Address;
+  c.markets.set(V4.toLowerCase(), { vault: V4, coinYes: "+40", coinNo: "+41", underlying: "HYPE", cluster: "crypto", direction: "band", title: "HYPE in band?", category: "crypto" });
+  const band = { ...goodBody, legs: [{ vault: V1, isYes: true }, { vault: V4, isYes: true }] };
+  assert.equal(validateQuoteRequest(band, c, 0).ok, true);
 });
 
 test("correlation haircut: same-cluster pair adds clusterEdgeBps to edge", async () => {

@@ -7,7 +7,8 @@
       "coinYes": "#131620",
       "coinNo": "#131621",
       "underlying": "BTC",
-      "cluster": "btc",
+      "cluster": "crypto",
+      "direction": "up",
       "expiryMs": 1787194800000
     },
     {
@@ -17,7 +18,8 @@
       "coinYes": "#131630",
       "coinNo": "#131631",
       "underlying": "ETH",
-      "cluster": "eth",
+      "cluster": "crypto",
+      "direction": "up",
       "expiryMs": 1787194800000
     },
     {
@@ -27,7 +29,8 @@
       "coinYes": "#131640",
       "coinNo": "#131641",
       "underlying": "SOL",
-      "cluster": "sol",
+      "cluster": "crypto",
+      "direction": "up",
       "expiryMs": 1787194800000
     },
     {
@@ -37,7 +40,8 @@
       "coinYes": "#131650",
       "coinNo": "#131651",
       "underlying": "HYPE",
-      "cluster": "hype",
+      "cluster": "crypto",
+      "direction": "up",
       "expiryMs": 1787194800000
     },
     {
@@ -47,7 +51,8 @@
       "coinYes": "#131660",
       "coinNo": "#131661",
       "underlying": "ZEC",
-      "cluster": "zec",
+      "cluster": "crypto",
+      "direction": "up",
       "expiryMs": 1787194800000
     },
     {
@@ -57,7 +62,8 @@
       "coinYes": "#131790",
       "coinNo": "#131791",
       "underlying": "BTC",
-      "cluster": "btc",
+      "cluster": "crypto",
+      "direction": "down",
       "expiryMs": 1787205600000
     },
     {
@@ -67,7 +73,8 @@
       "coinYes": "#131800",
       "coinNo": "#131801",
       "underlying": "BTC",
-      "cluster": "btc",
+      "cluster": "crypto",
+      "direction": "band",
       "expiryMs": 1787205600000
     },
     {
@@ -77,8 +84,42 @@
       "coinYes": "#131810",
       "coinNo": "#131811",
       "underlying": "BTC",
-      "cluster": "btc",
+      "cluster": "crypto",
+      "direction": "up",
       "expiryMs": 1787205600000
+    },
+    {
+      "vault": "0x0a1aca747c8643a7e3d720bef61072813826cacd",
+      "title": "SOL above 76.868 on Aug 19?",
+      "category": "crypto",
+      "coinYes": "#131750",
+      "coinNo": "#131751",
+      "underlying": "SOL",
+      "cluster": "crypto",
+      "direction": "up",
+      "expiryMs": 1787159640000
+    },
+    {
+      "vault": "0xd54b7265d74854b51913651ff33eae80ec968852",
+      "title": "ETH above 1932.8 on Aug 20?",
+      "category": "crypto",
+      "coinYes": "#132440",
+      "coinNo": "#132441",
+      "underlying": "ETH",
+      "cluster": "crypto",
+      "direction": "up",
+      "expiryMs": 1787191200000
+    },
+    {
+      "vault": "0x8535c01d2b53f81d2e6aeee52a7b556b59db2c0d",
+      "title": "BTC above 69192.75 on Aug 22?",
+      "category": "crypto",
+      "coinYes": "#125720",
+      "coinNo": "#125721",
+      "underlying": "BTC",
+      "cluster": "crypto",
+      "direction": "up",
+      "expiryMs": 1787369940000
     }
   ]
 }
