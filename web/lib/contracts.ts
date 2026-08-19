@@ -1,13 +1,16 @@
 import { parseAbi, parseAbiItem } from "viem";
 
-function requireEnv(name: string): string {
-  const v = process.env[name];
+// NEXT_PUBLIC_* must be read as static property access — Next.js inlines those
+// into the client bundle; process.env[name] dynamic lookup stays empty in browser.
+function requireEnv(name: string, v: string | undefined): string {
   if (!v) throw new Error(`missing required env var ${name}`);
   return v;
 }
 
 export const PARLAY_VAULT = process.env.NEXT_PUBLIC_PARLAY_VAULT as `0x${string}`;
-export const DEPLOY_BLOCK = BigInt(requireEnv("NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK"));
+export const DEPLOY_BLOCK = BigInt(
+  requireEnv("NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK", process.env.NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK),
+);
 
 export const parlayVaultAbi = parseAbi([
   "struct Leg { address vault; bool isYes; }",
