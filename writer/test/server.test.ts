@@ -178,6 +178,34 @@ test("HTTP smoke: /quote, /health, /metrics, bad-json, unknown route", async () 
   }
 });
 
+test("GET /markets serves registry verbatim with CORS", async () => {
+  const registryJson = '{"markets":[{"vault":"0x1111111111111111111111111111111111111111","title":"T","category":"c","coinYes":"#10","coinNo":"#11","underlying":"BTC","cluster":"crypto"}]}';
+  const d = deps({ cfg: cfg({ registryJson }) });
+  const server = startServer(d, 0, () => ({ ok: true }));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/markets`);
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get("access-control-allow-origin"), "*");
+    assert.equal(await r.text(), registryJson);
+  } finally {
+    server.close();
+  }
+});
+
+test("OPTIONS preflight returns 204 with CORS headers", async () => {
+  const server = startServer(deps(), 0, () => ({ ok: true }));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/quote`, { method: "OPTIONS" });
+    assert.equal(r.status, 204);
+    assert.equal(r.headers.get("access-control-allow-origin"), "*");
+    assert.match(r.headers.get("access-control-allow-headers") ?? "", /content-type/i);
+  } finally {
+    server.close();
+  }
+});
+
 test("HTTP smoke: oversized body rejected with 413, server keeps serving", async () => {
   const d = deps();
   const server = startServer(d, 0, () => ({ ok: true }));

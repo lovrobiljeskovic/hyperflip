@@ -193,11 +193,24 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
       console.error(new Date().toISOString(), "response stream error", err);
     });
     const send = (status: number, json: unknown) => {
-      res.writeHead(status, { "Content-Type": "application/json" });
+      res.writeHead(status, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
       res.end(JSON.stringify(json));
     };
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST",
+        "Access-Control-Allow-Headers": "content-type",
+        "Access-Control-Max-Age": "86400",
+      });
+      return res.end();
+    }
     if (req.method === "GET" && req.url === "/health") return send(200, health());
     if (req.method === "GET" && req.url === "/metrics") return send(200, deps.metrics);
+    if (req.method === "GET" && req.url === "/markets") {
+      res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      return res.end(deps.cfg.registryJson);
+    }
     if (req.method === "POST" && req.url === "/quote") {
       let raw = "";
       let tooLarge = false;
