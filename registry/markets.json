@@ -1,0 +1,22 @@
+{
+  "markets": [
+    {
+      "vault": "0x2695562df7D7056E7262CC5D2CD7b5916ce463aF",
+      "title": "MU outcome (testnet #13069)",
+      "category": "crypto",
+      "coinYes": "#130690",
+      "coinNo": "#130691",
+      "underlying": "MU",
+      "cluster": "crypto"
+    },
+    {
+      "vault": "0x79B4b1a83aBf8619711ea3f6DAA096584313B0Ef",
+      "title": "SKHX outcome (testnet #13071)",
+      "category": "crypto",
+      "coinYes": "#130710",
+      "coinNo": "#130711",
+      "underlying": "SKHX",
+      "cluster": "crypto"
+    }
+  ]
+}

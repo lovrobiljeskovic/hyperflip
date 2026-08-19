@@ -21,9 +21,10 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     clusterEdgeBps: 0n, quoteTtlMs: 30_000,
     lockoutMs: 600_000, pokerIntervalMs: 15_000, deployBlock: 0n,
     markets: new Map([
-      [V1.toLowerCase(), { vault: V1, coinYes: "+10", coinNo: "+11", underlying: "BTC", cluster: "crypto" }],
-      [V2.toLowerCase(), { vault: V2, coinYes: "+20", coinNo: "+21", expiryMs: 2_000_000, underlying: "ETH", cluster: "crypto" }],
+      [V1.toLowerCase(), { vault: V1, coinYes: "+10", coinNo: "+11", underlying: "BTC", cluster: "crypto", title: "Will BTC close above X?", category: "crypto" }],
+      [V2.toLowerCase(), { vault: V2, coinYes: "+20", coinNo: "+21", expiryMs: 2_000_000, underlying: "ETH", cluster: "crypto", title: "Will ETH close above X?", category: "crypto" }],
     ]),
+    registryJson: "{}",
     ...overrides,
   };
 }
@@ -63,7 +64,7 @@ test("happy path: returns signed quote, reserves exposure", async () => {
 test("validation: same-underlying legs rejected", () => {
   const V3 = "0x4444444444444444444444444444444444444444" as Address;
   const c = cfg();
-  c.markets.set(V3.toLowerCase(), { vault: V3, coinYes: "+30", coinNo: "+31", underlying: "BTC", cluster: "crypto" });
+  c.markets.set(V3.toLowerCase(), { vault: V3, coinYes: "+30", coinNo: "+31", underlying: "BTC", cluster: "crypto", title: "Will BTC close above Y?", category: "crypto" });
   const r = validateQuoteRequest(
     { taker: TAKER, legs: [{ vault: V1, isYes: true }, { vault: V3, isYes: true }], stake: "1000000" },
     c, 0,

@@ -1,4 +1,5 @@
 import { config as loadDotenv } from "dotenv";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isAddress, type Address } from "viem";
@@ -22,6 +23,10 @@ export interface MarketInfo {
   cluster: string;
   /** Optional market expiry (ms epoch); legs inside the lockout window are refused. */
   expiryMs?: number;
+  /** Human-readable market question, shown by the frontend. */
+  title: string;
+  /** Display grouping (e.g. "crypto", "sports"). */
+  category: string;
 }
 
 export interface WriterConfig {
@@ -49,6 +54,8 @@ export interface WriterConfig {
   deployBlock: bigint;
   /** Keyed by lowercase vault address. */
   markets: Map<string, MarketInfo>;
+  /** Raw registry file contents, served verbatim by GET /markets. */
+  registryJson: string;
 }
 
 function requireEnv(name: string): string {
@@ -72,12 +79,14 @@ function requireAddress(name: string): Address {
   return v;
 }
 
-/** MARKETS env: JSON array of { vault, coinYes, coinNo, underlying, cluster, expiryMs? }. */
+/** Registry: JSON array, or { markets: [...] }, of
+ * { vault, coinYes, coinNo, underlying, cluster, title, category, expiryMs? }. */
 export function parseMarkets(raw: string): Map<string, MarketInfo> {
   const parsed = JSON.parse(raw);
-  if (!Array.isArray(parsed)) throw new Error("MARKETS must be a JSON array");
+  const list = Array.isArray(parsed) ? parsed : parsed?.markets;
+  if (!Array.isArray(list)) throw new Error("MARKETS must be a JSON array or { markets: [...] }");
   const map = new Map<string, MarketInfo>();
-  for (const m of parsed) {
+  for (const m of list) {
     if (!isAddress(m.vault)) throw new Error(`invalid market vault: ${m.vault}`);
     if (typeof m.coinYes !== "string" || typeof m.coinNo !== "string") {
       throw new Error(`market ${m.vault} missing coinYes/coinNo`);
@@ -85,12 +94,17 @@ export function parseMarkets(raw: string): Map<string, MarketInfo> {
     if (typeof m.underlying !== "string" || m.underlying === "" || typeof m.cluster !== "string" || m.cluster === "") {
       throw new Error(`market ${m.vault} missing underlying/cluster`);
     }
+    if (typeof m.title !== "string" || m.title === "" || typeof m.category !== "string" || m.category === "") {
+      throw new Error(`market ${m.vault} missing title/category`);
+    }
     map.set(m.vault.toLowerCase(), {
       vault: m.vault as Address,
       coinYes: m.coinYes,
       coinNo: m.coinNo,
       underlying: m.underlying,
       cluster: m.cluster,
+      title: m.title,
+      category: m.category,
       expiryMs: typeof m.expiryMs === "number" ? m.expiryMs : undefined,
     });
   }
@@ -98,6 +112,7 @@ export function parseMarkets(raw: string): Map<string, MarketInfo> {
 }
 
 export function loadConfig(): WriterConfig {
+  const registryJson = readFileSync(path.resolve(here, "../..", requireEnv("MARKETS_FILE")), "utf8");
   return {
     rpcUrl: requireEnv("TESTNET_RPC"),
     parlayVault: requireAddress("PARLAY_VAULT_ADDRESS"),
@@ -117,6 +132,7 @@ export function loadConfig(): WriterConfig {
     lockoutMs: Number(process.env.LOCKOUT_MS ?? 600_000),
     pokerIntervalMs: Number(process.env.POKER_INTERVAL_MS ?? 15_000),
     deployBlock: BigInt(process.env.PARLAY_DEPLOY_BLOCK ?? 0),
-    markets: parseMarkets(requireEnv("MARKETS")),
+    markets: parseMarkets(registryJson),
+    registryJson,
   };
 }
