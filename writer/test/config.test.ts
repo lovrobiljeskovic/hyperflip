@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseMarkets } from "../src/config.js";
+import { parseMarkets, parseInviteCodes } from "../src/config.js";
 
 const VAULT = "0x1111111111111111111111111111111111111111";
 
@@ -56,4 +56,8 @@ test("parseMarkets rejects entry missing title/category", () => {
     }],
   });
   assert.throws(() => parseMarkets(raw), /missing title\/category/);
+});
+
+test("parseInviteCodes trims and drops empties", () => {
+  assert.deepEqual([...parseInviteCodes(" a, b,,c ")], ["a", "b", "c"]);
 });

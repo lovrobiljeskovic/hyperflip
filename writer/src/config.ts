@@ -56,6 +56,8 @@ export interface WriterConfig {
   markets: Map<string, MarketInfo>;
   /** Raw registry file contents, served verbatim by GET /markets. */
   registryJson: string;
+  /** Valid invite codes; the only beta gate (spec §3). */
+  inviteCodes: Set<string>;
 }
 
 function requireEnv(name: string): string {
@@ -111,6 +113,10 @@ export function parseMarkets(raw: string): Map<string, MarketInfo> {
   return map;
 }
 
+export function parseInviteCodes(raw: string): Set<string> {
+  return new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
+}
+
 export function loadConfig(): WriterConfig {
   const registryJson = readFileSync(path.resolve(here, "../..", requireEnv("MARKETS_FILE")), "utf8");
   return {
@@ -134,5 +140,6 @@ export function loadConfig(): WriterConfig {
     deployBlock: BigInt(process.env.PARLAY_DEPLOY_BLOCK ?? 0),
     markets: parseMarkets(registryJson),
     registryJson,
+    inviteCodes: parseInviteCodes(requireEnv("INVITE_CODES")),
   };
 }

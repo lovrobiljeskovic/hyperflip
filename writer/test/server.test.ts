@@ -20,6 +20,7 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     maxStake: 10_000_000n, perMarketCap: 1_000_000_000n, perClusterCap: 1_000_000_000n,
     clusterEdgeBps: 0n, quoteTtlMs: 30_000,
     lockoutMs: 600_000, pokerIntervalMs: 15_000, deployBlock: 0n,
+    inviteCodes: new Set(["beta-test"]),
     markets: new Map([
       [V1.toLowerCase(), { vault: V1, coinYes: "+10", coinNo: "+11", underlying: "BTC", cluster: "crypto", title: "Will BTC close above X?", category: "crypto" }],
       [V2.toLowerCase(), { vault: V2, coinYes: "+20", coinNo: "+21", expiryMs: 2_000_000, underlying: "ETH", cluster: "crypto", title: "Will ETH close above X?", category: "crypto" }],
@@ -46,7 +47,7 @@ function deps(overrides: Partial<QuoteDeps> = {}): QuoteDeps {
   };
 }
 
-const goodBody = { taker: TAKER, legs: [{ vault: V1, isYes: true }, { vault: V2, isYes: false }], stake: "1000000" };
+const goodBody = { taker: TAKER, legs: [{ vault: V1, isYes: true }, { vault: V2, isYes: false }], stake: "1000000", inviteCode: "beta-test" };
 
 test("happy path: returns signed quote, reserves exposure", async () => {
   const d = deps();
@@ -66,7 +67,7 @@ test("validation: same-underlying legs rejected", () => {
   const c = cfg();
   c.markets.set(V3.toLowerCase(), { vault: V3, coinYes: "+30", coinNo: "+31", underlying: "BTC", cluster: "crypto", title: "Will BTC close above Y?", category: "crypto" });
   const r = validateQuoteRequest(
-    { taker: TAKER, legs: [{ vault: V1, isYes: true }, { vault: V3, isYes: true }], stake: "1000000" },
+    { taker: TAKER, legs: [{ vault: V1, isYes: true }, { vault: V3, isYes: true }], stake: "1000000", inviteCode: "beta-test" },
     c, 0,
   );
   assert.deepEqual(r, { ok: false, status: 400, reason: "same-underlying" });
@@ -91,10 +92,24 @@ test("cluster cap: 409 when cluster exposure would exceed perClusterCap", async 
 
 test("validation: duplicate vault rejected", () => {
   const r = validateQuoteRequest(
-    { taker: TAKER, legs: [{ vault: V1, isYes: true }, { vault: V1, isYes: false }], stake: "1000000" },
+    { taker: TAKER, legs: [{ vault: V1, isYes: true }, { vault: V1, isYes: false }], stake: "1000000", inviteCode: "beta-test" },
     cfg(), 0,
   );
   assert.deepEqual(r, { ok: false, status: 400, reason: "duplicate-vault" });
+});
+
+test("quote without invite code is 403", async () => {
+  const d = deps();
+  const { inviteCode: _drop, ...body } = goodBody;
+  const r = await handleQuote(d, body);
+  assert.equal(r.status, 403);
+  assert.deepEqual(r.json, { error: "bad-invite" });
+  assert.equal(d.metrics.rejected["bad-invite"], 1);
+});
+
+test("quote with unknown invite code is 403", async () => {
+  const r = await handleQuote(deps(), { ...goodBody, inviteCode: "wrong" });
+  assert.equal(r.status, 403);
 });
 
 test("validation: unknown vault, leg count, stake cap, lockout", () => {

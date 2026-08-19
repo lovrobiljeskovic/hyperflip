@@ -38,8 +38,11 @@ type Validated =
   | { ok: false; status: number; reason: string };
 
 export function validateQuoteRequest(body: unknown, cfg: WriterConfig, now: number): Validated {
-  const b = body as { taker?: unknown; legs?: unknown; stake?: unknown };
-  if (!b || typeof b.taker !== "string" || !isAddress(b.taker)) {
+  const b = body as { taker?: unknown; legs?: unknown; stake?: unknown; inviteCode?: unknown };
+  if (!b || typeof b.inviteCode !== "string" || !cfg.inviteCodes.has(b.inviteCode)) {
+    return { ok: false, status: 403, reason: "bad-invite" };
+  }
+  if (typeof b.taker !== "string" || !isAddress(b.taker)) {
     return { ok: false, status: 400, reason: "bad-taker" };
   }
   if (!Array.isArray(b.legs)) return { ok: false, status: 400, reason: "bad-legs" };
