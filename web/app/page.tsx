@@ -1,4 +1,5 @@
 import { InviteForm } from "./invite-form";
+import { HeroStats, HeroTicket, LiveMarketBoard } from "./live-markets";
 
 const wordmark = (
   <span className="flex items-center gap-2 font-mono text-sm tracking-tight text-fg">
@@ -7,134 +8,7 @@ const wordmark = (
   </span>
 );
 
-function SideChip({ side }: { side: "YES" | "NO" }) {
-  const yes = side === "YES";
-  return (
-    <span
-      className={`inline-flex w-10 justify-center rounded-[4px] border px-1 py-0.5 font-mono text-[11px] uppercase ${
-        yes ? "border-yes/50 text-yes" : "border-no/50 text-no"
-      }`}
-    >
-      {side}
-    </span>
-  );
-}
-
-/* Live-style preview of the builder ticket. Sample pricing, consistent with
-   the worked example in the math section. */
-function TicketPreview() {
-  const legs = [
-    { side: "YES" as const, market: "BTC above 64,000 on Aug 21?", odds: "1.18x" },
-    { side: "NO" as const, market: "HYPE above 60 by Friday?", odds: "1.75x" },
-    { side: "YES" as const, market: "ETH below 1,850 on Aug 21?", odds: "1.61x" },
-  ];
-  return (
-    <div className="rounded-card border border-line bg-panel p-5 text-[13px] shadow-[0_24px_60px_rgba(4,10,12,0.5)]">
-      <div className="flex items-center justify-between">
-        <span className="font-medium">Parlay ticket</span>
-        <span className="rounded-[4px] border border-line px-1.5 py-0.5 font-mono text-[11px] text-dim">
-          testnet
-        </span>
-      </div>
-
-      <ul className="mt-4 flex flex-col gap-3">
-        {legs.map((leg) => (
-          <li key={leg.market} className="flex items-center gap-3">
-            <SideChip side={leg.side} />
-            <span className="flex-1 text-fg">{leg.market}</span>
-            <span className="font-mono text-dim">{leg.odds}</span>
-          </li>
-        ))}
-      </ul>
-
-      <div className="mt-5 border-t border-line pt-4 flex flex-col gap-2 font-mono">
-        <div className="flex justify-between">
-          <span className="text-dim">Stake</span>
-          <span>100.00 USDC</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-dim">Combined implied</span>
-          <span>30.0%</span>
-        </div>
-        <div className="flex justify-between text-base">
-          <span className="text-dim">Max payout</span>
-          <span className="text-accent">316.20 USDC</span>
-        </div>
-      </div>
-
-      <div className="mt-5">
-        <div className="h-[3px] overflow-hidden rounded-full bg-raised">
-          <div className="ttl-bar h-full bg-accent" />
-        </div>
-        <p className="mt-2 font-mono text-[11px] text-dim">
-          quote refreshes every 30s
-        </p>
-      </div>
-
-      <div
-        className="mt-4 rounded-card bg-accent py-2.5 text-center font-medium text-on-accent"
-        aria-hidden
-      >
-        Mint parlay
-      </div>
-      <p className="mt-3 text-center font-mono text-[11px] text-dim">
-        example pricing
-      </p>
-    </div>
-  );
-}
-
-function OutcomeRow({
-  side,
-  label,
-  odds,
-  pct,
-}: {
-  side: "YES" | "NO";
-  label: string;
-  odds: string;
-  pct: string;
-}) {
-  const yes = side === "YES";
-  return (
-    <li className="flex items-center gap-3 text-sm">
-      <SideChip side={side} />
-      <span className="flex-1">{label}</span>
-      <span className="font-mono text-dim">{odds}</span>
-      <span
-        className={`w-14 rounded-[4px] border py-1 text-center font-mono text-xs ${
-          yes ? "border-yes/50 text-yes" : "border-no/50 text-no"
-        }`}
-      >
-        {pct}
-      </span>
-    </li>
-  );
-}
-
-function MarketCard({
-  title,
-  volume,
-  children,
-  className = "",
-}: {
-  title: string;
-  volume: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <article
-      className={`flex flex-col rounded-card border border-line bg-panel p-5 ${className}`}
-    >
-      <h3 className="text-[15px] font-medium">{title}</h3>
-      <ul className="mt-4 flex flex-1 flex-col gap-3">{children}</ul>
-      <p className="mt-5 border-t border-line pt-3 font-mono text-xs text-dim">
-        {volume} 24h volume
-      </p>
-    </article>
-  );
-}
+const HEADLINE_WORDS = ["Three", "legs.", "One", "ticket.", "One", "payout."];
 
 const steps = [
   {
@@ -224,14 +98,24 @@ export default function Home() {
         {/* 1 · hero: split text + live ticket */}
         <section className="grid items-center gap-14 pb-24 pt-16 md:pt-20 lg:grid-cols-[1.1fr_0.9fr]">
           <div>
-            <h1 className="rise text-4xl font-semibold tracking-tighter md:text-6xl">
-              Three legs. One ticket. One payout.
+            <h1 className="text-4xl font-semibold tracking-tighter md:text-6xl">
+              {HEADLINE_WORDS.map((word, i) => (
+                <span key={word + i}>
+                  <span
+                    className="word-in"
+                    style={{ animationDelay: `${i * 80}ms` }}
+                  >
+                    {word}
+                  </span>
+                  {i < HEADLINE_WORDS.length - 1 ? " " : null}
+                </span>
+              ))}
             </h1>
-            <p className="rise mt-6 max-w-[46ch] text-base leading-relaxed text-dim [animation-delay:120ms]">
+            <p className="rise mt-6 max-w-[46ch] text-base leading-relaxed text-dim [animation-delay:360ms]">
               Combine YES and NO legs across Hyperliquid outcome markets into
               one parlay, priced live off the Core book.
             </p>
-            <div className="rise mt-8 flex flex-wrap gap-3 [animation-delay:240ms]">
+            <div className="rise mt-8 flex flex-wrap gap-3 [animation-delay:480ms]">
               <a
                 href="#access"
                 className="rounded-card bg-accent px-6 py-3 text-sm font-medium text-on-accent transition-transform active:scale-[0.98] hover:opacity-90"
@@ -245,9 +129,12 @@ export default function Home() {
                 How it works
               </a>
             </div>
+            <div className="rise mt-10 border-t border-line pt-4 [animation-delay:600ms]">
+              <HeroStats />
+            </div>
           </div>
-          <div className="rise [animation-delay:180ms]">
-            <TicketPreview />
+          <div className="rise [animation-delay:240ms]">
+            <HeroTicket />
           </div>
         </section>
 
@@ -257,27 +144,10 @@ export default function Home() {
             Live on testnet
           </h2>
           <p className="mt-3 max-w-[60ch] text-dim">
-            Sample markets from the beta registry. Every card is a HyperCore
-            outcome market you can put on a ticket.
+            The beta registry, priced off the live HyperCore book. Every card
+            is an outcome market you can put on a ticket.
           </p>
-          <div className="mt-10 grid gap-4 lg:grid-cols-[1fr_1fr_1.4fr]">
-            <MarketCard title="BTC above 64,000 on Aug 21?" volume="$126,262">
-              <OutcomeRow side="YES" label="Yes" odds="1.18x" pct="85%" />
-              <OutcomeRow side="NO" label="No" odds="5.88x" pct="17%" />
-            </MarketCard>
-            <MarketCard title="HYPE above 60 by Friday?" volume="$3,351">
-              <OutcomeRow side="YES" label="Yes" odds="2.33x" pct="43%" />
-              <OutcomeRow side="NO" label="No" odds="1.75x" pct="57%" />
-            </MarketCard>
-            <MarketCard
-              title="ETH below 1,850 on Aug 21?"
-              volume="$8,940"
-              className="bg-gradient-to-br from-panel to-raised"
-            >
-              <OutcomeRow side="YES" label="Yes" odds="1.61x" pct="62%" />
-              <OutcomeRow side="NO" label="No" odds="2.63x" pct="38%" />
-            </MarketCard>
-          </div>
+          <LiveMarketBoard />
         </section>
 
         {/* 3 · how it works: numbered vertical steps */}

@@ -55,12 +55,65 @@ html {
   animation: rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* hero headline: word-by-word blur-to-sharp reveal */
+@keyframes word-in {
+  from {
+    opacity: 0;
+    filter: blur(8px);
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+
+.word-in {
+  display: inline-block;
+  animation: word-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* live board: mid-change flash, 400ms decay */
+@keyframes flash-up {
+  from {
+    background: color-mix(in srgb, var(--color-yes) 18%, transparent);
+  }
+  to {
+    background: transparent;
+  }
+}
+
+@keyframes flash-down {
+  from {
+    background: color-mix(in srgb, var(--color-no) 18%, transparent);
+  }
+  to {
+    background: transparent;
+  }
+}
+
+.flash-up {
+  animation: flash-up 0.4s ease-out;
+}
+
+.flash-down {
+  animation: flash-down 0.4s ease-out;
+}
+
 .ttl-bar {
   animation: ttl 30s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .rise {
+    animation: none;
+  }
+  .word-in {
+    animation: none;
+  }
+  .flash-up,
+  .flash-down {
     animation: none;
   }
   .ttl-bar {
