@@ -18,7 +18,9 @@ export function useMids(pollMs = 5000): Record<string, string> {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ type: "allMids" }),
         });
-        if (alive && r.ok) setMids(await r.json());
+        if (!r.ok) return;
+        const data = await r.json();
+        if (alive) setMids(data);
       } catch {
         /* keep last mids on transient failure */
       }
