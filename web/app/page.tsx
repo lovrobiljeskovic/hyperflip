@@ -204,6 +204,12 @@ export default function Home() {
             <a href="#faq" className="hidden text-dim transition-colors hover:text-fg sm:block">
               FAQ
             </a>
+            <a href="/build" className="hidden text-dim transition-colors hover:text-fg sm:block">
+              Build
+            </a>
+            <a href="/positions" className="hidden text-dim transition-colors hover:text-fg sm:block">
+              Positions
+            </a>
             <a
               href="#access"
               className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-on-accent transition-transform active:scale-[0.98] hover:opacity-90"
