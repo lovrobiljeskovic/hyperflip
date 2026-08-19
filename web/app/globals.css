@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #0b0d12;
+  --color-panel: #11141b;
+  --color-raised: #1a1f29;
+  --color-line: #262c38;
+  --color-fg: #e9edf3;
+  --color-dim: #8b94a6;
+  --color-accent: #f0b43c;
+  --color-on-accent: #161104;
+  --color-yes: #34d26b;
+  --color-no: #f0546b;
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --radius-card: 8px;
+}
+
+html {
+  color-scheme: dark;
+  background: var(--color-ink);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+/* load-in cascade for the hero */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* quote TTL drain, mirrors the 30s refresh cycle in the builder */
+@keyframes ttl {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+
+.rise {
+  animation: rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.ttl-bar {
+  animation: ttl 30s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise {
+    animation: none;
+  }
+  .ttl-bar {
+    animation: none;
+    width: 63%;
+  }
+}
+
+/* native accordion marker */
+details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+details > summary::-webkit-details-marker {
+  display: none;
+}
+details > summary::after {
+  content: "+";
+  font-family: var(--font-mono);
+  color: var(--color-dim);
+}
+details[open] > summary::after {
+  content: "-";
+}
