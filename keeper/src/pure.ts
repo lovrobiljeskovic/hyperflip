@@ -1,4 +1,4 @@
-import { encodeAbiParameters, keccak256, type Address, type Hex } from "viem";
+import { encodeAbiParameters, isAddress, keccak256, type Address, type Hex } from "viem";
 
 /** CoreConstants.OUTCOME_WEI_PER_SHARE — outcome wei is 5-decimal. */
 export const OUTCOME_WEI_PER_SHARE = 100_000n;
@@ -119,4 +119,67 @@ export function newestSampleBefore(
 /** CoreConstants.outcomeStatus settledValue (scale 1e8) -> OutcomeVault.settleFractionWad (1e18). */
 export function fractionWadFromSettledValue(settledValue: bigint): bigint {
   return (settledValue * WAD) / SETTLED_VALUE_ONE;
+}
+
+/** Serialization for the settlement-fraction cache (see keeper.ts settlementLoop).
+ *
+ * Core prunes a settled outcome within ~10 minutes, and the pruned relay path can only replay a
+ * fraction this keeper observed while status was still 2. Holding that only in memory means any
+ * restart inside the window — a crash, a redeploy, a supervisor bounce — destroys the one number
+ * that can still settle the vault, and recovery drops to manual. That is exactly what stranded
+ * the 8/19 vaults on Aug 20. JSON keeps bigints as strings; vault keys are lowercased so a
+ * checksum-case config change cannot orphan an entry. */
+export function encodeFractionCache(cache: ReadonlyMap<string, bigint>): string {
+  return JSON.stringify(Object.fromEntries([...cache].map(([v, f]) => [v.toLowerCase(), f.toString()])));
+}
+
+/** Inverse of encodeFractionCache. A missing or corrupt file yields an empty cache — the same
+ * state as a keeper that never observed the settlement, which routes to the "manual recovery"
+ * alert rather than to a fabricated fraction. Never throw here: a bad cache file must not stop
+ * the keeper from settling every other vault. */
+export function decodeFractionCache(json: string): Map<string, bigint> {
+  const out = new Map<string, bigint>();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return out;
+  }
+  if (typeof parsed !== "object" || parsed === null) return out;
+  for (const [vault, fraction] of Object.entries(parsed as Record<string, unknown>)) {
+    try {
+      if (typeof fraction !== "string") continue;
+      const f = BigInt(fraction);
+      if (f < 0n || f > WAD) continue; // settle() rejects >1e18 anyway; drop rather than relay junk
+      out.set(vault.toLowerCase(), f);
+    } catch {
+      continue; // one unparseable entry must not discard the rest
+    }
+  }
+  return out;
+}
+
+/** Markets out of registry/markets.json (the file the writer serves at GET /markets).
+ *
+ * The keeper and the writer used to keep separate market lists — VAULT_ADDRESSES env here,
+ * MARKETS_FILE there — agreeing only by hand. Adding a vault to the registry and forgetting the
+ * env made the writer quote a market the keeper would never settle, which surfaces only at
+ * expiry, as a stranded vault. One source of truth removes the failure mode.
+ *
+ * `expiryMs` is optional, matching the writer's own parseMarkets: a market without it simply
+ * gets no staleness check. Everything else throws, because a keeper booted against a bad
+ * registry must fail loudly rather than silently watch a shorter list than the writer quotes. */
+export function parseRegistryMarkets(json: string): { vault: Address; expiryMs?: number }[] {
+  const parsed = JSON.parse(json) as { markets?: { vault?: string; expiryMs?: unknown }[] };
+  if (!Array.isArray(parsed.markets)) throw new Error("registry has no markets array");
+  if (parsed.markets.length === 0) throw new Error("registry lists no markets");
+  return parsed.markets.map((m) => {
+    if (typeof m?.vault !== "string" || !isAddress(m.vault)) {
+      throw new Error(`invalid vault in registry: ${String(m?.vault)}`);
+    }
+    return {
+      vault: m.vault as Address,
+      expiryMs: typeof m.expiryMs === "number" ? m.expiryMs : undefined,
+    };
+  });
 }

@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { createPublicClient, createWalletClient, erc20Abi, http, type Hex } from "viem";
+import { createPublicClient, createWalletClient, erc20Abi, fallback, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { parlayVaultAbi } from "./abi.js";
 import { loadConfig } from "./config.js";
@@ -12,7 +12,13 @@ import { readLegStates } from "./settlement.js";
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
-  const publicClient = createPublicClient({ transport: http(cfg.rpcUrl) });
+  // Testnet RPCs rate-limit bursts (-32005, retryable in viem) and the poker's cold-start
+  // rescan is one — deployBlock..head in 1000-block chunks, two getLogs each. Retry hard with a
+  // long backoff instead of dying on the limiter, then fall through to the next endpoint.
+  // Comma-separated URL list, same convention as the keeper.
+  const rpcUrls = cfg.rpcUrl.split(",").map((u) => u.trim()).filter(Boolean);
+  const transport = fallback(rpcUrls.map((u) => http(u, { retryCount: 6, retryDelay: 2_000 })));
+  const publicClient = createPublicClient({ transport });
   const chainId = await publicClient.getChainId();
   const usdcAddress = (await publicClient.readContract({
     address: cfg.parlayVault,
@@ -43,7 +49,7 @@ async function main(): Promise<void> {
   cfg.minPremiumBps = chainMinPremiumBps;
 
   const pokerAccount = privateKeyToAccount(cfg.pokerKey);
-  const walletClient = createWalletClient({ account: pokerAccount, transport: http(cfg.rpcUrl) });
+  const walletClient = createWalletClient({ account: pokerAccount, transport });
 
   const exposure = new ExposureBook((v) => cfg.markets.get(v)?.cluster);
   const metrics = newMetrics();
@@ -95,16 +101,28 @@ async function main(): Promise<void> {
     log: (msg) => console.log(JSON.stringify({ at: new Date().toISOString(), ...msg })),
   });
 
-  const tick = async () => {
-    try {
-      await poker.tick();
-    } catch (err) {
-      console.error(new Date().toISOString(), "poker tick failed", err);
-    } finally {
-      setTimeout(tick, cfg.pokerIntervalMs);
-    }
-  };
-  void tick();
+  // POKER_INTERVAL_MS=0 turns the poker off. Quoting and minting are unaffected —
+  // the poker only recycles house escrow off DEAD tickets and keeps the exposure
+  // book's per-market breakdown warm. Solvency does not depend on it: the hard cap
+  // is the on-chain writer allowance, which the book anchors to either way. Takers
+  // are unaffected too, since claim() auto-resolves and resolveParlay is
+  // permissionless from the UI. Off means PER_MARKET_CAP / PER_CLUSTER_CAP see only
+  // live reservations, so they bind looser than configured — acceptable while the
+  // allowance is small, not something to leave off once the bankroll grows.
+  if (cfg.pokerIntervalMs > 0) {
+    const tick = async () => {
+      try {
+        await poker.tick();
+      } catch (err) {
+        console.error(new Date().toISOString(), "poker tick failed", err);
+      } finally {
+        setTimeout(tick, cfg.pokerIntervalMs);
+      }
+    };
+    void tick();
+  } else {
+    console.log(JSON.stringify({ at: new Date().toISOString(), event: "poker-disabled" }));
+  }
 
   startServer(deps, cfg.port, () => ({
     ok: true,

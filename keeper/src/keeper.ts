@@ -2,6 +2,7 @@ import {
   createPublicClient,
   createWalletClient,
   defineChain,
+  fallback,
   http,
   zeroAddress,
   type Address,
@@ -11,8 +12,11 @@ import { keeperVerifierAbi, outcomeVaultAbi } from "./abi.js";
 import type { KeeperConfig } from "./config.js";
 import { OUTCOME_ACTIVE, OUTCOME_PRUNED, OUTCOME_SETTLED, readOutcomeStatus } from "./core814.js";
 import { fetchCoinBalanceWei } from "./infoApi.js";
+import { readFileSync, writeFileSync } from "node:fs";
 import {
   coinIdForOutcome,
+  decodeFractionCache,
+  encodeFractionCache,
   evmToOutcomeWei,
   fractionWadFromSettledValue,
   newestSampleBefore,
@@ -35,6 +39,12 @@ const HISTORY_LIMIT = 20;
  * pre-op". Subtracting this margin from the cutoff before comparing assumes the keeper clock is
  * never behind by more than this much. */
 const CLOCK_SKEW_MARGIN_MS = 2_000;
+/** How far past a market's registry expiry a vault may sit unsettled before the keeper alerts.
+ * Core needs some time to move a market from active to settled, so this is deliberately loose —
+ * it is a "nobody is settling this" tripwire, not a deadline. It exists because a keeper that is
+ * dead, misconfigured, or watching the wrong vault list looks exactly like a healthy one from the
+ * outside; that silence is what let the 8/19 vaults expire, prune, and strand unnoticed. */
+const SETTLEMENT_STALE_AFTER_MS = 15 * 60_000;
 /** A qualifying sample must also be no older than this relative to the (skew-adjusted) cutoff, so
  * a stalled sampler can't serve an arbitrarily old balance as a confident pre-op baseline; falls
  * through to the unconfident/fallback path instead. */
@@ -77,20 +87,49 @@ function sleep(ms: number): Promise<void> {
 
 export async function runKeeper(config: KeeperConfig): Promise<void> {
   const account = privateKeyToAccount(config.keeperPrivateKey);
+  // TESTNET_RPC takes a comma-separated list; viem's fallback tries them in order. The primary
+  // endpoint is a free public service with no SLA, and an unusable RPC is exactly what stranded
+  // the 8/19 vaults, so a second one costs nothing to keep behind it. Note the whole list must
+  // serve the 0x814 precompile — see keeper/rpc-check.mjs.
+  const rpcUrls = config.rpcUrl.split(",").map((u) => u.trim()).filter(Boolean);
   const chain = defineChain({
     id: 998,
     name: "HyperEVM Testnet",
     nativeCurrency: { name: "HYPE", symbol: "HYPE", decimals: 18 },
-    rpcUrls: { default: { http: [config.rpcUrl] } },
+    rpcUrls: { default: { http: rpcUrls } },
   });
-  const transport = http(config.rpcUrl);
+  // Testnet RPCs rate-limit bursts (-32005 limit exceeded, which viem treats as retryable);
+  // startup alone reads 4 calls per vault. Retry hard with a long backoff instead of crashing
+  // on a transient limiter, then fall through to the next endpoint.
+  const transport = fallback(rpcUrls.map((u) => http(u, { retryCount: 6, retryDelay: 2_000 })));
   const publicClient = createPublicClient({ chain, transport });
   const walletClient = createWalletClient({ account, chain, transport });
 
   const vaultInfo = new Map<Address, VaultInfo>();
   const pendingOps = new Map<Address, PendingOp>();
-  const lastKnownFraction = new Map<Address, bigint>(); // settlement fraction observed pre-prune
+  // Settlement fractions observed pre-prune. Persisted, because Core prunes within ~10 minutes
+  // and the pruned relay path can only replay a fraction this keeper saw at status 2 — a restart
+  // inside that window used to destroy the only number that could still settle the vault. Keys
+  // are lowercased vault addresses (see encodeFractionCache).
+  let lastKnownFraction: Map<string, bigint>;
+  try {
+    lastKnownFraction = decodeFractionCache(readFileSync(config.settlementCachePath, "utf8"));
+    if (lastKnownFraction.size > 0) log("loaded settlement cache", lastKnownFraction.size, "entries");
+  } catch {
+    lastKnownFraction = new Map(); // absent on first run; a cold cache is not an error
+  }
+
+  function rememberFraction(vault: Address, fractionWad: bigint): void {
+    lastKnownFraction.set(vault.toLowerCase(), fractionWad);
+    try {
+      writeFileSync(config.settlementCachePath, encodeFractionCache(lastKnownFraction));
+    } catch (err) {
+      // In-memory copy still works for this process; only a restart would lose it.
+      alert("could not persist settlement cache", config.settlementCachePath, (err as Error).message);
+    }
+  }
   const balanceHistory = new Map<Address, BalanceSample[]>(); // ambient yes-coin samples, per vault
+  const staleAlerted = new Set<Address>(); // suppresses repeat past-expiry alerts, per vault
 
   async function readVault<T>(vault: Address, functionName: string, args: readonly unknown[] = []): Promise<T> {
     return (await publicClient.readContract({ address: vault, abi: outcomeVaultAbi, functionName, args })) as T;
@@ -351,7 +390,23 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
       const info = vaultInfo.get(vault)!;
       try {
         const settled = await readVault<boolean>(vault, "settled");
-        if (settled) continue;
+        if (settled) {
+          staleAlerted.delete(vault); // settled late (manual relay, or a race won elsewhere) — re-arm
+          continue;
+        }
+        // Staleness tripwire. Fires regardless of WHY nothing settled — dead keeper, wrong vault
+        // list, RPC down, Core never settling — which is the point: the failure that stranded the
+        // 8/19 vaults was silence, and every cause of silence looks identical from outside.
+        const expiryMs = config.marketExpiries.get(vault.toLowerCase());
+        if (expiryMs !== undefined && Date.now() > expiryMs + SETTLEMENT_STALE_AFTER_MS && !staleAlerted.has(vault)) {
+          alert(
+            "vault past expiry and still unsettled — nothing is relaying settlement for it",
+            vault,
+            "expired",
+            new Date(expiryMs).toISOString(),
+          );
+          staleAlerted.add(vault); // once per vault per process; the loop would otherwise alert every tick
+        }
         const { status, settledValue, question } = await readOutcomeStatus(publicClient, info.outcome);
         if (status === OUTCOME_ACTIVE) continue;
         if (status === OUTCOME_SETTLED) {
@@ -360,11 +415,13 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
             continue;
           }
           const fractionWad = fractionWadFromSettledValue(settledValue);
-          lastKnownFraction.set(vault, fractionWad);
+          // Persist BEFORE sending: if settle() fails or this process dies mid-flight, the
+          // fraction has to outlive the attempt or the prune strands the vault for good.
+          rememberFraction(vault, fractionWad);
           log("settling (settled, pre-prune)", vault, fractionWad.toString());
           await settle(vault, fractionWad);
         } else if (status === OUTCOME_PRUNED) {
-          const cached = lastKnownFraction.get(vault);
+          const cached = lastKnownFraction.get(vault.toLowerCase());
           if (cached === undefined) {
             alert(
               "outcome pruned before this keeper ever observed it settled — no trustworthy fraction to relay, manual recovery needed",
