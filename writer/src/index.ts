@@ -124,11 +124,23 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({ at: new Date().toISOString(), event: "poker-disabled" }));
   }
 
-  startServer(deps, cfg.port, () => ({
-    ok: true,
-    openParlays: poker.openCount(),
-    lastBookFetchAgeMs: lastBookFetchMs ? Date.now() - lastBookFetchMs : null,
-  }));
+  startServer(deps, cfg.port, () => {
+    // Per-market exposure vs cap: without this a "market-cap" rejection is
+    // unfalsifiable from outside — you cannot tell a real cap from a leaked
+    // reservation. ponytail: unauthenticated, so it does show house posture to
+    // anyone who asks; gate it behind an ops token once the bankroll is real.
+    const now = Date.now();
+    const perMarket: Record<string, string> = {};
+    for (const v of cfg.markets.keys()) perMarket[v] = exposure.perMarket(v, now).toString();
+    return {
+      ok: true,
+      openParlays: poker.openCount(),
+      lastBookFetchAgeMs: lastBookFetchMs ? Date.now() - lastBookFetchMs : null,
+      perMarketCap: cfg.perMarketCap.toString(),
+      reservedGlobal: exposure.reservedGlobal(now).toString(),
+      perMarket,
+    };
+  });
   console.log(JSON.stringify({ at: new Date().toISOString(), event: "writer-started", port: cfg.port, chainId }));
 }
 

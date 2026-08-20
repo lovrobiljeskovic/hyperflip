@@ -7,5 +7,8 @@ export const hyperEvmTestnet = defineChain({
   rpcUrls: {
     default: { http: [process.env.NEXT_PUBLIC_RPC_URL ?? "https://hyperliquid-testnet.drpc.org"] },
   },
+  blockExplorers: {
+    default: { name: "Purrsec", url: "https://testnet.purrsec.com" },
+  },
   testnet: true,
 });

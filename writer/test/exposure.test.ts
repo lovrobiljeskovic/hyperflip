@@ -10,7 +10,7 @@ test("check fails at-capacity when risk exceeds allowance minus reservations", (
   const b = new ExposureBook();
   b.reserve("q1", 60n, [V1], 1000);
   const r = b.check(50n, [V2], 100n, 1000n, 0);
-  assert.deepEqual(r, { ok: false, reason: "at-capacity" });
+  assert.deepEqual(r, { ok: false, reason: "at-capacity", headroom: 40n }); // 100 allowance - 60 reserved
 });
 
 test("expired reservations free capacity", () => {
@@ -27,7 +27,7 @@ test("per-market cap counts reserved + open, case-insensitive", () => {
   b.onMinted("q0", "7", 30n, [V3]);
   // market total 60; cap 80 -> risk 25 breaches V3 but not global (allowance 1000)
   const r = b.check(25n, [V3], 1000n, 80n, 0);
-  assert.deepEqual(r, { ok: false, reason: "market-cap" });
+  assert.deepEqual(r, { ok: false, reason: "market-cap", headroom: 20n }); // cap 80 - market total 60
   assert.equal(b.check(25n, [V2], 1000n, 80n, 0).ok, true);
 });
 
@@ -59,7 +59,7 @@ test("cluster cap counts reserved + open across same-cluster markets", () => {
   b.onMinted("q0", "7", 30n, [V2]);
   // cluster total 60; cap 80 -> risk 25 breaches crypto cluster
   const r = b.check(25n, [V1], 1000n, 1000n, 0, 80n);
-  assert.deepEqual(r, { ok: false, reason: "cluster-cap" });
+  assert.deepEqual(r, { ok: false, reason: "cluster-cap", headroom: 20n }); // cap 80 - cluster total 60
   // V3 has no cluster -> unaffected
   assert.equal(b.check(25n, [V3], 1000n, 1000n, 0, 80n).ok, true);
 });
@@ -75,4 +75,12 @@ test("release undoes a reservation that never minted (e.g. signing failed)", () 
   b.reserve("q1", 40n, [V1], 10_000);
   b.release("q1");
   assert.equal(b.reservedGlobal(0), 0n);
+});
+
+test("headroom never goes negative when a cap is already breached", () => {
+  const b = new ExposureBook();
+  b.onMinted("q0", "7", 90n, [V1]); // market already 90 against a cap of 80
+  const r = b.check(25n, [V1], 1000n, 80n, 0);
+  assert.equal(r.ok, false);
+  assert.ok(!r.ok && r.headroom === 0n, "headroom clamps at 0, so a suggested stake is never negative");
 });

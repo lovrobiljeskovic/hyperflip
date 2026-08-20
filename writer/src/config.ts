@@ -51,6 +51,10 @@ export interface WriterConfig {
   /** Extra edge (bps) charged per same-cluster leg pair — blunt correlation haircut.
    * ponytail: flat per-pair bps; upgrade to per-pair rho estimates if volume justifies. */
   clusterEdgeBps: bigint;
+  /** Extra edge (bps) per leg past the first. Base edge is flat in leg count,
+   * so without this a long ticket earns the same margin as a short one while
+   * carrying far more risk. Set to 0 to restore flat pricing. */
+  legEdgeBps: bigint;
   quoteTtlMs: number;
   lockoutMs: number;
   pokerIntervalMs: number;
@@ -147,6 +151,7 @@ export function loadConfig(): WriterConfig {
     perMarketCap: BigInt(requireEnv("PER_MARKET_CAP")),
     perClusterCap: BigInt(requireEnv("PER_CLUSTER_CAP")),
     clusterEdgeBps: BigInt(process.env.CLUSTER_EDGE_BPS ?? 300),
+    legEdgeBps: BigInt(process.env.LEG_EDGE_BPS ?? 300),
     quoteTtlMs: Number(process.env.QUOTE_TTL_MS ?? 30_000),
     lockoutMs: Number(process.env.LOCKOUT_MS ?? 600_000),
     pokerIntervalMs: Number(process.env.POKER_INTERVAL_MS ?? 15_000),

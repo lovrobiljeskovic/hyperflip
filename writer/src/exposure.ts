@@ -61,10 +61,17 @@ export class ExposureBook {
     perMarketCap: bigint,
     now: number,
     perClusterCap?: bigint,
-  ): { ok: true } | { ok: false; reason: "at-capacity" | "market-cap" | "cluster-cap" } {
-    if (risk > allowance - this.reservedGlobal(now)) return { ok: false, reason: "at-capacity" };
+  ): { ok: true } | { ok: false; reason: "at-capacity" | "market-cap" | "cluster-cap"; headroom: bigint } {
+    // `headroom` is what the binding cap has left. Risk scales linearly with
+    // stake, so the caller can turn it into "this ticket fits at stake X"
+    // instead of a dead end the taker cannot act on.
+    const globalRoom = allowance - this.reservedGlobal(now);
+    if (risk > globalRoom) {
+      return { ok: false, reason: "at-capacity", headroom: globalRoom > 0n ? globalRoom : 0n };
+    }
     for (const v of vaults) {
-      if (this.perMarket(v, now) + risk > perMarketCap) return { ok: false, reason: "market-cap" };
+      const room = perMarketCap - this.perMarket(v, now);
+      if (risk > room) return { ok: false, reason: "market-cap", headroom: room > 0n ? room : 0n };
     }
     if (perClusterCap !== undefined) {
       const clusters = new Set<string>();
@@ -73,7 +80,8 @@ export class ExposureBook {
         if (c !== undefined) clusters.add(c);
       }
       for (const c of clusters) {
-        if (this.perCluster(c, now) + risk > perClusterCap) return { ok: false, reason: "cluster-cap" };
+        const room = perClusterCap - this.perCluster(c, now);
+        if (risk > room) return { ok: false, reason: "cluster-cap", headroom: room > 0n ? room : 0n };
       }
     }
     return { ok: true };
