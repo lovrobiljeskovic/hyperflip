@@ -128,7 +128,12 @@ export function parseInviteCodes(raw: string): Set<string> {
 export function loadConfig(): WriterConfig {
   const registryJson = readFileSync(path.resolve(here, "../..", requireEnv("MARKETS_FILE")), "utf8");
   return {
-    rpcUrl: requireEnv("TESTNET_RPC"),
+    // The writer never touches the 0x814 precompile (keeper-only), which is the sole
+    // reason TESTNET_RPC is pinned to the official endpoint — and that endpoint
+    // rate-limits getLogs hard enough that the poker's catch-up scan cannot finish.
+    // WRITER_RPC lets the writer run on a higher-throughput endpoint while the keeper
+    // keeps the official one for the precompile.
+    rpcUrl: process.env.WRITER_RPC ?? requireEnv("TESTNET_RPC"),
     parlayVault: requireAddress("PARLAY_VAULT_ADDRESS"),
     writerAddress: requireAddress("WRITER_ADDRESS"),
     quoteSignerKey: requireKey("QUOTE_SIGNER_PRIVATE_KEY"),

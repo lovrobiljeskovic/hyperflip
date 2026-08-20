@@ -40,6 +40,11 @@ const RESOLVED = parseAbiItem("event ParlayResolved(uint256 indexed id, uint8 st
  * Idempotent per tick; failures retry next tick. */
 export class Poker {
   private open = new Map<bigint, QuoteLeg[]>();
+  // ponytail: nextBlock is in-memory, so every restart rescans from deployBlock —
+  // it converges now that chunk progress survives a failed chunk, but the cost
+  // grows with chain age. Upgrade path when it stops being cheap: seed `open` from
+  // nextId + parlay(id) (the same stateless-rebuild trick the keeper uses in
+  // seedPendingOps) and start the log scan at head instead.
   private nextBlock: bigint;
 
   constructor(private deps: PokerDeps) {
@@ -59,22 +64,41 @@ export class Poker {
     const resolvedIds: bigint[] = [];
     // Testnet RPC caps getLogs at 1000 blocks per query; an unchunked scan bricks
     // every tick once the gap since fromBlock exceeds that (found in the 8/18 e2e).
+    //
+    // Chunk progress must also be durable. This scan used to be all-or-nothing, so
+    // one rate-limited chunk discarded every chunk already scanned and left
+    // nextBlock untouched — the next tick reran the same doomed scan, forever. A
+    // cold start 136k blocks behind never completed a single tick, leaving the
+    // poker blind to every open parlay while it hammered the RPC (found 8/20).
+    // Keep whatever scanned cleanly and resume from there next tick.
+    let scanned = fromBlock - 1n;
     for (const r of blockRanges(fromBlock, toBlock, 1000n)) {
-      const [mintLogs, resolveLogs] = await Promise.all([
-        publicClient.getLogs({ address: parlayVault, event: MINTED, fromBlock: r.from, toBlock: r.to }),
-        publicClient.getLogs({ address: parlayVault, event: RESOLVED, fromBlock: r.from, toBlock: r.to }),
-      ]);
-      minted.push(
-        ...mintLogs.map((l) => ({
-          id: l.args.id!,
-          quoteId: l.args.quoteId!,
-          premium: l.args.premium!,
-          maxPayout: l.args.maxPayout!,
-        })),
-      );
-      resolvedIds.push(...resolveLogs.map((l) => l.args.id!));
+      try {
+        const [mintLogs, resolveLogs] = await Promise.all([
+          publicClient.getLogs({ address: parlayVault, event: MINTED, fromBlock: r.from, toBlock: r.to }),
+          publicClient.getLogs({ address: parlayVault, event: RESOLVED, fromBlock: r.from, toBlock: r.to }),
+        ]);
+        minted.push(
+          ...mintLogs.map((l) => ({
+            id: l.args.id!,
+            quoteId: l.args.quoteId!,
+            premium: l.args.premium!,
+            maxPayout: l.args.maxPayout!,
+          })),
+        );
+        resolvedIds.push(...resolveLogs.map((l) => l.args.id!));
+        scanned = r.to;
+      } catch (err) {
+        this.deps.log({
+          event: "scan-truncated",
+          scannedTo: scanned.toString(),
+          target: toBlock.toString(),
+          err: String(err),
+        });
+        break;
+      }
     }
-    return { minted, resolvedIds, toBlock };
+    return { minted, resolvedIds, toBlock: scanned };
   }
 
   private async fetchLegs(id: bigint): Promise<QuoteLeg[]> {

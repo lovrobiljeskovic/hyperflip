@@ -19,3 +19,6 @@ docs/
 .beads-credential-key
 .beads/proxieddb/
 .worktrees/
+
+# Keeper settlement-fraction cache (runtime state, per deployment)
+keeper/settlement-cache.json

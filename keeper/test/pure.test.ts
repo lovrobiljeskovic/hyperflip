@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   coinIdForOutcome,
+  decodeFractionCache,
   deltaMatches,
+  encodeFractionCache,
   evmToOutcomeWei,
   expectedDelta,
   fractionWadFromSettledValue,
@@ -10,7 +12,9 @@ import {
   opKey,
   parseCoinId,
   parseDecimalToUnits,
+  parseRegistryMarkets,
   resolveBalanceCheck,
+  WAD,
 } from "../src/pure.js";
 
 test("opKey matches Solidity keccak256(abi.encode(vault, opId))", () => {
@@ -147,4 +151,61 @@ test("newestSampleBefore CRITICAL: MAX_SAMPLE_AGE excludes a stale sample even t
   const samples = [{ readAt: 100, balance: 1n }];
   assert.equal(newestSampleBefore(samples, 100_000, 0, 60_000), undefined);
   assert.deepEqual(newestSampleBefore(samples, 100_000, 0, 200_000), { readAt: 100, balance: 1n });
+});
+
+test("fraction cache CRITICAL: survives a round trip so a restart mid-prune-window can still relay", () => {
+  // The whole point: a keeper that observed status 2, then restarted before settle() landed, must
+  // come back holding the fraction. Losing it means the pruned vault can never be settled.
+  const cache = new Map([
+    ["0xAAAA000000000000000000000000000000000001", WAD],
+    ["0xbbbb000000000000000000000000000000000002", WAD / 2n],
+    ["0xcccc000000000000000000000000000000000003", 0n],
+  ]);
+  const back = decodeFractionCache(encodeFractionCache(cache));
+  assert.equal(back.get("0xaaaa000000000000000000000000000000000001"), WAD); // lowercased, so checksum-case config churn cannot orphan it
+  assert.equal(back.get("0xbbbb000000000000000000000000000000000002"), WAD / 2n);
+  assert.equal(back.get("0xcccc000000000000000000000000000000000003"), 0n); // a real "YES lost" fraction, not a missing entry
+});
+
+test("fraction cache: corrupt input degrades to empty rather than throwing or inventing a fraction", () => {
+  // An unreadable cache must land on the manual-recovery alert, never on a fabricated relay.
+  assert.equal(decodeFractionCache("").size, 0);
+  assert.equal(decodeFractionCache("{ not json").size, 0);
+  assert.equal(decodeFractionCache("null").size, 0);
+  assert.equal(decodeFractionCache("[1,2,3]").size, 0);
+  assert.equal(decodeFractionCache('{"0xaaa":"not-a-number"}').size, 0);
+  assert.equal(decodeFractionCache('{"0xaaa":123}').size, 0); // number, not string: reject
+  assert.equal(decodeFractionCache(`{"0xaaa":"${(WAD + 1n).toString()}"}`).size, 0); // settle() would revert BAD_FRACTION
+  // one bad entry must not discard the good ones
+  const mixed = decodeFractionCache(`{"0xaaa":"bad","0xbbb":"${WAD.toString()}"}`);
+  assert.equal(mixed.size, 1);
+  assert.equal(mixed.get("0xbbb"), WAD);
+});
+
+test("parseRegistryMarkets CRITICAL: keeper watches exactly what the writer quotes", () => {
+  // Two hand-synced market lists is how a market becomes quotable-but-unsettleable.
+  const registry = JSON.stringify({
+    markets: [
+      { vault: "0x69288D331911984fAeC8Af82688B7f718e2bB541", expiryMs: 1787194800000 },
+      { vault: "0xd6959Ac6a60b5af8edFf8165f642FBc7D02C1c0E" }, // no expiry: allowed, just unwatched
+    ],
+  });
+  assert.deepEqual(parseRegistryMarkets(registry), [
+    { vault: "0x69288D331911984fAeC8Af82688B7f718e2bB541", expiryMs: 1787194800000 },
+    { vault: "0xd6959Ac6a60b5af8edFf8165f642FBc7D02C1c0E", expiryMs: undefined },
+  ]);
+  // A non-numeric expiry must not become a NaN deadline that alerts on every tick forever.
+  const bogus = JSON.stringify({ markets: [{ vault: "0x69288D331911984fAeC8Af82688B7f718e2bB541", expiryMs: "soon" }] });
+  assert.equal(parseRegistryMarkets(bogus)[0].expiryMs, undefined);
+});
+
+test("parseRegistryMarkets: a malformed registry fails loudly rather than watching a short list", () => {
+  // Silently dropping an entry here is the whole bug this replaces — a keeper watching fewer
+  // vaults than the writer quotes looks healthy right up until an expiry strands one.
+  assert.throws(() => parseRegistryMarkets("{ not json"));
+  assert.throws(() => parseRegistryMarkets("{}"), /no markets array/);
+  assert.throws(() => parseRegistryMarkets('{"markets":[]}'), /lists no markets/);
+  assert.throws(() => parseRegistryMarkets('{"markets":[{"title":"no vault"}]}'), /invalid vault/);
+  assert.throws(() => parseRegistryMarkets('{"markets":[{"vault":"0xnothex"}]}'), /invalid vault/);
+  assert.throws(() => parseRegistryMarkets('{"markets":[{"vault":"0x1234"}]}'), /invalid vault/); // truncated address
 });

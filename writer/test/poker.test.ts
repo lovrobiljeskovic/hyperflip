@@ -101,3 +101,43 @@ test("tick: a failing resolve() does not abort poking the rest of the batch", as
   await poker.tick();
   assert.deepEqual(attempted, [1n, 2n]); // both attempted despite id 1 throwing
 });
+
+test("fetchEvents: a failed chunk keeps earlier chunks and resumes there next tick", async () => {
+  // Regression for the 8/20 wedge: an all-or-nothing chunk scan meant one rate-limited
+  // chunk discarded the whole batch and left nextBlock untouched, so a cold start far
+  // behind head never completed a tick and the poker stayed blind to every open parlay.
+  const requested: bigint[] = [];
+  let failFrom: bigint | null = 2000n;
+  const publicClient = {
+    getBlockNumber: async () => 2500n,
+    getLogs: async ({ event, fromBlock }: { event: { name: string }; fromBlock: bigint }) => {
+      if (event.name === "ParlayMinted") requested.push(fromBlock);
+      if (fromBlock === failFrom) throw new Error("rate limited");
+      if (event.name === "ParlayMinted" && fromBlock === 0n) {
+        return [{ args: { id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n } }];
+      }
+      return [];
+    },
+  } as unknown as PokerDeps["publicClient"];
+
+  const poker = new Poker({
+    publicClient,
+    parlayVault: VAULT,
+    exposure: new ExposureBook(),
+    metrics: newMetrics(),
+    fromBlock: 0n,
+    resolve: async () => {},
+    log: () => {},
+    fetchLegs: async () => [{ vault: V1, isYes: true }],
+    fetchLegStates: async () => new Map([[V1.toLowerCase(), { settled: false, fractionWad: 0n }]]),
+  });
+
+  await poker.tick();
+  assert.equal(poker.openCount(), 1); // chunk 0's mint survived the chunk-2 failure
+  assert.deepEqual(requested, [0n, 1000n, 2000n]); // stopped at the failure, no retry storm
+
+  failFrom = null;
+  requested.length = 0;
+  await poker.tick();
+  assert.deepEqual(requested, [2000n]); // resumed where it left off, did not rescan 0..1999
+});
