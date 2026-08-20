@@ -18,7 +18,7 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     pokerKey: `0x${"22".repeat(32)}` as `0x${string}`,
     infoApiUrl: "", port: 0, edgeBps: 0n, minPremiumBps: 100n, minLegs: 2,
     maxStake: 10_000_000n, perMarketCap: 1_000_000_000n, perClusterCap: 1_000_000_000n,
-    clusterEdgeBps: 0n, quoteTtlMs: 30_000,
+    clusterEdgeBps: 0n, legEdgeBps: 0n, quoteTtlMs: 30_000,
     lockoutMs: 600_000, pokerIntervalMs: 15_000, deployBlock: 0n,
     inviteCodes: new Set(["beta-test"]),
     markets: new Map([

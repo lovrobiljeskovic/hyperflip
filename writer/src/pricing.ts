@@ -1,5 +1,38 @@
 import { BPS, WAD } from "./pure.js";
 
+export interface EdgeParts {
+  baseBps: bigint;
+  legBps: bigint;
+  clusterBps: bigint;
+}
+
+/** Total edge charged on a ticket, split into the parts the UI displays.
+ *
+ * Base edge alone is flat in leg count — `prod(p)` cancels out of the house's
+ * expected margin (stake * e/(1+e)), so a 5-leg ticket earned the same 4.76%
+ * as a 2-leg one while risking ~20x more stake. legEdgeBps charges for that:
+ * every leg past the first adds to the edge, mirroring how a book prices vig
+ * into each leg before multiplying. Cluster edge is a separate axis — it
+ * prices comovement between specific legs, not ticket length. */
+export function edgeBreakdown(
+  legCount: number,
+  clusterPairs: bigint,
+  edgeBps: bigint,
+  legEdgeBps: bigint,
+  clusterEdgeBps: bigint,
+): EdgeParts {
+  const extraLegs = BigInt(Math.max(0, legCount - 1));
+  return {
+    baseBps: edgeBps,
+    legBps: legEdgeBps * extraLegs,
+    clusterBps: clusterEdgeBps * clusterPairs,
+  };
+}
+
+export function totalEdgeBps(p: EdgeParts): bigint {
+  return p.baseBps + p.legBps + p.clusterBps;
+}
+
 export type PriceOutcome =
   | { ok: true; premium: bigint; maxPayout: bigint }
   | { ok: false; reason: string };

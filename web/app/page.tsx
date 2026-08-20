@@ -1,5 +1,6 @@
 import { InviteForm } from "./invite-form";
 import { HeroStats, HeroTicket, LiveMarketBoard } from "./live-markets";
+import { WalletButton } from "./wallet-button";
 
 const wordmark = (
   <span className="flex items-center gap-2 font-mono text-sm tracking-tight text-fg">
@@ -65,7 +66,7 @@ const faq = [
 export default function Home() {
   return (
     <>
-      <header className="sticky top-0 z-10 border-b border-line bg-ink/95">
+      <header className="sticky top-0 z-30 border-b border-line bg-ink/95">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
           {wordmark}
           <nav className="flex items-center gap-6 text-sm">
@@ -84,12 +85,10 @@ export default function Home() {
             <a href="/positions" className="hidden text-dim transition-colors hover:text-fg sm:block">
               Positions
             </a>
-            <a
-              href="#access"
-              className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-on-accent transition-transform active:scale-[0.98] hover:opacity-90"
-            >
+            <a href="#access" className="text-dim transition-colors hover:text-fg">
               Get access
             </a>
+            <WalletButton />
           </nav>
         </div>
       </header>

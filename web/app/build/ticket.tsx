@@ -1,13 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { erc20Abi, parseUnits } from "viem";
-import { usePrivy } from "@privy-io/react-auth";
+import { erc20Abi, formatUnits, parseUnits } from "viem";
 import { useAccount, usePublicClient, useReadContract, useWriteContract } from "wagmi";
-import { requestQuote, type QuoteResult, type WriterQuote } from "@/lib/writer";
+import { fetchLimits, requestQuote, type QuoteResult, type WriterQuote } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
-import { formatUsdc, impliedPct, multiplier, secondsLeft, USDC_DECIMALS } from "@/lib/format";
+import {
+  formatUsdc,
+  impliedPct,
+  multiplier,
+  edgeSteps,
+  multiplierNum,
+  priceBreakdown,
+  secondsLeft,
+  USDC_DECIMALS,
+  type PriceBreakdown,
+} from "@/lib/format";
+import { hyperEvmTestnet } from "@/lib/chain";
 import { PARLAY_VAULT, parlayVaultAbi } from "@/lib/contracts";
+import { useConnectAction, useUsdc } from "@/lib/wallet";
 
 export interface BuilderLeg {
   vault: `0x${string}`;
@@ -18,23 +29,11 @@ export interface BuilderLeg {
 
 const MIN_LEGS = 2;
 const QUOTE_DEBOUNCE_MS = 400;
+/** Fallback quote lifetime until /limits answers with the writer's real one. */
 const TTL_SECONDS = 30;
-
-// @privy-io/wagmi's WagmiProvider only mounts when NEXT_PUBLIC_PRIVY_APP_ID is
-// set (see app/providers.tsx); usePrivy() throws without a PrivyProvider
-// ancestor. PRIVY_ENABLED is a build-time constant (inlined by Next.js), so
-// it never changes across a running instance's renders — safe to branch a
-// hook call on it.
-const PRIVY_ENABLED = !!process.env.NEXT_PUBLIC_PRIVY_APP_ID;
-
-function useOptionalLogin(): () => void {
-  if (PRIVY_ENABLED) {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    const { login } = usePrivy();
-    return login;
-  }
-  return () => {};
-}
+// Percent-of-cap stake chips — resolved against the writer's maxStake, or
+// treated as plain USDC amounts when /limits is unreachable.
+const STAKE_PRESETS = [25, 50, 100];
 
 export function SideChip({ side }: { side: "YES" | "NO" }) {
   const yes = side === "YES";
@@ -69,6 +68,7 @@ function tryParseStake(v: string): bigint | null {
 /** Short, user-facing line for a thrown mint error (wallet rejection, RPC, revert). */
 function shortMintError(err: unknown): string {
   const raw = String((err as Error)?.message ?? err);
+  if (raw.includes("exceeds balance")) return "Not enough testnet USDC in your wallet for the stake.";
   const firstLine = raw.split("\n")[0] ?? raw;
   return firstLine.length > 140 ? `${firstLine.slice(0, 140)}…` : firstLine;
 }
@@ -80,12 +80,84 @@ function errorMessage(res: Extract<QuoteResult, { ok: false }>): string {
   if (res.status === 0 || res.status === 503) return "Writer unreachable — retrying.";
   if (res.status === 403) return "Invite code rejected — check it on the landing page.";
   if (res.status === 409) {
-    return res.error === "leg-settled"
-      ? "A leg just settled — remove it and requote."
-      : "House is at capacity for this combination.";
+    if (res.error === "leg-settled") return "A leg just settled — remove it and requote.";
+    // market-cap/cluster-cap are stake-driven, not congestion: a long-shot ticket
+    // asks for a payout bigger than the house caps for those markets. Saying
+    // "at capacity" sends the taker away from a ticket that fits at a lower stake.
+    const fit = res.maxStake === undefined ? 0n : BigInt(res.maxStake);
+    if (fit > 0n) return `Payout too large for the house limit — stake up to ${formatUsdc(fit)} USDC on this ticket.`;
+    if (res.error === "at-capacity") return "House bankroll is fully committed — try again shortly.";
+    return "Payout too large for the house limit on one of these markets.";
   }
   if (res.status === 400 && res.error === "same-underlying") return "Two legs share an underlying — remove one.";
+  if (res.status === 400 && res.error === "correlated-direction")
+    return "These legs bet the same direction on correlated assets — flip one or remove it.";
   return res.error;
+}
+
+function DetailRow({
+  label,
+  children,
+  className = "",
+}: {
+  label: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-4">
+      <span className="text-dim">{label}</span>
+      <span className={`text-right ${className}`}>{children}</span>
+    </div>
+  );
+}
+
+const pct = (x: number) => `${(x * 100).toFixed(2)}%`;
+const mult = (x: number) => `${x.toFixed(2)}x`;
+const signedMult = (x: number) => `${x < 0 ? "\u2212" : "+"}${Math.abs(x).toFixed(2)}x`;
+
+/** How the multiplier was built: per-leg book price, then each deduction the
+ * writer applies (writer/src/pricing.ts). The last row is the signed quote's
+ * own ratio, so any gap against the arithmetic above is visible rather than
+ * hidden — that gap is the contract's minimum-premium cap biting. */
+function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown }) {
+  const { afterEdge, afterLegs, modelled } = edgeSteps(bd);
+  const capped = Math.abs(bd.actualMultiplier - modelled) / modelled > 0.005;
+  return (
+    <div className="flex flex-col gap-1.5">
+      {legs.map((leg, i) => (
+        <div key={leg.vault} className="flex items-baseline gap-3">
+          <span className={leg.isYes ? "text-yes" : "text-no"}>{leg.isYes ? "Y" : "N"}</span>
+          <span className="flex-1 truncate text-dim">{leg.title}</span>
+          <span className="w-14 text-right">{pct(bd.legProbs[i])}</span>
+          <span className="w-14 text-right">{mult(bd.legOdds[i])}</span>
+        </div>
+      ))}
+      <div className="mt-1 border-t border-line pt-1.5" />
+      <DetailRow label="Fair combined odds">{mult(bd.fairMultiplier)}</DetailRow>
+      <DetailRow label={`House edge ${pct(bd.edgePct)}`} className="text-no">
+        {signedMult(afterEdge - bd.fairMultiplier)}
+      </DetailRow>
+      {bd.legPct > 0 && (
+        <DetailRow label={`${legs.length} legs ${pct(bd.legPct)}`} className="text-no">
+          {signedMult(afterLegs - afterEdge)}
+        </DetailRow>
+      )}
+      {bd.corrPct > 0 && (
+        <DetailRow label={`Correlated legs ${pct(bd.corrPct)}`} className="text-no">
+          {signedMult(modelled - afterLegs)}
+        </DetailRow>
+      )}
+      {capped && (
+        <DetailRow label="Payout cap" className="text-no">
+          {signedMult(bd.actualMultiplier - modelled)}
+        </DetailRow>
+      )}
+      <DetailRow label="Your multiplier" className="text-accent">
+        {mult(bd.actualMultiplier)}
+      </DetailRow>
+    </div>
+  );
 }
 
 type Cta =
@@ -106,7 +178,7 @@ export function Ticket({
 }) {
   const mids = useMids();
   const { address, isConnected } = useAccount();
-  const login = useOptionalLogin();
+  const connect = useConnectAction();
 
   const [stake, setStake] = useState("");
   const [inviteCode, setInviteCode] = useState<string | null>(null);
@@ -115,19 +187,37 @@ export function Ticket({
   const [ttlLeft, setTtlLeft] = useState(0);
   const [mintState, setMintState] = useState<"idle" | "pending" | "done" | "requoted" | "error">("idle");
   const [mintErrorMsg, setMintErrorMsg] = useState("");
+  const [mintErrorDetail, setMintErrorDetail] = useState("");
 
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
-  const { data: usdcAddr } = useReadContract({
-    address: PARLAY_VAULT,
-    abi: parlayVaultAbi,
-    functionName: "usdc",
-    query: { enabled: !display },
+  const { address: usdcAddr, balance: usdcBalance } = useUsdc();
+  // Drives the "1 tx / 2 tx" route line — the mint flow re-reads allowance
+  // itself, so a stale value here only ever mislabels the row, never the tx.
+  const { data: allowance } = useReadContract({
+    address: usdcAddr,
+    abi: erc20Abi,
+    functionName: "allowance",
+    args: address ? [address, PARLAY_VAULT] : undefined,
+    query: { enabled: !display && !!usdcAddr && !!address },
   });
 
   useEffect(() => {
     if (display) return;
     setInviteCode(localStorage.getItem("inviteCode"));
+  }, [display]);
+
+  const [maxStake, setMaxStake] = useState<bigint | null>(null);
+  // Quote lifetime is the writer's to decide (QUOTE_TTL_MS); hardcoding it here
+  // pinned the drain bar at 100% for the first minute of a 90s quote.
+  const [ttlSeconds, setTtlSeconds] = useState(TTL_SECONDS);
+  useEffect(() => {
+    if (display) return;
+    void fetchLimits().then((l) => {
+      if (!l) return;
+      setMaxStake(BigInt(l.maxStake));
+      if (l.quoteTtlMs > 0) setTtlSeconds(Math.round(l.quoteTtlMs / 1000));
+    });
   }, [display]);
 
   const stakeBase = tryParseStake(stake);
@@ -207,41 +297,94 @@ export function Ticket({
   async function mintQuoted(q: WriterQuote, sig: `0x${string}`) {
     setMintState("pending");
     setMintErrorMsg("");
+    setMintErrorDetail("");
     try {
       if (!publicClient || !usdcAddr) throw new Error("client not ready");
-      const premium = BigInt(q.premium);
-      const allowance = await publicClient.readContract({
-        address: usdcAddr,
-        abi: erc20Abi,
-        functionName: "allowance",
-        args: [q.taker, PARLAY_VAULT],
-      });
+      let premium = BigInt(q.premium);
+      const [allowance, balance] = await Promise.all([
+        publicClient.readContract({
+          address: usdcAddr,
+          abi: erc20Abi,
+          functionName: "allowance",
+          args: [q.taker, PARLAY_VAULT],
+        }),
+        publicClient.readContract({
+          address: usdcAddr,
+          abi: erc20Abi,
+          functionName: "balanceOf",
+          args: [q.taker],
+        }),
+      ]);
+      // Fail before the approve tx, not after it: a wallet without the premium
+      // would otherwise pay approve gas and then revert the mint on-chain.
+      if (balance < premium) throw new Error("transfer amount exceeds balance");
       if (allowance < premium) {
+        // Exact approval is safe against the post-approve requote below:
+        // premium == stake by writer construction (pricing.ts), so the fresh
+        // quote's premium is identical and stays covered.
         const h = await writeContractAsync({
           address: usdcAddr,
           abi: erc20Abi,
           functionName: "approve",
           args: [PARLAY_VAULT, premium],
         });
-        await publicClient.waitForTransactionReceipt({ hash: h });
+        const approveReceipt = await publicClient.waitForTransactionReceipt({ hash: h });
+        if (approveReceipt.status !== "success") throw new Error("approve reverted");
       }
+      // The approve (and the wallet confirm before it) may have outlived the
+      // quote's TTL. Instead of sending a doomed mint, fetch a fresh quote and
+      // mint that in the same flow — same stake means same premium, so the
+      // approval still covers it. Buffer of 10s absorbs mining + clock lag.
+      if (allowance < premium || secondsLeft(BigInt(q.deadline), Date.now()) < 10) {
+        const base = tryParseStake(stake);
+        if (!inviteCode || base === null) throw new Error("stake or invite code missing");
+        const res = await requestQuote({
+          taker: q.taker,
+          legs: legs.map((l) => ({ vault: l.vault, isYes: l.isYes })),
+          stake: base.toString(),
+          inviteCode,
+        });
+        if (!res.ok) {
+          setQuoteResult(res);
+          setMintState("idle");
+          return;
+        }
+        setQuoteResult(res);
+        q = res.quote;
+        sig = res.sig;
+        premium = BigInt(q.premium);
+      }
+      const mintArgs = [
+        {
+          taker: q.taker,
+          legs: q.legs,
+          premium,
+          maxPayout: BigInt(q.maxPayout),
+          deadline: BigInt(q.deadline),
+          quoteId: q.quoteId,
+        },
+        sig,
+      ] as const;
+      // Simulate first: surfaces the actual revert reason (QUOTE_EXPIRED,
+      // exceeds balance, …) before gas is spent — a mined-but-reverted tx
+      // resolves without one.
+      await publicClient.simulateContract({
+        address: PARLAY_VAULT,
+        abi: parlayVaultAbi,
+        functionName: "mint",
+        args: mintArgs,
+        account: q.taker,
+      });
       const hash = await writeContractAsync({
         address: PARLAY_VAULT,
         abi: parlayVaultAbi,
         functionName: "mint",
-        args: [
-          {
-            taker: q.taker,
-            legs: q.legs,
-            premium,
-            maxPayout: BigInt(q.maxPayout),
-            deadline: BigInt(q.deadline),
-            quoteId: q.quoteId,
-          },
-          sig,
-        ],
+        args: mintArgs,
       });
-      await publicClient.waitForTransactionReceipt({ hash });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      // Simulation passed but the mined tx reverted — deadline raced the
+      // wallet confirmation; treat as stale quote.
+      if (receipt.status !== "success") throw new Error("QUOTE_EXPIRED (mint reverted on-chain)");
       setMintState("done");
     } catch (err) {
       const msg = String((err as Error)?.message ?? err);
@@ -250,6 +393,7 @@ export function Ticket({
         setMintState("requoted");
       } else {
         setMintErrorMsg(shortMintError(err));
+        setMintErrorDetail(msg);
         setMintState("error");
       }
     }
@@ -260,6 +404,10 @@ export function Ticket({
     if (!isConnected) return { kind: "connect", label: "Connect wallet" };
     if (!inviteCode) return { kind: "link", label: "Enter invite code", href: "/#access" };
     if (stakeBase === null) return { kind: "disabled", label: "Enter a stake to quote" };
+    // Checked before the quote is even shown: a stake the wallet can't cover
+    // would otherwise reach the approve tx and burn gas on a doomed mint.
+    if (usdcBalance !== undefined && stakeBase > usdcBalance)
+      return { kind: "disabled", label: `Insufficient USDC — ${formatUsdc(usdcBalance)} available` };
     if (mintState === "pending") return { kind: "disabled", label: "Confirm in wallet…" };
     if (mintState === "done") return { kind: "done", label: "Minted — view positions", href: "/positions" };
     if (quoting) return { kind: "disabled", label: "Quoting…" };
@@ -268,6 +416,40 @@ export function Ticket({
     return { kind: "mint", label: `Mint parlay — ${formatUsdc(BigInt(quoteResult.quote.premium))} USDC` };
   }
   const cta = display ? null : computeCta();
+
+  // Quote-derived display values. premium/maxPayout are the signed truth;
+  // `bd` re-derives the writer's pricing steps for the breakdown accordion.
+  const premium = quoteResult?.ok ? BigInt(quoteResult.quote.premium) : 0n;
+  const maxPayout = quoteResult?.ok ? BigInt(quoteResult.quote.maxPayout) : 0n;
+  const bd =
+    quoteResult?.ok && quoteResult.breakdown
+      ? priceBreakdown(
+          quoteResult.breakdown.legPricesWad,
+          quoteResult.breakdown.edgeBps,
+          quoteResult.breakdown.legBps,
+          quoteResult.breakdown.corrBps,
+          premium,
+          maxPayout,
+        )
+      : null;
+  // The stake you'd need to win back exactly what you paid — the honest
+  // "how likely does this have to be" number behind the multiplier.
+  const m = multiplierNum(premium, maxPayout);
+  const breakEven = m > 0 ? 1 / m : null;
+  const needsApproval = allowance === undefined || allowance < premium;
+  // Max is whichever runs out first: your balance or the house per-ticket cap.
+  const maxAllowed =
+    usdcBalance === undefined
+      ? maxStake
+      : maxStake === null
+        ? usdcBalance
+        : usdcBalance < maxStake
+          ? usdcBalance
+          : maxStake;
+  // Presets scale off the cap so no chip is a button that always 400s.
+  const presets = STAKE_PRESETS.map((f) =>
+    maxStake === null ? BigInt(f) * 10n ** BigInt(USDC_DECIMALS) : (maxStake * BigInt(f)) / 100n,
+  );
 
   // display-mode sample math: fair combined odds off live mids, no house edge.
   const combinedImplied = legs.length
@@ -331,9 +513,14 @@ export function Ticket({
       ) : (
         <>
           <div className="mt-4">
-            <label htmlFor="stake" className="text-xs text-dim">
-              Stake (USDC)
-            </label>
+            <div className="flex items-baseline justify-between">
+              <label htmlFor="stake" className="text-xs text-dim">
+                Stake (USDC)
+              </label>
+              <span className="font-mono text-[11px] text-dim">
+                Balance {usdcBalance === undefined ? "—" : formatUsdc(usdcBalance)}
+              </span>
+            </div>
             <input
               id="stake"
               inputMode="decimal"
@@ -343,22 +530,81 @@ export function Ticket({
               placeholder="0.00"
               className="mt-1 w-full rounded-card border border-line bg-panel px-3 py-2 font-mono text-sm text-fg placeholder:text-dim focus:outline-none focus:border-accent"
             />
+            <div className="mt-2 flex gap-2">
+              {presets.map((v, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setStake(formatUnits(v, USDC_DECIMALS))}
+                  className="flex-1 rounded-[4px] border border-line py-1 font-mono text-[11px] text-dim transition-colors hover:border-dim hover:text-fg"
+                >
+                  {formatUsdc(v)}
+                </button>
+              ))}
+              <button
+                type="button"
+                disabled={maxAllowed === null || maxAllowed === 0n}
+                onClick={() => maxAllowed !== null && setStake(formatUnits(maxAllowed, USDC_DECIMALS))}
+                className="flex-1 rounded-[4px] border border-line py-1 font-mono text-[11px] text-dim transition-colors hover:border-dim hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Max
+              </button>
+            </div>
+            {maxStake !== null && (
+              <p className="mt-1 font-mono text-[11px] text-dim">
+                House limit {formatUsdc(maxStake)} USDC per ticket
+              </p>
+            )}
           </div>
 
           {quoteResult?.ok && (
             <div className="mt-4 flex flex-col gap-2 border-t border-line pt-4 font-mono">
-              <div className="flex justify-between">
-                <span className="text-dim">Premium</span>
-                <span>{formatUsdc(BigInt(quoteResult.quote.premium))} USDC</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-dim">Multiplier</span>
-                <span>{multiplier(BigInt(quoteResult.quote.premium), BigInt(quoteResult.quote.maxPayout))}</span>
-              </div>
-              <div className="flex justify-between text-base">
+              <DetailRow label="You pay">{formatUsdc(premium)} USDC</DetailRow>
+              <DetailRow label="Multiplier">{multiplier(premium, maxPayout)}</DetailRow>
+              <div className="flex items-baseline justify-between gap-4 text-base">
                 <span className="text-dim">Max payout</span>
-                <span className="text-accent">{formatUsdc(BigInt(quoteResult.quote.maxPayout))} USDC</span>
+                <span className="text-accent">{formatUsdc(maxPayout)} USDC</span>
               </div>
+
+              {/* open by default: the multiplier's derivation is the point of the
+                  panel, not a footnote — collapsing it hides the one number a
+                  taker most needs to trust. */}
+              <details open className="mt-2 rounded-[4px] border border-line bg-raised/40 px-3 py-2">
+                <summary className="flex items-center justify-between text-[11px] text-dim">
+                  Quote details
+                </summary>
+                <div className="mt-3 flex flex-col gap-3 text-[11px]">
+                  {bd && bd.legProbs.length === legs.length ? (
+                    <MathBreakdown legs={legs} bd={bd} />
+                  ) : (
+                    <p className="text-dim">Breakdown unavailable for this quote.</p>
+                  )}
+
+                  <div className="flex flex-col gap-1.5 border-t border-line pt-3">
+                    <DetailRow label="Profit if won" className="text-yes">
+                      +{formatUsdc(maxPayout - premium)} USDC
+                    </DetailRow>
+                    <DetailRow label="Break-even probability">
+                      {breakEven === null ? "—" : pct(breakEven)}
+                    </DetailRow>
+                    <DetailRow label="Max loss" className="text-no">
+                      {formatUsdc(premium)} USDC
+                    </DetailRow>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5 border-t border-line pt-3">
+                    <DetailRow label="Price protection">Fixed — signed quote</DetailRow>
+                    <DetailRow label="Slippage">None (0%)</DetailRow>
+                    <DetailRow label="Route">
+                      {needsApproval ? "2 txs · Approve + Mint" : "1 tx · Mint"}
+                    </DetailRow>
+                    <DetailRow label="Platform fee">0.00 USDC</DetailRow>
+                    <DetailRow label="Network">{hyperEvmTestnet.name}</DetailRow>
+                    <DetailRow label="Gas token">{hyperEvmTestnet.nativeCurrency.symbol}</DetailRow>
+                    <DetailRow label="Quote valid for">{ttlLeft}s</DetailRow>
+                  </div>
+                </div>
+              </details>
             </div>
           )}
 
@@ -367,7 +613,7 @@ export function Ticket({
               <div className="h-[3px] overflow-hidden rounded-full bg-raised">
                 <div
                   className="h-full bg-accent transition-[width] duration-200"
-                  style={{ width: `${Math.max(0, Math.min(100, (ttlLeft / TTL_SECONDS) * 100))}%` }}
+                  style={{ width: `${Math.max(0, Math.min(100, (ttlLeft / ttlSeconds) * 100))}%` }}
                 />
               </div>
               <p className="mt-2 font-mono text-[11px] text-dim">{ttlLeft}s until requote</p>
@@ -391,6 +637,15 @@ export function Ticket({
                   className="mt-2 rounded-[4px] border border-line px-2 py-1 font-mono text-[11px] text-dim transition-colors hover:text-fg"
                 >
                   Retry
+                </button>
+              )}
+              {quoteResult.maxStake !== undefined && BigInt(quoteResult.maxStake) > 0n && (
+                <button
+                  type="button"
+                  onClick={() => setStake(formatUnits(BigInt(quoteResult.maxStake!), USDC_DECIMALS))}
+                  className="mt-2 rounded-[4px] border border-line px-2 py-1 font-mono text-[11px] text-dim transition-colors hover:text-fg"
+                >
+                  Use {formatUsdc(BigInt(quoteResult.maxStake))} USDC
                 </button>
               )}
               {quoteResult.status === 403 && (
@@ -424,7 +679,7 @@ export function Ticket({
           {cta.kind === "connect" && (
             <button
               type="button"
-              onClick={() => login()}
+              onClick={() => connect()}
               className="mt-4 w-full rounded-card bg-accent py-2.5 text-center font-medium text-on-accent transition-transform active:scale-[0.98] hover:opacity-90"
             >
               {cta.label}
@@ -454,11 +709,28 @@ export function Ticket({
               {cta.label}
             </div>
           )}
+          {cta.kind === "mint" && needsApproval && (
+            <p className="mt-2 text-center font-mono text-[11px] text-dim">
+              Two wallet confirmations: approve USDC, then mint.
+            </p>
+          )}
           {mintState === "requoted" && (
             <p className="mt-3 text-center font-mono text-[11px] text-accent">Quote refreshed — mint again</p>
           )}
           {mintState === "error" && mintErrorMsg && (
-            <p className="mt-3 text-center text-xs text-no">{mintErrorMsg}</p>
+            <div className="mt-3">
+              <p className="text-center text-xs text-no">{mintErrorMsg}</p>
+              {mintErrorDetail && mintErrorDetail !== mintErrorMsg && (
+                <details className="mt-2 rounded-[4px] border border-no/30 bg-no/5 p-2">
+                  <summary className="cursor-pointer font-mono text-[11px] text-no/70">
+                    Full error
+                  </summary>
+                  <pre className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-no/80">
+                    {mintErrorDetail}
+                  </pre>
+                </details>
+              )}
+            </div>
           )}
         </>
       ) : null}

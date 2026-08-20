@@ -5,6 +5,7 @@ import { fetchMarkets, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { impliedPct } from "@/lib/format";
 import { SideChip, Ticket, type BuilderLeg } from "./ticket";
+import { AppHeader } from "../app-header";
 
 function midOf(mids: Record<string, string>, coin: string): number | null {
   const raw = mids[coin];
@@ -125,19 +126,7 @@ export default function BuildPage() {
 
   return (
     <div className="min-h-screen text-[13px] text-fg">
-      <header className="sticky top-0 z-10 border-b border-line bg-ink/95">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
-          <a href="/" className="flex items-center gap-2 font-mono text-sm tracking-tight text-fg">
-            <span className="inline-block size-2.5 rounded-[2px] bg-accent" aria-hidden />
-            parlay
-          </a>
-          <nav className="flex items-center gap-6 text-sm">
-            <a href="/positions" className="text-dim transition-colors hover:text-fg">
-              Positions
-            </a>
-          </nav>
-        </div>
-      </header>
+      <AppHeader />
 
       <main className="mx-auto grid max-w-6xl gap-8 px-6 py-10 lg:grid-cols-[1.5fr_1fr] lg:items-start">
         <section>

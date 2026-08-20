@@ -2,7 +2,7 @@ import http from "node:http";
 import { isAddress, type Address, type Hex } from "viem";
 import type { WriterConfig } from "./config.js";
 import { ExposureBook } from "./exposure.js";
-import { priceParlay } from "./pricing.js";
+import { edgeBreakdown, priceParlay, totalEdgeBps } from "./pricing.js";
 import type { ParlayQuote, QuoteLeg } from "./quotes.js";
 
 export interface Metrics {
@@ -137,9 +137,9 @@ export async function handleQuote(deps: QuoteDeps, body: unknown): Promise<{ sta
   }
   let pairs = 0n;
   for (const n of clusterCounts.values()) pairs += BigInt((n * (n - 1)) / 2);
-  const corrBps = cfg.clusterEdgeBps * pairs;
 
-  const priced = priceParlay(pricesWad, v.stake, cfg.edgeBps + corrBps, cfg.minPremiumBps);
+  const edge = edgeBreakdown(v.legs.length, pairs, cfg.edgeBps, cfg.legEdgeBps, cfg.clusterEdgeBps);
+  const priced = priceParlay(pricesWad, v.stake, totalEdgeBps(edge), cfg.minPremiumBps);
   if (!priced.ok) {
     reject(metrics, priced.reason);
     return { status: 400, json: { error: priced.reason } };
@@ -154,7 +154,12 @@ export async function handleQuote(deps: QuoteDeps, body: unknown): Promise<{ sta
     reject(metrics, check.reason);
     // Structured at-capacity log: the bankroll topup signal (spec §6).
     console.log(JSON.stringify({ at: new Date(now).toISOString(), event: "quote-rejected", reason: check.reason, risk: risk.toString() }));
-    return { status: 409, json: { error: check.reason } };
+    // Risk is linear in stake (premium == stake, maxPayout == stake * mult), so
+    // the largest stake that still fits under the binding cap is just the same
+    // ratio applied to the headroom. Let the taker shrink the ticket instead of
+    // guessing at a wall.
+    const fitStake = risk > 0n ? (v.stake * check.headroom) / risk : 0n;
+    return { status: 409, json: { error: check.reason, maxStake: fitStake.toString() } };
   }
   const quoteId = deps.randomId();
   exposure.reserve(quoteId, risk, vaults, now + cfg.quoteTtlMs);
@@ -188,6 +193,15 @@ export async function handleQuote(deps: QuoteDeps, body: unknown): Promise<{ sta
         quoteId: quote.quoteId,
       },
       sig,
+      // Informational only — not covered by the signature. Lets the UI show how
+      // the multiplier was built (per-leg book price, house edge, correlation
+      // haircut) instead of a bare number. Same order as quote.legs.
+      breakdown: {
+        legPricesWad: pricesWad.map((p) => p.toString()),
+        edgeBps: edge.baseBps.toString(),
+        legBps: edge.legBps.toString(),
+        corrBps: edge.clusterBps.toString(),
+      },
     },
   };
 }
@@ -223,6 +237,18 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
     if (req.method === "GET" && req.url === "/markets") {
       res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
       return res.end(deps.cfg.registryJson);
+    }
+    // Quote-shaping limits the builder needs before it can even offer a stake
+    // preset — a chip above maxStake is a button that always 400s.
+    if (req.method === "GET" && req.url === "/limits") {
+      res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      return res.end(
+        JSON.stringify({
+          maxStake: deps.cfg.maxStake.toString(),
+          edgeBps: deps.cfg.edgeBps.toString(),
+          quoteTtlMs: deps.cfg.quoteTtlMs,
+        }),
+      );
     }
     if (req.method === "POST" && req.url === "/quote") {
       let raw = "";
