@@ -26,7 +26,7 @@ const martian = Martian_Mono({
 export const metadata: Metadata = {
   title: "Overround",
   description:
-    "Parlays on Hyperliquid outcome markets. Combine YES and NO legs into one slip with one premium and one payout, settled on HyperCore.",
+    "Combine YES and NO legs from Hyperliquid outcome markets into one slip — one premium, one payout, settled on HyperCore.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

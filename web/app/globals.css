@@ -315,3 +315,24 @@ details[open] > summary::after {
     animation: none;
   }
 }
+
+/* Cross — marketing to app is a deliberate lights-down. The ground darkens
+   while the mark holds its position in the header. 420ms, matching the
+   handoff's motion table. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 420ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+::view-transition-group(overround-mark) {
+  animation-duration: 420ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root),
+  ::view-transition-group(overround-mark) {
+    animation: none;
+  }
+}

@@ -61,7 +61,7 @@ function overround(yes: number | null, no: number | null): number | null {
 }
 
 /* Odds cell that flashes on mid change: up = ink green, down = stamp red,
-   400ms decay (globals.css keyframes, re-tinted by the .slip palette). */
+   400ms decay (globals.css keyframes, re-tinted by the .paper palette). */
 function OddsCell({ side, mid }: { side: "YES" | "NO"; mid: number | null }) {
   const prev = useRef<number | null>(null);
   const [flash, setFlash] = useState<{ dir: "up" | "down"; seq: number } | null>(null);
