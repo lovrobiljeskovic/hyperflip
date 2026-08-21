@@ -37,18 +37,6 @@ html {
   }
 }
 
-/* load-in cascade for the hero */
-@keyframes rise {
-  from {
-    opacity: 0;
-    transform: translateY(14px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 /* quote TTL drain, mirrors the 30s refresh cycle in the builder */
 @keyframes ttl {
   from {
@@ -57,29 +45,6 @@ html {
   to {
     width: 0%;
   }
-}
-
-.rise {
-  animation: rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-/* hero headline: word-by-word blur-to-sharp reveal */
-@keyframes word-in {
-  from {
-    opacity: 0;
-    filter: blur(8px);
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    filter: blur(0);
-    transform: translateY(0);
-  }
-}
-
-.word-in {
-  display: inline-block;
-  animation: word-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 /* live board: mid-change flash, 400ms decay */
@@ -129,12 +94,6 @@ html {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rise {
-    animation: none;
-  }
-  .word-in {
-    animation: none;
-  }
   .flash-up,
   .flash-down {
     animation: none;
@@ -171,7 +130,7 @@ details[open] > summary::after {
    Scoped to .paper so /build and /positions keep the dark app
    theme — the overrides below re-point the shared @theme vars
    (accent, panel, line…) only inside this subtree, which is
-   what re-skins WalletButton on the yellow ground.
+   what re-skins WalletButton on the paper ground.
    ============================================================ */
 
 .paper {
@@ -274,26 +233,6 @@ details[open] > summary::after {
   animation: print-line 0.28s steps(4, end) both;
 }
 
-/* stamped marks land once, hard */
-@keyframes stamp-in {
-  0% {
-    opacity: 0;
-    transform: rotate(-9deg) scale(1.6);
-  }
-  60% {
-    opacity: 0.95;
-    transform: rotate(-9deg) scale(0.96);
-  }
-  100% {
-    opacity: 0.9;
-    transform: rotate(-9deg) scale(1);
-  }
-}
-
-.stamp-in {
-  animation: stamp-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.4) both;
-}
-
 /* The ticket turns as the reader moves down the page and lands face-on.
    Clamped to ±24° so the face is never near edge-on. Scroll-driven animation
    is Chromium-only today; elsewhere the slip simply renders static, which is
@@ -317,7 +256,6 @@ details[open] > summary::after {
 
 @media (prefers-reduced-motion: reduce) {
   .print-line,
-  .stamp-in,
   .slip-turn {
     animation: none;
   }
