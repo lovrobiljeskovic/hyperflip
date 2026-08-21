@@ -78,7 +78,7 @@ export function InviteForm() {
           />
           <button
             type="submit"
-            className="mono bg-[var(--ink)] px-6 py-3 text-[12px] uppercase tracking-wide text-[var(--stock)] transition-transform active:scale-[0.98] hover:-translate-y-[1px]"
+            className="mono bg-[var(--ink)] px-6 py-3 text-[12px] uppercase tracking-wide text-[var(--stock)] transition-transform motion-reduce:transition-none active:scale-[0.98] hover:-translate-y-[1px]"
           >
             Save code
           </button>

@@ -98,7 +98,7 @@ export default function Home() {
             <div className="mt-8 flex flex-wrap gap-3">
               <a
                 href="#counter"
-                className="mono bg-[var(--ink)] px-[26px] py-[14px] text-[11px] uppercase tracking-[0.1em] text-[var(--stock)] transition-transform active:scale-[0.98] hover:-translate-y-[1px]"
+                className="mono bg-[var(--ink)] px-[26px] py-[14px] text-[11px] uppercase tracking-[0.1em] text-[var(--stock)] transition-transform motion-reduce:transition-none active:scale-[0.98] hover:-translate-y-[1px]"
               >
                 Get an invite code
               </a>

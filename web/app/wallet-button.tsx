@@ -50,7 +50,7 @@ export function WalletButton() {
       <button
         type="button"
         onClick={() => connect()}
-        className="rounded-card bg-accent px-4 py-1.5 text-sm font-medium text-on-accent transition-transform active:scale-[0.98] hover:opacity-90"
+        className="rounded-card bg-accent px-4 py-1.5 text-sm font-medium text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90"
       >
         Connect wallet
       </button>

@@ -403,7 +403,7 @@ export default function PositionsPage() {
             <button
               type="button"
               onClick={() => connect()}
-              className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-on-accent transition-transform active:scale-[0.98] hover:opacity-90"
+              className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90"
             >
               Connect wallet
             </button>
@@ -466,7 +466,7 @@ export default function PositionsPage() {
                         >
                           <td className="px-5 py-4">
                             <span className="flex items-center gap-2">
-                              <span className={`text-dim transition-transform ${isOpen ? "rotate-90" : ""}`} aria-hidden>
+                              <span className={`text-dim transition-transform motion-reduce:transition-none ${isOpen ? "rotate-90" : ""}`} aria-hidden>
                                 ›
                               </span>
                               <span>

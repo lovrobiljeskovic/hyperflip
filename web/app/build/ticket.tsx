@@ -691,7 +691,7 @@ export function Ticket({
             <button
               type="button"
               onClick={() => connect()}
-              className="mono mt-4 w-full rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform active:scale-[0.98] hover:opacity-90"
+              className="mono mt-4 w-full rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90"
             >
               {cta.label}
             </button>
@@ -699,7 +699,7 @@ export function Ticket({
           {(cta.kind === "link" || cta.kind === "done") && (
             <a
               href={cta.href}
-              className={`mono mt-4 block w-full rounded-card py-[15px] text-center text-[12px] uppercase tracking-[0.1em] transition-transform active:scale-[0.98] hover:opacity-90 ${
+              className={`mono mt-4 block w-full rounded-card py-[15px] text-center text-[12px] uppercase tracking-[0.1em] transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90 ${
                 cta.kind === "done" ? "bg-yes text-on-accent" : "bg-accent text-on-accent"
               }`}
             >
@@ -710,7 +710,7 @@ export function Ticket({
             <button
               type="button"
               onClick={() => quoteResult?.ok && mintQuoted(quoteResult.quote, quoteResult.sig)}
-              className="mono mt-4 w-full rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform active:scale-[0.98] hover:opacity-90"
+              className="mono mt-4 w-full rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90"
             >
               {cta.label}
             </button>
