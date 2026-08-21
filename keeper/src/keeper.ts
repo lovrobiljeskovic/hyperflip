@@ -298,6 +298,9 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   // ponytail: a held op (no confident baseline ever established, e.g. a rebuilt op) stays pending
   // forever if it truly dropped on Core — recovery is manual/owner-driven (setVerifier), same as
   // any other case this design defers to the owner rather than trusting elapsed time.
+  // Consecutive failed info-API samples per vault — throttles the alert, nothing else.
+  const sampleFailures = new Map<string, number>();
+
   async function balanceLoop(): Promise<void> {
     for (const vault of config.vaultAddresses) {
       const info = vaultInfo.get(vault)!;
@@ -306,8 +309,20 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
       try {
         current = await fetchCoinBalanceWei(config.infoApiUrl, vault, coinId);
       } catch (err) {
-        alert("balance sample failed", vault, (err as Error).message);
+        // The info API 502s in bursts. One alert per tick per vault buries every other
+        // alert in the journal, so speak on the first failure and then once a minute,
+        // and keep the nginx error page out of the log.
+        const n = (sampleFailures.get(vault) ?? 0) + 1;
+        sampleFailures.set(vault, n);
+        if (n === 1 || (n * config.pollIntervalMs) % 60_000 < config.pollIntervalMs) {
+          alert("balance sample failed", vault, `x${n}`, (err as Error).message.split("\n")[0].slice(0, 200));
+        }
         continue;
+      }
+      const failed = sampleFailures.get(vault);
+      if (failed) {
+        log("balance sample recovered", vault, `after ${failed} failures`);
+        sampleFailures.delete(vault);
       }
       recordSample(vault, current);
 

@@ -85,6 +85,12 @@ Description=hype-evm keeper
 After=network-online.target
 Wants=network-online.target
 
+# Failure mode here is silence, so never give up restarting. This key is
+# [Unit]-only: under [Service] systemd ignores it and the default
+# 5-starts-in-10s limit applies, which is exactly how a crash-looping
+# service goes quiet for good.
+StartLimitIntervalSec=0
+
 [Service]
 Type=simple
 User=hype
@@ -92,8 +98,6 @@ WorkingDirectory=/opt/hype/keeper
 ExecStart=/usr/bin/npm start
 Restart=always
 RestartSec=5
-# Failure mode here is silence, so never give up restarting.
-StartLimitIntervalSec=0
 
 [Install]
 WantedBy=multi-user.target
