@@ -193,17 +193,25 @@ details[open] > summary::after {
   color: var(--stock);
 }
 
-.mono {
-  font-family: var(--font-martian), ui-monospace, monospace;
-  font-variation-settings: "wdth" 90;
-  letter-spacing: -0.02em;
-}
+/* Layered on purpose — do not unwrap.
+   These two set a face plus sane defaults that utilities are meant to
+   override per site. Unlayered rules beat every layered Tailwind utility
+   regardless of specificity, so left bare they silently win over every
+   tracking-*, leading-* and [font-variation-settings:...] utility.
+   @layer components sorts below utilities, so the utility wins. */
+@layer components {
+  .mono {
+    font-family: var(--font-martian), ui-monospace, monospace;
+    font-variation-settings: "wdth" 90;
+    letter-spacing: -0.02em;
+  }
 
-.display {
-  font-family: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
-  font-variation-settings: "opsz" 96, "wght" 800;
-  letter-spacing: -0.035em;
-  line-height: 0.92;
+  .display {
+    font-family: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
+    font-variation-settings: "opsz" 96, "wght" 800;
+    letter-spacing: -0.035em;
+    line-height: 0.92;
+  }
 }
 
 /* perforation: a section boundary reads as a tear line, not a rule */
