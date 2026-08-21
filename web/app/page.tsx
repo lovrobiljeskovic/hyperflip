@@ -10,7 +10,7 @@ const steps = [
   {
     n: "01",
     title: "Pick your legs",
-    body: "Take YES or NO on any market on the board. Two legs minimum, five maximum.",
+    body: "Take YES or NO on any market on the board. Two legs minimum, ten maximum.",
   },
   {
     n: "02",
@@ -84,7 +84,7 @@ export default function Home() {
           <div>
             <HeroStats />
             <h1 className="display mt-[22px] text-[clamp(2.6rem,7vw,4.75rem)] leading-[0.9] tracking-[-0.04em]">
-              Two to five legs.
+              Two to ten legs.
               <br />
               One slip.
               <br />
