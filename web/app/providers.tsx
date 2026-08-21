@@ -42,7 +42,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       config={{
         defaultChain: hyperEvmTestnet,
         supportedChains: [hyperEvmTestnet],
-        appearance: { theme: "dark", accentColor: "#f0b43c" },
+        appearance: { theme: "dark", accentColor: "#f5a091" },
       }}
     >
       <QueryClientProvider client={queryClient}>

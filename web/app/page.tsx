@@ -88,7 +88,7 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
 
 export default function Home() {
   return (
-    <div className="slip flex min-h-full flex-col">
+    <div className="paper flex min-h-full flex-col">
       <header className="sticky top-0 z-30 bg-[var(--stock)]/95 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
           {wordmark}

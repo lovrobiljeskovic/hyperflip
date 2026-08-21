@@ -7,13 +7,21 @@
   --color-line: #262c38;
   --color-fg: #e9edf3;
   --color-dim: #8b94a6;
-  --color-accent: #f0b43c;
-  --color-on-accent: #161104;
-  --color-yes: #34d26b;
-  --color-no: #f0546b;
+  --color-accent: #f5a091;
+  --color-on-accent: #241512;
+  --color-yes: #35d07a;
+  --color-no: #ff4d5e;
 
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* The ground the mark's lens is knocked out to, and the mark's leading disc.
+     Both are re-pointed by .paper so one <Mark /> serves both surfaces. */
+  --ground: #0b0d12;
+  --mark-1: var(--color-accent);
+
+  --font-sans: var(--font-instrument), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
+  --font-display--font-variation-settings: "opsz" 96, "wght" 800;
+  --font-mono: var(--font-martian), ui-monospace, monospace;
+  --font-mono--font-variation-settings: "wdth" 90;
 
   --radius-card: 8px;
 }
@@ -141,13 +149,13 @@ details[open] > summary::after {
 
 /* ============================================================
    Landing page: the betting-slip register.
-   Scoped to .slip so /build and /positions keep the dark app
+   Scoped to .paper so /build and /positions keep the dark app
    theme — the overrides below re-point the shared @theme vars
    (accent, panel, line…) only inside this subtree, which is
    what re-skins WalletButton on the yellow ground.
    ============================================================ */
 
-.slip {
+.paper {
   --paper: #fdf7f2;
   --stock: #efb3a6;
   --ink: #241512;
@@ -166,17 +174,21 @@ details[open] > summary::after {
   --color-yes: var(--hit);
   --color-no: var(--stamp);
 
+  /* The register is square. */
+  --radius-card: 0px;
+  --ground: var(--stock);
+  --mark-1: var(--stamp); /* rose on rose would vanish */
+
   background: var(--stock);
   color: var(--ink);
-  font-family: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
 }
 
-.slip :focus-visible {
+.paper :focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 3px;
 }
 
-.slip ::selection {
+.paper ::selection {
   background: var(--ink);
   color: var(--stock);
 }
