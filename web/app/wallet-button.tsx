@@ -5,7 +5,7 @@ import { formatUnits } from "viem";
 import { useAccount, useBalance, useSwitchChain } from "wagmi";
 import { hyperEvmTestnet } from "@/lib/chain";
 import { formatUsdc, shortAddress } from "@/lib/format";
-import { useConnectAction, useDisconnectAction, useUsdc } from "@/lib/wallet";
+import { useConnectAction, useDisconnectAction, useUsdc, useWalletState } from "@/lib/wallet";
 
 const EXPLORER = hyperEvmTestnet.blockExplorers.default.url;
 
@@ -19,7 +19,8 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 export function WalletButton() {
-  const { address, isConnected, chainId } = useAccount();
+  const { ready, address, isConnected } = useWalletState();
+  const { chainId } = useAccount();
   const connect = useConnectAction();
   const disconnect = useDisconnectAction();
   const { switchChain } = useSwitchChain();
@@ -37,6 +38,12 @@ export function WalletButton() {
   useEffect(() => {
     if (!isConnected) setOpen(false);
   }, [isConnected]);
+
+  // Placeholder holds the button's footprint while Privy restores its session,
+  // so a connected user never sees "Connect wallet" flash first.
+  if (!ready) {
+    return <div className="h-[34px] w-[132px] animate-pulse rounded-card bg-panel" aria-hidden />;
+  }
 
   if (!isConnected || !address) {
     return (

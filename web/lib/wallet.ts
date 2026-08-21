@@ -1,6 +1,7 @@
 "use client";
 
-import { usePrivy } from "@privy-io/react-auth";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { useEffect, useState } from "react";
 import { erc20Abi } from "viem";
 import { useAccount, useDisconnect, useReadContract } from "wagmi";
 import { PARLAY_VAULT, parlayVaultAbi } from "./contracts";
@@ -11,6 +12,41 @@ import { PARLAY_VAULT, parlayVaultAbi } from "./contracts";
 // never changes across a running instance's renders — safe to branch a hook
 // call on it.
 const PRIVY_ENABLED = !!process.env.NEXT_PUBLIC_PRIVY_APP_ID;
+
+/** The wallet state every connection-dependent branch must render from.
+ *
+ * Privy restores its session asynchronously and @privy-io/wagmi only mirrors
+ * the restored wallet into wagmi a tick after that, so wagmi's `isConnected`
+ * reads false for the first frames of every page load — rendering it directly
+ * flashes "Connect wallet" at a user who is already connected. `ready` stays
+ * false until Privy has loaded, its wallet list has resolved, and any wallet it
+ * found has landed in wagmi; render a neutral placeholder until then. */
+export function useWalletState(): {
+  ready: boolean;
+  isConnected: boolean;
+  address?: `0x${string}`;
+} {
+  const { address, isConnected } = useAccount();
+  if (!PRIVY_ENABLED) return { ready: true, isConnected, address };
+  /* eslint-disable react-hooks/rules-of-hooks */
+  const { ready: privyReady } = usePrivy();
+  const { ready: walletsReady, wallets } = useWallets();
+  const [timedOut, setTimedOut] = useState(false);
+
+  // Privy knows about a wallet that wagmi hasn't picked up yet.
+  const syncing = privyReady && walletsReady && wallets.length > 0 && !isConnected;
+
+  useEffect(() => {
+    if (!syncing) return;
+    // ponytail: fixed failsafe. If the Privy-to-wagmi sync never lands, show
+    // the disconnected UI instead of an eternal placeholder.
+    const t = setTimeout(() => setTimedOut(true), 2_000);
+    return () => clearTimeout(t);
+  }, [syncing]);
+  /* eslint-enable react-hooks/rules-of-hooks */
+
+  return { ready: (privyReady && walletsReady && !syncing) || timedOut, isConnected, address };
+}
 
 /** Click handler for every "Connect wallet" button.
  *

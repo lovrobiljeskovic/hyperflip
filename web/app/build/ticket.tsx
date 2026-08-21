@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { erc20Abi, formatUnits, parseUnits } from "viem";
-import { useAccount, usePublicClient, useReadContract, useWriteContract } from "wagmi";
+import { usePublicClient, useReadContract, useWriteContract } from "wagmi";
 import { fetchLimits, requestQuote, type QuoteResult, type WriterQuote } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import {
@@ -18,7 +18,7 @@ import {
 } from "@/lib/format";
 import { hyperEvmTestnet } from "@/lib/chain";
 import { PARLAY_VAULT, parlayVaultAbi } from "@/lib/contracts";
-import { useConnectAction, useUsdc } from "@/lib/wallet";
+import { useConnectAction, useUsdc, useWalletState } from "@/lib/wallet";
 
 export interface BuilderLeg {
   vault: `0x${string}`;
@@ -177,7 +177,7 @@ export function Ticket({
   display?: boolean;
 }) {
   const mids = useMids();
-  const { address, isConnected } = useAccount();
+  const { ready: walletReady, address, isConnected } = useWalletState();
   const connect = useConnectAction();
 
   const [stake, setStake] = useState("");
@@ -401,6 +401,7 @@ export function Ticket({
 
   function computeCta(): Cta {
     if (legs.length < MIN_LEGS) return { kind: "disabled", label: "Add 2 legs to price a ticket" };
+    if (!walletReady) return { kind: "disabled", label: "Checking wallet…" };
     if (!isConnected) return { kind: "connect", label: "Connect wallet" };
     if (!inviteCode) return { kind: "link", label: "Enter invite code", href: "/#access" };
     if (stakeBase === null) return { kind: "disabled", label: "Enter a stake to quote" };

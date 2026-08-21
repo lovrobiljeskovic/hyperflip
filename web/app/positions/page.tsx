@@ -2,7 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import type { PublicClient } from "viem";
-import { useAccount, usePublicClient, useWriteContract } from "wagmi";
+import { usePublicClient, useWriteContract } from "wagmi";
 import { scanParlayIds, type ParlayRef } from "@/lib/scan";
 import { pool } from "@/lib/pool";
 import { PARLAY_VAULT, STATUS, outcomeVaultAbi, parlayVaultAbi } from "@/lib/contracts";
@@ -10,7 +10,7 @@ import { formatUsdc, multiplier } from "@/lib/format";
 import { hyperEvmTestnet } from "@/lib/chain";
 import { fetchMarkets, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
-import { useConnectAction } from "@/lib/wallet";
+import { useConnectAction, useWalletState } from "@/lib/wallet";
 import { AppHeader } from "../app-header";
 
 const WAD = 10n ** 18n;
@@ -289,7 +289,7 @@ function LoadingSkeleton() {
 }
 
 export default function PositionsPage() {
-  const { address, isConnected } = useAccount();
+  const { ready, address, isConnected } = useWalletState();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
   const connect = useConnectAction();
@@ -372,7 +372,9 @@ export default function PositionsPage() {
         <h1 className="text-lg font-medium">Your parlays</h1>
         <p className="mt-1 text-dim">Read straight from chain — parlay mints, leg settlement, and claims.</p>
 
-        {!isConnected ? (
+        {!ready ? (
+          <LoadingSkeleton />
+        ) : !isConnected ? (
           <div className="mt-10 flex flex-col items-start gap-3 rounded-card border border-line bg-panel p-6">
             <p className="text-dim">Connect your wallet to see your positions.</p>
             <button
