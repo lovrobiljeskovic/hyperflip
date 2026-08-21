@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import type { PublicClient } from "viem";
 import { useAccount, usePublicClient, useWriteContract } from "wagmi";
 import { scanParlayIds, type ParlayRef } from "@/lib/scan";
+import { pool } from "@/lib/pool";
 import { PARLAY_VAULT, STATUS, outcomeVaultAbi, parlayVaultAbi } from "@/lib/contracts";
 import { formatUsdc, multiplier } from "@/lib/format";
 import { hyperEvmTestnet } from "@/lib/chain";
@@ -319,13 +320,12 @@ export default function PositionsPage() {
     setRows(null);
     try {
       const refs = await scanParlayIds(publicClient, address);
-      // ponytail: sequential row loads (one parlay at a time; leg reads within
-      // a row still run in parallel) to avoid M×(2+2L) simultaneous RPC calls
-      // against the same rate-limited testnet endpoint the scan checkpoint
-      // exists for. Batch via multicall if position counts grow enough to
-      // make this slow.
-      const loaded: Row[] = [];
-      for (const ref of refs) loaded.push(await loadRow(publicClient, ref));
+      // Each row costs ~1.5s of round trips, so nine positions loaded one at a
+      // time read as a hung page. Six at a time; leg reads inside a row still
+      // fan out, so the real ceiling is ~6×(2+2L) in flight, which this testnet
+      // endpoint serves without rate-limiting.
+      // ponytail: fixed pool. Batch via multicall if position counts grow.
+      const loaded = await pool(refs, 6, (ref) => loadRow(publicClient, ref));
       loaded.sort((a, b) => (a.id > b.id ? -1 : a.id < b.id ? 1 : 0)); // newest first
       setRows(loaded);
     } catch {
