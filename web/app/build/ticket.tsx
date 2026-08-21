@@ -623,7 +623,7 @@ export function Ticket({
             <div className="mt-5">
               <div className="h-[3px] overflow-hidden rounded-full bg-raised">
                 <div
-                  className="h-full bg-accent transition-[width] duration-200"
+                  className="h-full bg-accent transition-[width] duration-200 motion-reduce:transition-none"
                   style={{ width: `${Math.max(0, Math.min(100, (ttlLeft / ttlSeconds) * 100))}%` }}
                 />
               </div>
