@@ -43,22 +43,29 @@ for (const key of ["PRIVATE_KEY", "TESTNET_RPC", "KEEPER_ADDRESS"]) {
 }
 console.log(`keeper: ${process.env.KEEPER_ADDRESS} (must be KEEPER_PRIVATE_KEY's address)`);
 
-async function info(type) {
+async function info(type, extra = {}) {
   const res = await fetch(INFO_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type }),
+    body: JSON.stringify({ type, ...extra }),
   });
   if (!res.ok) throw new Error(`info ${type}: HTTP ${res.status}`);
   return res.json();
 }
 
-const [{ outcomes }, mids] = await Promise.all([info("outcomeMeta"), info("allMids")]);
+// Strike sanity needs each underlying's own mid. Crypto perps are in the
+// default allMids; tokenized equities/commodities only in the `xyz` dex one.
+const [{ outcomes, questions }, mids, xyzMids] = await Promise.all([
+  info("outcomeMeta"),
+  info("allMids"),
+  info("allMids", { dex: "xyz" }),
+]);
+Object.assign(mids, xyzMids);
 const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));
 const nowMs = Date.now();
 const knownCoins = new Set(registry.markets.map((m) => m.coinYes));
 
-const picks = pickBinaries({ outcomes, mids, knownCoins, nowMs });
+const picks = pickBinaries({ outcomes, mids, questions, knownCoins, nowMs });
 const expired = registry.markets.filter((m) => m.expiryMs <= nowMs);
 const kept = registry.markets.filter((m) => m.expiryMs > nowMs);
 
@@ -78,7 +85,8 @@ if (picks.length === 0) {
   process.exit(0);
 }
 for (const p of picks) {
-  console.log(`pick: outcome ${p.outcome} — ${registryEntry(p, "?").title} (mid ${mids[p.coinYes]})`);
+  const e = registryEntry(p, "?");
+  console.log(`pick: outcome ${p.outcome} — ${e.title} [${e.category}] mid ${mids[p.coinYes]} vs ${p.perp} ${mids[p.venue ? `${p.venue}:${p.perp}` : p.perp]}, ${((p.expiryMs - nowMs) / 86400_000).toFixed(1)}d left`);
 }
 if (dryRun) {
   console.log("dry run — stopping before deploys");
