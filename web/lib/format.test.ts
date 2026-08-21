@@ -1,5 +1,16 @@
 import { describe, expect, it, test } from "vitest";
-import { edgeSteps, formatUsdc, multiplier, impliedPct, priceBreakdown, secondsLeft, shortAddress } from "./format";
+import {
+  edgeSteps,
+  formatUsdc,
+  multiplier,
+  impliedPct,
+  pct1,
+  priceBreakdown,
+  quotedOverround,
+  secondsLeft,
+  shortAddress,
+  until,
+} from "./format";
 
 test("formatUsdc renders 6-decimal base units at 2dp with grouping", () => {
   expect(formatUsdc(1_000_000n)).toBe("1.00");
@@ -76,4 +87,37 @@ describe("edgeSteps", () => {
     const { afterEdge, afterLegs } = edgeSteps(bd);
     expect(afterLegs).toBe(afterEdge);
   });
+});
+
+test("until counts down in the largest useful unit", () => {
+  const now = Date.now();
+  expect(until(now - 1000)).toBe("expired");
+  expect(until(now)).toBe("expired");
+  expect(until(now + 18 * 60_000)).toBe("18m");
+  expect(until(now + 4 * 3_600_000)).toBe("4h");
+  expect(until(now + 11 * 86_400_000 + 60_000)).toBe("11d");
+});
+
+test("pct1 renders a mid at one decimal place", () => {
+  expect(pct1(0.614)).toBe("61.4%");
+  expect(pct1(0.5)).toBe("50.0%");
+  expect(pct1(0)).toBe("0.0%");
+});
+
+test("quotedOverround is how far fair odds exceed the quoted odds", () => {
+  // Fair 3.33x quoted down to 3.16x is a 5.4% margin.
+  const bd = {
+    legOdds: [],
+    legProbs: [],
+    fairMultiplier: 3.33,
+    edgePct: 0,
+    legPct: 0,
+    corrPct: 0,
+    actualMultiplier: 3.16,
+  };
+  expect(quotedOverround(bd)).toBeCloseTo(0.0538, 4);
+  // A quote that pays fair odds has no margin.
+  expect(quotedOverround({ ...bd, actualMultiplier: 3.33 })).toBe(0);
+  // A degenerate quote can't produce a margin at all.
+  expect(quotedOverround({ ...bd, actualMultiplier: 0 })).toBe(0);
 });

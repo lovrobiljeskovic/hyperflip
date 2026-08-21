@@ -81,3 +81,27 @@ export function priceBreakdown(
     actualMultiplier: multiplierNum(premium, maxPayout),
   };
 }
+
+/** Time until a market expires, in the largest unit that still reads as a
+ * countdown. Past its expiry it says so rather than counting up. */
+export function until(ms: number): string {
+  const s = (ms - Date.now()) / 1000;
+  if (s <= 0) return "expired";
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86_400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86_400)}d`;
+}
+
+/** A mid as a one-decimal percentage. The board prints 61.4%, not 61% —
+ * whole percents hide the moves the flash animation is reporting. */
+export function pct1(mid: number): string {
+  return `${(mid * 100).toFixed(1)}%`;
+}
+
+/** The book's margin on a signed quote: how far the fair multiplier exceeds
+ * the one the house actually pays. Drives the width of the motif's lens, so
+ * it returns 0 rather than Infinity on a degenerate quote. */
+export function quotedOverround(bd: PriceBreakdown): number {
+  if (bd.actualMultiplier <= 0) return 0;
+  return bd.fairMultiplier / bd.actualMultiplier - 1;
+}

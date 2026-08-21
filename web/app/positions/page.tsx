@@ -6,7 +6,7 @@ import { usePublicClient, useWriteContract } from "wagmi";
 import { scanParlayIds, type ParlayRef } from "@/lib/scan";
 import { pool } from "@/lib/pool";
 import { PARLAY_VAULT, STATUS, outcomeVaultAbi, parlayVaultAbi } from "@/lib/contracts";
-import { formatUsdc, multiplier } from "@/lib/format";
+import { formatUsdc, multiplier, until } from "@/lib/format";
 import { hyperEvmTestnet } from "@/lib/chain";
 import { fetchMarkets, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
@@ -167,15 +167,6 @@ function ago(ms: number): string {
   if (s < 86_400) return `${Math.floor(s / 3600)}h ago`;
   if (s < 7 * 86_400) return `${Math.floor(s / 86_400)}d ago`;
   return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-/** Time until a leg's market expires, or "expired". */
-function until(ms: number): string {
-  const s = (ms - Date.now()) / 1000;
-  if (s <= 0) return "expired";
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  if (s < 86_400) return `${Math.floor(s / 3600)}h`;
-  return `${Math.floor(s / 86_400)}d`;
 }
 
 /** One dot per leg, coloured by that leg's verdict — the whole ticket's
