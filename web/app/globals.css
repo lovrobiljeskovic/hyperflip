@@ -138,3 +138,123 @@ details > summary::after {
 details[open] > summary::after {
   content: "-";
 }
+
+/* ============================================================
+   Landing page: the betting-slip register.
+   Scoped to .slip so /build and /positions keep the dark app
+   theme — the overrides below re-point the shared @theme vars
+   (accent, panel, line…) only inside this subtree, which is
+   what re-skins WalletButton on the yellow ground.
+   ============================================================ */
+
+.slip {
+  --paper: #fdf7f2;
+  --stock: #efb3a6;
+  --ink: #241512;
+  --graphite: #5e4038; /* 5.1:1 on the pink stock — body text sits on it */
+  --stamp: #9e2b1a;
+  --hit: #1f5c40;
+  --hair: color-mix(in srgb, var(--ink) 20%, transparent);
+
+  --color-fg: var(--ink);
+  --color-dim: var(--graphite);
+  --color-line: var(--hair);
+  --color-panel: var(--paper);
+  --color-raised: color-mix(in srgb, var(--ink) 8%, transparent);
+  --color-accent: var(--ink);
+  --color-on-accent: var(--stock);
+  --color-yes: var(--hit);
+  --color-no: var(--stamp);
+
+  background: var(--stock);
+  color: var(--ink);
+  font-family: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
+}
+
+.slip :focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+
+.slip ::selection {
+  background: var(--ink);
+  color: var(--stock);
+}
+
+.mono {
+  font-family: var(--font-martian), ui-monospace, monospace;
+  font-variation-settings: "wdth" 90;
+  letter-spacing: -0.02em;
+}
+
+.display {
+  font-family: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
+  font-variation-settings: "opsz" 96, "wght" 800;
+  letter-spacing: -0.035em;
+  line-height: 0.92;
+}
+
+/* perforation: a section boundary reads as a tear line, not a rule */
+.perf {
+  height: 2px;
+  background-image: radial-gradient(circle at 2px 1px, var(--hair) 1.2px, transparent 1.4px);
+  background-size: 8px 2px;
+}
+
+/* coupon edge — semicircular bites top and bottom of a paper panel */
+.torn {
+  --r: 7px;
+  -webkit-mask:
+    radial-gradient(circle 7px at 50% 0, #0000 98%, #000) repeat-x 50% 0 / 22px 7px,
+    radial-gradient(circle 7px at 50% 100%, #0000 98%, #000) repeat-x 50% 100% / 22px 7px,
+    linear-gradient(#000 0 0) no-repeat 0 7px / 100% calc(100% - 14px);
+  mask:
+    radial-gradient(circle 7px at 50% 0, #0000 98%, #000) repeat-x 50% 0 / 22px 7px,
+    radial-gradient(circle 7px at 50% 100%, #0000 98%, #000) repeat-x 50% 100% / 22px 7px,
+    linear-gradient(#000 0 0) no-repeat 0 7px / 100% calc(100% - 14px);
+}
+
+/* the hero slip prints itself: one line at a time, ink settling */
+@keyframes print-line {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
+}
+
+.print-line {
+  animation: print-line 0.28s steps(4, end) both;
+}
+
+/* stamped marks land once, hard */
+@keyframes stamp-in {
+  0% {
+    opacity: 0;
+    transform: rotate(-9deg) scale(1.6);
+  }
+  60% {
+    opacity: 0.95;
+    transform: rotate(-9deg) scale(0.96);
+  }
+  100% {
+    opacity: 0.9;
+    transform: rotate(-9deg) scale(1);
+  }
+}
+
+.stamp-in {
+  animation: stamp-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.4) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .print-line,
+  .stamp-in {
+    animation: none;
+  }
+}

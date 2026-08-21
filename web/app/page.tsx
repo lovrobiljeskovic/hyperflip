@@ -1,242 +1,282 @@
 import { InviteForm } from "./invite-form";
-import { HeroStats, HeroTicket, LiveMarketBoard } from "./live-markets";
+import { HeroSlip, HeroStats, LiveMarketBoard } from "./live-markets";
 import { WalletButton } from "./wallet-button";
 
 const wordmark = (
-  <span className="flex items-center gap-2 font-mono text-sm tracking-tight text-fg">
-    <span className="inline-block size-2.5 rounded-[2px] bg-accent" aria-hidden />
+  <a href="/" className="mono flex items-center gap-2 text-[13px] tracking-tight">
+    <span className="inline-block h-3 w-3 bg-[var(--ink)]" aria-hidden />
     parlay
-  </span>
+  </a>
 );
 
-const HEADLINE_WORDS = ["Three", "legs.", "One", "ticket.", "One", "payout."];
+const NAV = [
+  { href: "#board", label: "Board" },
+  { href: "#writing", label: "Writing a slip" },
+  { href: "#book", label: "The book" },
+  { href: "/build", label: "Build" },
+  { href: "/positions", label: "Positions" },
+];
 
+/* A real sequence — you cannot quote before you pick, or claim before it
+   settles — so these carry numbers. */
 const steps = [
   {
-    n: "1",
+    n: "01",
     title: "Pick your legs",
-    body: "Choose YES or NO on any listed outcome market. Two to five legs per ticket.",
+    body: "Take YES or NO on any market on the board. Two legs minimum, five maximum.",
   },
   {
-    n: "2",
-    title: "Quote and mint",
-    body: "The house writer prices the combination off the live Core book and signs your quote. Minting locks it on-chain.",
+    n: "02",
+    title: "Take the quote",
+    body: "The house prices the whole combination off the live Core book and signs it. The quote holds for 30 seconds, then reprices.",
   },
   {
-    n: "3",
-    title: "Settle and claim",
-    body: "When every leg resolves your way, claim the full payout in USDC. One losing leg ends the ticket.",
+    n: "03",
+    title: "Mint the slip",
+    body: "Minting locks the premium and the maximum payout on-chain. Your slip is an NFT you hold until the last leg settles.",
+  },
+  {
+    n: "04",
+    title: "Claim",
+    body: "Every leg your way pays the full amount in USDC. One leg against you closes the slip.",
   },
 ];
 
-const trust = [
+const settlement = [
   {
     key: "Signed quotes",
-    body: "Every premium is an EIP-712 quote signed by the house writer and verified on-chain at mint. No valid signature, no ticket.",
+    body: "Every premium is an EIP-712 quote signed by the house writer and checked on-chain at mint. No valid signature, no slip.",
   },
   {
     key: "HyperCore settlement",
-    body: "Legs are HIP-4 outcome markets that settle on HyperCore. The vault reads final prices straight from the book, not from an oracle we run.",
+    body: "Legs are HIP-4 outcome markets that settle on HyperCore. The vault reads final prices from the book itself, not from an oracle we run.",
+  },
+  {
+    key: "Collateral up front",
+    body: "The house vault posts the maximum payout at mint, inside per-market exposure caps. Your ceiling is funded before you sign.",
   },
   {
     key: "Self-custody",
-    body: "Legs are held as ERC-20 outcome tokens in a non-custodial vault. Winning tickets claim USDC directly from the contract.",
+    body: "Legs are held as ERC-20 outcome tokens in a non-custodial vault. Winning slips claim USDC straight from the contract.",
   },
 ];
 
 const faq = [
   {
-    q: "What backs the payout?",
-    a: "The house vault collateralises every quoted ticket at mint, within per-market exposure caps enforced by the writer. Your max payout is locked before you sign.",
+    q: "What is the overround?",
+    a: "Add up both sides of a market and you get more than 100%. That excess is the book's margin. A parlay multiplies its legs, so it multiplies their overround too — which is why the board prints the margin on every market and the quote shows the fair number beside the quoted one.",
   },
   {
-    q: "What happens if a leg settles while I mint?",
-    a: "The mint reverts and the builder fetches a fresh quote. You never mint against an already-settled leg.",
+    q: "What happens if a leg settles while I am minting?",
+    a: "The mint reverts and the builder pulls a fresh quote. You never mint against a leg that has already resolved.",
   },
   {
-    q: "Which markets are listed?",
-    a: "A curated registry of HIP-4 outcome markets on the HyperCore testnet book. The list grows through the beta.",
+    q: "Which markets are on the board?",
+    a: "A curated registry of HIP-4 outcome markets on the HyperCore testnet book. The board grows through the beta.",
   },
   {
     q: "What does it cost?",
-    a: "No platform fee in beta. Pricing includes the house spread over combined implied odds, and you see the full quote before you mint.",
+    a: "No platform fee during the beta. Pricing is the house spread over combined implied odds, and you see the full quote before you sign.",
   },
 ];
 
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="mono text-[10px] uppercase tracking-[0.18em] text-dim">{children}</p>
+  );
+}
+
 export default function Home() {
   return (
-    <>
-      <header className="sticky top-0 z-30 border-b border-line bg-ink/95">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
+    <div className="slip flex min-h-full flex-col">
+      <header className="sticky top-0 z-30 bg-[var(--stock)]/95 backdrop-blur">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
           {wordmark}
-          <nav className="flex items-center gap-6 text-sm">
-            <a href="#markets" className="hidden text-dim transition-colors hover:text-fg sm:block">
-              Markets
-            </a>
-            <a href="#how" className="hidden text-dim transition-colors hover:text-fg sm:block">
-              How it works
-            </a>
-            <a href="#faq" className="hidden text-dim transition-colors hover:text-fg sm:block">
-              FAQ
-            </a>
-            <a href="/build" className="hidden text-dim transition-colors hover:text-fg sm:block">
-              Build
-            </a>
-            <a href="/positions" className="hidden text-dim transition-colors hover:text-fg sm:block">
-              Positions
-            </a>
-            <a href="#access" className="text-dim transition-colors hover:text-fg">
-              Get access
-            </a>
+          <nav className="mono flex items-center gap-5 text-[11px] uppercase tracking-wide">
+            {NAV.map((l) => (
+              <a
+                key={l.href}
+                href={l.href}
+                className="hidden text-dim transition-colors hover:text-fg md:block"
+              >
+                {l.label}
+              </a>
+            ))}
             <WalletButton />
           </nav>
         </div>
+        <div className="perf" />
       </header>
 
       <main className="mx-auto w-full max-w-6xl px-6">
-        {/* 1 · hero: split text + live ticket */}
-        <section className="grid items-center gap-14 pb-24 pt-16 md:pt-20 lg:grid-cols-[1.1fr_0.9fr]">
+        {/* 1 · hero — the slip prints itself */}
+        <section className="grid items-center gap-12 py-16 lg:grid-cols-[1.05fr_0.95fr] lg:py-24">
           <div>
-            <h1 className="text-4xl font-semibold tracking-tighter md:text-6xl">
-              {HEADLINE_WORDS.map((word, i) => (
-                <span key={word + i}>
-                  <span
-                    className="word-in"
-                    style={{ animationDelay: `${i * 80}ms` }}
-                  >
-                    {word}
-                  </span>
-                  {i < HEADLINE_WORDS.length - 1 ? " " : null}
-                </span>
-              ))}
+            <HeroStats />
+            <h1 className="display mt-5 text-[clamp(2.6rem,7vw,4.75rem)]">
+              Two to five legs.
+              <br />
+              One slip.
+              <br />
+              One payout.
             </h1>
-            <p className="rise mt-6 max-w-[46ch] text-base leading-relaxed text-dim [animation-delay:360ms]">
-              Combine YES and NO legs across Hyperliquid outcome markets into
-              one parlay, priced live off the Core book.
+            <p className="mt-6 max-w-[44ch] text-[17px] leading-relaxed text-[color-mix(in_srgb,var(--ink)_78%,transparent)]">
+              Take YES or NO across Hyperliquid outcome markets and put them on
+              a single ticket. The house prices the combination off the live
+              Core book, signs it, and posts the payout before you mint.
             </p>
-            <div className="rise mt-8 flex flex-wrap gap-3 [animation-delay:480ms]">
+            <div className="mt-8 flex flex-wrap gap-3">
               <a
-                href="#access"
-                className="rounded-card bg-accent px-6 py-3 text-sm font-medium text-on-accent transition-transform active:scale-[0.98] hover:opacity-90"
+                href="#counter"
+                className="mono bg-[var(--ink)] px-6 py-3 text-[12px] uppercase tracking-wide text-[var(--stock)] transition-transform active:scale-[0.98] hover:-translate-y-[1px]"
               >
-                Get access
+                Get an invite code
               </a>
               <a
-                href="#how"
-                className="rounded-card border border-line px-6 py-3 text-sm text-fg transition-colors hover:border-dim"
+                href="#writing"
+                className="mono border border-[var(--ink)] px-6 py-3 text-[12px] uppercase tracking-wide transition-colors hover:bg-[color-mix(in_srgb,var(--ink)_8%,transparent)]"
               >
-                How it works
+                How a slip settles
               </a>
             </div>
-            <div className="rise mt-10 border-t border-line pt-4 [animation-delay:600ms]">
-              <HeroStats />
-            </div>
           </div>
-          <div className="rise [animation-delay:240ms]">
-            <HeroTicket />
-          </div>
+          <HeroSlip />
         </section>
 
-        {/* 2 · markets: asymmetric card trio */}
-        <section id="markets" className="scroll-mt-24 border-t border-line py-24">
-          <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
-            Live on testnet
+        <div className="perf" />
+
+        {/* 2 · the board */}
+        <section id="board" className="scroll-mt-20 py-20">
+          <FieldLabel>Selections</FieldLabel>
+          <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)]">
+            The board
           </h2>
-          <p className="mt-3 max-w-[60ch] text-dim">
-            The beta registry, priced off the live HyperCore book. Every card
-            is an outcome market you can put on a ticket.
+          <p className="mt-4 max-w-[58ch] text-[15px] leading-relaxed text-dim">
+            Every market you can put on a slip, priced off the live HyperCore
+            book. <span className="text-fg">Book</span> is the overround: how
+            far both sides sum past 100%, which is what the market charges to
+            take the other side of you. The testnet book quotes both sides
+            flat, so it prints 0.0% until real makers show up.
           </p>
           <LiveMarketBoard />
         </section>
 
-        {/* 3 · how it works: numbered vertical steps */}
-        <section id="how" className="scroll-mt-24 border-t border-line py-24">
-          <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
-            How it works
+        <div className="perf" />
+
+        {/* 3 · writing a slip — genuine sequence, hence the numbering */}
+        <section id="writing" className="scroll-mt-20 py-20">
+          <FieldLabel>Procedure</FieldLabel>
+          <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)]">
+            Writing a slip
           </h2>
-          <ol className="mt-10 flex flex-col">
+          <ol className="mt-10 grid gap-px bg-[var(--hair)] sm:grid-cols-2">
             {steps.map((step) => (
-              <li
-                key={step.n}
-                className="grid gap-4 border-t border-line py-8 first:border-t-0 md:grid-cols-[80px_1fr_2fr] md:items-baseline"
-              >
-                <span className="font-mono text-3xl text-accent">{step.n}</span>
-                <h3 className="text-lg font-medium">{step.title}</h3>
-                <p className="max-w-[55ch] text-dim">{step.body}</p>
+              <li key={step.n} className="bg-[var(--stock)] p-6">
+                <span className="mono text-[11px] tracking-widest text-dim">
+                  {step.n}
+                </span>
+                <h3 className="mt-3 text-lg font-semibold">{step.title}</h3>
+                <p className="mt-2 max-w-[42ch] text-[15px] leading-relaxed text-dim">
+                  {step.body}
+                </p>
               </li>
             ))}
           </ol>
         </section>
 
-        {/* 4 · the math: full-width stat strip */}
-        <section id="math" className="scroll-mt-24 border-t border-line py-24">
-          <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
-            The math, upfront
+        <div className="perf" />
+
+        {/* 4 · the book — the margin, printed */}
+        <section id="book" className="scroll-mt-20 py-20">
+          <FieldLabel>Stake and return</FieldLabel>
+          <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)]">
+            The book, printed
           </h2>
-          <p className="mt-3 max-w-[60ch] text-dim">
-            The worked example from the ticket above. Fair combined odds are
-            3.33x; the quote includes the house spread.
+          <p className="mt-4 max-w-[58ch] text-[15px] leading-relaxed text-dim">
+            A three-leg slip at 100 USDC, priced end to end. Fair odds are what
+            the legs multiply out to. Quoted is what the house pays. The gap
+            between them is the whole business.
           </p>
-          <dl className="mt-10 grid grid-cols-2 gap-x-6 gap-y-10 font-mono md:grid-cols-5">
+          <dl className="mono mt-12 grid grid-cols-2 gap-x-6 gap-y-10 md:grid-cols-4">
             <div>
-              <dt className="text-xs text-dim">Legs</dt>
-              <dd className="mt-2 text-3xl md:text-4xl">3</dd>
+              <dt className="text-[10px] uppercase tracking-wide text-dim">Legs</dt>
+              <dd className="mt-2 text-[clamp(2rem,5vw,3.25rem)] leading-none">3</dd>
             </div>
             <div>
-              <dt className="text-xs text-dim">Combined implied</dt>
-              <dd className="mt-2 text-3xl md:text-4xl">30.0%</dd>
+              <dt className="text-[10px] uppercase tracking-wide text-dim">
+                Combined implied
+              </dt>
+              <dd className="mt-2 text-[clamp(2rem,5vw,3.25rem)] leading-none">30.0%</dd>
             </div>
             <div>
-              <dt className="text-xs text-dim">Quoted multiplier</dt>
-              <dd className="mt-2 text-3xl md:text-4xl">3.16x</dd>
+              <dt className="text-[10px] uppercase tracking-wide text-dim">Fair</dt>
+              <dd className="mt-2 text-[clamp(2rem,5vw,3.25rem)] leading-none text-dim">
+                3.33x
+              </dd>
             </div>
             <div>
-              <dt className="text-xs text-dim">Stake</dt>
-              <dd className="mt-2 text-3xl md:text-4xl">100.00</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-dim">Max payout</dt>
-              <dd className="mt-2 text-3xl text-accent md:text-4xl">316.20</dd>
+              <dt className="text-[10px] uppercase tracking-wide text-dim">Quoted</dt>
+              <dd className="mt-2 text-[clamp(2rem,5vw,3.25rem)] leading-none">3.16x</dd>
             </div>
           </dl>
+          <div className="mt-12 max-w-[62ch] border-l-[3px] border-[var(--stamp)] pl-5">
+            <p className="text-[15px] leading-relaxed">
+              On a 100 USDC stake that is{" "}
+              <span className="mono">316.20</span> against a fair{" "}
+              <span className="mono">333.00</span>. The house keeps{" "}
+              <span className="mono font-semibold">16.80</span>, and every
+              quote shows you both numbers before you sign.
+            </p>
+          </div>
         </section>
 
-        {/* 5 · trust: keyed definition rows */}
-        <section className="border-t border-line py-24">
-          <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
-            On-chain where it counts
+        <div className="perf" />
+
+        {/* 5 · settlement */}
+        <section className="py-20">
+          <FieldLabel>Settlement</FieldLabel>
+          <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)]">
+            Where the money sits
           </h2>
-          <div className="mt-10 flex flex-col gap-8 md:gap-10">
-            {trust.map((row) => (
-              <div key={row.key} className="grid gap-2 md:grid-cols-[240px_1fr]">
-                <h3 className="font-medium text-accent">{row.key}</h3>
-                <p className="max-w-[65ch] text-dim">{row.body}</p>
+          <div className="mt-10 flex flex-col">
+            {settlement.map((row) => (
+              <div
+                key={row.key}
+                className="grid gap-2 border-t border-line py-7 md:grid-cols-[260px_1fr]"
+              >
+                <h3 className="mono text-[12px] uppercase tracking-wide">{row.key}</h3>
+                <p className="max-w-[62ch] text-[15px] leading-relaxed text-dim">
+                  {row.body}
+                </p>
               </div>
             ))}
           </div>
         </section>
 
-        {/* 6 · positions preview: table idiom */}
-        <section className="border-t border-line py-24">
-          <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
-            Every ticket, tracked
+        <div className="perf" />
+
+        {/* 6 · the stub — positions preview */}
+        <section className="py-20">
+          <FieldLabel>Your stubs</FieldLabel>
+          <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)]">
+            Every slip, tracked
           </h2>
-          <p className="mt-3 max-w-[60ch] text-dim">
-            Your positions page reads straight from chain events. Sample data
-            shown.
+          <p className="mt-4 max-w-[58ch] text-[15px] leading-relaxed text-dim">
+            Positions reads straight from chain events — which legs landed,
+            which one closed the slip, what is claimable. Sample rows shown.
           </p>
-          <div className="mt-10 overflow-x-auto rounded-card border border-line bg-panel">
-            <table className="w-full min-w-[560px] text-left text-sm">
-              <thead className="font-mono text-xs text-dim">
+          <div className="mt-8 overflow-x-auto bg-[var(--paper)] shadow-[6px_8px_0_rgba(36,21,18,0.14)]">
+            <table className="w-full min-w-[560px] text-left">
+              <thead className="mono text-[10px] uppercase tracking-wide text-dim">
                 <tr className="border-b border-line">
-                  <th className="px-5 py-3 font-normal">Ticket</th>
+                  <th className="px-5 py-3 font-normal">Slip</th>
                   <th className="px-5 py-3 font-normal">Legs</th>
                   <th className="px-5 py-3 font-normal">Stake</th>
                   <th className="px-5 py-3 font-normal">Status</th>
                   <th className="px-5 py-3 text-right font-normal">Payout</th>
                 </tr>
               </thead>
-              <tbody className="font-mono">
+              <tbody className="mono text-[13px]">
                 <tr className="border-b border-line">
                   <td className="px-5 py-4">#0012</td>
                   <td className="px-5 py-4">3</td>
@@ -255,7 +295,7 @@ export default function Home() {
                   <td className="px-5 py-4">#0007</td>
                   <td className="px-5 py-4">2</td>
                   <td className="px-5 py-4">25.00</td>
-                  <td className="px-5 py-4 text-no">Lost</td>
+                  <td className="px-5 py-4 text-no">Closed</td>
                   <td className="px-5 py-4 text-right text-dim">0.00</td>
                 </tr>
               </tbody>
@@ -263,15 +303,18 @@ export default function Home() {
           </div>
         </section>
 
-        {/* 7 · access: centered form */}
-        <section id="access" className="scroll-mt-24 border-t border-line py-24">
-          <div className="mx-auto max-w-xl text-center">
-            <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
-              Closed beta on HyperEVM testnet
+        <div className="perf" />
+
+        {/* 7 · the counter — invite */}
+        <section id="counter" className="scroll-mt-20 py-20">
+          <div className="mx-auto max-w-xl">
+            <FieldLabel>The counter</FieldLabel>
+            <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)]">
+              Closed beta, testnet only
             </h2>
-            <p className="mt-3 text-dim">
+            <p className="mt-4 text-[15px] leading-relaxed text-dim">
               Quoting is invite-gated. Save your code once and it rides along
-              with every quote request.
+              with every quote you request.
             </p>
             <div className="mt-8">
               <InviteForm />
@@ -279,33 +322,36 @@ export default function Home() {
           </div>
         </section>
 
-        {/* 8 · faq: accordion */}
-        <section id="faq" className="scroll-mt-24 border-t border-line py-24">
-          <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
-            FAQ
+        <div className="perf" />
+
+        {/* 8 · faq */}
+        <section className="py-20">
+          <FieldLabel>Small print</FieldLabel>
+          <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)]">
+            Questions
           </h2>
           <div className="mt-8 flex max-w-3xl flex-col divide-y divide-line border-y border-line">
             {faq.map((item) => (
               <details key={item.q} className="group py-5">
-                <summary className="flex items-center justify-between gap-4 text-base font-medium">
+                <summary className="flex items-center justify-between gap-4 text-[16px] font-semibold">
                   {item.q}
                 </summary>
-                <p className="mt-3 max-w-[65ch] text-dim">{item.a}</p>
+                <p className="mt-3 max-w-[64ch] text-[15px] leading-relaxed text-dim">
+                  {item.a}
+                </p>
               </details>
             ))}
           </div>
         </section>
       </main>
 
-      <footer className="border-t border-line">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-8 text-sm text-dim">
+      <footer className="mt-auto">
+        <div className="perf" />
+        <div className="mono mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-8 text-[11px] uppercase tracking-wide text-dim">
           {wordmark}
-          <p>HyperEVM testnet beta. Not investment advice.</p>
+          <p>HyperEVM testnet beta · not investment advice</p>
           <div className="flex gap-5">
-            <a
-              href="https://hyperliquid.xyz"
-              className="transition-colors hover:text-fg"
-            >
+            <a href="https://hyperliquid.xyz" className="transition-colors hover:text-fg">
               Hyperliquid
             </a>
             <a
@@ -317,6 +363,6 @@ export default function Home() {
           </div>
         </div>
       </footer>
-    </>
+    </div>
   );
 }

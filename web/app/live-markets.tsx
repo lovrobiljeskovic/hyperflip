@@ -4,11 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { fetchMarkets, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { impliedPct } from "@/lib/format";
-import { Ticket, SideChip, type BuilderLeg } from "./build/ticket";
 
-/* One registry fetch shared by the hero ticket, the stat strip, and the
-   board. ponytail: module-level promise cache, cleared on failure so a
-   client-side revisit retries. */
+/* One registry fetch shared by the hero slip, the stat line, and the board.
+   ponytail: module-level promise cache, cleared on failure so a client-side
+   revisit retries. */
 let marketsCache: Promise<Market[]> | null = null;
 function loadMarkets(): Promise<Market[]> {
   marketsCache ??= fetchMarkets().catch((e) => {
@@ -50,10 +49,15 @@ function oddsLabel(mid: number | null): string {
   return mid === null ? "—" : `${(1 / mid).toFixed(2)}x`;
 }
 
-/* Implied-% pill that flashes on mid change: up = yes-green tint,
-   down = no-red tint, 400ms decay (globals.css keyframes). */
-function MidPill({ side, mid }: { side: "YES" | "NO"; mid: number | null }) {
-  const yes = side === "YES";
+/** The book's overround: both sides' implied probabilities sum past 100% by
+ * exactly the margin the market makes. Null unless both sides are priced. */
+function overround(yes: number | null, no: number | null): number | null {
+  return yes === null || no === null ? null : yes + no - 1;
+}
+
+/* Odds cell that flashes on mid change: up = ink green, down = stamp red,
+   400ms decay (globals.css keyframes, re-tinted by the .slip palette). */
+function OddsCell({ side, mid }: { side: "YES" | "NO"; mid: number | null }) {
   const prev = useRef<number | null>(null);
   const [flash, setFlash] = useState<{ dir: "up" | "down"; seq: number } | null>(null);
 
@@ -67,201 +71,256 @@ function MidPill({ side, mid }: { side: "YES" | "NO"; mid: number | null }) {
   }, [mid]);
 
   return (
-    <span
+    <div
       key={flash?.seq ?? 0}
-      className={`w-14 rounded-[4px] border py-1 text-center font-mono text-xs ${
-        yes ? "border-yes/50 text-yes" : "border-no/50 text-no"
-      } ${flash ? (flash.dir === "up" ? "flash-up" : "flash-down") : ""}`}
+      className={`mono px-2 py-1 text-right ${
+        flash ? (flash.dir === "up" ? "flash-up" : "flash-down") : ""
+      }`}
     >
-      {mid === null ? "—" : impliedPct(mid)}
-    </span>
-  );
-}
-
-function OutcomeRow({
-  side,
-  mid,
-}: {
-  side: "YES" | "NO";
-  mid: number | null;
-}) {
-  return (
-    <li className="flex items-center gap-3 text-sm">
-      <SideChip side={side} />
-      <span className="flex-1">{side === "YES" ? "Yes" : "No"}</span>
-      <span className="font-mono text-dim">{oddsLabel(mid)}</span>
-      <MidPill side={side} mid={mid} />
-    </li>
+      <span className={`text-[15px] ${side === "YES" ? "text-yes" : "text-no"}`}>
+        {oddsLabel(mid)}
+      </span>
+      <span className="ml-2 text-[10px] text-dim">
+        {mid === null ? "—" : impliedPct(mid)}
+      </span>
+    </div>
   );
 }
 
 function expiryLabel(expiryMs?: number): string | null {
   if (!expiryMs) return null;
-  return `expires ${new Date(expiryMs).toLocaleDateString("en-US", {
+  return new Date(expiryMs).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
-  })}`;
+  });
 }
 
-function LiveMarketCard({ market, mids }: { market: Market; mids: Record<string, string> }) {
+function BoardRow({ market, mids }: { market: Market; mids: Record<string, string> }) {
+  const yes = midNumber(mids, market.coinYes);
+  const no = midNumber(mids, market.coinNo);
+  const book = overround(yes, no);
   const expiry = expiryLabel(market.expiryMs);
   return (
-    <article className="flex flex-col rounded-card border border-line bg-panel p-5">
-      <h3 className="text-[15px] font-medium">{market.title}</h3>
-      <ul className="mt-4 flex flex-1 flex-col gap-3">
-        <OutcomeRow side="YES" mid={midNumber(mids, market.coinYes)} />
-        <OutcomeRow side="NO" mid={midNumber(mids, market.coinNo)} />
-      </ul>
-      <p className="mt-5 border-t border-line pt-3 font-mono text-xs text-dim">
-        {market.category}
-        {expiry ? ` · ${expiry}` : ""}
-      </p>
-    </article>
+    <div className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-2 px-5 py-4 sm:grid-cols-[1fr_110px_110px_86px]">
+      <div className="col-span-2 sm:col-span-1">
+        <p className="text-[15px] leading-snug">{market.title}</p>
+        <p className="mono mt-1 text-[10px] uppercase tracking-wide text-dim">
+          {market.category}
+          {expiry ? ` · settles ${expiry}` : ""}
+        </p>
+      </div>
+      <OddsCell side="YES" mid={yes} />
+      <OddsCell side="NO" mid={no} />
+      <div className="mono col-span-2 text-right text-[11px] text-dim sm:col-span-1">
+        {book === null ? "—" : `${book >= 0 ? "+" : ""}${(book * 100).toFixed(1)}%`}
+      </div>
+    </div>
   );
 }
 
-/* Live board for the #markets section. Loading → static skeleton matching
-   the card shape; writer down → quiet offline panel; live → registry cards
-   joined with allMids (missing mids render as dashes, never faked). */
+function Slab({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mt-8 rounded-[3px] bg-[var(--paper)] shadow-[6px_8px_0_rgba(36,21,18,0.14)]">
+      {children}
+    </div>
+  );
+}
+
+/** The board for the #board section: every listed market with both sides and
+ * the margin the book is charging on each. */
 export function LiveMarketBoard() {
   const state = useMarkets();
   const mids = useMids();
 
   if (state.status === "loading") {
     return (
-      <div className="mt-10 grid gap-4 sm:grid-cols-2">
-        {[0, 1].map((i) => (
-          <div key={i} className="h-44 rounded-card border border-line bg-panel p-5" aria-hidden>
-            <div className="h-4 w-2/3 rounded-[4px] bg-raised" />
-            <div className="mt-5 h-3 w-full rounded-[4px] bg-raised" />
-            <div className="mt-3 h-3 w-full rounded-[4px] bg-raised" />
-          </div>
-        ))}
-      </div>
+      <Slab>
+        <div className="flex flex-col divide-y divide-line" aria-hidden>
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="px-5 py-5">
+              <div className="h-3 w-2/5 rounded-[2px] bg-raised" />
+              <div className="mt-2 h-2 w-24 rounded-[2px] bg-raised" />
+            </div>
+          ))}
+        </div>
+      </Slab>
     );
   }
 
   if (state.status === "offline") {
     return (
-      <div className="mt-10 rounded-card border border-line bg-panel p-8 text-center">
-        <p className="font-mono text-sm text-dim">markets feed offline</p>
-        <p className="mt-2 text-sm text-dim">
-          The registry is unreachable. Live pricing returns when the writer is back.
-        </p>
-      </div>
+      <Slab>
+        <div className="px-5 py-10 text-center">
+          <p className="mono text-xs uppercase tracking-wide text-no">Board down</p>
+          <p className="mt-2 text-sm text-dim">
+            The registry is unreachable. Prices come back when the writer does.
+          </p>
+        </div>
+      </Slab>
     );
   }
 
   if (state.markets.length === 0) {
     return (
-      <div className="mt-10 rounded-card border border-line bg-panel p-8 text-center">
-        <p className="font-mono text-sm text-dim">no markets listed yet</p>
-      </div>
+      <Slab>
+        <p className="mono px-5 py-10 text-center text-xs uppercase tracking-wide text-dim">
+          No markets listed yet
+        </p>
+      </Slab>
     );
   }
 
   return (
-    <div className="mt-10 grid gap-4 sm:grid-cols-2">
-      {state.markets.map((m) => (
-        <LiveMarketCard key={m.vault} market={m} mids={mids} />
-      ))}
-    </div>
+    <Slab>
+      <div className="mono hidden grid-cols-[1fr_110px_110px_86px] gap-x-4 border-b border-line px-5 py-3 text-[10px] uppercase tracking-wide text-dim sm:grid">
+        <span>Market</span>
+        <span className="text-right">Yes</span>
+        <span className="text-right">No</span>
+        <span className="text-right">Book</span>
+      </div>
+      <div className="flex flex-col divide-y divide-line">
+        {state.markets.map((m) => (
+          <BoardRow key={m.vault} market={m} mids={mids} />
+        ))}
+      </div>
+    </Slab>
   );
 }
 
-/* Hero stat strip: real numbers only. Markets count appears once the
-   registry answers; the network label is always true. */
+/** One line of true numbers under the headline. */
 export function HeroStats() {
   const state = useMarkets();
   return (
-    <p className="font-mono text-xs text-dim">
+    <p className="mono text-[11px] uppercase tracking-wide text-dim">
       {state.status === "live"
-        ? `${state.markets.length} market${state.markets.length === 1 ? "" : "s"} listed · HyperEVM testnet`
+        ? `${state.markets.length} market${state.markets.length === 1 ? "" : "s"} on the board · HyperEVM testnet`
         : "HyperEVM testnet"}
     </p>
   );
 }
 
-/* Static sample ticket, shown while the registry loads (no layout jump) and
-   kept when the writer is offline — labeled example pricing, consistent with
-   the worked example in the math section. */
-function TicketPreview() {
-  const legs = [
-    { side: "YES" as const, market: "BTC above 64,000 on Aug 21?", odds: "1.18x" },
-    { side: "NO" as const, market: "HYPE above 60 by Friday?", odds: "1.75x" },
-    { side: "YES" as const, market: "ETH below 1,850 on Aug 21?", odds: "1.61x" },
-  ];
+/* --- the hero slip --- */
+
+type SlipLeg = { side: "YES" | "NO"; title: string; prob: number };
+
+const EXAMPLE_LEGS: SlipLeg[] = [
+  { side: "YES", title: "BTC above 64,000 on Aug 21?", prob: 0.85 },
+  { side: "NO", title: "HYPE above 60 by Friday?", prob: 0.57 },
+  { side: "YES", title: "ETH below 1,850 on Aug 21?", prob: 0.62 },
+];
+
+function Line({ i, children }: { i: number; children: React.ReactNode }) {
   return (
-    <div className="rounded-card border border-line bg-panel p-5 text-[13px] shadow-[0_24px_60px_rgba(4,10,12,0.5)]">
-      <div className="flex items-center justify-between">
-        <span className="font-medium">Parlay ticket</span>
-        <span className="rounded-[4px] border border-line px-1.5 py-0.5 font-mono text-[11px] text-dim">
-          testnet
-        </span>
-      </div>
-
-      <ul className="mt-4 flex flex-col gap-3">
-        {legs.map((leg) => (
-          <li key={leg.market} className="flex items-center gap-3">
-            <SideChip side={leg.side} />
-            <span className="flex-1 text-fg">{leg.market}</span>
-            <span className="font-mono text-dim">{leg.odds}</span>
-          </li>
-        ))}
-      </ul>
-
-      <div className="mt-5 border-t border-line pt-4 flex flex-col gap-2 font-mono">
-        <div className="flex justify-between">
-          <span className="text-dim">Stake</span>
-          <span>100.00 USDC</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-dim">Combined implied</span>
-          <span>30.0%</span>
-        </div>
-        <div className="flex justify-between text-base">
-          <span className="text-dim">Max payout</span>
-          <span className="text-accent">316.20 USDC</span>
-        </div>
-      </div>
-
-      <div className="mt-5">
-        <div className="h-[3px] overflow-hidden rounded-full bg-raised">
-          <div className="ttl-bar h-full bg-accent" />
-        </div>
-        <p className="mt-2 font-mono text-[11px] text-dim">
-          quote refreshes every 30s
-        </p>
-      </div>
-
-      <div
-        className="mt-4 rounded-card bg-accent py-2.5 text-center font-medium text-on-accent"
-        aria-hidden
-      >
-        Mint parlay
-      </div>
-      <p className="mt-3 text-center font-mono text-[11px] text-dim">
-        example pricing
-      </p>
+    <div className="print-line" style={{ animationDelay: `${240 + i * 110}ms` }}>
+      {children}
     </div>
   );
 }
 
-/* Hero asset: the real builder Ticket in display mode, legs from the first
-   two registry markets (YES side), live odds via useMids inside Ticket.
-   Only swaps in once every leg coin has a live mid: with rotated-off coins
-   the display Ticket would compute a fake-looking "100% implied" summary,
-   so the honest fallback is the labeled example-pricing preview. */
-export function HeroTicket() {
+/** The signature: a slip printing itself, line by line, on live odds when the
+ * board is up and on the worked example when it isn't. Every number shown is
+ * labelled for which of the two it is. */
+export function HeroSlip() {
   const state = useMarkets();
   const mids = useMids();
-  if (state.status !== "live" || state.markets.length < 2) return <TicketPreview />;
-  const legs: BuilderLeg[] = state.markets.slice(0, 2).map((m) => ({
-    vault: m.vault,
-    isYes: true,
-    title: m.title,
-    coin: m.coinYes,
-  }));
-  if (!legs.every((l) => midNumber(mids, l.coin) !== null)) return <TicketPreview />;
-  return <Ticket legs={legs} onRemove={() => {}} display />;
+
+  /* Live legs only when every side has a mid — a half-priced slip would
+     print a combined implied that isn't real. */
+  let legs = EXAMPLE_LEGS;
+  let live = false;
+  if (state.status === "live" && state.markets.length >= 2) {
+    const priced = state.markets.slice(0, 3).map((m) => ({
+      side: "YES" as const,
+      title: m.title,
+      prob: midNumber(mids, m.coinYes),
+    }));
+    if (priced.every((l) => l.prob !== null)) {
+      legs = priced as SlipLeg[];
+      live = true;
+    }
+  }
+
+  const combined = legs.reduce((acc, l) => acc * (l.prob as number), 1);
+  const stake = 100;
+  /* Fair returns, not a quote: the house spread is applied by the writer at
+     quote time, so the slip says which number this is. */
+  const fair = stake / combined;
+  return (
+    <div className="relative">
+      <div className="torn bg-[var(--paper)] px-6 py-7 shadow-[10px_14px_0_rgba(36,21,18,0.16)]">
+        <Line i={0}>
+          <div className="mono flex items-baseline justify-between text-[10px] uppercase tracking-wide text-dim">
+            <span>Parlay slip</span>
+            <span>{live ? "live board" : "example"}</span>
+          </div>
+        </Line>
+
+        <Line i={1}>
+          <div className="perf my-4" />
+        </Line>
+
+        <ul className="flex flex-col gap-3">
+          {legs.map((leg, i) => (
+            <li key={leg.title}>
+              <Line i={2 + i}>
+                <div className="flex items-start gap-3">
+                  <span
+                    className={`mono mt-[2px] shrink-0 px-1.5 py-0.5 text-[10px] leading-none ${
+                      leg.side === "YES"
+                        ? "bg-[var(--hit)] text-[var(--paper)]"
+                        : "bg-[var(--stamp)] text-[var(--paper)]"
+                    }`}
+                  >
+                    {leg.side}
+                  </span>
+                  <span className="flex-1 text-[13px] leading-snug">{leg.title}</span>
+                  <span className="mono text-[13px]">{oddsLabel(leg.prob)}</span>
+                </div>
+              </Line>
+            </li>
+          ))}
+        </ul>
+
+        <Line i={2 + legs.length}>
+          <div className="perf my-4" />
+        </Line>
+
+        <div className="mono flex flex-col gap-2 text-[12px]">
+          <Line i={3 + legs.length}>
+            <div className="flex justify-between">
+              <span className="text-dim">Stake</span>
+              <span>{stake.toFixed(2)} USDC</span>
+            </div>
+          </Line>
+          <Line i={4 + legs.length}>
+            <div className="flex justify-between">
+              <span className="text-dim">Combined implied</span>
+              <span>{(combined * 100).toFixed(1)}%</span>
+            </div>
+          </Line>
+          <Line i={5 + legs.length}>
+            <div className="flex items-baseline justify-between">
+              <span className="text-dim">Fair returns</span>
+              <span className="text-[20px]">{fair.toFixed(2)}</span>
+            </div>
+          </Line>
+        </div>
+
+        <Line i={6 + legs.length}>
+          <p className="mono mt-5 text-[9px] uppercase tracking-wide text-dim">
+            {live
+              ? "Odds from the live Core book, before the house spread. Your quote is signed at mint."
+              : "Worked example. Live odds print here when the board is up."}
+          </p>
+        </Line>
+      </div>
+
+      <span
+        aria-hidden
+        className="stamp-in mono pointer-events-none absolute -bottom-3 -left-3 border-[3px] border-[var(--stamp)] bg-[color-mix(in_srgb,var(--paper)_75%,transparent)] px-3 py-1 text-[12px] uppercase tracking-widest text-[var(--stamp)] [animation-delay:1.1s]"
+      >
+        Testnet
+      </span>
+    </div>
+  );
 }
