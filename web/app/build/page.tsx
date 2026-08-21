@@ -45,10 +45,10 @@ function PriceCell({
       disabled={mid === null}
       aria-pressed={selected}
       aria-label={label}
-      className={`mono w-full px-1 py-0.5 text-right text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+      className={`mono w-full pl-1 py-0.5 text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
         selected
           ? "bg-accent text-center text-on-accent"
-          : "text-dim hover:text-fg"
+          : "text-right text-dim hover:text-fg"
       }`}
     >
       {mid === null ? "—" : pct1(mid)}
@@ -68,6 +68,10 @@ function BoardRow({
   onPick: (market: Market, isYes: boolean) => void;
 }) {
   const current = legs.find((l) => l.vault === market.vault);
+  // aria-label overrides the button's text, so the price has to be spoken here
+  // or a screen reader never hears it — the price IS the control.
+  const yes = midOf(mids, market.coinYes);
+  const no = midOf(mids, market.coinNo);
   return (
     <div
       className={`grid grid-cols-[1fr_96px_96px_90px] items-center gap-x-3 border-t border-line px-5 py-3 ${
@@ -76,15 +80,15 @@ function BoardRow({
     >
       <span className="truncate text-[13px]">{market.title}</span>
       <PriceCell
-        mid={midOf(mids, market.coinYes)}
+        mid={yes}
         selected={current?.isYes === true}
-        label={`Take YES on ${market.title}`}
+        label={`Take YES on ${market.title} at ${yes === null ? "no price" : pct1(yes)}`}
         onPick={() => onPick(market, true)}
       />
       <PriceCell
-        mid={midOf(mids, market.coinNo)}
+        mid={no}
         selected={current?.isYes === false}
-        label={`Take NO on ${market.title}`}
+        label={`Take NO on ${market.title} at ${no === null ? "no price" : pct1(no)}`}
         onPick={() => onPick(market, false)}
       />
       <span className="mono text-right text-[12px] text-dim">
@@ -183,7 +187,7 @@ export default function BuildPage() {
           </div>
         </section>
 
-        <aside className="mt-8 lg:mt-0 lg:sticky lg:top-24 lg:pl-8">
+        <aside className="mt-8 lg:mt-0 lg:sticky lg:top-24 lg:self-start lg:pl-8">
           <Ticket legs={legs} onRemove={removeLeg} />
         </aside>
       </main>
