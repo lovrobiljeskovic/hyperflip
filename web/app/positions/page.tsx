@@ -357,7 +357,7 @@ export default function PositionsPage() {
 
   return (
     <div className="min-h-screen text-[13px] text-fg">
-      <AppHeader />
+      <AppHeader ground="dark" />
 
       <main className="mx-auto max-w-6xl px-6 py-10">
         <h1 className="text-lg font-medium">Your parlays</h1>

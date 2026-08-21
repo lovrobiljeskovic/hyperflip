@@ -1,21 +1,8 @@
+import Link from "next/link";
+
+import { AppHeader, Mark } from "./app-header";
 import { InviteForm } from "./invite-form";
 import { HeroSlip, HeroStats, LiveMarketBoard } from "./live-markets";
-import { WalletButton } from "./wallet-button";
-
-const wordmark = (
-  <a href="/" className="mono flex items-center gap-2 text-[13px] tracking-tight">
-    <span className="inline-block h-3 w-3 bg-[var(--ink)]" aria-hidden />
-    parlay
-  </a>
-);
-
-const NAV = [
-  { href: "#board", label: "Board" },
-  { href: "#writing", label: "Writing a slip" },
-  { href: "#book", label: "The book" },
-  { href: "/build", label: "Build" },
-  { href: "/positions", label: "Positions" },
-];
 
 /* A real sequence — you cannot quote before you pick, or claim before it
    settles — so these carry numbers. */
@@ -89,24 +76,7 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
 export default function Home() {
   return (
     <div className="paper flex min-h-full flex-col">
-      <header className="sticky top-0 z-30 bg-[var(--stock)]/95 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
-          {wordmark}
-          <nav className="mono flex items-center gap-5 text-[11px] uppercase tracking-wide">
-            {NAV.map((l) => (
-              <a
-                key={l.href}
-                href={l.href}
-                className="hidden text-dim transition-colors hover:text-fg md:block"
-              >
-                {l.label}
-              </a>
-            ))}
-            <WalletButton />
-          </nav>
-        </div>
-        <div className="perf" />
-      </header>
+      <AppHeader ground="paper" />
 
       <main className="mx-auto w-full max-w-6xl px-6">
         {/* 1 · hero — the slip prints itself */}
@@ -348,7 +318,12 @@ export default function Home() {
       <footer className="mt-auto">
         <div className="perf" />
         <div className="mono mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-8 text-[11px] uppercase tracking-wide text-dim">
-          {wordmark}
+          <Link href="/" className="flex items-center gap-[10px] normal-case">
+            <Mark className="h-[15px] w-[26px]" />
+            <span className="display text-[16px] [font-variation-settings:'wght'_700] tracking-[-0.035em]">
+              overround
+            </span>
+          </Link>
           <p>HyperEVM testnet beta · not investment advice</p>
           <div className="flex gap-5">
             <a href="https://hyperliquid.xyz" className="transition-colors hover:text-fg">

@@ -126,7 +126,7 @@ export default function BuildPage() {
 
   return (
     <div className="min-h-screen text-[13px] text-fg">
-      <AppHeader />
+      <AppHeader ground="dark" />
 
       <main className="mx-auto grid max-w-6xl gap-8 px-6 py-10 lg:grid-cols-[1.5fr_1fr] lg:items-start">
         <section>
