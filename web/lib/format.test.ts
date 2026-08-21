@@ -1,4 +1,4 @@
-import { describe, expect, it, test } from "vitest";
+import { describe, expect, it, test, vi } from "vitest";
 import {
   edgeSteps,
   formatUsdc,
@@ -90,12 +90,20 @@ describe("edgeSteps", () => {
 });
 
 test("until counts down in the largest useful unit", () => {
+  // until() reads the clock itself, so the test must freeze it — otherwise a
+  // millisecond elapsing between here and the call floors 18m to 17m.
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
   const now = Date.now();
   expect(until(now - 1000)).toBe("expired");
   expect(until(now)).toBe("expired");
   expect(until(now + 18 * 60_000)).toBe("18m");
   expect(until(now + 4 * 3_600_000)).toBe("4h");
   expect(until(now + 11 * 86_400_000 + 60_000)).toBe("11d");
+  // the unit transitions themselves, assertable now the clock is frozen
+  expect(until(now + 3_600_000)).toBe("1h");
+  expect(until(now + 86_400_000)).toBe("1d");
+  vi.useRealTimers();
 });
 
 test("pct1 renders a mid at one decimal place", () => {
