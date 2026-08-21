@@ -458,8 +458,10 @@ export default function PositionsPage() {
                       <Fragment key={row.id.toString()}>
                         <tr
                           onClick={() => setExpanded((cur) => (cur === row.id ? null : row.id))}
-                          className={`cursor-pointer transition-colors hover:bg-raised/40 ${divider} ${
-                            view.action?.kind === "claim" ? "bg-[rgba(245,160,145,0.06)]" : ""
+                          className={`cursor-pointer transition-colors ${divider} ${
+                            view.action?.kind === "claim"
+                              ? "bg-accent/[0.06] hover:bg-accent/10"
+                              : "hover:bg-raised/40"
                           }`}
                         >
                           <td className="px-5 py-4">
