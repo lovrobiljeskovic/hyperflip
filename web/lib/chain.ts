@@ -5,7 +5,7 @@ export const hyperEvmTestnet = defineChain({
   name: "HyperEVM Testnet",
   nativeCurrency: { name: "HYPE", symbol: "HYPE", decimals: 18 },
   rpcUrls: {
-    default: { http: [process.env.NEXT_PUBLIC_RPC_URL ?? "https://hyperliquid-testnet.drpc.org"] },
+    default: { http: [process.env.NEXT_PUBLIC_RPC_URL ?? "https://rpcs.chain.link/hyperevm/testnet"] },
   },
   blockExplorers: {
     default: { name: "Purrsec", url: "https://testnet.purrsec.com" },
