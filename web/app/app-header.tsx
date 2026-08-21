@@ -77,7 +77,9 @@ export function AppHeader({ ground }: { ground: "paper" | "dark" }) {
               </Link>
             );
           })}
-          <WalletButton />
+          <span className="normal-case tracking-normal">
+            <WalletButton />
+          </span>
         </nav>
       </div>
       {paper && <div className="perf" />}
