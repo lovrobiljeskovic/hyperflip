@@ -222,7 +222,7 @@ function LegTable({
 }) {
   return (
     <div className="flex flex-col gap-2 border-l-2 border-line bg-raised/30 px-5 py-4">
-      <div className="flex gap-4 font-mono text-[11px] text-dim">
+      <div className="flex gap-4 mono text-[11px] text-dim">
         <span className="w-10">Side</span>
         <span className="flex-1">Market</span>
         <span className="w-16 text-right">Live</span>
@@ -240,7 +240,7 @@ function LegTable({
         const live = Number.isFinite(n) && n > 0 && n < 1 ? n : null;
         const verdict = VERDICT_STYLE[row.legVerdicts[i]];
         return (
-          <div key={leg.vault} className="flex items-baseline gap-4 font-mono text-xs">
+          <div key={leg.vault} className="flex items-baseline gap-4 mono text-xs">
             <span className={`w-10 ${leg.isYes ? "text-yes" : "text-no"}`}>{leg.isYes ? "YES" : "NO"}</span>
             <a
               href={`${EXPLORER}/address/${leg.vault}`}
@@ -289,7 +289,7 @@ function SummaryStrip({ rows }: { rows: Row[] }) {
     <div className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-card border border-line bg-line sm:grid-cols-5">
       {cells.map((c) => (
         <div key={c.label} className="bg-panel px-[18px] py-[14px]">
-          <p className="mono text-[10px] text-dim">{c.label}</p>
+          <p className="mono text-[10px] uppercase tracking-[0.16em] text-dim">{c.label}</p>
           <p className={`mono mt-1 text-[16px] ${c.className}`}>{c.value}</p>
         </div>
       ))}
@@ -493,7 +493,7 @@ export default function PositionsPage() {
                                 type="button"
                                 disabled={isPending}
                                 onClick={() => void act(row, view.action!.kind)}
-                                className={`rounded-[4px] px-3 py-1 font-mono text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                                className={`rounded-[4px] px-3 py-1 mono text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                                   view.action.kind === "claim"
                                     ? "bg-accent font-medium text-on-accent hover:opacity-90"
                                     : "border border-line text-fg hover:border-dim"
