@@ -519,7 +519,7 @@ export function Ticket({
         <>
           <div className="mt-4">
             <div className="flex items-baseline justify-between">
-              <label htmlFor="stake" className="text-xs text-dim">
+              <label htmlFor="stake" className="mono text-[10px] uppercase tracking-[0.16em] text-dim">
                 Stake (USDC)
               </label>
               <span className="mono text-[11px] text-dim">

@@ -222,7 +222,7 @@ function LegTable({
 }) {
   return (
     <div className="flex flex-col gap-2 border-l-2 border-line bg-raised/30 px-5 py-4">
-      <div className="flex gap-4 mono text-[11px] text-dim">
+      <div className="flex gap-4 mono text-[9px] uppercase tracking-[0.16em] text-dim">
         <span className="w-10">Side</span>
         <span className="flex-1">Market</span>
         <span className="w-16 text-right">Live</span>

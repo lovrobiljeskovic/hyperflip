@@ -13,7 +13,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   return (
     <div className="flex items-baseline justify-between gap-4">
       <span className="text-dim">{label}</span>
-      <span className="font-mono">{children}</span>
+      <span className="mono">{children}</span>
     </div>
   );
 }
@@ -78,7 +78,7 @@ export function WalletButton() {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-haspopup="dialog"
-        className="flex items-center gap-2 rounded-card border border-line bg-panel px-3 py-1.5 font-mono text-xs text-fg transition-colors hover:border-dim"
+        className="flex items-center gap-2 rounded-card border border-line bg-panel py-2 px-3.5 mono text-xs text-fg transition-colors hover:border-dim"
       >
         <span
           className={`inline-block size-1.5 rounded-full ${wrongChain ? "bg-no" : "bg-yes"}`}
@@ -101,13 +101,13 @@ export function WalletButton() {
             aria-label="Wallet"
             className="absolute right-0 z-30 mt-2 w-72 rounded-card border border-line bg-panel p-4 text-xs shadow-[0_24px_60px_rgba(4,10,12,0.6)]"
           >
-            <p className="break-all font-mono text-[11px] leading-relaxed text-fg">{address}</p>
+            <p className="break-all mono text-[11px] leading-relaxed text-fg">{address}</p>
 
             <div className="mt-3 flex gap-2">
               <button
                 type="button"
                 onClick={() => void copy()}
-                className="flex-1 rounded-[4px] border border-line px-2 py-1 font-mono text-[11px] text-dim transition-colors hover:text-fg"
+                className="flex-1 rounded-[4px] border border-line px-2 py-1 mono text-[11px] text-dim transition-colors hover:text-fg"
               >
                 {copied ? "Copied" : "Copy address"}
               </button>
@@ -115,7 +115,7 @@ export function WalletButton() {
                 href={`${EXPLORER}/address/${address}`}
                 target="_blank"
                 rel="noreferrer"
-                className="flex-1 rounded-[4px] border border-line px-2 py-1 text-center font-mono text-[11px] text-dim transition-colors hover:text-fg"
+                className="flex-1 rounded-[4px] border border-line px-2 py-1 text-center mono text-[11px] text-dim transition-colors hover:text-fg"
               >
                 Explorer ↗
               </a>
@@ -149,7 +149,7 @@ export function WalletButton() {
                 setOpen(false);
                 disconnect();
               }}
-              className="mt-3 w-full rounded-[4px] border border-no/40 py-1.5 text-center font-mono text-[11px] text-no transition-colors hover:bg-no/10"
+              className="mt-3 w-full rounded-[4px] border border-no/40 py-1.5 text-center mono text-[11px] text-no transition-colors hover:bg-no/10"
             >
               Disconnect
             </button>
