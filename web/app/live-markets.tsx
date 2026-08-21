@@ -38,11 +38,16 @@ function useMarkets(): MarketsState {
 
 /* --- mid helpers: never fake a number, dash on missing --- */
 
+/** A coin's mid as a probability. allMids carries every coin on the venue, so
+ * a mid is only meaningful here when it lands strictly inside (0, 1) — the
+ * same domain priceBreakdown() enforces on a signed quote's leg prices.
+ * Anything else is not a probability and must not reach the board or the
+ * hero, where it would print as a nonsense percentage or payout. */
 function midNumber(mids: Record<string, string>, coin: string): number | null {
   const raw = mids[coin];
   if (raw === undefined) return null;
   const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : null;
+  return Number.isFinite(n) && n > 0 && n < 1 ? n : null;
 }
 
 function oddsLabel(mid: number | null): string {
