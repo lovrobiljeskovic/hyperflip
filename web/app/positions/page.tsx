@@ -286,7 +286,7 @@ function SummaryStrip({ rows }: { rows: Row[] }) {
     { label: "Claimed", value: `${formatUsdc(won)} USDC`, className: won > 0n ? "text-yes" : "" },
   ];
   return (
-    <div className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-card border border-line bg-line sm:grid-cols-5">
+    <div className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-card border border-line bg-line sm:grid-cols-3 lg:grid-cols-5">
       {cells.map((c) => (
         <div key={c.label} className="bg-panel px-[18px] py-[14px]">
           <p className="mono text-[10px] uppercase tracking-[0.16em] text-dim">{c.label}</p>
