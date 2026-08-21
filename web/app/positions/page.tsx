@@ -184,7 +184,11 @@ function ago(ms: number): string {
  * settlement progress readable without expanding the row. */
 function LegDots({ verdicts }: { verdicts: LegVerdict[] }) {
   return (
-    <span className="inline-flex items-center gap-[3px]">
+    <span
+      role="img"
+      aria-label={verdicts.map((v) => VERDICT_STYLE[v].label).join(", ")}
+      className="inline-flex items-center gap-[3px]"
+    >
       {verdicts.map((v, i) => (
         <span
           key={i}
@@ -196,7 +200,8 @@ function LegDots({ verdicts }: { verdicts: LegVerdict[] }) {
   );
 }
 
-/** New: without it, the half-filled dot is a puzzle rather than a state. */
+/** Names the four dot states; without it the half-filled dot is a puzzle
+ * rather than a state. */
 function DotLegend() {
   const order: LegVerdict[] = ["hit", "fractional", "lost", "pending"];
   return (
