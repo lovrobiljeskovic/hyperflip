@@ -202,6 +202,13 @@ details[open] > summary::after {
   color: var(--ink);
 }
 
+/* Focus is visible on both grounds. The paper rule below is more specific and
+   keeps its ink outline inside the landing subtree. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
 .paper :focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 3px;
@@ -329,10 +336,14 @@ details[open] > summary::after {
   animation-duration: 420ms;
 }
 
+/* Every view transition, including pseudo-elements the UA generates that we
+   never named. `!important` is load-bearing: it must beat the UA's own
+   animation shorthand on these pseudo-elements. */
 @media (prefers-reduced-motion: reduce) {
-  ::view-transition-old(root),
-  ::view-transition-new(root),
-  ::view-transition-group(overround-mark) {
-    animation: none;
+  ::view-transition-old(*),
+  ::view-transition-new(*),
+  ::view-transition-group(*) {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
   }
 }
