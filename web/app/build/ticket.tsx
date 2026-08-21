@@ -12,6 +12,7 @@ import {
   edgeSteps,
   multiplierNum,
   priceBreakdown,
+  quotedOverround,
   secondsLeft,
   USDC_DECIMALS,
   type PriceBreakdown,
@@ -19,6 +20,7 @@ import {
 import { hyperEvmTestnet } from "@/lib/chain";
 import { PARLAY_VAULT, parlayVaultAbi } from "@/lib/contracts";
 import { useConnectAction, useUsdc, useWalletState } from "@/lib/wallet";
+import { Overround } from "../overround-motif";
 
 export interface BuilderLeg {
   vault: `0x${string}`;
@@ -35,24 +37,13 @@ const TTL_SECONDS = 30;
 // treated as plain USDC amounts when /limits is unreachable.
 const STAKE_PRESETS = [25, 50, 100];
 
-export function SideChip({ side }: { side: "YES" | "NO" }) {
-  const yes = side === "YES";
-  return (
-    <span
-      className={`inline-flex w-10 justify-center rounded-[4px] border px-1 py-0.5 font-mono text-[11px] uppercase ${
-        yes ? "border-yes/50 text-yes" : "border-no/50 text-no"
-      }`}
-    >
-      {side}
-    </span>
-  );
-}
-
 function midPct(mids: Record<string, string>, coin: string): string {
   const raw = mids[coin];
   if (raw === undefined) return "—";
   const n = Number(raw);
-  return Number.isFinite(n) ? impliedPct(n) : "—";
+  // Only a value strictly inside (0, 1) is a probability — the same domain
+  // priceBreakdown() enforces. allMids carries every coin on the venue.
+  return Number.isFinite(n) && n > 0 && n < 1 ? impliedPct(n) : "—";
 }
 
 function tryParseStake(v: string): bigint | null {
@@ -414,7 +405,7 @@ export function Ticket({
     if (quoting) return { kind: "disabled", label: "Quoting…" };
     if (!quoteResult) return { kind: "disabled", label: "Waiting for quote…" };
     if (!quoteResult.ok) return { kind: "disabled", label: "Unable to quote" };
-    return { kind: "mint", label: `Mint parlay — ${formatUsdc(BigInt(quoteResult.quote.premium))} USDC` };
+    return { kind: "mint", label: `Mint slip — ${formatUsdc(BigInt(quoteResult.quote.premium))} USDC` };
   }
   const cta = display ? null : computeCta();
 
@@ -433,6 +424,8 @@ export function Ticket({
           maxPayout,
         )
       : null;
+  // The motif's lens is the book's margin on the live quote.
+  const margin = bd ? quotedOverround(bd) : null;
   // The stake you'd need to win back exactly what you paid — the honest
   // "how likely does this have to be" number behind the multiplier.
   const m = multiplierNum(premium, maxPayout);
@@ -452,35 +445,40 @@ export function Ticket({
     maxStake === null ? BigInt(f) * 10n ** BigInt(USDC_DECIMALS) : (maxStake * BigInt(f)) / 100n,
   );
 
-  // display-mode sample math: fair combined odds off live mids, no house edge.
-  const combinedImplied = legs.length
-    ? legs.reduce((acc, l) => {
-        const raw = mids[l.coin];
-        const n = raw === undefined ? NaN : Number(raw);
-        return acc * (Number.isFinite(n) ? n : 1);
-      }, 1)
-    : 0;
-  const sampleMultiplier = combinedImplied > 0 ? 1 / combinedImplied : 0;
-  const samplePayout = 100 * sampleMultiplier;
+  // Display-mode sample math: fair combined odds off live mids, no house edge.
+  // Every leg must carry a real probability — treating an unpriced leg as
+  // certain would overstate the multiplier, so the figure goes unavailable
+  // instead.
+  const sampleProbs = legs.map((l) => {
+    const raw = mids[l.coin];
+    const n = raw === undefined ? NaN : Number(raw);
+    return Number.isFinite(n) && n > 0 && n < 1 ? n : null;
+  });
+  const combinedImplied =
+    legs.length && sampleProbs.every((p) => p !== null)
+      ? (sampleProbs as number[]).reduce((acc, p) => acc * p, 1)
+      : 0;
+  const sampleMultiplier = combinedImplied > 0 ? 1 / combinedImplied : null;
+  const samplePayout = sampleMultiplier === null ? null : 100 * sampleMultiplier;
 
   return (
-    <div className="rounded-card border border-line bg-panel p-5 text-[13px] shadow-[0_24px_60px_rgba(4,10,12,0.5)]">
-      <div className="flex items-center justify-between">
-        <span className="font-medium">Parlay ticket</span>
-        <span className="rounded-[4px] border border-line px-1.5 py-0.5 font-mono text-[11px] text-dim">
-          {display ? "preview" : "testnet"}
-        </span>
+    <div className="rounded-card border border-line bg-panel px-7 py-8 text-[13px] shadow-[0_24px_60px_rgba(4,10,12,0.5)]">
+      <div className="flex items-start justify-between">
+        <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Your slip</span>
+        <Overround size={44} margin={margin} />
       </div>
 
       {legs.length === 0 ? (
         <p className="mt-4 text-dim">No legs yet — add YES or NO from the market list.</p>
       ) : (
-        <ul className="mt-4 flex flex-col gap-3">
+        <ul className="mt-4 flex flex-col gap-px bg-line">
           {legs.map((leg) => (
-            <li key={leg.vault} className="flex items-center gap-3">
-              <SideChip side={leg.isYes ? "YES" : "NO"} />
-              <span className="flex-1 text-fg">{leg.title}</span>
-              <span className="font-mono text-dim">{midPct(mids, leg.coin)}</span>
+            <li key={leg.vault} className="flex items-center gap-3 bg-ink px-4 py-[13px]">
+              <span className={`mono text-[11px] ${leg.isYes ? "text-yes" : "text-no"}`}>
+                {leg.isYes ? "YES" : "NO"}
+              </span>
+              <span className="flex-1 truncate text-fg">{leg.title}</span>
+              <span className="mono text-dim">{midPct(mids, leg.coin)}</span>
               {!display && (
                 <button
                   type="button"
@@ -497,18 +495,24 @@ export function Ticket({
       )}
 
       {display ? (
-        <div className="mt-5 border-t border-line pt-4 flex flex-col gap-2 font-mono">
+        <div className="mono mt-5 flex flex-col gap-2 border-t border-line pt-4 text-[12px]">
           <div className="flex justify-between">
             <span className="text-dim">Stake</span>
             <span>100.00 USDC</span>
           </div>
           <div className="flex justify-between">
             <span className="text-dim">Combined implied</span>
-            <span>{impliedPct(combinedImplied)}</span>
+            <span>{combinedImplied > 0 ? impliedPct(combinedImplied) : "—"}</span>
           </div>
-          <div className="flex justify-between text-base">
-            <span className="text-dim">Max payout</span>
-            <span className="text-accent">{samplePayout.toFixed(2)} USDC</span>
+          <div className="flex justify-between">
+            <span className="text-dim">Fair</span>
+            <span className="text-dim">{sampleMultiplier === null ? "—" : mult(sampleMultiplier)}</span>
+          </div>
+          <div className="mt-3 flex items-end justify-between border-t border-line pt-4">
+            <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Max payout</span>
+            <span className="mono text-[30px] leading-none text-accent">
+              {samplePayout === null ? "—" : samplePayout.toFixed(2)}
+            </span>
           </div>
         </div>
       ) : (
@@ -518,7 +522,7 @@ export function Ticket({
               <label htmlFor="stake" className="text-xs text-dim">
                 Stake (USDC)
               </label>
-              <span className="font-mono text-[11px] text-dim">
+              <span className="mono text-[11px] text-dim">
                 Balance {usdcBalance === undefined ? "—" : formatUsdc(usdcBalance)}
               </span>
             </div>
@@ -529,7 +533,7 @@ export function Ticket({
               value={stake}
               onChange={(e) => setStake(e.target.value)}
               placeholder="0.00"
-              className="mt-1 w-full rounded-card border border-line bg-panel px-3 py-2 font-mono text-sm text-fg placeholder:text-dim focus:outline-none focus:border-accent"
+              className="mt-1 w-full rounded-card border border-line bg-panel px-3 py-2 mono text-sm text-fg placeholder:text-dim focus:outline-none focus:border-accent"
             />
             <div className="mt-2 flex gap-2">
               {presets.map((v, i) => (
@@ -537,7 +541,7 @@ export function Ticket({
                   key={i}
                   type="button"
                   onClick={() => setStake(formatUnits(v, USDC_DECIMALS))}
-                  className="flex-1 rounded-[4px] border border-line py-1 font-mono text-[11px] text-dim transition-colors hover:border-dim hover:text-fg"
+                  className="flex-1 rounded-[4px] border border-line py-1 mono text-[11px] text-dim transition-colors hover:border-dim hover:text-fg"
                 >
                   {formatUsdc(v)}
                 </button>
@@ -546,25 +550,31 @@ export function Ticket({
                 type="button"
                 disabled={maxAllowed === null || maxAllowed === 0n}
                 onClick={() => maxAllowed !== null && setStake(formatUnits(maxAllowed, USDC_DECIMALS))}
-                className="flex-1 rounded-[4px] border border-line py-1 font-mono text-[11px] text-dim transition-colors hover:border-dim hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+                className="flex-1 rounded-[4px] border border-line py-1 mono text-[11px] text-dim transition-colors hover:border-dim hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Max
               </button>
             </div>
             {maxStake !== null && (
-              <p className="mt-1 font-mono text-[11px] text-dim">
+              <p className="mt-1 mono text-[11px] text-dim">
                 House limit {formatUsdc(maxStake)} USDC per ticket
               </p>
             )}
           </div>
 
           {quoteResult?.ok && (
-            <div className="mt-4 flex flex-col gap-2 border-t border-line pt-4 font-mono">
-              <DetailRow label="You pay">{formatUsdc(premium)} USDC</DetailRow>
-              <DetailRow label="Multiplier">{multiplier(premium, maxPayout)}</DetailRow>
-              <div className="flex items-baseline justify-between gap-4 text-base">
-                <span className="text-dim">Max payout</span>
-                <span className="text-accent">{formatUsdc(maxPayout)} USDC</span>
+            <div className="mono mt-4 flex flex-col gap-2 border-t border-line pt-4 text-[12px]">
+              <DetailRow label="Stake">{formatUsdc(premium)} USDC</DetailRow>
+              <DetailRow label="Combined implied">{bd ? pct(1 / bd.fairMultiplier) : "—"}</DetailRow>
+              <DetailRow label="Fair" className="text-dim">
+                {bd ? mult(bd.fairMultiplier) : "—"}
+              </DetailRow>
+              <DetailRow label="Quoted" className="text-[20px] leading-none text-accent">
+                {multiplier(premium, maxPayout)}
+              </DetailRow>
+              <div className="mt-3 flex items-end justify-between border-t border-line pt-4">
+                <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Max payout</span>
+                <span className="mono text-[30px] leading-none text-accent">{formatUsdc(maxPayout)}</span>
               </div>
 
               {/* open by default: the multiplier's derivation is the point of the
@@ -617,7 +627,7 @@ export function Ticket({
                   style={{ width: `${Math.max(0, Math.min(100, (ttlLeft / ttlSeconds) * 100))}%` }}
                 />
               </div>
-              <p className="mt-2 font-mono text-[11px] text-dim">{ttlLeft}s until requote</p>
+              <p className="mono mt-2 text-[11px] text-dim">Quote reprices in {ttlLeft}s</p>
             </div>
           )}
 
@@ -625,7 +635,7 @@ export function Ticket({
             <div className="mt-4 rounded-[4px] border border-no/30 bg-no/5 p-3">
               <p className="text-no">{errorMessage(quoteResult)}</p>
               {errorMessage(quoteResult) !== quoteResult.error && (
-                <p className="mt-1 font-mono text-[11px] text-no/70">{quoteResult.error}</p>
+                <p className="mt-1 mono text-[11px] text-no/70">{quoteResult.error}</p>
               )}
               {(quoteResult.status === 0 || quoteResult.status === 503) && (
                 <button
@@ -635,7 +645,7 @@ export function Ticket({
                     clockSkewRetried.current = false;
                     void runQuote();
                   }}
-                  className="mt-2 rounded-[4px] border border-line px-2 py-1 font-mono text-[11px] text-dim transition-colors hover:text-fg"
+                  className="mt-2 rounded-[4px] border border-line px-2 py-1 mono text-[11px] text-dim transition-colors hover:text-fg"
                 >
                   Retry
                 </button>
@@ -644,7 +654,7 @@ export function Ticket({
                 <button
                   type="button"
                   onClick={() => setStake(formatUnits(BigInt(quoteResult.maxStake!), USDC_DECIMALS))}
-                  className="mt-2 rounded-[4px] border border-line px-2 py-1 font-mono text-[11px] text-dim transition-colors hover:text-fg"
+                  className="mt-2 rounded-[4px] border border-line px-2 py-1 mono text-[11px] text-dim transition-colors hover:text-fg"
                 >
                   Use {formatUsdc(BigInt(quoteResult.maxStake))} USDC
                 </button>
@@ -652,7 +662,7 @@ export function Ticket({
               {quoteResult.status === 403 && (
                 <a
                   href="/#access"
-                  className="mt-2 inline-block font-mono text-[11px] text-dim underline underline-offset-4 transition-colors hover:text-fg"
+                  className="mt-2 inline-block mono text-[11px] text-dim underline underline-offset-4 transition-colors hover:text-fg"
                 >
                   Update invite code
                 </a>
@@ -667,13 +677,13 @@ export function Ticket({
           <div className="h-[3px] overflow-hidden rounded-full bg-raised">
             <div className="ttl-bar h-full bg-accent" />
           </div>
-          <p className="mt-2 font-mono text-[11px] text-dim">quote refreshes every 30s</p>
+          <p className="mono mt-2 text-[11px] text-dim">Quote reprices in 30s</p>
         </div>
       )}
 
       {display ? (
-        <div className="mt-4 rounded-card bg-accent py-2.5 text-center font-medium text-on-accent" aria-hidden>
-          Mint parlay — 100.00 USDC
+        <div className="mono mt-4 rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent" aria-hidden>
+          Mint slip — 100.00 USDC
         </div>
       ) : cta ? (
         <>
@@ -681,7 +691,7 @@ export function Ticket({
             <button
               type="button"
               onClick={() => connect()}
-              className="mt-4 w-full rounded-card bg-accent py-2.5 text-center font-medium text-on-accent transition-transform active:scale-[0.98] hover:opacity-90"
+              className="mono mt-4 w-full rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform active:scale-[0.98] hover:opacity-90"
             >
               {cta.label}
             </button>
@@ -689,7 +699,7 @@ export function Ticket({
           {(cta.kind === "link" || cta.kind === "done") && (
             <a
               href={cta.href}
-              className={`mt-4 block w-full rounded-card py-2.5 text-center font-medium transition-transform active:scale-[0.98] hover:opacity-90 ${
+              className={`mono mt-4 block w-full rounded-card py-[15px] text-center text-[12px] uppercase tracking-[0.1em] transition-transform active:scale-[0.98] hover:opacity-90 ${
                 cta.kind === "done" ? "bg-yes text-on-accent" : "bg-accent text-on-accent"
               }`}
             >
@@ -700,33 +710,33 @@ export function Ticket({
             <button
               type="button"
               onClick={() => quoteResult?.ok && mintQuoted(quoteResult.quote, quoteResult.sig)}
-              className="mt-4 w-full rounded-card bg-accent py-2.5 text-center font-medium text-on-accent transition-transform active:scale-[0.98] hover:opacity-90"
+              className="mono mt-4 w-full rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform active:scale-[0.98] hover:opacity-90"
             >
               {cta.label}
             </button>
           )}
           {cta.kind === "disabled" && (
-            <div className="mt-4 w-full cursor-not-allowed rounded-card bg-raised py-2.5 text-center font-medium text-dim">
+            <div className="mono mt-4 w-full cursor-not-allowed rounded-card bg-raised py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-dim">
               {cta.label}
             </div>
           )}
           {cta.kind === "mint" && needsApproval && (
-            <p className="mt-2 text-center font-mono text-[11px] text-dim">
+            <p className="mt-2 text-center mono text-[11px] text-dim">
               Two wallet confirmations: approve USDC, then mint.
             </p>
           )}
           {mintState === "requoted" && (
-            <p className="mt-3 text-center font-mono text-[11px] text-accent">Quote refreshed — mint again</p>
+            <p className="mt-3 text-center mono text-[11px] text-accent">Quote refreshed — mint again</p>
           )}
           {mintState === "error" && mintErrorMsg && (
             <div className="mt-3">
               <p className="text-center text-xs text-no">{mintErrorMsg}</p>
               {mintErrorDetail && mintErrorDetail !== mintErrorMsg && (
                 <details className="mt-2 rounded-[4px] border border-no/30 bg-no/5 p-2">
-                  <summary className="cursor-pointer font-mono text-[11px] text-no/70">
+                  <summary className="cursor-pointer mono text-[11px] text-no/70">
                     Full error
                   </summary>
-                  <pre className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-no/80">
+                  <pre className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-all mono text-[11px] leading-relaxed text-no/80">
                     {mintErrorDetail}
                   </pre>
                 </details>
