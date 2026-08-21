@@ -19,7 +19,10 @@ function midOf(mids: Record<string, string>, coin: string): number | null {
   return Number.isFinite(n) && n > 0 && n < 1 ? n : null;
 }
 
-const MAX_LEGS = 5;
+/** Matches ParlayVault.MAX_LEGS (src/ParlayVault.sol:58) and the writer's own
+ * bound (writer/src/server.ts:49). Display only — the cap is enforced on-chain
+ * and by the writer, not here. */
+const MAX_LEGS = 10;
 
 /** A price cell is the control — clicking 61.4 takes that side. It stays a
  * <button> so the keyboard and a screen reader still have a target now that
@@ -39,9 +42,10 @@ function PriceCell({
     <button
       type="button"
       onClick={onPick}
+      disabled={mid === null}
       aria-pressed={selected}
       aria-label={label}
-      className={`mono w-full px-1 py-0.5 text-right text-[12px] transition-colors ${
+      className={`mono w-full px-1 py-0.5 text-right text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
         selected
           ? "bg-accent text-center text-on-accent"
           : "text-dim hover:text-fg"
