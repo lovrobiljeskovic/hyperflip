@@ -69,7 +69,7 @@ const faq = [
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return (
-    <p className="mono text-[10px] uppercase tracking-[0.18em] text-dim">{children}</p>
+    <p className="mono text-[10px] uppercase tracking-[0.16em] text-dim">{children}</p>
   );
 }
 
@@ -80,17 +80,17 @@ export default function Home() {
 
       <main className="mx-auto w-full max-w-6xl px-6">
         {/* 1 · hero — the slip prints itself */}
-        <section className="grid items-center gap-12 py-16 lg:grid-cols-[1.05fr_0.95fr] lg:py-24">
+        <section className="grid items-center gap-14 py-16 lg:grid-cols-[1.05fr_0.95fr] lg:py-[72px]">
           <div>
             <HeroStats />
-            <h1 className="display mt-5 text-[clamp(2.6rem,7vw,4.75rem)]">
+            <h1 className="display mt-[22px] text-[clamp(2.6rem,7vw,4.75rem)] leading-[0.9] tracking-[-0.04em]">
               Two to five legs.
               <br />
               One slip.
               <br />
               One payout.
             </h1>
-            <p className="mt-6 max-w-[44ch] text-[17px] leading-relaxed text-[color-mix(in_srgb,var(--ink)_78%,transparent)]">
+            <p className="mt-6 max-w-[44ch] text-[17px] leading-[1.6] text-[#4A2B23]">
               Take YES or NO across Hyperliquid outcome markets and put them on
               a single ticket. The house prices the combination off the live
               Core book, signs it, and posts the payout before you mint.
@@ -98,13 +98,13 @@ export default function Home() {
             <div className="mt-8 flex flex-wrap gap-3">
               <a
                 href="#counter"
-                className="mono bg-[var(--ink)] px-6 py-3 text-[12px] uppercase tracking-wide text-[var(--stock)] transition-transform active:scale-[0.98] hover:-translate-y-[1px]"
+                className="mono bg-[var(--ink)] px-[26px] py-[14px] text-[11px] uppercase tracking-[0.1em] text-[var(--stock)] transition-transform active:scale-[0.98] hover:-translate-y-[1px]"
               >
                 Get an invite code
               </a>
               <a
                 href="#writing"
-                className="mono border border-[var(--ink)] px-6 py-3 text-[12px] uppercase tracking-wide transition-colors hover:bg-[color-mix(in_srgb,var(--ink)_8%,transparent)]"
+                className="mono border border-[var(--ink)] px-[26px] py-[14px] text-[11px] uppercase tracking-[0.1em] transition-colors hover:bg-[color-mix(in_srgb,var(--ink)_8%,transparent)]"
               >
                 How a slip settles
               </a>

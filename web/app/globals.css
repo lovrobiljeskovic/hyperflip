@@ -221,17 +221,13 @@ details[open] > summary::after {
   background-size: 8px 2px;
 }
 
-/* coupon edge — semicircular bites top and bottom of a paper panel */
-.torn {
-  --r: 7px;
-  -webkit-mask:
-    radial-gradient(circle 7px at 50% 0, #0000 98%, #000) repeat-x 50% 0 / 22px 7px,
-    radial-gradient(circle 7px at 50% 100%, #0000 98%, #000) repeat-x 50% 100% / 22px 7px,
-    linear-gradient(#000 0 0) no-repeat 0 7px / 100% calc(100% - 14px);
-  mask:
-    radial-gradient(circle 7px at 50% 0, #0000 98%, #000) repeat-x 50% 0 / 22px 7px,
-    radial-gradient(circle 7px at 50% 100%, #0000 98%, #000) repeat-x 50% 100% / 22px 7px,
-    linear-gradient(#000 0 0) no-repeat 0 7px / 100% calc(100% - 14px);
+/* torn receipt edge — the bottom of the slip, ripped off the roll. Two triangle
+   repeats in the ground colour bite into the paper from below. */
+.torn-edge {
+  height: 9px;
+  background:
+    linear-gradient(-45deg, var(--stock) 25%, transparent 25%) repeat-x 0 0 / 12px 9px,
+    linear-gradient(45deg, var(--stock) 25%, transparent 25%) repeat-x 0 0 / 12px 9px;
 }
 
 /* the hero slip prints itself: one line at a time, ink settling */
@@ -272,9 +268,31 @@ details[open] > summary::after {
   animation: stamp-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.4) both;
 }
 
+/* The ticket turns as the reader moves down the page and lands face-on.
+   Clamped to ±24° so the face is never near edge-on. Scroll-driven animation
+   is Chromium-only today; elsewhere the slip simply renders static, which is
+   the same result prefers-reduced-motion gives. */
+@keyframes slip-turn {
+  from {
+    transform: rotateY(-24deg);
+  }
+  to {
+    transform: rotateY(0deg);
+  }
+}
+
+.slip-turn {
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+  animation: slip-turn linear both;
+  animation-timeline: view();
+  animation-range: entry 0% cover 45%;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .print-line,
-  .stamp-in {
+  .stamp-in,
+  .slip-turn {
     animation: none;
   }
 }

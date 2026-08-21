@@ -58,7 +58,7 @@ export function InviteForm() {
       <div className="flex flex-col gap-2">
         <label
           htmlFor="invite"
-          className="mono text-[10px] uppercase tracking-[0.18em] text-dim"
+          className="mono text-[10px] uppercase tracking-[0.16em] text-dim"
         >
           Invite code
         </label>

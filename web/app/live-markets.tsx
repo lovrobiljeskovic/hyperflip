@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchMarkets, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
-import { impliedPct } from "@/lib/format";
+import { impliedPct, pct1 } from "@/lib/format";
 
 /* One registry fetch shared by the hero slip, the stat line, and the board.
    ponytail: module-level promise cache, cleared on failure so a client-side
@@ -187,14 +187,18 @@ export function LiveMarketBoard() {
   );
 }
 
-/** One line of true numbers under the headline. */
+/** One line of true numbers above the headline. */
 export function HeroStats() {
   const state = useMarkets();
+  const count =
+    state.status === "live"
+      ? `${state.markets.length} market${state.markets.length === 1 ? "" : "s"} live`
+      : "HyperEVM testnet";
   return (
-    <p className="mono text-[11px] uppercase tracking-wide text-dim">
-      {state.status === "live"
-        ? `${state.markets.length} market${state.markets.length === 1 ? "" : "s"} on the board · HyperEVM testnet`
-        : "HyperEVM testnet"}
+    <p className="mono flex flex-wrap gap-x-7 gap-y-1 text-[10px] uppercase tracking-[0.14em] text-dim">
+      <span>{count}</span>
+      <span>testnet beta</span>
+      <span>invite only</span>
     </p>
   );
 }
@@ -218,8 +222,9 @@ function Line({ i, children }: { i: number; children: React.ReactNode }) {
 }
 
 /** The signature: a slip printing itself, line by line, on live odds when the
- * board is up and on the worked example when it isn't. Every number shown is
- * labelled for which of the two it is. */
+ * board is up and on the worked example when it isn't. It turns to face the
+ * reader as they scroll. Every number shown is labelled for which it is —
+ * this is fair value off the book, not a signed quote. */
 export function HeroSlip() {
   const state = useMarkets();
   const mids = useMids();
@@ -242,85 +247,87 @@ export function HeroSlip() {
 
   const combined = legs.reduce((acc, l) => acc * (l.prob as number), 1);
   const stake = 100;
-  /* Fair returns, not a quote: the house spread is applied by the writer at
-     quote time, so the slip says which number this is. */
-  const fair = stake / combined;
+  const fair = combined > 0 ? 1 / combined : 0;
+
   return (
-    <div className="relative">
-      <div className="torn bg-[var(--paper)] px-6 py-7 shadow-[10px_14px_0_rgba(36,21,18,0.16)]">
-        <Line i={0}>
-          <div className="mono flex items-baseline justify-between text-[10px] uppercase tracking-wide text-dim">
-            <span>Parlay slip</span>
-            <span>{live ? "live board" : "example"}</span>
-          </div>
-        </Line>
+    <div className="[perspective:1200px]">
+      <div className="slip-turn mx-auto w-[280px] shadow-[-34px_30px_60px_rgba(36,21,18,0.35)]">
+        <div className="bg-[var(--paper)] px-[22px] py-5">
+          <Line i={0}>
+            <div className="mono flex items-baseline justify-between text-[9px] uppercase tracking-[0.14em] text-dim">
+              <span>Slip #0012</span>
+              <span>
+                {legs.length} legs · {live ? "live board" : "example"}
+              </span>
+            </div>
+          </Line>
 
-        <Line i={1}>
-          <div className="perf my-4" />
-        </Line>
+          <Line i={1}>
+            <div className="my-3 h-px bg-[var(--hair)]" />
+          </Line>
 
-        <ul className="flex flex-col gap-3">
-          {legs.map((leg, i) => (
-            <li key={leg.title}>
-              <Line i={2 + i}>
-                <div className="flex items-start gap-3">
-                  <span
-                    className={`mono mt-[2px] shrink-0 px-1.5 py-0.5 text-[10px] leading-none ${
-                      leg.side === "YES"
-                        ? "bg-[var(--hit)] text-[var(--paper)]"
-                        : "bg-[var(--stamp)] text-[var(--paper)]"
-                    }`}
-                  >
-                    {leg.side}
-                  </span>
-                  <span className="flex-1 text-[13px] leading-snug">{leg.title}</span>
-                  <span className="mono text-[13px]">{oddsLabel(leg.prob)}</span>
-                </div>
-              </Line>
-            </li>
-          ))}
-        </ul>
+          <ul className="flex flex-col gap-2.5">
+            {legs.map((leg, i) => (
+              <li key={leg.title}>
+                <Line i={2 + i}>
+                  <div className="flex items-baseline justify-between gap-3 text-[11px]">
+                    <span className="flex-1 truncate leading-snug">{leg.title}</span>
+                    <span
+                      className={`mono shrink-0 ${
+                        leg.side === "YES" ? "text-[var(--hit)]" : "text-[var(--stamp)]"
+                      }`}
+                    >
+                      {leg.side} {leg.prob === null ? "—" : pct1(leg.prob)}
+                    </span>
+                  </div>
+                </Line>
+              </li>
+            ))}
+          </ul>
 
-        <Line i={2 + legs.length}>
-          <div className="perf my-4" />
-        </Line>
+          <Line i={2 + legs.length}>
+            <div className="my-3 h-px bg-[var(--hair)]" />
+          </Line>
 
-        <div className="mono flex flex-col gap-2 text-[12px]">
           <Line i={3 + legs.length}>
-            <div className="flex justify-between">
+            <div className="mono flex items-baseline justify-between text-[11px]">
               <span className="text-dim">Stake</span>
-              <span>{stake.toFixed(2)} USDC</span>
+              <span>{stake.toFixed(2)}</span>
             </div>
           </Line>
+
           <Line i={4 + legs.length}>
-            <div className="flex justify-between">
-              <span className="text-dim">Combined implied</span>
-              <span>{(combined * 100).toFixed(1)}%</span>
+            <div className="mt-3 flex items-end justify-between">
+              <span className="mono text-[9px] uppercase tracking-[0.14em] text-dim">
+                Fair payout {fair.toFixed(2)}×
+              </span>
+              <span className="mono text-[26px] leading-none">
+                {(stake * fair).toFixed(2)}
+              </span>
             </div>
           </Line>
+
           <Line i={5 + legs.length}>
-            <div className="flex items-baseline justify-between">
-              <span className="text-dim">Fair returns</span>
-              <span className="text-[20px]">{fair.toFixed(2)}</span>
+            <div className="mt-4">
+              <div className="h-[3px] overflow-hidden bg-[rgba(36,21,18,0.14)]">
+                <div className="ttl-bar h-full bg-[var(--stamp)]" />
+              </div>
+              <p className="mono mt-2 text-[9px] uppercase tracking-[0.14em] text-dim">
+                Quote holds 30s
+              </p>
             </div>
+          </Line>
+
+          <Line i={6 + legs.length}>
+            <p className="mono mt-4 text-[9px] leading-relaxed text-dim">
+              {live
+                ? "Odds from the live Core book, before the house spread. Your quote is signed at mint."
+                : "Worked example. Live odds print here when the board is up."}
+            </p>
           </Line>
         </div>
-
-        <Line i={6 + legs.length}>
-          <p className="mono mt-5 text-[9px] uppercase tracking-wide text-dim">
-            {live
-              ? "Odds from the live Core book, before the house spread. Your quote is signed at mint."
-              : "Worked example. Live odds print here when the board is up."}
-          </p>
-        </Line>
+        <div className="torn-edge" />
       </div>
-
-      <span
-        aria-hidden
-        className="stamp-in mono pointer-events-none absolute -bottom-3 -left-3 border-[3px] border-[var(--stamp)] bg-[color-mix(in_srgb,var(--paper)_75%,transparent)] px-3 py-1 text-[12px] uppercase tracking-widest text-[var(--stamp)] [animation-delay:1.1s]"
-      >
-        Testnet
-      </span>
     </div>
   );
 }
