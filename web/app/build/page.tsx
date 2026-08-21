@@ -102,7 +102,7 @@ function LoadingSkeleton() {
   return (
     <div className="border border-line">
       {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="h-11 animate-pulse border-t border-line bg-panel first:border-t-0" />
+        <div key={i} className="h-11 animate-pulse motion-reduce:animate-none border-t border-line bg-panel first:border-t-0" />
       ))}
     </div>
   );

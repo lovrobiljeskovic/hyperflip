@@ -533,7 +533,7 @@ export function Ticket({
               value={stake}
               onChange={(e) => setStake(e.target.value)}
               placeholder="0.00"
-              className="mt-1 w-full rounded-card border border-line bg-panel px-3 py-2 mono text-sm text-fg placeholder:text-dim focus:outline-none focus:border-accent"
+              className="mt-1 w-full rounded-card border border-line bg-panel px-3 py-2 mono text-sm text-fg placeholder:text-dim focus:border-accent"
             />
             <div className="mt-2 flex gap-2">
               {presets.map((v, i) => (

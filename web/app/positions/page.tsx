@@ -301,7 +301,7 @@ function LoadingSkeleton() {
   return (
     <div className="mt-10 flex flex-col gap-2">
       {[0, 1, 2].map((i) => (
-        <div key={i} className="h-12 animate-pulse rounded-card border border-line bg-panel" />
+        <div key={i} className="h-12 animate-pulse motion-reduce:animate-none rounded-card border border-line bg-panel" />
       ))}
     </div>
   );

@@ -42,7 +42,7 @@ export function WalletButton() {
   // Placeholder holds the button's footprint while Privy restores its session,
   // so a connected user never sees "Connect wallet" flash first.
   if (!ready) {
-    return <div className="h-[34px] w-[132px] animate-pulse rounded-card bg-panel" aria-hidden />;
+    return <div className="h-[34px] w-[132px] animate-pulse motion-reduce:animate-none rounded-card bg-panel" aria-hidden />;
   }
 
   if (!isConnected || !address) {
