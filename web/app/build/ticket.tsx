@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { erc20Abi, formatUnits, parseUnits } from "viem";
 import { usePublicClient, useReadContract, useWriteContract } from "wagmi";
@@ -394,7 +395,7 @@ export function Ticket({
     if (legs.length < MIN_LEGS) return { kind: "disabled", label: "Add 2 legs to price a ticket" };
     if (!walletReady) return { kind: "disabled", label: "Checking wallet…" };
     if (!isConnected) return { kind: "connect", label: "Connect wallet" };
-    if (!inviteCode) return { kind: "link", label: "Enter invite code", href: "/#access" };
+    if (!inviteCode) return { kind: "link", label: "Enter invite code", href: "/#counter" };
     if (stakeBase === null) return { kind: "disabled", label: "Enter a stake to quote" };
     // Checked before the quote is even shown: a stake the wallet can't cover
     // would otherwise reach the approve tx and burn gas on a doomed mint.
@@ -660,12 +661,12 @@ export function Ticket({
                 </button>
               )}
               {quoteResult.status === 403 && (
-                <a
-                  href="/#access"
+                <Link
+                  href="/#counter"
                   className="mt-2 inline-block mono text-[11px] text-dim underline underline-offset-4 transition-colors hover:text-fg"
                 >
                   Update invite code
-                </a>
+                </Link>
               )}
             </div>
           )}
@@ -697,14 +698,14 @@ export function Ticket({
             </button>
           )}
           {(cta.kind === "link" || cta.kind === "done") && (
-            <a
+            <Link
               href={cta.href}
               className={`mono mt-4 block w-full rounded-card py-[15px] text-center text-[12px] uppercase tracking-[0.1em] transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90 ${
                 cta.kind === "done" ? "bg-yes text-on-accent" : "bg-accent text-on-accent"
               }`}
             >
               {cta.label}
-            </a>
+            </Link>
           )}
           {cta.kind === "mint" && (
             <button
