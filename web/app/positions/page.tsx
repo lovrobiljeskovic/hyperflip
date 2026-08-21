@@ -1,12 +1,13 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import type { PublicClient } from "viem";
 import { usePublicClient, useWriteContract } from "wagmi";
 import { scanParlayIds, type ParlayRef } from "@/lib/scan";
 import { pool } from "@/lib/pool";
 import { PARLAY_VAULT, STATUS, outcomeVaultAbi, parlayVaultAbi } from "@/lib/contracts";
-import { formatUsdc, multiplier, until } from "@/lib/format";
+import { formatUsdc, multiplier, pct1, until } from "@/lib/format";
 import { hyperEvmTestnet } from "@/lib/chain";
 import { fetchMarkets, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
@@ -157,7 +158,17 @@ const VERDICT_STYLE: Record<LegVerdict, { label: string; className: string }> = 
   pending: { label: "Pending", className: "text-dim" },
   hit: { label: "Hit", className: "text-yes" },
   lost: { label: "Lost", className: "text-no" },
-  fractional: { label: "Partial", className: "text-accent" },
+  fractional: { label: "Partial", className: "text-fg" },
+};
+
+/** The four dot states, shared by the leg dots and the legend beneath the
+ * table. `fractional` is a half-filled hit dot — the retired yellow's only
+ * remaining job, done without a third colour. */
+const DOT_CLASS: Record<LegVerdict, string> = {
+  hit: "bg-yes",
+  lost: "bg-no",
+  pending: "bg-line",
+  fractional: "bg-[linear-gradient(90deg,#35D07A_50%,#262C38_50%)]",
 };
 
 /** Compact "2h ago" / "3d ago". Absolute date once it stops being useful as an age. */
@@ -173,17 +184,30 @@ function ago(ms: number): string {
  * settlement progress readable without expanding the row. */
 function LegDots({ verdicts }: { verdicts: LegVerdict[] }) {
   return (
-    <span className="inline-flex items-center gap-1">
+    <span className="inline-flex items-center gap-[3px]">
       {verdicts.map((v, i) => (
         <span
           key={i}
           title={VERDICT_STYLE[v].label}
-          className={`inline-block size-1.5 rounded-full ${
-            v === "hit" ? "bg-yes" : v === "lost" ? "bg-no" : v === "fractional" ? "bg-accent" : "bg-line"
-          }`}
+          className={`inline-block size-1.5 rounded-full ${DOT_CLASS[v]}`}
         />
       ))}
     </span>
+  );
+}
+
+/** New: without it, the half-filled dot is a puzzle rather than a state. */
+function DotLegend() {
+  const order: LegVerdict[] = ["hit", "fractional", "lost", "pending"];
+  return (
+    <div className="mono mt-4 flex flex-wrap items-center gap-5 text-[10px] uppercase tracking-[0.16em] text-dim">
+      {order.map((v) => (
+        <span key={v} className="flex items-center gap-2">
+          <span className={`inline-block size-1.5 rounded-full ${DOT_CLASS[v]}`} aria-hidden />
+          {v === "fractional" ? "partial" : v}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -197,7 +221,7 @@ function LegTable({
   mids: Record<string, string>;
 }) {
   return (
-    <div className="flex flex-col gap-2 border-l-2 border-accent/40 bg-raised/30 px-5 py-4">
+    <div className="flex flex-col gap-2 border-l-2 border-line bg-raised/30 px-5 py-4">
       <div className="flex gap-4 font-mono text-[11px] text-dim">
         <span className="w-10">Side</span>
         <span className="flex-1">Market</span>
@@ -209,7 +233,11 @@ function LegTable({
         const m = markets.get(leg.vault.toLowerCase());
         const coin = m ? (leg.isYes ? m.coinYes : m.coinNo) : undefined;
         const raw = coin === undefined ? undefined : mids[coin];
-        const live = raw === undefined ? null : Number(raw);
+        const n = raw === undefined ? NaN : Number(raw);
+        // Only a value strictly inside (0, 1) is a probability — the same
+        // domain priceBreakdown() enforces. allMids carries every coin on
+        // the venue, so anything else is not this leg's price.
+        const live = Number.isFinite(n) && n > 0 && n < 1 ? n : null;
         const verdict = VERDICT_STYLE[row.legVerdicts[i]];
         return (
           <div key={leg.vault} className="flex items-baseline gap-4 font-mono text-xs">
@@ -223,7 +251,7 @@ function LegTable({
               {m?.title ?? leg.vault}
             </a>
             <span className="w-16 text-right text-dim">
-              {live !== null && Number.isFinite(live) ? `${(live * 100).toFixed(1)}%` : "—"}
+              {live === null ? "—" : pct1(live)}
             </span>
             <span className="w-16 text-right text-dim">{m?.expiryMs ? until(m.expiryMs) : "—"}</span>
             <span className={`w-20 text-right ${verdict.className}`}>{verdict.label}</span>
@@ -260,9 +288,9 @@ function SummaryStrip({ rows }: { rows: Row[] }) {
   return (
     <div className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-card border border-line bg-line sm:grid-cols-5">
       {cells.map((c) => (
-        <div key={c.label} className="bg-panel px-4 py-3">
-          <p className="font-mono text-[11px] text-dim">{c.label}</p>
-          <p className={`mt-1 font-mono text-sm ${c.className}`}>{c.value}</p>
+        <div key={c.label} className="bg-panel px-[18px] py-[14px]">
+          <p className="mono text-[10px] text-dim">{c.label}</p>
+          <p className={`mono mt-1 text-[16px] ${c.className}`}>{c.value}</p>
         </div>
       ))}
     </div>
@@ -360,8 +388,12 @@ export default function PositionsPage() {
       <AppHeader ground="dark" />
 
       <main className="mx-auto max-w-6xl px-6 py-10">
-        <h1 className="text-lg font-medium">Your parlays</h1>
-        <p className="mt-1 text-dim">Read straight from chain — parlay mints, leg settlement, and claims.</p>
+        <h1 className="display text-[26px] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
+          Your slips
+        </h1>
+        <p className="mt-1 text-[15px] text-dim">
+          Read straight from chain — slip mints, leg settlement, and claims.
+        </p>
 
         {!ready ? (
           <LoadingSkeleton />
@@ -392,10 +424,10 @@ export default function PositionsPage() {
         ) : rows.length === 0 ? (
           <div className="mt-10 rounded-card border border-line bg-panel p-6">
             <p className="text-dim">
-              No parlays yet —{" "}
-              <a href="/build" className="text-accent underline underline-offset-4">
+              No slips yet —{" "}
+              <Link href="/build" className="text-accent underline underline-offset-4">
                 build one
-              </a>
+              </Link>
               .
             </p>
           </div>
@@ -404,19 +436,18 @@ export default function PositionsPage() {
             <SummaryStrip rows={rows} />
             <div className="mt-4 overflow-x-auto rounded-card border border-line bg-panel">
               <table className="w-full min-w-[860px] text-left text-sm">
-                <thead className="font-mono text-xs text-dim">
+                <thead className="mono text-[9px] uppercase tracking-[0.16em] text-dim">
                   <tr className="border-b border-line">
                     <th className="px-5 py-3 font-normal">Ticket</th>
                     <th className="px-5 py-3 font-normal">Legs</th>
                     <th className="px-5 py-3 text-right font-normal">Stake</th>
                     <th className="px-5 py-3 text-right font-normal">Multiplier</th>
                     <th className="px-5 py-3 text-right font-normal">Max payout</th>
-                    <th className="px-5 py-3 text-right font-normal">Profit</th>
                     <th className="px-5 py-3 font-normal">Status</th>
                     <th className="px-5 py-3 text-right font-normal">Action</th>
                   </tr>
                 </thead>
-                <tbody className="font-mono">
+                <tbody className="mono text-[12px]">
                   {rows.map((row, i) => {
                     const view = deriveRow(row);
                     const isPending = pending?.id === row.id;
@@ -427,7 +458,9 @@ export default function PositionsPage() {
                       <Fragment key={row.id.toString()}>
                         <tr
                           onClick={() => setExpanded((cur) => (cur === row.id ? null : row.id))}
-                          className={`cursor-pointer transition-colors hover:bg-raised/40 ${divider}`}
+                          className={`cursor-pointer transition-colors hover:bg-raised/40 ${divider} ${
+                            view.action?.kind === "claim" ? "bg-[rgba(245,160,145,0.06)]" : ""
+                          }`}
                         >
                           <td className="px-5 py-4">
                             <span className="flex items-center gap-2">
@@ -452,9 +485,6 @@ export default function PositionsPage() {
                           </td>
                           <td className={`px-5 py-4 text-right ${view.payoutClass}`}>
                             {formatUsdc(row.parlay.maxPayout)}
-                          </td>
-                          <td className={`px-5 py-4 text-right ${view.payoutClass}`}>
-                            +{formatUsdc(row.parlay.maxPayout - row.parlay.premium)}
                           </td>
                           <td className={`px-5 py-4 ${view.statusClass}`}>{view.statusLabel}</td>
                           <td className="px-5 py-4 text-right" onClick={(e) => e.stopPropagation()}>
@@ -483,7 +513,7 @@ export default function PositionsPage() {
                         </tr>
                         {isOpen && (
                           <tr className={i < rows.length - 1 ? "border-b border-line" : ""}>
-                            <td colSpan={8} className="p-0">
+                            <td colSpan={7} className="p-0">
                               <LegTable row={row} markets={marketsByVault} mids={mids} />
                             </td>
                           </tr>
@@ -494,6 +524,7 @@ export default function PositionsPage() {
                 </tbody>
               </table>
             </div>
+            <DotLegend />
           </>
         )}
       </main>
