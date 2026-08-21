@@ -75,7 +75,7 @@ function BoardRow({
   return (
     <div
       className={`grid grid-cols-[1fr_96px_96px_90px] items-center gap-x-3 border-t border-line px-5 py-3 ${
-        current ? "bg-[rgba(245,160,145,0.07)]" : ""
+        current ? "bg-accent/[0.07]" : ""
       }`}
     >
       <span className="truncate text-[13px]">{market.title}</span>
