@@ -118,9 +118,15 @@ export default function Home() {
         {/* 2 · the board */}
         <section id="board" className="scroll-mt-20 py-20">
           <FieldLabel>Selections</FieldLabel>
-          <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)]">
-            The board
-          </h2>
+          <div className="mt-3 flex flex-wrap items-baseline justify-between gap-4">
+            <h2 className="display text-[clamp(1.9rem,4vw,2.75rem)] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
+              The board
+            </h2>
+            <span className="mono flex items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-dim">
+              <span className="live-dot inline-block size-1.5 rounded-full bg-[var(--hit)]" aria-hidden />
+              live from HyperCore
+            </span>
+          </div>
           <p className="mt-4 max-w-[58ch] text-[15px] leading-relaxed text-dim">
             Every market you can put on a slip, priced off the live HyperCore
             book. <span className="text-fg">Book</span> is the overround: how
@@ -136,7 +142,7 @@ export default function Home() {
         {/* 3 · writing a slip — genuine sequence, hence the numbering */}
         <section id="writing" className="scroll-mt-20 py-20">
           <FieldLabel>Procedure</FieldLabel>
-          <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)]">
+          <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
             Writing a slip
           </h2>
           <ol className="mt-10 grid gap-px bg-[var(--hair)] sm:grid-cols-2">
@@ -159,7 +165,7 @@ export default function Home() {
         {/* 4 · the book — the margin, printed */}
         <section id="book" className="scroll-mt-20 py-20">
           <FieldLabel>Stake and return</FieldLabel>
-          <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)]">
+          <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
             The book, printed
           </h2>
           <p className="mt-4 max-w-[58ch] text-[15px] leading-relaxed text-dim">
@@ -205,7 +211,7 @@ export default function Home() {
         {/* 5 · settlement */}
         <section className="py-20">
           <FieldLabel>Settlement</FieldLabel>
-          <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)]">
+          <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
             Where the money sits
           </h2>
           <div className="mt-10 flex flex-col">
@@ -228,7 +234,7 @@ export default function Home() {
         {/* 6 · the stub — positions preview */}
         <section className="py-20">
           <FieldLabel>Your stubs</FieldLabel>
-          <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)]">
+          <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
             Every slip, tracked
           </h2>
           <p className="mt-4 max-w-[58ch] text-[15px] leading-relaxed text-dim">
@@ -279,7 +285,7 @@ export default function Home() {
         <section id="counter" className="scroll-mt-20 py-20">
           <div className="mx-auto max-w-xl">
             <FieldLabel>The counter</FieldLabel>
-            <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)]">
+            <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
               Closed beta, testnet only
             </h2>
             <p className="mt-4 text-[15px] leading-relaxed text-dim">
@@ -297,7 +303,7 @@ export default function Home() {
         {/* 8 · faq */}
         <section className="py-20">
           <FieldLabel>Small print</FieldLabel>
-          <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)]">
+          <h2 className="display mt-3 text-[clamp(1.9rem,4vw,2.75rem)] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
             Questions
           </h2>
           <div className="mt-8 flex max-w-3xl flex-col divide-y divide-line border-y border-line">

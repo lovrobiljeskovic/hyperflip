@@ -113,6 +113,21 @@ html {
   animation: ttl 30s linear infinite;
 }
 
+/* the board is live — a 2s breath, the only decoration that reports a fact */
+@keyframes live-dot {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.live-dot {
+  animation: live-dot 2s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .rise {
     animation: none;
@@ -127,6 +142,10 @@ html {
   .ttl-bar {
     animation: none;
     width: 63%;
+  }
+  .live-dot {
+    animation: none;
+    opacity: 1;
   }
 }
 
