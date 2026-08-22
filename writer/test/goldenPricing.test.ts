@@ -15,6 +15,7 @@ const BAND = 0.2;
 let vaultSeq = 0;
 const leg = (p: number, cluster: string, underlying: string, bullish: boolean | null = true): CorrLeg => ({
   vault: `0x${(++vaultSeq).toString(16).padStart(40, "0")}`,
+  isYes: bullish !== false,
   probWad: BigInt(Math.round(p * 1e18)),
   cluster,
   underlying,
@@ -33,6 +34,7 @@ const BTC = (p: number, b = true) => leg(p, "crypto", "BTC", b);
 const ETH = (p: number, b = true) => leg(p, "crypto", "ETH", b);
 const NVDA = (p: number, b = true) => leg(p, "equity", "NVDA", b);
 const SP500 = (p: number, b = true) => leg(p, "equity", "SP500", b);
+const SNDK = (p: number, b = true) => leg(p, "equity", "SNDK", b);
 
 /** Spec table, ~/docs/superpowers/specs/2026-08-22-parlay-correlation-pricing-design.md.
  * Wide tolerance: these pin behaviour and rough magnitude, not the quadrature's
@@ -44,6 +46,21 @@ const GOLDEN: [string, CorrLeg[], number][] = [
   ["NVDA yes + SP500 no", [NVDA(0.132), SP500(0.56, false)], 50.7],
   ["BTC yes + ETH no", [BTC(0.5), ETH(0.45, false)], 9.7],
   ["BTC yes + NVDA yes", [BTC(0.5), NVDA(0.132)], 12.5],
+  // Two SNDK markets, same side: the same-underlying collapse in buildTree,
+  // priced. joint 0.44422, so 1 / (0.44422 * 1.08) = 2.084x, against 4.115x if
+  // the legs were priced as independent.
+  //
+  // SNDK and not BTC deliberately. BTC's loadings already explain 0.984 of
+  // variance, so at the band's upper end they shrink to MAX_EXPLAINED whether
+  // or not the underlying loading is there — zeroing every `underlying` moves
+  // a two-BTC ticket by 0.0%, and the row would guard nothing. SNDK's explain
+  // 0.955 and 0.653, so the same mutation moves this row 21%.
+  ["SNDK yes + SNDK yes (same underlying)", [SNDK(0.5), SNDK(0.45)], 2.08],
+  // Two NVDA markets plus SP500: the only golden whose tree actually has three
+  // levels — a same-underlying PAIR collapses cluster and underlying into one
+  // factor, so it never reaches depth 2. joint 0.34778, and the 3-leg edge is
+  // 500 + 2*300 = 1100bps, so 1 / (0.34778 * 1.11) = 2.590x.
+  ["NVDA yes + NVDA yes + SP500 yes", [NVDA(0.5), NVDA(0.45), SP500(0.44)], 2.59],
 ];
 
 for (const [name, legs, want] of GOLDEN) {

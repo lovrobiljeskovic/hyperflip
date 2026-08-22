@@ -46,7 +46,7 @@ describe("priceBreakdown", () => {
 
   it("rebuilds fair odds and edge from the writer's inputs", () => {
     // 0.5 * 0.4 = 0.2 fair -> 5x. With 5% edge: 1/(0.2*1.05) = 4.7619x
-    const b = priceBreakdown([wad(0.5), wad(0.4)], "500", "0", "0", 100_000_000n, 476_190_476n)!;
+    const b = priceBreakdown([wad(0.5), wad(0.4)], "500", "0", undefined, 100_000_000n, 476_190_476n)!;
     expect(b.fairMultiplier).toBeCloseTo(5, 6);
     expect(b.legOdds[0]).toBeCloseTo(2, 6);
     expect(b.edgePct).toBe(0.05);
@@ -99,9 +99,9 @@ describe("priceBreakdown", () => {
   });
 
   it("rejects impossible leg prices and empty input", () => {
-    expect(priceBreakdown([wad(1)], "500", "0", "0", 1n, 1n)).toBeNull();
-    expect(priceBreakdown(["0"], "500", "0", "0", 1n, 1n)).toBeNull();
-    expect(priceBreakdown([], "500", "0", "0", 1n, 1n)).toBeNull();
+    expect(priceBreakdown([wad(1)], "500", "0", undefined, 1n, 1n)).toBeNull();
+    expect(priceBreakdown(["0"], "500", "0", undefined, 1n, 1n)).toBeNull();
+    expect(priceBreakdown([], "500", "0", undefined, 1n, 1n)).toBeNull();
   });
 });
 

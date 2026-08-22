@@ -19,6 +19,9 @@ const BTC_VAULT_A = "0x5555555555555555555555555555555555555555" as const;
 const BTC_VAULT_B = "0x6666666666666666666666666666666666666666" as const;
 const NVDA_VAULT = "0x7777777777777777777777777777777777777777" as const;
 const SP500_VAULT = "0x8888888888888888888888888888888888888888" as const;
+/** direction "band": wins if the underlying stays inside a range, so neither
+ * side is bullish or bearish. */
+const BAND_VAULT = "0x9999999999999999999999999999999999999999" as Address;
 
 const CORRELATIONS = parseCorrelations(readFileSync(new URL("../../registry/correlations.json", import.meta.url), "utf8"));
 
@@ -59,6 +62,7 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
       [V1.toLowerCase(), { vault: V1, coinYes: "+10", coinNo: "+11", underlying: "BTC", cluster: "crypto", direction: "up" as const, title: "Will BTC close above X?", category: "crypto" }],
       [V2.toLowerCase(), { vault: V2, coinYes: "+20", coinNo: "+21", expiryMs: 2_000_000, underlying: "ETH", cluster: "crypto", direction: "up" as const, title: "Will ETH close above X?", category: "crypto" }],
       ...FIXTURE_MARKETS,
+      [BAND_VAULT.toLowerCase(), { vault: BAND_VAULT, coinYes: "+30", coinNo: "+31", underlying: "GOLD", cluster: "commodity", direction: "band" as const, title: "GOLD between 4000 and 4250 on Aug 31?", category: "commodity" }],
     ]),
     registryJson: "{}",
     ...overrides,
@@ -128,7 +132,19 @@ test("correlated legs pay less than the same legs priced independently", async (
   const correlated = await handleQuote(deps(), body({ legs: [legOn(NVDA_VAULT, true), legOn(SP500_VAULT, true)] }));
   const crossCluster = await handleQuote(deps(), body({ legs: [legOn(NVDA_VAULT, true), legOn(BTC_VAULT_A, true)] }));
   const payout = (r: typeof correlated) => BigInt((r.json as { quote: { maxPayout: string } }).quote.maxPayout);
-  assert.ok(payout(correlated) < payout(crossCluster) * 3n, "same-cluster legs must be materially tighter");
+  // No slack factor. Baseline is 7.25x against 12.54x; with every cluster
+  // loading zeroed — correlation pricing dead — the same-cluster payout is
+  // 13.77x, which a "* 3n" tolerance would have waved through.
+  assert.ok(payout(correlated) < payout(crossCluster), "same-cluster legs must be materially tighter");
+});
+
+test("a band market's two sides on one vault are refused as cannot-win", async () => {
+  // Both sides of a band market are non-directional, so `bullish` is null on
+  // each. Collapsing on stance rather than side would sell ~1.9x on a ticket
+  // that cannot win.
+  const res = await handleQuote(deps(), body({ legs: [legOn(BAND_VAULT, true), legOn(BAND_VAULT, false)] }));
+  assert.equal(res.status, 400);
+  assert.equal((res.json as { error: string }).error, "cannot-win");
 });
 
 test("breakdown reports the joint probability, not a correlation surcharge", async () => {

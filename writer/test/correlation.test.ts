@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildTree, jointProbWad, pairCorrelation, parseCorrelations, type CorrLeg } from "../src/correlation.js";
-import { jointProbability, normInv } from "../src/copula.js";
+import { jointProbability, normInv, TooComplexError } from "../src/copula.js";
 
 const WAD = 10n ** 18n;
 const wad = (p: number) => BigInt(Math.round(p * 1e18));
@@ -30,7 +30,8 @@ const leg = (
   underlying: string,
   bullish: boolean | null = true,
   vault = `0x${(++vaultSeq).toString(16).padStart(40, "0")}`,
-): CorrLeg => ({ vault, probWad: wad(p), cluster, underlying, bullish });
+  isYes = bullish !== false,
+): CorrLeg => ({ vault, isYes, probWad: wad(p), cluster, underlying, bullish });
 
 const SAME_VAULT = "0xdead00000000000000000000000000000000beef";
 
@@ -217,4 +218,53 @@ test("a cluster whose legs share one underlying collapses to a single factor", (
     ],
   });
   assert.ok(Math.abs(jointProbability(tree) - explicit) < 1e-6, "collapse must not change the answer");
+});
+
+test("a band market's two sides on one vault cannot win", () => {
+  // A band market has no direction, so `bullish` is null on BOTH sides. Keying
+  // the collapse on stance instead of side would fold these into one leg and
+  // quote ~1.9x on a ticket that is guaranteed to lose.
+  const legs = [
+    leg(0.5, "crypto", "BTC", null, SAME_VAULT, true),
+    leg(0.5, "crypto", "BTC", null, SAME_VAULT, false),
+  ];
+  assert.equal(jointProbWad(legs, TABLE, 0.2), 0n);
+});
+
+test("a band market's same side twice on one vault is still one event", () => {
+  const twice = jointProbWad(
+    [leg(0.4, "crypto", "BTC", null, SAME_VAULT, true), leg(0.4, "crypto", "BTC", null, SAME_VAULT, true)],
+    TABLE,
+    0.2,
+  );
+  const once = jointProbWad([leg(0.4, "crypto", "BTC", null, SAME_VAULT, true)], TABLE, 0.2);
+  assert.equal(twice, once);
+});
+
+test("a ticket past the quadrature budget is refused, not integrated for seconds", () => {
+  // Eight legs, two per underlying across two clusters: three integration
+  // levels in both, well past the budget and seconds of a single-threaded
+  // event loop. The house refuses tickets it cannot price in bounded time.
+  const legs = ["BTC", "ETH"]
+    .flatMap((u) => [leg(0.5, "crypto", u), leg(0.45, "crypto", u)])
+    .concat(["NVDA", "SP500"].flatMap((u) => [leg(0.4, "equity", u), leg(0.35, "equity", u)]));
+  assert.equal(legs.length, 8);
+  const t0 = performance.now();
+  assert.throws(() => jointProbWad(legs, TABLE, 0.2), TooComplexError);
+  assert.ok(performance.now() - t0 < 500, "the refusal must be cheap, not a full integration");
+});
+
+test("a realistic ticket across every live cluster still prices", () => {
+  // The budget must not refuse anything the registry can actually build. This
+  // is the most expensive live shape: two BTC markets and ETH in one cluster,
+  // so crypto integrates all three levels, plus a second cluster.
+  const legs = [
+    leg(0.5, "crypto", "BTC"),
+    leg(0.45, "crypto", "BTC"),
+    leg(0.55, "crypto", "ETH"),
+    leg(0.132, "equity", "NVDA"),
+    leg(0.44, "equity", "SP500"),
+  ];
+  const joint = jointProbWad(legs, TABLE, 0.2);
+  assert.ok(joint > 0n && joint < WAD, `${joint}`);
 });

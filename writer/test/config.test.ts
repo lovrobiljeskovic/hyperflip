@@ -70,14 +70,31 @@ test("parseInviteCodes trims and drops empties", () => {
   assert.deepEqual([...parseInviteCodes(" a, b,,c ")], ["a", "b", "c"]);
 });
 
-test("the shipped correlations file parses and covers every registry underlying", () => {
+test("the shipped correlations file parses and covers a registry's clusters and underlyings", () => {
+  // Deliberately a committed fixture, not registry/markets.json: the live file
+  // is owned and rewritten by tools/rotate-markets.mjs, so asserting against it
+  // is non-deterministic by construction. The live file's coverage is checked
+  // at boot by loadConfig, which warns on an unknown cluster instead.
   const raw = readFileSync(new URL("../../registry/correlations.json", import.meta.url), "utf8");
   const table = parseCorrelations(raw);
-  const markets = parseMarkets(readFileSync(new URL("../../registry/markets.json", import.meta.url), "utf8"));
+  const markets = parseMarkets(readFileSync(new URL("./fixtures/markets.json", import.meta.url), "utf8"));
   for (const m of markets.values()) {
+    // The cluster must be known on its own. An underlying-only match is not
+    // enough: a market labelled with a cluster the table has never heard of
+    // prices against the blunt whole-table fallback, not against its peers,
+    // even when its underlying is tabulated.
+    assert.ok(table.fallback[m.cluster] !== undefined, `unknown cluster ${m.cluster} for ${m.underlying}`);
     assert.ok(
       table.underlyings[m.underlying] !== undefined || table.fallback[m.cluster] !== undefined,
       `no loadings and no cluster fallback for ${m.underlying} (${m.cluster})`,
     );
   }
+});
+
+test("the coverage assertion fails a market whose cluster the table does not know", () => {
+  // Guards the assertion itself: the `||` form this replaced passed on the
+  // underlying alone, so a BTC market mislabelled into cluster "btc" slipped by.
+  const table = parseCorrelations(readFileSync(new URL("../../registry/correlations.json", import.meta.url), "utf8"));
+  assert.ok(table.underlyings.BTC !== undefined);
+  assert.equal(table.fallback.btc, undefined);
 });
