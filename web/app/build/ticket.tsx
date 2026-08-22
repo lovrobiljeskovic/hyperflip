@@ -256,21 +256,6 @@ function InviteEntry({ onSave }: { onSave: (code: string) => void }) {
 
 const DRIP_HINT = "Claim testnet USDC at the Hyperliquid drip, then transfer it (and some HYPE for gas) from Core to EVM.";
 
-/** Onboarding trail: each step lights up as its state is met, so a new tester
- * always sees what's done and what's next. Hidden once everything is ready. */
-function Steps({ items }: { items: { label: string; done: boolean }[] }) {
-  if (items.every((s) => s.done)) return null;
-  return (
-    <ol className="mt-3 flex flex-wrap gap-x-4 gap-y-1 mono text-[10px] uppercase tracking-[0.16em]">
-      {items.map((s, i) => (
-        <li key={s.label} className={s.done ? "text-yes" : "text-dim"}>
-          {s.done ? "✓" : `${i + 1}.`} {s.label}
-        </li>
-      ))}
-    </ol>
-  );
-}
-
 export function Ticket({
   legs,
   onRemove,
@@ -595,20 +580,6 @@ export function Ticket({
         <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Your slip</span>
         <Overround size={44} margin={margin} />
       </div>
-
-      {!display && (
-        <Steps
-          items={[
-            { label: "Connect", done: isConnected },
-            { label: "Invite", done: !!inviteCode },
-            // gas is undefined until the read lands — don't flag "Fund" undone
-            // on a wallet we haven't finished reading.
-            { label: "Fund", done: (usdcBalance ?? 0n) > 0n && gas?.value !== 0n },
-            { label: "2+ legs", done: legs.length >= MIN_LEGS },
-            { label: "Stake", done: stakeBase !== null },
-          ]}
-        />
-      )}
 
       {legs.length === 0 ? (
         <p className="mt-4 text-dim">No legs yet — add YES or NO from the market list.</p>

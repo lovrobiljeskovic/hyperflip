@@ -67,6 +67,39 @@ function PriceCell({
   );
 }
 
+/** Category glyph — crypto coin, commodity ingot, chart line for the rest. */
+function CategoryIcon({ category }: { category: string }) {
+  const common = {
+    width: 14,
+    height: 14,
+    viewBox: "0 0 14 14",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.3,
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": true,
+  } as const;
+  if (category === "crypto")
+    return (
+      <svg {...common}>
+        <circle cx="7" cy="7" r="5.4" />
+        <path d="M5.6 4.6h2.1a1.2 1.2 0 0 1 0 2.4H5.6h2.5a1.2 1.2 0 0 1 0 2.4H5.6M6.4 3.7v.9M6.4 9.4v.9" />
+      </svg>
+    );
+  if (category === "commodity")
+    return (
+      <svg {...common}>
+        <path d="M4.2 3.4h5.6l1.4 3H2.8l1.4-3ZM3.4 7.6h7.2l1.4 3H2l1.4-3Z" />
+      </svg>
+    );
+  return (
+    <svg {...common}>
+      <path d="M1.8 10.8 5.4 7l2.3 2.3 4.3-4.8M8.6 4.5H12v3.4" />
+    </svg>
+  );
+}
+
 function BoardRow({
   market,
   mids,
@@ -89,11 +122,16 @@ function BoardRow({
         current ? "bg-accent/[0.07]" : ""
       }`}
     >
-      <div className="min-w-0">
-        <p className="truncate text-[13px]">{market.title}</p>
-        <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">
-          {market.category}
-        </p>
+      <div className="flex min-w-0 items-center gap-2.5">
+        <span className="shrink-0 text-dim">
+          <CategoryIcon category={market.category} />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-[13px]">{market.title}</p>
+          <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">
+            {market.category}
+          </p>
+        </div>
       </div>
       <PriceCell
         mid={yes}
@@ -137,7 +175,8 @@ export default function BuildPage() {
     setMarkets(null);
     try {
       const m = await fetchMarkets();
-      setMarkets(m);
+      // Soonest expiry first; markets without one sink to the bottom.
+      setMarkets([...m].sort((a, b) => (a.expiryMs ?? Infinity) - (b.expiryMs ?? Infinity)));
     } catch {
       setError(true);
     }
