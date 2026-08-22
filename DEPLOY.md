@@ -141,7 +141,7 @@ allows only 5 failed validations per hostname per hour.
 cd <repo root>
 forge build   # only if contracts changed
 
-rsync -az --delete --exclude node_modules --exclude .env keeper/ root@91.99.94.25:/opt/hype/keeper/
+rsync -az --delete --exclude node_modules --exclude .env --exclude settlement-cache.json keeper/ root@91.99.94.25:/opt/hype/keeper/
 rsync -az --delete --exclude node_modules --exclude .env writer/ root@91.99.94.25:/opt/hype/writer/
 rsync -az registry/ root@91.99.94.25:/opt/hype/registry/
 
@@ -149,8 +149,8 @@ ssh root@91.99.94.25 'cd /opt/hype/keeper && npm ci --omit=dev=false && cd /opt/
 ssh root@91.99.94.25 'chown -R hype:hype /opt/hype && systemctl restart keeper writer'
 ```
 
-`--delete` on the keeper rsync will not remove `settlement-cache.json` because it is excluded
-from the repo, but confirm it survives before restarting.
+`--exclude settlement-cache.json` on the keeper rsync protects the box's live cache from both
+deletion and overwrite by a local copy — confirm it survives before restarting.
 
 Note `npm ci` must install devDependencies — `npm start` runs `tsx`, which is a devDependency.
 Do not set `NODE_ENV=production`.
