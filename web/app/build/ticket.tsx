@@ -68,7 +68,16 @@ function shortMintError(err: unknown): string {
 
 /** Writer error → ticket-facing message. Falls back to the writer's reason
  * verbatim (e.g. stake-too-big) rather than pre-validating client-side. */
-function errorMessage(res: Extract<QuoteResult, { ok: false }>): string {
+function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: BuilderLeg[] = []): string {
+  if (res.status === 400 && res.error === "dominated") {
+    // res.vault names the leg whose lone Core trade already out-pays the whole
+    // ticket — the other legs move together with it so tightly they add risk
+    // without adding payout.
+    const keep = legs.find((l) => l.vault.toLowerCase() === res.vault?.toLowerCase());
+    return keep
+      ? `These legs move together so tightly the combo pays less than "${keep.title}" alone — drop the other legs or mix in something less correlated.`
+      : "These legs move together so tightly the combo pays less than one leg alone — drop a leg or mix in something less correlated.";
+  }
   if (res.error === "clock-skew") return "Quote expired immediately — check your clock.";
   if (res.status === 0 || res.status === 503) return "Writer unreachable — retrying.";
   if (res.status === 403) return "Invite code rejected — check it on the landing page.";
@@ -642,8 +651,8 @@ export function Ticket({
 
           {quoteResult && !quoteResult.ok && (
             <div className="mt-4 rounded-[4px] border border-no/30 bg-no/5 p-3">
-              <p className="text-no">{errorMessage(quoteResult)}</p>
-              {errorMessage(quoteResult) !== quoteResult.error && (
+              <p className="text-no">{errorMessage(quoteResult, legs)}</p>
+              {errorMessage(quoteResult, legs) !== quoteResult.error && (
                 <p className="mt-1 mono text-[11px] text-no/70">{quoteResult.error}</p>
               )}
               {(quoteResult.status === 0 || quoteResult.status === 503) && (

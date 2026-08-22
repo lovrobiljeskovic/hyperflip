@@ -4,7 +4,7 @@ import type { WriterConfig } from "./config.js";
 import { TooComplexError } from "./copula.js";
 import { jointProbWad, type CorrLeg } from "./correlation.js";
 import { ExposureBook } from "./exposure.js";
-import { edgeBreakdown, priceParlay, totalEdgeBps } from "./pricing.js";
+import { dominatingLeg, edgeBreakdown, priceParlay, totalEdgeBps } from "./pricing.js";
 import type { ParlayQuote, QuoteLeg } from "./quotes.js";
 
 export interface Metrics {
@@ -150,6 +150,15 @@ export async function handleQuote(deps: QuoteDeps, body: unknown): Promise<{ sta
   if (!priced.ok) {
     reject(metrics, priced.reason);
     return { status: 400, json: { error: priced.reason } };
+  }
+
+  // A ticket that pays no more than one of its own legs traded alone on Core is
+  // strictly worse than that trade; `vault` names the leg worth keeping so the
+  // UI can say which legs to drop. See dominatingLeg.
+  const dom = dominatingLeg(pricesWad, v.stake, priced.maxPayout);
+  if (dom !== -1) {
+    reject(metrics, "dominated");
+    return { status: 400, json: { error: "dominated", vault: v.legs[dom].vault } };
   }
 
   // check + reserve is one synchronous step — no awaits between them (spec §4 race guard).

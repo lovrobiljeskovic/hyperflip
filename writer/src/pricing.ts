@@ -55,3 +55,21 @@ export function priceParlay(
   if (maxPayout >= 2n ** 96n) return { ok: false, reason: "uint96-overflow" };
   return { ok: true, premium: stake, maxPayout };
 }
+
+/** Index of a leg whose lone Core trade (payout stake/p, no edge) already pays
+ * at least the whole parlay, or -1.
+ *
+ * The joint probability can never exceed the smallest leg probability, for any
+ * correlation — so the fair parlay payout is always at least the best leg's
+ * Core fair. When house-favorable correlation collapses the joint onto that
+ * bound, edge pushes the quote below it, and the ticket is strictly dominated:
+ * fewer ways to win AND a lower payout than one Core trade the taker can see
+ * on screen. No correlation table makes such a quote sensible, on any future
+ * market pair; the writer refuses instead of signing it. */
+export function dominatingLeg(legPricesWad: bigint[], stake: bigint, maxPayout: bigint): number {
+  for (let i = 0; i < legPricesWad.length; i++) {
+    const p = legPricesWad[i];
+    if (p > 0n && maxPayout <= (stake * WAD) / p) return i;
+  }
+  return -1;
+}

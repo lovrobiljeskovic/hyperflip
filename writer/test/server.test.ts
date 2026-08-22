@@ -138,6 +138,24 @@ test("correlated legs pay less than the same legs priced independently", async (
   assert.ok(payout(correlated) < payout(crossCluster), "same-cluster legs must be materially tighter");
 });
 
+// The user's real ticket: NVDA>230 (p=0.1318) + SP500>8000 (p=0.4405). At the
+// house end of the rho band the equity cluster collapses the joint to ~P(NVDA),
+// and edge then pushes the payout below NVDA alone on Core — a ticket with
+// strictly fewer ways to win AND a lower payout. Must be refused, not signed.
+test("a quote dominated by one leg's Core fair payout is refused", async () => {
+  const skewedPrices = async (l: { vault: Address }) =>
+    l.vault.toLowerCase() === NVDA_VAULT.toLowerCase() ? (WAD * 1318n) / 10000n : (WAD * 4405n) / 10000n;
+  const d = deps({ cfg: cfg({ edgeBps: 500n, legEdgeBps: 300n }), fetchLegPriceWad: skewedPrices });
+  const r = await handleQuote(d, body({ legs: [legOn(NVDA_VAULT, true), legOn(SP500_VAULT, true)] }));
+  assert.equal(r.status, 400);
+  assert.deepEqual(r.json, { error: "dominated", vault: NVDA_VAULT });
+  assert.equal(d.metrics.rejected["dominated"], 1);
+  // Same legs, cross-cluster: correlation is near-zero, the second leg earns its
+  // keep, and the identical edge settings quote fine.
+  const ok = await handleQuote(d, body({ legs: [legOn(NVDA_VAULT, true), legOn(BTC_VAULT_A, true)] }));
+  assert.equal(ok.status, 200);
+});
+
 test("a band market's two sides on one vault are refused as cannot-win", async () => {
   // Both sides of a band market are non-directional, so `bullish` is null on
   // each. Collapsing on stance rather than side would sell ~1.9x on a ticket

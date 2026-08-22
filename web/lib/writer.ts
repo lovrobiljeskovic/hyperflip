@@ -29,7 +29,7 @@ export interface QuoteBreakdown {
 
 export type QuoteResult =
   | { ok: true; quote: WriterQuote; sig: `0x${string}`; breakdown?: QuoteBreakdown }
-  | { ok: false; status: number; error: string; maxStake?: string };
+  | { ok: false; status: number; error: string; maxStake?: string; vault?: string };
 
 const BASE = process.env.NEXT_PUBLIC_WRITER_URL ?? "";
 
@@ -82,8 +82,8 @@ export async function requestQuote(req: {
   }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
-    const body = j as { error?: string; maxStake?: string };
-    return { ok: false, status: r.status, error: body.error ?? "unknown", maxStake: body.maxStake };
+    const body = j as { error?: string; maxStake?: string; vault?: string };
+    return { ok: false, status: r.status, error: body.error ?? "unknown", maxStake: body.maxStake, vault: body.vault };
   }
   const { quote, sig, breakdown } = j as {
     quote: WriterQuote;

@@ -70,9 +70,7 @@ const faq = [
 ];
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="mono text-[10px] uppercase tracking-[0.16em] text-dim">{children}</p>
-  );
+  return <p className="mono text-[10px] uppercase tracking-[0.16em] text-dim">{children}</p>;
 }
 
 /* The board, read once on the server and handed to every live component.
@@ -80,10 +78,7 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
    is down at render time yields a null board and the client falls back to
    fetching for itself, which is what it always did. */
 async function boardSnapshot(): Promise<BoardSnapshot> {
-  const [markets, mids] = await Promise.all([
-    fetchMarkets().catch(() => null),
-    fetchMids(10),
-  ]);
+  const [markets, mids] = await Promise.all([fetchMarkets().catch(() => null), fetchMids(10)]);
   return { markets, mids };
 }
 
@@ -106,9 +101,8 @@ export default async function Home() {
               One payout.
             </h1>
             <p className="mt-6 max-w-[44ch] text-[17px] leading-[1.6] text-[#4A2B23]">
-              Take YES or NO across Hyperliquid outcome markets and put them on
-              a single ticket. The house prices the combination off the live
-              Core book, signs it, and posts the payout before you mint.
+              Take Hyperliquid outcome markets and put them on a single ticket. The house prices the combination off the
+              live Core book, signs it, and posts the payout before you mint.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <a
@@ -143,9 +137,8 @@ export default async function Home() {
             </span>
           </div>
           <p className="mt-4 max-w-[58ch] text-[15px] leading-relaxed text-dim">
-            Every market you can put on a slip, priced off the live HyperCore
-            book. Both sides quoted as decimal odds and implied probability,
-            straight from the mids — no house spread on the board.
+            Every market you can put on a slip, priced off the live HyperCore book. Both sides quoted as decimal odds
+            and implied probability, straight from the mids — no house spread on the board.
           </p>
           <LiveMarketBoard board={board} />
         </section>
@@ -161,13 +154,9 @@ export default async function Home() {
           <ol className="mt-10 grid gap-px bg-[var(--hair)] sm:grid-cols-2">
             {steps.map((step) => (
               <li key={step.n} className="bg-[var(--stock)] p-6">
-                <span className="mono text-[11px] tracking-widest text-dim">
-                  {step.n}
-                </span>
+                <span className="mono text-[11px] tracking-widest text-dim">{step.n}</span>
                 <h3 className="mt-3 text-lg font-semibold">{step.title}</h3>
-                <p className="mt-2 max-w-[42ch] text-[15px] leading-relaxed text-dim">
-                  {step.body}
-                </p>
+                <p className="mt-2 max-w-[42ch] text-[15px] leading-relaxed text-dim">{step.body}</p>
               </li>
             ))}
           </ol>
@@ -182,12 +171,10 @@ export default async function Home() {
             The book, printed
           </h2>
           <p className="mt-4 max-w-[58ch] text-[15px] leading-relaxed text-dim">
-            A three-leg slip at 100 USDC, priced end to end. Fair odds are what
-            the legs multiply out to. Correlation is a signed correction to
-            that fair number — crypto legs move together, so all three landing
-            is likelier than the product says. Quoted is what the house pays
-            after its edge. The gap between corrected fair and quoted is the
-            whole business.
+            A three-leg slip at 100 USDC, priced end to end. Fair odds are what the legs multiply out to. Correlation is
+            a signed correction to that fair number — crypto legs move together, so all three landing is likelier than
+            the product says. Quoted is what the house pays after its edge. The gap between corrected fair and quoted is
+            the whole business.
           </p>
           <dl className="mono mt-12 grid grid-cols-2 gap-x-6 gap-y-10 md:grid-cols-4">
             <div>
@@ -196,17 +183,11 @@ export default async function Home() {
             </div>
             <div>
               <dt className="text-[10px] uppercase tracking-wide text-dim">Fair</dt>
-              <dd className="mt-2 text-[clamp(2rem,5vw,3.25rem)] leading-none text-dim">
-                3.33x
-              </dd>
+              <dd className="mt-2 text-[clamp(2rem,5vw,3.25rem)] leading-none text-dim">3.33x</dd>
             </div>
             <div>
-              <dt className="text-[10px] uppercase tracking-wide text-dim">
-                Correlation
-              </dt>
-              <dd className="mt-2 text-[clamp(2rem,5vw,3.25rem)] leading-none text-dim">
-                &minus;0.30x
-              </dd>
+              <dt className="text-[10px] uppercase tracking-wide text-dim">Correlation</dt>
+              <dd className="mt-2 text-[clamp(2rem,5vw,3.25rem)] leading-none text-dim">&minus;0.30x</dd>
             </div>
             <div>
               <dt className="text-[10px] uppercase tracking-wide text-dim">Quoted</dt>
@@ -215,13 +196,10 @@ export default async function Home() {
           </dl>
           <div className="mt-12 max-w-[62ch] border-l-[3px] border-[var(--stamp)] pl-5">
             <p className="text-[15px] leading-relaxed">
-              On a 100 USDC stake that is{" "}
-              <span className="mono">273.00</span> against a corrected fair of{" "}
-              <span className="mono">303.03</span>. Comovement took fair down
-              from <span className="mono">333.00</span> — a correction, not
-              takeout — and the edge keeps{" "}
-              <span className="mono font-semibold">30.03</span>: 5% base plus
-              3% per extra leg. Every quote prints each line before you sign.
+              On a 100 USDC stake that is <span className="mono">273.00</span> against a corrected fair of{" "}
+              <span className="mono">303.03</span>. Comovement took fair down from <span className="mono">333.00</span>{" "}
+              — a correction, not takeout — and the edge keeps <span className="mono font-semibold">30.03</span>: 5%
+              base plus 3% per extra leg. Every quote prints each line before you sign.
             </p>
           </div>
         </section>
@@ -236,14 +214,9 @@ export default async function Home() {
           </h2>
           <div className="mt-10 flex flex-col">
             {settlement.map((row) => (
-              <div
-                key={row.key}
-                className="grid gap-2 border-t border-line py-7 md:grid-cols-[260px_1fr]"
-              >
+              <div key={row.key} className="grid gap-2 border-t border-line py-7 md:grid-cols-[260px_1fr]">
                 <h3 className="mono text-[12px] uppercase tracking-wide">{row.key}</h3>
-                <p className="max-w-[62ch] text-[15px] leading-relaxed text-dim">
-                  {row.body}
-                </p>
+                <p className="max-w-[62ch] text-[15px] leading-relaxed text-dim">{row.body}</p>
               </div>
             ))}
           </div>
@@ -258,8 +231,8 @@ export default async function Home() {
             Every slip, tracked
           </h2>
           <p className="mt-4 max-w-[58ch] text-[15px] leading-relaxed text-dim">
-            Positions reads straight from chain events — which legs landed,
-            which one closed the slip, what is claimable. Sample rows shown.
+            Positions reads straight from chain events — which legs landed, which one closed the slip, what is
+            claimable. Sample rows shown.
           </p>
           <div className="mt-8 overflow-x-auto bg-[var(--paper)] shadow-[6px_8px_0_rgba(36,21,18,0.14)]">
             <table className="w-full min-w-[560px] text-left">
@@ -309,8 +282,7 @@ export default async function Home() {
               Closed beta, testnet only
             </h2>
             <p className="mt-4 text-[15px] leading-relaxed text-dim">
-              Quoting is invite-gated. Save your code once and it rides along
-              with every quote you request.
+              Quoting is invite-gated. Save your code once and it rides along with every quote you request.
             </p>
             <div className="mt-8">
               <InviteForm />
@@ -332,9 +304,7 @@ export default async function Home() {
                 <summary className="flex items-center justify-between gap-4 text-[16px] font-semibold">
                   {item.q}
                 </summary>
-                <p className="mt-3 max-w-[64ch] text-[15px] leading-relaxed text-dim">
-                  {item.a}
-                </p>
+                <p className="mt-3 max-w-[64ch] text-[15px] leading-relaxed text-dim">{item.a}</p>
               </details>
             ))}
           </div>
@@ -355,10 +325,7 @@ export default async function Home() {
             <a href="https://hyperliquid.xyz" className="transition-colors hover:text-fg">
               Hyperliquid
             </a>
-            <a
-              href="https://hyperliquid.gitbook.io/hyperliquid-docs"
-              className="transition-colors hover:text-fg"
-            >
+            <a href="https://hyperliquid.gitbook.io/hyperliquid-docs" className="transition-colors hover:text-fg">
               HyperCore docs
             </a>
           </div>

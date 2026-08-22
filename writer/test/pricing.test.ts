@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { edgeBreakdown, priceParlay, totalEdgeBps } from "../src/pricing.js";
+import { dominatingLeg, edgeBreakdown, priceParlay, totalEdgeBps } from "../src/pricing.js";
 import { WAD } from "../src/pure.js";
 
 const QUARTER = WAD / 4n; // joint probability 0.25 — e.g. two independent 0.50 legs
@@ -55,4 +55,17 @@ test("edge is base plus per-extra-leg, with no correlation component", () => {
 
 test("a single leg carries base edge only", () => {
   assert.equal(totalEdgeBps(edgeBreakdown(1, 500n, 300n)), 500n);
+});
+
+// NVDA-above-230 (p=0.1318) Core fair is 7_587_253; a collapsed-correlation
+// parlay quote of 7.03x pays less while needing BOTH legs to win.
+test("dominatingLeg flags a quote at or below one leg's Core fair payout", () => {
+  const prices = [(WAD * 1318n) / 10000n, (WAD * 4405n) / 10000n];
+  assert.equal(dominatingLeg(prices, 1_000_000n, 7_030_000n), 0);
+  assert.equal(dominatingLeg(prices, 1_000_000n, 7_587_253n), 0); // boundary: equal is still dominated
+  assert.equal(dominatingLeg(prices, 1_000_000n, 7_600_000n), -1);
+});
+
+test("dominatingLeg ignores a zero leg price", () => {
+  assert.equal(dominatingLeg([0n, WAD / 2n], 1_000_000n, 3_000_000n), -1);
 });
