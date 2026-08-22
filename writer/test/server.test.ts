@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import type { Address, Hex } from "viem";
 import { handleQuote, validateQuoteRequest, newMetrics, startServer, type QuoteDeps } from "../src/server.js";
 import { ExposureBook } from "../src/exposure.js";
+import { RateLimiter } from "../src/waitlist.js";
 import { parseCorrelations } from "../src/correlation.js";
 import { WAD } from "../src/pure.js";
 import type { WriterConfig } from "../src/config.js";
@@ -210,6 +211,26 @@ test("quote without invite code is 403", async () => {
 test("quote with unknown invite code is 403", async () => {
   const r = await handleQuote(deps(), { ...goodBody, inviteCode: "wrong" });
   assert.equal(r.status, 403);
+});
+
+test("bad-invite attempts over the limit are 429; valid codes never consume a slot", async () => {
+  const d = deps({ badInviteLimiter: new RateLimiter(2, 1000, () => 0) });
+  // Valid-code quotes don't touch the bad-invite limiter.
+  assert.equal((await handleQuote(d, goodBody)).status, 200);
+  assert.equal((await handleQuote(d, { ...goodBody, inviteCode: "wrong" })).status, 403);
+  assert.equal((await handleQuote(d, { ...goodBody, inviteCode: "wrong" })).status, 403);
+  assert.equal((await handleQuote(d, { ...goodBody, inviteCode: "wrong" })).status, 429);
+  // A valid code from the same IP still quotes fine after the 429.
+  assert.equal((await handleQuote(d, goodBody)).status, 200);
+});
+
+test("quote limiter caps all quotes per IP, keyed separately", async () => {
+  const d = deps({ quoteLimiter: new RateLimiter(1, 1000, () => 0) });
+  assert.equal((await handleQuote(d, goodBody, "1.2.3.4")).status, 200);
+  const r = await handleQuote(d, goodBody, "1.2.3.4");
+  assert.equal(r.status, 429);
+  assert.deepEqual(r.json, { error: "rate-limited" });
+  assert.equal((await handleQuote(d, goodBody, "5.6.7.8")).status, 200);
 });
 
 test("waitlist-issued code passes the invite gate", () => {

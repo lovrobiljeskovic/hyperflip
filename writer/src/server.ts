@@ -38,6 +38,13 @@ export interface QuoteDeps {
   waitlist?: Waitlist;
   sendInvite?(email: string, code: string): Promise<void>;
   signupLimiter?: RateLimiter;
+  /** Per-IP cap on failed invite attempts at /quote — brute-force guard only;
+   * requests with a valid code never consume a slot. */
+  badInviteLimiter?: RateLimiter;
+  /** Per-IP cap on ALL /quote requests — a valid code doesn't make quotes free
+   * to serve: each one reserves exposure until TTL and burns RPC calls.
+   * ponytail: per-IP punishes shared NATs; key by inviteCode if that bites. */
+  quoteLimiter?: RateLimiter;
 }
 
 type Validated =
@@ -89,10 +96,22 @@ export function validateQuoteRequest(
   return { ok: true, taker: b.taker as Address, legs, stake };
 }
 
-export async function handleQuote(deps: QuoteDeps, body: unknown): Promise<{ status: number; json: unknown }> {
+export async function handleQuote(
+  deps: QuoteDeps,
+  body: unknown,
+  ip = "unknown",
+): Promise<{ status: number; json: unknown }> {
   const { cfg, exposure, metrics } = deps;
+  if (deps.quoteLimiter && !deps.quoteLimiter.allow(ip)) {
+    reject(metrics, "rate-limited");
+    return { status: 429, json: { error: "rate-limited" } };
+  }
   const v = validateQuoteRequest(body, cfg, deps.now(), deps.waitlist);
   if (!v.ok) {
+    if (v.reason === "bad-invite" && deps.badInviteLimiter && !deps.badInviteLimiter.allow(ip)) {
+      reject(metrics, "rate-limited");
+      return { status: 429, json: { error: "rate-limited" } };
+    }
     reject(metrics, v.reason);
     return { status: v.status, json: { error: v.reason } };
   }
@@ -332,15 +351,15 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
           return send(400, { error: "bad-json" });
         }
         try {
-          if (url === "/quote") {
-            const r = await handleQuote(deps, body);
-            return send(r.status, r.json);
-          }
           // Rate-limit key: first hop of x-forwarded-for (set by Caddy in front),
           // falling back to the socket address for direct/local runs.
           const fwd = req.headers["x-forwarded-for"];
           const ip =
             (Array.isArray(fwd) ? fwd[0] : fwd)?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
+          if (url === "/quote") {
+            const r = await handleQuote(deps, body, ip);
+            return send(r.status, r.json);
+          }
           const r = await handleWaitlist(deps, body, ip);
           send(r.status, r.json);
         } catch (err) {

@@ -86,6 +86,8 @@ async function main(): Promise<void> {
       ? (email, code) => sendInviteEmail(cfg.resendApiKey!, email, code)
       : undefined,
     signupLimiter: new RateLimiter(5, 60 * 60 * 1000),
+    badInviteLimiter: new RateLimiter(20, 60 * 60 * 1000),
+    quoteLimiter: new RateLimiter(300, 60 * 60 * 1000),
   };
   if (!cfg.resendApiKey) {
     console.warn(JSON.stringify({ event: "waitlist-disabled", reason: "RESEND_API_KEY unset" }));
