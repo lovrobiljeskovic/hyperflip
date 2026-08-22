@@ -13,9 +13,16 @@ export interface Loadings {
 }
 
 export interface CorrelationTable {
-  /** Keyed by cluster name — the fallback for an underlying not in the table. */
-  defaults: Record<string, Loadings>;
+  /** Every underlying in the file, flattened for lookup. */
   underlyings: Record<string, Loadings>;
+  /** Per-cluster fallback for an underlying the file does not list. COMPUTED
+   * from that cluster's members (see computeFallback) rather than hand-set:
+   * a hand-set default silently drifts looser than the members it is meant to
+   * bound, and for some clusters no hand-set value can bound them at all —
+   * crypto's BTC is the conservative one on the underlying axis (0.29) while
+   * ETH is on the cluster axis (0.92), and a vector dominating both explains
+   * 1.0205 of variance, past MAX_EXPLAINED. */
+  fallback: Record<string, Loadings>;
 }
 
 export interface CorrLeg {
@@ -46,17 +53,50 @@ function parseLoadings(what: string, v: unknown): Loadings {
   return l;
 }
 
+/** The most conservative loadings a cluster's members justify: the
+ * component-wise maximum, shrunk to MAX_EXPLAINED if that combination
+ * over-explains. Component-wise max is what the fallback invariant needs —
+ * using it can never yield a lower pairwise correlation than any single
+ * member would have. When the shrink bites, the fallback is no longer a
+ * strict bound on every axis, so it is logged rather than applied silently. */
+function computeFallback(cluster: string, members: Loadings[]): Loadings {
+  const max = members.reduce(
+    (m, l) => ({
+      global: Math.max(m.global, l.global),
+      cluster: Math.max(m.cluster, l.cluster),
+      underlying: Math.max(m.underlying, l.underlying),
+    }),
+    { global: 0, cluster: 0, underlying: 0 },
+  );
+  const explained = max.global ** 2 + max.cluster ** 2 + max.underlying ** 2;
+  if (explained <= MAX_EXPLAINED) return max;
+  const shrink = Math.sqrt(MAX_EXPLAINED / explained);
+  console.warn(
+    JSON.stringify({
+      event: "correlation-fallback-shrunk",
+      cluster,
+      explained: Number(explained.toFixed(4)),
+      shrink: Number(shrink.toFixed(4)),
+    }),
+  );
+  return { global: max.global * shrink, cluster: max.cluster * shrink, underlying: max.underlying * shrink };
+}
+
 export function parseCorrelations(raw: string): CorrelationTable {
   const parsed = JSON.parse(raw) as Record<string, unknown>;
-  const defaults: Record<string, Loadings> = {};
-  for (const [k, v] of Object.entries((parsed.defaults ?? {}) as Record<string, unknown>)) {
-    defaults[k] = parseLoadings(`defaults.${k}`, v);
-  }
+  const clusters = (parsed.clusters ?? {}) as Record<string, unknown>;
   const underlyings: Record<string, Loadings> = {};
-  for (const [k, v] of Object.entries((parsed.underlyings ?? {}) as Record<string, unknown>)) {
-    underlyings[k] = parseLoadings(`underlyings.${k}`, v);
+  const fallback: Record<string, Loadings> = {};
+  for (const [cluster, entries] of Object.entries(clusters)) {
+    const members: Loadings[] = [];
+    for (const [name, v] of Object.entries(entries as Record<string, unknown>)) {
+      const l = parseLoadings(`clusters.${cluster}.${name}`, v);
+      underlyings[name] = l;
+      members.push(l);
+    }
+    if (members.length > 0) fallback[cluster] = computeFallback(cluster, members);
   }
-  return { defaults, underlyings };
+  return { underlyings, fallback };
 }
 
 export function pairCorrelation(a: Loadings, b: Loadings, sameCluster: boolean, sameUnderlying: boolean): number {
@@ -72,14 +112,17 @@ export function pairCorrelation(a: Loadings, b: Loadings, sameCluster: boolean, 
 function loadingsFor(leg: CorrLeg, table: CorrelationTable): Loadings {
   const exact = table.underlyings[leg.underlying];
   if (exact) return exact;
-  const fallback = table.defaults[leg.cluster];
+  const fallback = table.fallback[leg.cluster];
   if (fallback) {
     console.warn(JSON.stringify({ event: "correlation-fallback", underlying: leg.underlying, cluster: leg.cluster }));
     return fallback;
   }
-  // No cluster default either: assume the tightest thing the table knows about.
-  console.warn(JSON.stringify({ event: "correlation-unknown", underlying: leg.underlying, cluster: leg.cluster }));
-  const all = Object.values(table.underlyings).concat(Object.values(table.defaults));
+  // The cluster itself is unknown, so there is no in-cluster evidence to bound
+  // this leg with. Borrow the tightest thing the whole table knows about: it
+  // may come from an unrelated cluster, which is a blunt over-estimate rather
+  // than an under-estimate, and it is loud in the log either way.
+  console.warn(JSON.stringify({ event: "correlation-unknown-cluster", underlying: leg.underlying, cluster: leg.cluster }));
+  const all = Object.values(table.underlyings);
   if (all.length === 0) return { global: 0, cluster: 0, underlying: 0 };
   return all.reduce((best, l) =>
     l.global ** 2 + l.cluster ** 2 + l.underlying ** 2 > best.global ** 2 + best.cluster ** 2 + best.underlying ** 2 ? l : best,
@@ -178,12 +221,6 @@ export function buildTree(legs: CorrLeg[], table: CorrelationTable, scale: numbe
   return root;
 }
 
-/** P(every leg wins), as WAD, at the house-favorable end of the rho band.
- *
- * House-favorable is always the higher joint probability: a higher joint means
- * a lower payout. Taking the max over both ends therefore needs no sign
- * special-case — it raises assumed correlation on same-direction tickets and
- * lowers it on anti-correlated ones in a single rule. */
 /** Two legs on the SAME market are one random variable, not two correlated
  * ones, and the copula cannot express that: MAX_EXPLAINED caps every modelled
  * correlation strictly below 1, and the rho band then quotes the loosest end.
@@ -204,14 +241,38 @@ function resolveSameMarket(legs: CorrLeg[]): CorrLeg[] | null {
       continue;
     }
     if (prior.bullish !== leg.bullish) return null;
+    if (prior.probWad !== leg.probWad) {
+      // Same market, same side, two different prices: an upstream bug. The
+      // first price wins, but never silently — this is a money path.
+      console.warn(
+        JSON.stringify({
+          event: "duplicate-leg-price-mismatch",
+          vault: key,
+          kept: prior.probWad.toString(),
+          dropped: leg.probWad.toString(),
+        }),
+      );
+    }
   }
   return [...seen.values()];
 }
 
+/** P(every leg wins), as WAD, at the house-favorable end of the rho band.
+ *
+ * House-favorable is always the higher joint probability: a higher joint means
+ * a lower payout. Taking the max over both ends therefore needs no sign
+ * special-case — it raises assumed correlation on same-direction tickets and
+ * lowers it on anti-correlated ones in a single rule.
+ *
+ * `bandPct` is clamped here rather than trusted from the caller: every caller
+ * routes through this function, and a value at or above 1 would make
+ * scaleLoadings take the square root of a negative number, quietly producing
+ * NaN loadings and a meaningless price. */
 export function jointProbWad(legs: CorrLeg[], table: CorrelationTable, bandPct: number): bigint {
   const resolved = resolveSameMarket(legs);
   if (resolved === null) return 0n;
-  const scales = bandPct > 0 ? [1 - bandPct, 1 + bandPct] : [1];
+  const band = Number.isFinite(bandPct) ? Math.min(Math.max(bandPct, 0), 0.99) : 0;
+  const scales = band > 0 ? [1 - band, 1 + band] : [1];
   let best = 0;
   for (const s of scales) {
     const p = jointProbability(buildTree(resolved, table, s));

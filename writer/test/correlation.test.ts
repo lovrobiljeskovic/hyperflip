@@ -8,12 +8,15 @@ const wad = (p: number) => BigInt(Math.round(p * 1e18));
 
 const TABLE = parseCorrelations(
   JSON.stringify({
-    defaults: { crypto: { global: 0.3, cluster: 0.9, underlying: 0.29 }, equity: { global: 0.3, cluster: 0.8426, underlying: 0.4 } },
-    underlyings: {
-      BTC: { global: 0.3, cluster: 0.9, underlying: 0.29 },
-      ETH: { global: 0.3, cluster: 0.92, underlying: 0.2 },
-      NVDA: { global: 0.3, cluster: 0.8426, underlying: 0.4 },
-      SP500: { global: 0.3, cluster: 0.8426, underlying: 0.4 },
+    clusters: {
+      crypto: {
+        BTC: { global: 0.3, cluster: 0.9, underlying: 0.29 },
+        ETH: { global: 0.3, cluster: 0.92, underlying: 0.2 },
+      },
+      equity: {
+        NVDA: { global: 0.3, cluster: 0.8426, underlying: 0.4 },
+        SP500: { global: 0.3, cluster: 0.8426, underlying: 0.4 },
+      },
     },
   }),
 );
@@ -42,13 +45,42 @@ test("pairCorrelation composes the shared factors", () => {
 
 test("rejects loadings whose squares reach 1", () => {
   assert.throws(() =>
-    parseCorrelations(JSON.stringify({ defaults: {}, underlyings: { X: { global: 0.8, cluster: 0.8, underlying: 0.1 } } })),
+    parseCorrelations(JSON.stringify({ clusters: { c: { X: { global: 0.8, cluster: 0.8, underlying: 0.1 } } } })),
   );
 });
 
 test("rejects a negative or non-numeric loading", () => {
-  assert.throws(() => parseCorrelations(JSON.stringify({ defaults: {}, underlyings: { X: { global: -0.1, cluster: 0, underlying: 0 } } })));
-  assert.throws(() => parseCorrelations(JSON.stringify({ defaults: {}, underlyings: { X: { global: "a", cluster: 0, underlying: 0 } } })));
+  assert.throws(() => parseCorrelations(JSON.stringify({ clusters: { c: { X: { global: -0.1, cluster: 0, underlying: 0 } } } })));
+  assert.throws(() => parseCorrelations(JSON.stringify({ clusters: { c: { X: { global: "a", cluster: 0, underlying: 0 } } } })));
+});
+
+test("the computed fallback is never looser than any member of its cluster", () => {
+  // The whole point of the fallback: an underlying nobody tabulated must not
+  // price more cheaply than one that was. Component-wise domination is the
+  // property that guarantees it, since every pairwise correlation term is a
+  // product of two loadings.
+  for (const [cluster, fb] of Object.entries(TABLE.fallback)) {
+    const members = cluster === "crypto" ? ["BTC", "ETH"] : ["NVDA", "SP500"];
+    const explained = fb.global ** 2 + fb.cluster ** 2 + fb.underlying ** 2;
+    assert.ok(explained <= 0.99 + 1e-12, `${cluster} fallback over-explains: ${explained}`);
+    if (explained < 0.99 - 1e-9) {
+      // Only when the shrink did NOT bite can domination be strict.
+      for (const m of members) {
+        const l = TABLE.underlyings[m];
+        assert.ok(fb.global >= l.global - 1e-12, `${cluster} fallback global below ${m}`);
+        assert.ok(fb.cluster >= l.cluster - 1e-12, `${cluster} fallback cluster below ${m}`);
+        assert.ok(fb.underlying >= l.underlying - 1e-12, `${cluster} fallback underlying below ${m}`);
+      }
+    }
+  }
+});
+
+test("an out-of-range band is clamped, not propagated as NaN", () => {
+  const legs = [leg(0.132, "equity", "NVDA"), leg(0.44, "equity", "SP500")];
+  for (const bad of [1.5, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const joint = jointProbWad(legs, TABLE, bad);
+    assert.ok(joint > 0n && joint < WAD, `band ${bad} produced ${joint}`);
+  }
 });
 
 test("correlated same-direction legs price above the independent product", () => {
@@ -104,10 +136,12 @@ test("two DIFFERENT markets on one underlying, opposite sides, stay possible", (
   assert.ok(joint < wad(0.2), `expected a low joint for opposing legs, got ${joint}`);
 });
 
-test("an unknown underlying falls back to its cluster default", () => {
+test("an unknown underlying prices at least as tight as a known one", () => {
   const known = jointProbWad([leg(0.132, "equity", "NVDA"), leg(0.44, "equity", "SP500")], TABLE, 0);
   const unknown = jointProbWad([leg(0.132, "equity", "MYSTERY"), leg(0.44, "equity", "SP500")], TABLE, 0);
-  assert.ok(Math.abs(Number(known - unknown)) / Number(known) < 0.02, "fallback should land near the cluster default");
+  // Same-direction legs: tighter means a HIGHER joint probability, i.e. a
+  // smaller payout. Missing data must never be the cheaper ticket.
+  assert.ok(unknown >= known, `unknown ${unknown} priced looser than known ${known}`);
 });
 
 test("a lone leg returns its own marginal", () => {

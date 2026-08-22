@@ -1,16 +1,17 @@
 {
-  "_comment": "Hand-set factor loadings for parlay correlation pricing. Pairwise correlation = global_a*global_b, plus cluster_a*cluster_b when the legs share a cluster, plus underlying_a*underlying_b when they share an underlying. Squares must sum below 0.99. Writer-only; not served to the frontend.",
-  "defaults": {
-    "crypto": { "global": 0.30, "cluster": 0.90, "underlying": 0.29 },
-    "equity": { "global": 0.30, "cluster": 0.85, "underlying": 0.38 },
-    "commodity": { "global": 0.30, "cluster": 0.70, "underlying": 0.60 }
-  },
-  "underlyings": {
-    "BTC": { "global": 0.30, "cluster": 0.90, "underlying": 0.29 },
-    "ETH": { "global": 0.30, "cluster": 0.92, "underlying": 0.20 },
-    "NVDA": { "global": 0.30, "cluster": 0.8426, "underlying": 0.40 },
-    "SP500": { "global": 0.30, "cluster": 0.8426, "underlying": 0.40 },
-    "SNDK": { "global": 0.30, "cluster": 0.75, "underlying": 0.55 },
-    "GOLD": { "global": 0.30, "cluster": 0.70, "underlying": 0.60 }
+  "_comment": "Hand-set factor loadings for parlay correlation pricing, grouped by correlation cluster. Pairwise correlation = global_a*global_b, plus cluster_a*cluster_b when the legs share a cluster, plus underlying_a*underlying_b when they share an underlying. Squares must sum to at most 0.99. The fallback for an underlying missing from this file is COMPUTED per cluster, not written here. Writer-only; not served to the frontend.",
+  "clusters": {
+    "crypto": {
+      "BTC": { "global": 0.30, "cluster": 0.90, "underlying": 0.29 },
+      "ETH": { "global": 0.30, "cluster": 0.92, "underlying": 0.20 }
+    },
+    "equity": {
+      "NVDA": { "global": 0.30, "cluster": 0.8426, "underlying": 0.40 },
+      "SP500": { "global": 0.30, "cluster": 0.8426, "underlying": 0.40 },
+      "SNDK": { "global": 0.30, "cluster": 0.75, "underlying": 0.55 }
+    },
+    "commodity": {
+      "GOLD": { "global": 0.30, "cluster": 0.70, "underlying": 0.60 }
+    }
   }
 }
