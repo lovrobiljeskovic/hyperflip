@@ -141,10 +141,18 @@ test("breakdown reports the joint probability, not a correlation surcharge", asy
   assert.ok(BigInt(bd.jointProbWad as string) > product, "correlated joint must exceed the naive product");
 });
 
-test("a repeated vault is counted once against exposure", async () => {
-  // Two legs on one vault must not double-charge that market's cap.
-  const once = await handleQuote(deps(), body({ legs: [legOn(BTC_VAULT_A, true), legOn(NVDA_VAULT, true)] }));
-  assert.equal(once.status, 200);
+test("the same vault twice, same side, collapses to one event and prices identically to the deduplicated ticket", async () => {
+  // resolveSameMarket (correlation.ts) collapses this before pricing; this
+  // exercises that collapse through the whole quote path, not just the model.
+  const duplicated = await handleQuote(
+    deps(),
+    body({ legs: [legOn(BTC_VAULT_A, true), legOn(BTC_VAULT_A, true), legOn(NVDA_VAULT, true)] }),
+  );
+  const deduped = await handleQuote(deps(), body({ legs: [legOn(BTC_VAULT_A, true), legOn(NVDA_VAULT, true)] }));
+  assert.equal(duplicated.status, 200);
+  assert.equal(deduped.status, 200);
+  const payout = (r: typeof duplicated) => (r.json as { quote: { maxPayout: string } }).quote.maxPayout;
+  assert.equal(payout(duplicated), payout(deduped), "a duplicated same-side leg must not change the price");
 });
 
 test("cluster cap: 409 when cluster exposure would exceed perClusterCap", async () => {

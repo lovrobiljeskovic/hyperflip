@@ -23,6 +23,11 @@ export interface CorrelationTable {
    * ETH is on the cluster axis (0.92), and a vector dominating both explains
    * 1.0205 of variance, past MAX_EXPLAINED. */
   fallback: Record<string, Loadings>;
+  /** Clusters whose computed fallback had to be shrunk to respect MAX_EXPLAINED
+   * (see computeFallback) — the fallback is no longer a strict per-axis bound
+   * on every member for these. Parsing stays pure; the caller decides whether
+   * and how loudly to surface this. */
+  shrunkClusters: string[];
 }
 
 export interface CorrLeg {
@@ -58,8 +63,9 @@ function parseLoadings(what: string, v: unknown): Loadings {
  * over-explains. Component-wise max is what the fallback invariant needs —
  * using it can never yield a lower pairwise correlation than any single
  * member would have. When the shrink bites, the fallback is no longer a
- * strict bound on every axis, so it is logged rather than applied silently. */
-function computeFallback(cluster: string, members: Loadings[]): Loadings {
+ * strict bound on every axis; the caller (parseCorrelations) records that in
+ * shrunkClusters rather than this function logging it — parsing stays pure. */
+function computeFallback(members: Loadings[]): { loadings: Loadings; shrunk: boolean } {
   const max = members.reduce(
     (m, l) => ({
       global: Math.max(m.global, l.global),
@@ -69,17 +75,12 @@ function computeFallback(cluster: string, members: Loadings[]): Loadings {
     { global: 0, cluster: 0, underlying: 0 },
   );
   const explained = max.global ** 2 + max.cluster ** 2 + max.underlying ** 2;
-  if (explained <= MAX_EXPLAINED) return max;
+  if (explained <= MAX_EXPLAINED) return { loadings: max, shrunk: false };
   const shrink = Math.sqrt(MAX_EXPLAINED / explained);
-  console.warn(
-    JSON.stringify({
-      event: "correlation-fallback-shrunk",
-      cluster,
-      explained: Number(explained.toFixed(4)),
-      shrink: Number(shrink.toFixed(4)),
-    }),
-  );
-  return { global: max.global * shrink, cluster: max.cluster * shrink, underlying: max.underlying * shrink };
+  return {
+    loadings: { global: max.global * shrink, cluster: max.cluster * shrink, underlying: max.underlying * shrink },
+    shrunk: true,
+  };
 }
 
 export function parseCorrelations(raw: string): CorrelationTable {
@@ -87,6 +88,7 @@ export function parseCorrelations(raw: string): CorrelationTable {
   const clusters = (parsed.clusters ?? {}) as Record<string, unknown>;
   const underlyings: Record<string, Loadings> = {};
   const fallback: Record<string, Loadings> = {};
+  const shrunkClusters: string[] = [];
   for (const [cluster, entries] of Object.entries(clusters)) {
     const members: Loadings[] = [];
     for (const [name, v] of Object.entries(entries as Record<string, unknown>)) {
@@ -94,9 +96,13 @@ export function parseCorrelations(raw: string): CorrelationTable {
       underlyings[name] = l;
       members.push(l);
     }
-    if (members.length > 0) fallback[cluster] = computeFallback(cluster, members);
+    if (members.length > 0) {
+      const { loadings, shrunk } = computeFallback(members);
+      fallback[cluster] = loadings;
+      if (shrunk) shrunkClusters.push(cluster);
+    }
   }
-  return { underlyings, fallback };
+  return { underlyings, fallback, shrunkClusters };
 }
 
 export function pairCorrelation(a: Loadings, b: Loadings, sameCluster: boolean, sameUnderlying: boolean): number {

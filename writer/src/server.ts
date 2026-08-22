@@ -81,8 +81,13 @@ export async function handleQuote(deps: QuoteDeps, body: unknown): Promise<{ sta
     reject(metrics, v.reason);
     return { status: v.status, json: { error: v.reason } };
   }
-  // A repeated vault is one market's worth of exposure, not two.
-  const vaults = [...new Set(v.legs.map((l) => l.vault.toLowerCase()))] as Address[];
+  // Defensive, not load-bearing: ExposureBook tests vault membership
+  // (Array.includes/some) rather than summing per occurrence, so a duplicated
+  // vault would not double-count today even without this. Deduping still
+  // guards against a future ExposureBook that sums per entry.
+  // `.toLowerCase()` widens Address to string; the cast recovers it — the
+  // value is still a well-formed 0x-prefixed address, just lowercase.
+  const vaults = [...new Set(v.legs.map((l) => l.vault.toLowerCase()))].map((addr) => addr as Address);
 
   let settled: Set<string>;
   let pricesWad: bigint[];

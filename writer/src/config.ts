@@ -15,16 +15,17 @@ export interface MarketInfo {
   coinYes: string;
   /** Core l2Book coin string for the NO side (e.g. "+123851"). */
   coinNo: string;
-  /** Underlying asset (e.g. "BTC"). Two legs sharing an underlying are refused —
-   * correlation ≈ 100%, product pricing is meaningless. Also subsumes
-   * impossible/redundant strike combos without any strike parsing. */
+  /** Underlying asset (e.g. "BTC"). Feeds the correlation model in
+   * correlation.ts: legs sharing an underlying are priced as near-certainly
+   * (or, on opposite sides, impossibly) correlated by the copula, not refused. */
   underlying: string;
-  /** Correlation cluster (e.g. "crypto"). Same-cluster leg pairs get a pricing
-   * haircut and share a cluster exposure cap. */
+  /** Correlation cluster (e.g. "crypto"). Feeds the correlation model in
+   * correlation.ts and scopes the perClusterCap exposure cap. */
   cluster: string;
   /** Which way YES bets the underlying: "up" (above-strike), "down" (below-strike),
-   * "band" (between-strikes, direction-neutral). Same-cluster legs betting the same
-   * way are refused — comovement makes naive product pricing badly underprice them. */
+   * "band" (between-strikes, direction-neutral). Combined with a leg's isYes, this
+   * gives its bullish/bearish stance for the copula ("band" is non-directional —
+   * bullish: null). */
   direction: "up" | "down" | "band";
   /** Optional market expiry (ms epoch); legs inside the lockout window are refused. */
   expiryMs?: number;
@@ -137,6 +138,15 @@ export function parseInviteCodes(raw: string): Set<string> {
 
 export function loadConfig(): WriterConfig {
   const registryJson = readFileSync(path.resolve(here, "../..", requireEnv("MARKETS_FILE")), "utf8");
+  const correlations = parseCorrelations(
+    readFileSync(path.resolve(here, "../..", process.env.CORRELATIONS_FILE ?? "registry/correlations.json"), "utf8"),
+  );
+  // Boot-time signal, not per-request noise: the shipped table's shrunk
+  // clusters don't change quote to quote, so this fires once here rather than
+  // from the pure parse function on every call.
+  if (correlations.shrunkClusters.length > 0) {
+    console.warn(JSON.stringify({ event: "correlation-fallback-shrunk", clusters: correlations.shrunkClusters }));
+  }
   return {
     // The writer never touches the 0x814 precompile (keeper-only), which is the sole
     // reason TESTNET_RPC is pinned to the official endpoint — and that endpoint
@@ -157,9 +167,7 @@ export function loadConfig(): WriterConfig {
     perMarketCap: BigInt(requireEnv("PER_MARKET_CAP")),
     perClusterCap: BigInt(requireEnv("PER_CLUSTER_CAP")),
     rhoBandPct: Number(process.env.RHO_BAND_PCT ?? 0.2),
-    correlations: parseCorrelations(
-      readFileSync(path.resolve(here, "../..", process.env.CORRELATIONS_FILE ?? "registry/correlations.json"), "utf8"),
-    ),
+    correlations,
     legEdgeBps: BigInt(process.env.LEG_EDGE_BPS ?? 300),
     quoteTtlMs: Number(process.env.QUOTE_TTL_MS ?? 30_000),
     lockoutMs: Number(process.env.LOCKOUT_MS ?? 600_000),

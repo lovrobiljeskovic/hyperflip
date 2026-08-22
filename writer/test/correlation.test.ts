@@ -75,6 +75,13 @@ test("the computed fallback is never looser than any member of its cluster", () 
   }
 });
 
+test("parseCorrelations reports which clusters' fallback had to be shrunk, without logging", () => {
+  // crypto's component-wise max (global 0.3, cluster 0.92, underlying 0.29)
+  // explains 1.0205 of variance, past MAX_EXPLAINED — must shrink and be
+  // reported. equity's (0.3, 0.8426, 0.4) explains ~0.96 — must not.
+  assert.deepEqual(TABLE.shrunkClusters, ["crypto"]);
+});
+
 test("an out-of-range band is clamped, not propagated as NaN", () => {
   const legs = [leg(0.132, "equity", "NVDA"), leg(0.44, "equity", "SP500")];
   for (const bad of [1.5, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
