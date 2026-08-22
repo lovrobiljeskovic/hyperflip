@@ -83,8 +83,8 @@ function errorMessage(res: Extract<QuoteResult, { ok: false }>): string {
     return "Payout too large for the house limit on one of these markets.";
   }
   if (res.status === 400 && res.error === "same-underlying") return "Two legs share an underlying — remove one.";
-  if (res.status === 400 && res.error === "correlated-direction")
-    return "These legs bet the same direction on correlated assets — flip one or remove it.";
+  if (res.status === 400 && res.error === "cannot-win")
+    return "These legs contradict each other — this ticket can never win.";
   return res.error;
 }
 
@@ -114,7 +114,7 @@ const signedMult = (x: number) => `${x < 0 ? "\u2212" : "+"}${Math.abs(x).toFixe
  * own ratio, so any gap against the arithmetic above is visible rather than
  * hidden — that gap is the contract's minimum-premium cap biting. */
 function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown }) {
-  const { afterEdge, afterLegs, modelled } = edgeSteps(bd);
+  const { afterCorrelation, afterEdge, afterLegs, modelled } = edgeSteps(bd);
   const capped = Math.abs(bd.actualMultiplier - modelled) / modelled > 0.005;
   return (
     <div className="flex flex-col gap-1.5">
@@ -128,17 +128,20 @@ function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown })
       ))}
       <div className="mt-1 border-t border-line pt-1.5" />
       <DetailRow label="Fair combined odds">{mult(bd.fairMultiplier)}</DetailRow>
+      {Math.abs(afterCorrelation - bd.fairMultiplier) > 0.005 && (
+        <DetailRow
+          label="Correlation"
+          className={afterCorrelation > bd.fairMultiplier ? "text-yes" : "text-no"}
+        >
+          {signedMult(afterCorrelation - bd.fairMultiplier)}
+        </DetailRow>
+      )}
       <DetailRow label={`House edge ${pct(bd.edgePct)}`} className="text-no">
-        {signedMult(afterEdge - bd.fairMultiplier)}
+        {signedMult(afterEdge - afterCorrelation)}
       </DetailRow>
       {bd.legPct > 0 && (
         <DetailRow label={`${legs.length} legs ${pct(bd.legPct)}`} className="text-no">
           {signedMult(afterLegs - afterEdge)}
-        </DetailRow>
-      )}
-      {bd.corrPct > 0 && (
-        <DetailRow label={`Correlated legs ${pct(bd.corrPct)}`} className="text-no">
-          {signedMult(modelled - afterLegs)}
         </DetailRow>
       )}
       {capped && (
@@ -422,7 +425,7 @@ export function Ticket({
           quoteResult.breakdown.legPricesWad,
           quoteResult.breakdown.edgeBps,
           quoteResult.breakdown.legBps,
-          quoteResult.breakdown.corrBps,
+          quoteResult.breakdown.jointProbWad,
           premium,
           maxPayout,
         )

@@ -20,9 +20,11 @@ export interface WriterQuote {
  * quote (not covered by the signature). legPricesWad is in quote.legs order. */
 export interface QuoteBreakdown {
   legPricesWad: string[];
+  /** P(all legs win) from the writer's copula, WAD. Absent on writers
+   * predating correlation pricing — treat as the product of the leg prices. */
+  jointProbWad?: string;
   edgeBps: string;
   legBps?: string; // absent on writers predating leg-count-scaled edge
-  corrBps: string;
 }
 
 export type QuoteResult =

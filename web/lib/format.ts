@@ -37,33 +37,39 @@ export const WAD = 10n ** 18n;
 export interface PriceBreakdown {
   legOdds: number[]; // 1/p per leg, quote.legs order
   legProbs: number[]; // p per leg
-  fairMultiplier: number; // 1 / prod(p)
+  fairMultiplier: number; // 1 / prod(p) — what the legs multiply to, verifiable by hand
+  correlatedMultiplier: number; // 1 / joint — fair odds once comovement is priced
   edgePct: number; // base house edge as a fraction (0.05 = 5%)
   legPct: number; // leg-count surcharge as a fraction
-  corrPct: number; // correlation haircut as a fraction
   actualMultiplier: number; // maxPayout / premium — the signed truth
 }
 
-/** The multiplier after each edge component is applied in turn, so the UI can
- * show one row per deduction. Components are additive in bps (see the writer's
- * edgeBreakdown), hence the running sum in the denominator. */
-export function edgeSteps(bd: PriceBreakdown): { afterEdge: number; afterLegs: number; modelled: number } {
-  const at = (bps: number) => bd.fairMultiplier / (1 + bps);
+/** The multiplier after each step is applied in turn, so the UI can show one
+ * row per adjustment. Correlation moves the fair number itself and can go
+ * either way; the edge components are additive in bps after it. */
+export function edgeSteps(bd: PriceBreakdown): {
+  afterCorrelation: number;
+  afterEdge: number;
+  afterLegs: number;
+  modelled: number;
+} {
+  const at = (bps: number) => bd.correlatedMultiplier / (1 + bps);
   return {
+    afterCorrelation: bd.correlatedMultiplier,
     afterEdge: at(bd.edgePct),
     afterLegs: at(bd.edgePct + bd.legPct),
-    modelled: at(bd.edgePct + bd.legPct + bd.corrPct),
+    modelled: at(bd.edgePct + bd.legPct),
   };
 }
 
 /** Rebuild the writer's pricing steps for display (writer/src/pricing.ts:
- * maxPayout = stake / (prod(p) * (1 + edge + corr))). Returns null when the
- * writer sent no breakdown or the leg count doesn't match. */
+ * maxPayout = stake / (joint * (1 + edge))). Returns null when the writer sent
+ * no breakdown or the leg count doesn't match. */
 export function priceBreakdown(
   legPricesWad: readonly string[],
   edgeBps: string,
   legBps: string | undefined,
-  corrBps: string,
+  jointProbWad: string | undefined,
   premium: bigint,
   maxPayout: bigint,
 ): PriceBreakdown | null {
@@ -71,13 +77,14 @@ export function priceBreakdown(
   const legProbs = legPricesWad.map((w) => Number(BigInt(w)) / Number(WAD));
   if (legProbs.some((p) => !(p > 0) || p >= 1)) return null;
   const prod = legProbs.reduce((a, p) => a * p, 1);
+  const joint = jointProbWad === undefined ? prod : Number(BigInt(jointProbWad)) / Number(WAD);
   return {
     legProbs,
     legOdds: legProbs.map((p) => 1 / p),
     fairMultiplier: 1 / prod,
+    correlatedMultiplier: joint > 0 ? 1 / joint : 1 / prod,
     edgePct: Number(edgeBps) / 10_000,
     legPct: Number(legBps ?? 0) / 10_000,
-    corrPct: Number(corrBps) / 10_000,
     actualMultiplier: multiplierNum(premium, maxPayout),
   };
 }
@@ -98,10 +105,12 @@ export function pct1(mid: number): string {
   return `${(mid * 100).toFixed(1)}%`;
 }
 
-/** The book's margin on a signed quote: how far the fair multiplier exceeds
- * the one the house actually pays. Drives the splay of the motif's rings, so
- * it returns 0 rather than Infinity on a degenerate quote. */
+/** The book's margin on the live quote: correlated fair odds against what was
+ * actually signed. Measured off correlatedMultiplier, not fairMultiplier —
+ * correlation is a correction to the fair price, not house takeout, and
+ * charging it to the margin ring would misreport the book. Returns 0 rather
+ * than Infinity on a degenerate quote. */
 export function quotedOverround(bd: PriceBreakdown): number {
   if (bd.actualMultiplier <= 0) return 0;
-  return bd.fairMultiplier / bd.actualMultiplier - 1;
+  return bd.correlatedMultiplier / bd.actualMultiplier - 1;
 }
