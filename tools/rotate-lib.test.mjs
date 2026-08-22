@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseBinary, pickBinaries, registryEntry, marketSymbol, classify } from "./rotate-lib.mjs";
+import { parseBinary, parseRecurring, pickBinaries, registryEntry, marketSymbol, classify } from "./rotate-lib.mjs";
 
 const NOW = Date.UTC(2026, 7, 18, 12, 0); // 2026-08-18T12:00Z
 
@@ -162,6 +162,34 @@ test("pickBinaries respects cap", () => {
   for (let i = 0; i < 12; i++) mids[`P${i}`] = "1";
   const picked = pickBinaries({ outcomes, mids, knownCoins: new Set(), nowMs: NOW });
   assert.equal(picked.length, 8);
+});
+
+test("parseRecurring happy path and garbage", () => {
+  assert.deepEqual(parseRecurring("class:priceBinary|underlying:BTC|expiry:20260823-0300|targetPrice:78881|period:1d"), {
+    perp: "BTC",
+    venue: null,
+    threshold: 78881,
+    expiryMs: Date.UTC(2026, 7, 23, 3, 0),
+  });
+  assert.equal(parseRecurring("class:somethingElse|underlying:BTC|expiry:20260823-0300|targetPrice:78881"), null);
+  assert.equal(parseRecurring("class:priceBinary|underlying:BTC|expiry:2026-08-23|targetPrice:78881"), null);
+  assert.equal(parseRecurring("class:priceBinary|underlying:BTC|expiry:20260823-0300|targetPrice:abc"), null);
+  assert.equal(parseRecurring("competition:MLB|contestType:game"), null);
+});
+
+test("pickBinaries includes Recurring 1d markets despite the 24h floor", () => {
+  const recSides = [{ name: "Yes" }, { name: "No" }];
+  const outcomes = [
+    // 15h left — a template binary this close is rejected, a recurring is kept.
+    { outcome: 600, name: "Recurring", description: "class:priceBinary|underlying:BTC|expiry:20260819-0300|targetPrice:100|period:1d", quoteToken: "USDC", sideSpecs: recSides },
+    outcome(601, "perp:ETH|threshold:2|time:20260819-0300"),
+    // 1h left — even a recurring must clear the 2h floor.
+    { outcome: 602, name: "Recurring", description: "class:priceBinary|underlying:SOL|expiry:20260818-1300|targetPrice:5|period:1d", quoteToken: "USDC", sideSpecs: recSides },
+  ];
+  const mids = { "#6000": "0.5", "#6010": "0.5", "#6020": "0.5", BTC: "100", ETH: "2", SOL: "5" };
+  const picked = pickBinaries({ outcomes, mids, knownCoins: new Set(), nowMs: NOW });
+  assert.deepEqual(picked.map((p) => p.outcome), [600]);
+  assert.deepEqual(registryEntry(picked[0], "0xabc").title, "BTC above 100 on Aug 19?");
 });
 
 test("registryEntry and marketSymbol shape", () => {

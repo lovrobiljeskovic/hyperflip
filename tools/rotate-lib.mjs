@@ -4,17 +4,27 @@
 // `xyz` venue trades — `pew:` deployments are junk with dead 0.5 books.
 const TRADED_VENUES = new Set(["xyz"]);
 
-/** Parse a `template:binaryPrice*` description like
- * `perp:BTC|threshold:64200|time:20260820-0200` (time is UTC). binaryPrice2/4
- * carry extra fields (priceDescription, seconds); they are ignored.
- * Returns null on any shape mismatch. */
-export function parseBinary(description) {
-  const fields = Object.fromEntries(
+function parseFields(description) {
+  return Object.fromEntries(
     description.split("|").map((kv) => {
       const i = kv.indexOf(":");
       return i === -1 ? [kv, ""] : [kv.slice(0, i), kv.slice(i + 1)];
     }),
   );
+}
+
+/** `20260820-0200` (UTC) to epoch ms, or null. */
+function parseStamp(stamp) {
+  const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})$/.exec(stamp ?? "");
+  return m === null ? null : Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+}
+
+/** Parse a `template:binaryPrice*` description like
+ * `perp:BTC|threshold:64200|time:20260820-0200` (time is UTC). binaryPrice2/4
+ * carry extra fields (priceDescription, seconds); they are ignored.
+ * Returns null on any shape mismatch. */
+export function parseBinary(description) {
+  const fields = parseFields(description);
   const { perp, threshold, time } = fields;
   if (!perp || !threshold || !time) return null;
   const parts = perp.split(":");
@@ -22,10 +32,21 @@ export function parseBinary(description) {
   const [venue, symbol] = parts.length === 2 ? parts : [null, parts[0]];
   if (venue !== null && !TRADED_VENUES.has(venue)) return null;
   if (!symbol) return null;
-  const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})$/.exec(time);
-  if (m === null || !Number.isFinite(Number(threshold))) return null;
-  const expiryMs = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+  const expiryMs = parseStamp(time);
+  if (expiryMs === null || !Number.isFinite(Number(threshold))) return null;
   return { perp: symbol, venue, threshold: Number(threshold), expiryMs };
+}
+
+/** Parse a `Recurring` (Crypto 1d tab) description like
+ * `class:priceBinary|underlying:BTC|expiry:20260823-0300|targetPrice:78881|period:1d`.
+ * Returns the same shape as parseBinary, or null on mismatch. */
+export function parseRecurring(description) {
+  const fields = parseFields(description);
+  if (fields.class !== "priceBinary") return null;
+  const { underlying, targetPrice, expiry } = fields;
+  const expiryMs = parseStamp(expiry);
+  if (!underlying || expiryMs === null || !Number.isFinite(Number(targetPrice))) return null;
+  return { perp: underlying, venue: null, threshold: Number(targetPrice), expiryMs };
 }
 
 const COMMODITIES = new Set(["GOLD", "SILVER", "NATGAS", "CL", "OIL", "COPPER"]);
@@ -61,6 +82,17 @@ const isBinary = (o) =>
   o.sideSpecs[0]?.name === "template:Yes" &&
   o.sideSpecs[1]?.name === "template:No";
 
+/** The Crypto(1d) tab: house-deployed daily binaries, plain Yes/No sides. */
+const isRecurring = (o) =>
+  o.name === "Recurring" &&
+  o.sideSpecs?.length === 2 &&
+  o.sideSpecs[0]?.name === "Yes" &&
+  o.sideSpecs[1]?.name === "No";
+
+/** Recurring markets live exactly 24h, so the standard minMsLeft floor would
+ * reject every one of them. 2h keeps us off nearly-expired boards only. */
+const RECURRING_MIN_MS = 2 * 3600_000;
+
 /** Pick fresh standalone binaries to wrap.
  * outcomes: outcomeMeta.outcomes; mids: allMids object; questions:
  * outcomeMeta.questions; knownCoins: Set of coinYes already in the registry. */
@@ -86,11 +118,12 @@ export function pickBinaries({
   }
   const candidates = [];
   for (const o of outcomes) {
-    if (!isBinary(o) || o.quoteToken !== "USDC" || grouped.has(o.outcome)) continue;
-    const parsed = parseBinary(o.description);
+    const recurring = isRecurring(o);
+    if ((!isBinary(o) && !recurring) || o.quoteToken !== "USDC" || grouped.has(o.outcome)) continue;
+    const parsed = recurring ? parseRecurring(o.description) : parseBinary(o.description);
     if (!parsed) continue;
     const msLeft = parsed.expiryMs - nowMs;
-    if (msLeft < minMsLeft || msLeft > maxMsLeft) continue;
+    if (msLeft < (recurring ? RECURRING_MIN_MS : minMsLeft) || msLeft > maxMsLeft) continue;
     const coinYes = `#${o.outcome * 10}`;
     if (knownCoins.has(coinYes)) continue;
     const mid = mids[coinYes];

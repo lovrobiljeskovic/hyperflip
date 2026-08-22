@@ -143,16 +143,38 @@ forge build   # only if contracts changed
 
 rsync -az --delete --exclude node_modules --exclude .env --exclude settlement-cache.json keeper/ root@91.99.94.25:/opt/hype/keeper/
 rsync -az --delete --exclude node_modules --exclude .env --exclude waitlist.json writer/ root@91.99.94.25:/opt/hype/writer/
-rsync -az registry/ root@91.99.94.25:/opt/hype/registry/
+# Registry is BOX-AUTHORITATIVE (rotate.timer rewrites it nightly) — pull, never push:
+rsync -az root@91.99.94.25:/opt/hype/registry/ registry/
 
 ssh root@91.99.94.25 'cd /opt/hype/keeper && npm ci --omit=dev=false && cd /opt/hype/writer && npm ci'
-ssh root@91.99.94.25 'chown -R hype:hype /opt/hype && systemctl restart keeper writer'
+ssh root@91.99.94.25 'chown -R hype:hype /opt/hype/keeper /opt/hype/writer && systemctl restart keeper writer'
 ```
 
 `--exclude settlement-cache.json` on the keeper rsync protects the box's live cache from both
 deletion and overwrite by a local copy — confirm it survives before restarting. Same story for
 `--exclude waitlist.json` on the writer rsync: it holds the beta signups and their issued
 invite codes (`jq length /opt/hype/writer/waitlist.json` is the signup count).
+
+## Nightly market rotation
+
+`rotate.timer` on the box fires daily at 03:10 UTC (the testnet Crypto 1d board refreshes at
+03:00): `rotate.service` runs `node tools/rotate-markets.mjs` from `/opt/hype/repo`, which
+deploys vaults for fresh crypto binaries (incl. the Recurring 1d set), prunes expired entries
+into `archived`, rewrites `/opt/hype/registry/markets.json` (`/opt/hype/repo/registry` is a
+symlink to it), then restarts writer + keeper.
+
+The repo copy at `/opt/hype/repo` is rsynced from the laptop (same excludes as above plus
+`--exclude registry`); its `.env` holds only `PRIVATE_KEY`, `TESTNET_RPC`, `KEEPER_ADDRESS`
+(root-only, 600 — the deployer key must live here for forge). forge + uv are installed for
+root. After changing rotation code:
+
+```bash
+rsync -az --delete --exclude node_modules --exclude .git --exclude cache --exclude out \
+  --exclude broadcast --exclude web --exclude '.env*' --exclude registry --exclude '*.html' \
+  ./ root@91.99.94.25:/opt/hype/repo/
+ssh root@91.99.94.25 'cd /opt/hype/repo && node tools/rotate-markets.mjs --dry-run'  # sanity
+ssh root@91.99.94.25 'systemctl start rotate.service'                                # live run
+ssh root@91.99.94.25 'journalctl -u rotate.service -n 50 --no-pager'                 # logs
 
 Note `npm ci` must install devDependencies — `npm start` runs `tsx`, which is a devDependency.
 Do not set `NODE_ENV=production`.
