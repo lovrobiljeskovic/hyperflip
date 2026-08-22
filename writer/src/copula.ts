@@ -149,6 +149,9 @@ const GRIDS = new Map(PANEL_COUNTS.map((p) => [p, buildGrid(p)]));
  * is plenty for a smooth integrand, the finest is where cost stops being worth
  * it. */
 function gridFor(maxLoading: number, minIdio: number): { z: number[]; w: number[] } {
+  // ponytail: floors minIdio at 1e-6 instead of throwing on ~0 (only reachable
+  // via the idioOf clamp above, i.e. an already-invalid leg). Same ceiling and
+  // upgrade path as idioOf.
   const want = Math.ceil((PANEL_NODES * maxLoading) / Math.max(minIdio, 1e-6));
   const panels = PANEL_COUNTS.find((p) => p >= want) ?? PANEL_COUNTS[PANEL_COUNTS.length - 1];
   return GRIDS.get(panels)!;
@@ -173,6 +176,11 @@ export interface FactorNode {
 
 function idioOf(leg: FactorLeg): number {
   const explained = leg.loadings.reduce((s, l) => s + l * l, 0);
+  // ponytail: floors at 1e-12 instead of throwing when loadings' squares sum
+  // to >= 1 (zero or negative idiosyncratic variance — a physically invalid
+  // factor structure). Safe today because every caller in this repo builds
+  // loadings itself and keeps them under 1; validate and throw here, or at
+  // FactorLeg construction, once an untrusted caller can set loadings.
   return Math.sqrt(Math.max(1 - explained, 1e-12));
 }
 
