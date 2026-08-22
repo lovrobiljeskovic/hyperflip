@@ -147,12 +147,17 @@ const GRIDS = new Map(PANEL_COUNTS.map((p) => [p, buildGrid(p)]));
 /** Panels needed to resolve a transition of width sigma/loading: enough that
  * several panels land inside it. Clamped to the precomputed set — the coarsest
  * is plenty for a smooth integrand, the finest is where cost stops being worth
- * it. */
-function gridFor(maxLoading: number, minIdio: number): { z: number[]; w: number[] } {
-  // ponytail: floors minIdio at 1e-6 instead of throwing on ~0 (only reachable
-  // via the idioOf clamp above, i.e. an already-invalid leg). Same ceiling and
-  // upgrade path as idioOf.
-  const want = Math.ceil((PANEL_NODES * maxLoading) / Math.max(minIdio, 1e-6));
+ * it.
+ *
+ * `minSigma` is the residual sigma AT THIS LEVEL, not the leg's final
+ * idiosyncratic sigma: at an outer level the deeper integrations smooth the
+ * integrand too, so the transition there is wider and a fine grid buys
+ * nothing while its cost multiplies through every level below. */
+function gridFor(maxLoading: number, minSigma: number): { z: number[]; w: number[] } {
+  // ponytail: floors minSigma at 1e-6 instead of throwing on ~0 (only reachable
+  // via the residualSigma clamp below, i.e. an already-invalid leg). Same
+  // ceiling and upgrade path as residualSigma.
+  const want = Math.ceil((PANEL_NODES * maxLoading) / Math.max(minSigma, 1e-6));
   const panels = PANEL_COUNTS.find((p) => p >= want) ?? PANEL_COUNTS[PANEL_COUNTS.length - 1];
   return GRIDS.get(panels)!;
 }
@@ -174,8 +179,13 @@ export interface FactorNode {
   children: FactorNode[];
 }
 
-function idioOf(leg: FactorLeg): number {
-  const explained = leg.loadings.reduce((s, l) => s + l * l, 0);
+/** Sigma of everything still unresolved once the factors down to `depth` are
+ * fixed: the leg's own noise plus every factor deeper than this level. That is
+ * the width the integrand at this level actually transitions over, because the
+ * deeper levels are integrated out inside it. */
+function residualSigma(leg: FactorLeg, depth: number): number {
+  let explained = 0;
+  for (let k = 0; k <= depth && k < leg.loadings.length; k++) explained += leg.loadings[k] * leg.loadings[k];
   // ponytail: floors at 1e-12 instead of throwing when loadings' squares sum
   // to >= 1 (zero or negative idiosyncratic variance — a physically invalid
   // factor structure). Safe today because every caller in this repo builds
@@ -184,8 +194,57 @@ function idioOf(leg: FactorLeg): number {
   return Math.sqrt(Math.max(1 - explained, 1e-12));
 }
 
+/** The leg's idiosyncratic sigma: residual once every factor it loads on is
+ * fixed. This is the divisor in the conditional marginal, always. */
+function idioOf(leg: FactorLeg): number {
+  return residualSigma(leg, leg.loadings.length - 1);
+}
+
 function collectLegs(node: FactorNode): FactorLeg[] {
   return node.legs.concat(...node.children.map(collectLegs));
+}
+
+/** The grid this node's own factor gets, or null when nothing hangs below it. */
+function gridForNode(node: FactorNode, depth: number): { z: number[]; w: number[] } | null {
+  const subtree = collectLegs(node);
+  if (subtree.length === 0) return null;
+  const maxLoading = subtree.reduce((m, l) => Math.max(m, Math.abs(l.loadings[depth] ?? 0)), 0);
+  const minSigma = subtree.reduce((m, l) => Math.min(m, residualSigma(l, depth)), 1);
+  return gridFor(maxLoading, minSigma);
+}
+
+/** Quadrature points the whole tree visits: a node's grid runs once per point
+ * of every grid above it, so the cost multiplies down the levels. */
+function quadratureCost(node: FactorNode, depth: number, outer: number): number {
+  const grid = gridForNode(node, depth);
+  if (grid === null) return 0;
+  const here = outer * grid.z.length;
+  return node.children.reduce((sum, c) => sum + quadratureCost(c, depth + 1, here), here);
+}
+
+/** Ceiling on quadratureCost. The writer is single-threaded — the HTTP server,
+ * the poker's timer and /health all share this event loop — so a ticket whose
+ * integral costs seconds does not price slowly, it stalls the process. A
+ * ticket the house cannot price in bounded time is refused instead.
+ *
+ * Measured here at ~45ns per point, so 4e6 is ~180ms per call and ~360ms per
+ * quote (jointProbWad integrates both ends of the rho band). That admits every
+ * shape the current registry can build — the most expensive is all seven live
+ * markets with BTC, BTC and ETH in one cluster, at 3.17e6 — and refuses the
+ * ten-leg two-per-underlying tickets that cost 1.6e7 and seconds of wall clock.
+ *
+ * ponytail: a flat budget with a hard refusal, not an adaptive coarsening.
+ * Coarsening silently trades accuracy on a money path. If these tickets ever
+ * need to be quotable, move the integral off the event loop (worker thread)
+ * rather than loosening the quadrature. */
+const MAX_QUADRATURE_POINTS = 4_000_000;
+
+/** Thrown when the factor tree would cost more than MAX_QUADRATURE_POINTS. */
+export class TooComplexError extends Error {
+  constructor(readonly cost: number) {
+    super(`parlay too complex to price: ${cost} quadrature points, max ${MAX_QUADRATURE_POINTS}`);
+    this.name = "TooComplexError";
+  }
 }
 
 /** P(every leg in the tree wins).
@@ -194,17 +253,18 @@ function collectLegs(node: FactorNode): FactorLeg[] {
  * latent score, threaded down the recursion. At a node we integrate that
  * node's factor: for each quadrature point the legs hanging here become
  * conditionally independent (their remaining randomness is idiosyncratic), and
- * the children are conditionally independent of each other, so both multiply. */
+ * the children are conditionally independent of each other, so both multiply.
+ *
+ * Throws TooComplexError rather than blocking the event loop for seconds. */
 export function jointProbability(root: FactorNode): number {
+  const cost = quadratureCost(root, 0, 1);
+  if (cost > MAX_QUADRATURE_POINTS) throw new TooComplexError(cost);
   return integrate(root, new Map(), 0);
 }
 
 function integrate(node: FactorNode, carried: Map<FactorLeg, number>, depth: number): number {
-  const subtree = collectLegs(node);
-  if (subtree.length === 0) return 1;
-  const maxLoading = subtree.reduce((m, l) => Math.max(m, Math.abs(l.loadings[depth] ?? 0)), 0);
-  const minIdio = subtree.reduce((m, l) => Math.min(m, idioOf(l)), 1);
-  const grid = gridFor(maxLoading, minIdio);
+  const grid = gridForNode(node, depth);
+  if (grid === null) return 1;
   let total = 0;
   for (let q = 0; q < grid.z.length; q++) {
     const f = grid.z[q];

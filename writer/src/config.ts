@@ -147,6 +147,28 @@ export function loadConfig(): WriterConfig {
   if (correlations.shrunkClusters.length > 0) {
     console.warn(JSON.stringify({ event: "correlation-fallback-shrunk", clusters: correlations.shrunkClusters }));
   }
+  const markets = parseMarkets(registryJson);
+  // An empty table is not a degraded mode, it is silent mispricing: every leg
+  // falls through to zero loadings and every parlay quotes as independent,
+  // with nothing in the logs to say so. Refuse to boot.
+  if (Object.keys(correlations.underlyings).length === 0) {
+    throw new Error("correlations: no underlyings parsed — check the file's top-level `clusters` key");
+  }
+  // A market in a cluster the table has never heard of gets the blunt
+  // whole-table fallback (see loadingsFor), which is an over-estimate rather
+  // than an under-estimate — wrong, but not house-losing. Deliberately a warn
+  // and not a throw: the registry is rewritten by the rotation job, so a throw
+  // here would let that job brick the writer at startup.
+  const unknown = [...markets.values()].filter((m) => correlations.fallback[m.cluster] === undefined);
+  if (unknown.length > 0) {
+    console.warn(
+      JSON.stringify({
+        event: "correlation-unknown-market-cluster",
+        clusters: [...new Set(unknown.map((m) => m.cluster))],
+        markets: unknown.map((m) => ({ vault: m.vault, underlying: m.underlying, cluster: m.cluster })),
+      }),
+    );
+  }
   return {
     // The writer never touches the 0x814 precompile (keeper-only), which is the sole
     // reason TESTNET_RPC is pinned to the official endpoint — and that endpoint
@@ -173,7 +195,7 @@ export function loadConfig(): WriterConfig {
     lockoutMs: Number(process.env.LOCKOUT_MS ?? 600_000),
     pokerIntervalMs: Number(process.env.POKER_INTERVAL_MS ?? 15_000),
     deployBlock: BigInt(process.env.PARLAY_DEPLOY_BLOCK ?? 0),
-    markets: parseMarkets(registryJson),
+    markets,
     registryJson,
     inviteCodes: parseInviteCodes(requireEnv("INVITE_CODES")),
   };

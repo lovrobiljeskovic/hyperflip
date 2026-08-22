@@ -34,10 +34,15 @@ export interface CorrLeg {
   /** The market this leg is on. Two legs sharing it are the same event, not
    * two correlated ones — see resolveSameMarket. */
   vault: string;
+  /** Which side of that market. Identity of a position is a side question, so
+   * this — not `bullish` — is what resolveSameMarket keys on. */
+  isYes: boolean;
   probWad: bigint;
   cluster: string;
   underlying: string;
-  /** (direction === "up") === isYes, or null for a non-directional market. */
+  /** (direction === "up") === isYes, or null for a non-directional market.
+   * Only the copula's sign uses it; a band market has no direction, so both
+   * of its sides are null. */
   bullish: boolean | null;
 }
 
@@ -236,6 +241,11 @@ export function buildTree(legs: CorrLeg[], table: CorrelationTable, scale: numbe
  * impossible, and the same side twice is a single event whose duplicate
  * carries no information.
  *
+ * Sides are compared by `isYes`, not by `bullish`: a band market sets `bullish`
+ * to null on BOTH sides, so comparing stance would collapse a YES and a NO on
+ * one band vault into a single leg and sell a ~1.9x payout on a ticket that
+ * cannot win.
+ *
  * Returns null when the ticket cannot win. */
 function resolveSameMarket(legs: CorrLeg[]): CorrLeg[] | null {
   const seen = new Map<string, CorrLeg>();
@@ -246,7 +256,7 @@ function resolveSameMarket(legs: CorrLeg[]): CorrLeg[] | null {
       seen.set(key, leg);
       continue;
     }
-    if (prior.bullish !== leg.bullish) return null;
+    if (prior.isYes !== leg.isYes) return null;
     if (prior.probWad !== leg.probWad) {
       // Same market, same side, two different prices: an upstream bug. The
       // first price wins, but never silently — this is a money path.
@@ -278,7 +288,10 @@ export function jointProbWad(legs: CorrLeg[], table: CorrelationTable, bandPct: 
   const resolved = resolveSameMarket(legs);
   if (resolved === null) return 0n;
   const band = Number.isFinite(bandPct) ? Math.min(Math.max(bandPct, 0), 0.99) : 0;
-  const scales = band > 0 ? [1 - band, 1 + band] : [1];
+  // Widest scale first: its tree is the most expensive to integrate, so a
+  // ticket over the quadrature budget throws before the cheap end is spent.
+  // Only an optimisation — the result is the max either way.
+  const scales = band > 0 ? [1 + band, 1 - band] : [1];
   let best = 0;
   for (const s of scales) {
     const p = jointProbability(buildTree(resolved, table, s));

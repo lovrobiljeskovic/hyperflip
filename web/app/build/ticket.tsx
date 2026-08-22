@@ -82,9 +82,10 @@ function errorMessage(res: Extract<QuoteResult, { ok: false }>): string {
     if (res.error === "at-capacity") return "House bankroll is fully committed — try again shortly.";
     return "Payout too large for the house limit on one of these markets.";
   }
-  if (res.status === 400 && res.error === "same-underlying") return "Two legs share an underlying — remove one.";
   if (res.status === 400 && res.error === "cannot-win")
     return "These legs contradict each other — this ticket can never win.";
+  if (res.status === 400 && res.error === "ticket-too-complex")
+    return "Too many correlated legs to price — drop one.";
   return res.error;
 }
 

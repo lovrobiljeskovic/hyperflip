@@ -1,6 +1,7 @@
 import http from "node:http";
 import { isAddress, type Address, type Hex } from "viem";
 import type { WriterConfig } from "./config.js";
+import { TooComplexError } from "./copula.js";
 import { jointProbWad, type CorrLeg } from "./correlation.js";
 import { ExposureBook } from "./exposure.js";
 import { edgeBreakdown, priceParlay, totalEdgeBps } from "./pricing.js";
@@ -125,13 +126,24 @@ export async function handleQuote(deps: QuoteDeps, body: unknown): Promise<{ sta
     const m = cfg.markets.get(l.vault.toLowerCase())!;
     return {
       vault: l.vault,
+      isYes: l.isYes,
       probWad: pricesWad[i],
       cluster: m.cluster,
       underlying: m.underlying,
       bullish: m.direction === "band" ? null : (m.direction === "up") === l.isYes,
     };
   });
-  const joint = jointProbWad(corrLegs, cfg.correlations, cfg.rhoBandPct);
+  let joint: bigint;
+  try {
+    joint = jointProbWad(corrLegs, cfg.correlations, cfg.rhoBandPct);
+  } catch (e) {
+    // The writer is single-threaded, so a ticket whose factor tree costs
+    // seconds to integrate would stall every other request and the poker with
+    // it. Refusing is the honest answer; see MAX_QUADRATURE_POINTS.
+    if (!(e instanceof TooComplexError)) throw e;
+    reject(metrics, "ticket-too-complex");
+    return { status: 400, json: { error: "ticket-too-complex" } };
+  }
 
   const edge = edgeBreakdown(v.legs.length, cfg.edgeBps, cfg.legEdgeBps);
   const priced = priceParlay(joint, v.stake, totalEdgeBps(edge), cfg.minPremiumBps);
