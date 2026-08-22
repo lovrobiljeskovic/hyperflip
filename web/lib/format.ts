@@ -105,6 +105,12 @@ export function pct1(mid: number): string {
   return `${(mid * 100).toFixed(1)}%`;
 }
 
+/** A mid as decimal odds. Shared by the landing and build boards so both
+ * print the same "2.13x" for the same price. */
+export function oddsLabel(mid: number | null): string {
+  return mid === null ? "—" : `${(1 / mid).toFixed(2)}x`;
+}
+
 /** The book's margin on the live quote: correlated fair odds against what was
  * actually signed. Measured off correlatedMultiplier, not fairMultiplier —
  * correlation is a correction to the fair price, not house takeout, and

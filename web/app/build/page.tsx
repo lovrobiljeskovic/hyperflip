@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchMarkets, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
-import { pct1, until } from "@/lib/format";
+import { oddsLabel, pct1, until } from "@/lib/format";
 import { Ticket, type BuilderLeg } from "./ticket";
 import { AppHeader } from "../app-header";
 
@@ -29,11 +29,13 @@ const MAX_LEGS = 10;
  * the explicit Add button is gone. */
 function PriceCell({
   mid,
+  side,
   selected,
   label,
   onPick,
 }: {
   mid: number | null;
+  side: "YES" | "NO";
   selected: boolean;
   label: string;
   onPick: () => void;
@@ -45,13 +47,22 @@ function PriceCell({
       disabled={mid === null}
       aria-pressed={selected}
       aria-label={label}
-      className={`mono w-full pl-1 py-0.5 text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-        selected
-          ? "bg-accent text-center text-on-accent"
-          : "text-right text-dim hover:text-fg"
+      className={`mono w-full px-2 py-1 text-right transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+        selected ? "bg-accent" : ""
       }`}
     >
-      {mid === null ? "—" : pct1(mid)}
+      <span
+        className={`text-[13px] ${
+          selected ? "text-on-accent" : side === "YES" ? "text-yes" : "text-no"
+        }`}
+      >
+        {oddsLabel(mid)}
+      </span>
+      <span
+        className={`ml-2 text-[10px] ${selected ? "text-on-accent/70" : "text-dim"}`}
+      >
+        {mid === null ? "—" : pct1(mid)}
+      </span>
     </button>
   );
 }
@@ -74,19 +85,26 @@ function BoardRow({
   const no = midOf(mids, market.coinNo);
   return (
     <div
-      className={`grid grid-cols-[1fr_96px_96px_90px] items-center gap-x-3 border-t border-line px-5 py-3 ${
+      className={`grid grid-cols-[1fr_110px_110px_90px] items-center gap-x-3 border-t border-line px-5 py-3 ${
         current ? "bg-accent/[0.07]" : ""
       }`}
     >
-      <span className="truncate text-[13px]">{market.title}</span>
+      <div className="min-w-0">
+        <p className="truncate text-[13px]">{market.title}</p>
+        <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">
+          {market.category}
+        </p>
+      </div>
       <PriceCell
         mid={yes}
+        side="YES"
         selected={current?.isYes === true}
         label={`Take YES on ${market.title} at ${yes === null ? "no price" : pct1(yes)}`}
         onPick={() => onPick(market, true)}
       />
       <PriceCell
         mid={no}
+        side="NO"
         selected={current?.isYes === false}
         label={`Take NO on ${market.title} at ${no === null ? "no price" : pct1(no)}`}
         onPick={() => onPick(market, false)}
@@ -173,10 +191,10 @@ export default function BuildPage() {
               <p className="rounded-card border border-line bg-panel p-6 text-dim">No markets listed.</p>
             ) : (
               <div className="border border-line">
-                <div className="mono grid grid-cols-[1fr_96px_96px_90px] gap-x-3 bg-panel px-5 py-3 text-[9px] uppercase tracking-[0.16em] text-dim">
+                <div className="mono grid grid-cols-[1fr_110px_110px_90px] gap-x-3 bg-panel px-5 py-3 text-[9px] uppercase tracking-[0.16em] text-dim">
                   <span>Market</span>
-                  <span className="text-right">Yes</span>
-                  <span className="text-right">No</span>
+                  <span className="pr-2 text-right">Yes</span>
+                  <span className="pr-2 text-right">No</span>
                   <span className="text-right">Expires</span>
                 </div>
                 {markets.map((m) => (

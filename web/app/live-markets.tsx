@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { fetchMarkets, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
-import { pct1, until } from "@/lib/format";
+import { oddsLabel, pct1, until } from "@/lib/format";
 
 /* One registry fetch shared by the hero slip, the stat line, and the board.
    ponytail: module-level promise cache, cleared on failure so a client-side
@@ -67,16 +67,6 @@ function midNumber(mids: Record<string, string>, coin: string): number | null {
   return Number.isFinite(n) && n > 0 && n < 1 ? n : null;
 }
 
-function oddsLabel(mid: number | null): string {
-  return mid === null ? "—" : `${(1 / mid).toFixed(2)}x`;
-}
-
-/** The book's overround: both sides' implied probabilities sum past 100% by
- * exactly the margin the market makes. Null unless both sides are priced. */
-function overround(yes: number | null, no: number | null): number | null {
-  return yes === null || no === null ? null : yes + no - 1;
-}
-
 /* Odds cell that flashes on mid change: up = ink green, down = stamp red,
    400ms decay (globals.css keyframes, re-tinted by the .paper palette). */
 function OddsCell({ side, mid }: { side: "YES" | "NO"; mid: number | null }) {
@@ -112,7 +102,6 @@ function OddsCell({ side, mid }: { side: "YES" | "NO"; mid: number | null }) {
 function BoardRow({ market, mids }: { market: Market; mids: Record<string, string> }) {
   const yes = midNumber(mids, market.coinYes);
   const no = midNumber(mids, market.coinNo);
-  const book = overround(yes, no);
   // The leading side tints the row — the board reads as a shape before it reads
   // as numbers. Semantic, never rose.
   const lead =
@@ -125,7 +114,7 @@ function BoardRow({ market, mids }: { market: Market; mids: Record<string, strin
           : "";
   return (
     <div
-      className={`grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-2 px-5 py-[15px] sm:grid-cols-[1fr_110px_110px_100px_120px] ${lead}`}
+      className={`grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-2 px-5 py-[15px] sm:grid-cols-[1fr_110px_110px_120px] ${lead}`}
     >
       <div className="col-span-2 sm:col-span-1">
         <p className="text-[12px] leading-snug">{market.title}</p>
@@ -135,9 +124,6 @@ function BoardRow({ market, mids }: { market: Market; mids: Record<string, strin
       </div>
       <OddsCell side="YES" mid={yes} />
       <OddsCell side="NO" mid={no} />
-      <div className="mono col-span-2 text-right text-[11px] text-dim sm:col-span-1">
-        {book === null ? "—" : `${book >= 0 ? "+" : ""}${(book * 100).toFixed(1)}%`}
-      </div>
       <div className="mono col-span-2 text-right text-[11px] text-dim sm:col-span-1">
         {market.expiryMs ? until(market.expiryMs) : "—"}
       </div>
@@ -153,8 +139,8 @@ function Slab({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** The board for the #board section: every listed market with both sides and
- * the margin the book is charging on each. */
+/** The board for the #board section: every listed market with both sides
+ * priced live. */
 export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
   const state = useMarkets(board.markets);
   const mids = useMids(board.mids);
@@ -199,11 +185,10 @@ export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
 
   return (
     <Slab>
-      <div className="mono hidden grid-cols-[1fr_110px_110px_100px_120px] gap-x-4 border-b border-line px-5 py-3 text-[9px] uppercase tracking-[0.14em] text-dim sm:grid">
+      <div className="mono hidden grid-cols-[1fr_110px_110px_120px] gap-x-4 border-b border-line px-5 py-3 text-[9px] uppercase tracking-[0.14em] text-dim sm:grid">
         <span>Market</span>
         <span className="text-right">Yes</span>
         <span className="text-right">No</span>
-        <span className="text-right">Book</span>
         <span className="text-right">Expires</span>
       </div>
       <div className="flex flex-col divide-y divide-line">

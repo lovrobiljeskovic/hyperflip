@@ -53,7 +53,7 @@ const settlement = [
 const faq = [
   {
     q: "What is the overround?",
-    a: "Add up both sides of a market and you get more than 100%. That excess is the book's margin. A parlay multiplies its legs, so it multiplies their overround too — which is why the board prints the margin on every market and the quote shows the fair number beside the quoted one.",
+    a: "Add up both sides of a market and you get more than 100%. That excess is the book's margin. A parlay multiplies its legs, so it multiplies their overround too — which is why every quote shows the fair number beside the quoted one.",
   },
   {
     q: "What happens if a leg settles while I am minting?",
@@ -144,10 +144,8 @@ export default async function Home() {
           </div>
           <p className="mt-4 max-w-[58ch] text-[15px] leading-relaxed text-dim">
             Every market you can put on a slip, priced off the live HyperCore
-            book. <span className="text-fg">Book</span> is the overround: how
-            far both sides sum past 100%, which is what the market charges to
-            take the other side of you. The testnet book quotes both sides
-            flat, so it prints 0.0% until real makers show up.
+            book. Both sides quoted as decimal odds and implied probability,
+            straight from the mids — no house spread on the board.
           </p>
           <LiveMarketBoard board={board} />
         </section>
@@ -185,19 +183,16 @@ export default async function Home() {
           </h2>
           <p className="mt-4 max-w-[58ch] text-[15px] leading-relaxed text-dim">
             A three-leg slip at 100 USDC, priced end to end. Fair odds are what
-            the legs multiply out to. Quoted is what the house pays. The gap
-            between them is the whole business.
+            the legs multiply out to. Correlation is a signed correction to
+            that fair number — crypto legs move together, so all three landing
+            is likelier than the product says. Quoted is what the house pays
+            after its edge. The gap between corrected fair and quoted is the
+            whole business.
           </p>
           <dl className="mono mt-12 grid grid-cols-2 gap-x-6 gap-y-10 md:grid-cols-4">
             <div>
               <dt className="text-[10px] uppercase tracking-wide text-dim">Legs</dt>
               <dd className="mt-2 text-[clamp(2rem,5vw,3.25rem)] leading-none">3</dd>
-            </div>
-            <div>
-              <dt className="text-[10px] uppercase tracking-wide text-dim">
-                Combined implied
-              </dt>
-              <dd className="mt-2 text-[clamp(2rem,5vw,3.25rem)] leading-none">30.0%</dd>
             </div>
             <div>
               <dt className="text-[10px] uppercase tracking-wide text-dim">Fair</dt>
@@ -206,17 +201,27 @@ export default async function Home() {
               </dd>
             </div>
             <div>
+              <dt className="text-[10px] uppercase tracking-wide text-dim">
+                Correlation
+              </dt>
+              <dd className="mt-2 text-[clamp(2rem,5vw,3.25rem)] leading-none text-dim">
+                &minus;0.30x
+              </dd>
+            </div>
+            <div>
               <dt className="text-[10px] uppercase tracking-wide text-dim">Quoted</dt>
-              <dd className="mt-2 text-[clamp(2rem,5vw,3.25rem)] leading-none">3.16x</dd>
+              <dd className="mt-2 text-[clamp(2rem,5vw,3.25rem)] leading-none">2.73x</dd>
             </div>
           </dl>
           <div className="mt-12 max-w-[62ch] border-l-[3px] border-[var(--stamp)] pl-5">
             <p className="text-[15px] leading-relaxed">
               On a 100 USDC stake that is{" "}
-              <span className="mono">316.20</span> against a fair{" "}
-              <span className="mono">333.00</span>. The house keeps{" "}
-              <span className="mono font-semibold">16.80</span>, and every
-              quote shows you both numbers before you sign.
+              <span className="mono">273.00</span> against a corrected fair of{" "}
+              <span className="mono">303.03</span>. Comovement took fair down
+              from <span className="mono">333.00</span> — a correction, not
+              takeout — and the edge keeps{" "}
+              <span className="mono font-semibold">30.03</span>: 5% base plus
+              3% per extra leg. Every quote prints each line before you sign.
             </p>
           </div>
         </section>
