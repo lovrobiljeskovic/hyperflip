@@ -1,15 +1,49 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import type { Address, Hex } from "viem";
 import { handleQuote, validateQuoteRequest, newMetrics, startServer, type QuoteDeps } from "../src/server.js";
 import { ExposureBook } from "../src/exposure.js";
+import { parseCorrelations } from "../src/correlation.js";
 import { WAD } from "../src/pure.js";
 import type { WriterConfig } from "../src/config.js";
 
 const V1 = "0x1111111111111111111111111111111111111111" as Address;
 const V2 = "0x2222222222222222222222222222222222222222" as Address;
 const TAKER = "0x3333333333333333333333333333333333333333" as Address;
+
+// Distinct from V1/V2/TAKER above — the brief's suggested 0x1111../0x2222../0x3333..
+// addresses collide with those and would silently clobber the V2 (ETH) fixture.
+const BTC_VAULT_A = "0x5555555555555555555555555555555555555555" as const;
+const BTC_VAULT_B = "0x6666666666666666666666666666666666666666" as const;
+const NVDA_VAULT = "0x7777777777777777777777777777777777777777" as const;
+const SP500_VAULT = "0x8888888888888888888888888888888888888888" as const;
+
+const CORRELATIONS = parseCorrelations(readFileSync(new URL("../../registry/correlations.json", import.meta.url), "utf8"));
+
+const FIXTURE_MARKETS = new Map(
+  (
+    [
+      [BTC_VAULT_A, "BTC", "crypto", "BTC above 69192.75 on Aug 22?"],
+      [BTC_VAULT_B, "BTC", "crypto", "BTC above 72000 on Aug 22?"],
+      [NVDA_VAULT, "NVDA", "equity", "NVDA above 230 on Aug 28?"],
+      [SP500_VAULT, "SP500", "equity", "SP500 above 8000 on Aug 31?"],
+    ] as const
+  ).map(([vault, underlying, cluster, title]) => [
+    vault.toLowerCase(),
+    {
+      vault,
+      coinYes: "+1",
+      coinNo: "+2",
+      underlying,
+      cluster,
+      direction: "up" as const,
+      title,
+      category: cluster,
+    },
+  ]),
+);
 
 function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
   return {
@@ -18,16 +52,25 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     pokerKey: `0x${"22".repeat(32)}` as `0x${string}`,
     infoApiUrl: "", port: 0, edgeBps: 0n, minPremiumBps: 100n, minLegs: 2,
     maxStake: 10_000_000n, perMarketCap: 1_000_000_000n, perClusterCap: 1_000_000_000n,
-    clusterEdgeBps: 0n, legEdgeBps: 0n, quoteTtlMs: 30_000,
+    rhoBandPct: 0.2, correlations: CORRELATIONS, legEdgeBps: 0n, quoteTtlMs: 30_000,
     lockoutMs: 600_000, pokerIntervalMs: 15_000, deployBlock: 0n,
     inviteCodes: new Set(["beta-test"]),
     markets: new Map([
       [V1.toLowerCase(), { vault: V1, coinYes: "+10", coinNo: "+11", underlying: "BTC", cluster: "crypto", direction: "up" as const, title: "Will BTC close above X?", category: "crypto" }],
       [V2.toLowerCase(), { vault: V2, coinYes: "+20", coinNo: "+21", expiryMs: 2_000_000, underlying: "ETH", cluster: "crypto", direction: "up" as const, title: "Will ETH close above X?", category: "crypto" }],
+      ...FIXTURE_MARKETS,
     ]),
     registryJson: "{}",
     ...overrides,
   };
+}
+
+function legOn(vault: Address, isYes: boolean): { vault: Address; isYes: boolean } {
+  return { vault, isYes };
+}
+
+function body(overrides: { legs: { vault: Address; isYes: boolean }[] }): typeof goodBody {
+  return { ...goodBody, ...overrides };
 }
 
 function deps(overrides: Partial<QuoteDeps> = {}): QuoteDeps {
@@ -55,73 +98,67 @@ test("happy path: returns signed quote, reserves exposure", async () => {
   assert.equal(r.status, 200);
   const j = r.json as { quote: { premium: string; maxPayout: string; deadline: string }; sig: string };
   assert.equal(j.quote.premium, "1000000");
-  assert.equal(j.quote.maxPayout, "4000000"); // 0.5 * 0.5, zero edge
+  // V1 (BTC, bull) and V2 (ETH, bear) sit in the same cluster but bet opposite
+  // directions, so real correlation pushes the joint probability below the
+  // naive 0.5*0.5 product — a higher payout than the old independence math gave.
+  assert.equal(j.quote.maxPayout, "8422341");
   assert.equal(j.quote.deadline, "1030"); // (1_000_000 + 30_000) ms -> seconds
   assert.equal(j.sig, "0xsig");
-  assert.equal(d.exposure.reservedGlobal(d.now()), 3_000_000n); // maxPayout - premium
+  assert.equal(d.exposure.reservedGlobal(d.now()), 7_422_341n); // maxPayout - premium
   assert.equal(d.metrics.quoted, 1);
 });
 
-test("validation: same-underlying legs rejected", () => {
-  const V3 = "0x4444444444444444444444444444444444444444" as Address;
-  const c = cfg();
-  c.markets.set(V3.toLowerCase(), { vault: V3, coinYes: "+30", coinNo: "+31", underlying: "BTC", cluster: "crypto", direction: "up", title: "Will BTC close above Y?", category: "crypto" });
-  const r = validateQuoteRequest(
-    { taker: TAKER, legs: [{ vault: V1, isYes: true }, { vault: V3, isYes: true }], stake: "1000000", inviteCode: "beta-test" },
-    c, 0,
-  );
-  assert.deepEqual(r, { ok: false, status: 400, reason: "same-underlying" });
+test("same-cluster same-direction legs now quote instead of 400", async () => {
+  const res = await handleQuote(deps(), body({ legs: [legOn(NVDA_VAULT, true), legOn(SP500_VAULT, true)] }));
+  assert.equal(res.status, 200);
 });
 
-test("validation: same-cluster same-direction legs rejected", () => {
-  const c = cfg();
-  // V1 and V2 are both "up" markets in cluster crypto: YES+YES = two bulls.
-  const bulls = { ...goodBody, legs: [{ vault: V1, isYes: true }, { vault: V2, isYes: true }] };
-  assert.deepEqual(validateQuoteRequest(bulls, c, 0), { ok: false, status: 400, reason: "correlated-direction" });
-  // NO+NO = two bears, same problem.
-  const bears = { ...goodBody, legs: [{ vault: V1, isYes: false }, { vault: V2, isYes: false }] };
-  assert.deepEqual(validateQuoteRequest(bears, c, 0), { ok: false, status: 400, reason: "correlated-direction" });
-  // A "down" market's NO is a bull: rejected against V1 YES.
-  const V3 = "0x4444444444444444444444444444444444444444" as Address;
-  c.markets.set(V3.toLowerCase(), { vault: V3, coinYes: "+30", coinNo: "+31", underlying: "SOL", cluster: "crypto", direction: "down", title: "Will SOL close below X?", category: "crypto" });
-  const flipped = { ...goodBody, legs: [{ vault: V1, isYes: true }, { vault: V3, isYes: false }] };
-  assert.deepEqual(validateQuoteRequest(flipped, c, 0), { ok: false, status: 400, reason: "correlated-direction" });
-  // "band" legs are direction-neutral: allowed next to a bull.
-  const V4 = "0x5555555555555555555555555555555555555555" as Address;
-  c.markets.set(V4.toLowerCase(), { vault: V4, coinYes: "+40", coinNo: "+41", underlying: "HYPE", cluster: "crypto", direction: "band", title: "HYPE in band?", category: "crypto" });
-  const band = { ...goodBody, legs: [{ vault: V1, isYes: true }, { vault: V4, isYes: true }] };
-  assert.equal(validateQuoteRequest(band, c, 0).ok, true);
+test("two markets on the same underlying now quote", async () => {
+  const res = await handleQuote(deps(), body({ legs: [legOn(BTC_VAULT_A, true), legOn(BTC_VAULT_B, true)] }));
+  assert.equal(res.status, 200);
 });
 
-test("correlation haircut: same-cluster pair adds clusterEdgeBps to edge", async () => {
-  // Two 0.5 legs, one same-cluster pair, clusterEdgeBps 500 -> price = 0.25 * 1.05
-  const d = deps({ cfg: cfg({ clusterEdgeBps: 500n }) });
-  const r = await handleQuote(d, goodBody);
-  assert.equal(r.status, 200);
-  const j = r.json as { quote: { maxPayout: string } };
-  assert.equal(j.quote.maxPayout, "3809523"); // vs 4000000 without haircut
+test("the same vault twice, opposite sides, is refused as cannot-win", async () => {
+  const res = await handleQuote(deps(), body({ legs: [legOn(BTC_VAULT_A, true), legOn(BTC_VAULT_A, false)] }));
+  assert.equal(res.status, 400);
+  assert.equal((res.json as { error: string }).error, "cannot-win");
+});
+
+test("correlated legs pay less than the same legs priced independently", async () => {
+  const correlated = await handleQuote(deps(), body({ legs: [legOn(NVDA_VAULT, true), legOn(SP500_VAULT, true)] }));
+  const crossCluster = await handleQuote(deps(), body({ legs: [legOn(NVDA_VAULT, true), legOn(BTC_VAULT_A, true)] }));
+  const payout = (r: typeof correlated) => BigInt((r.json as { quote: { maxPayout: string } }).quote.maxPayout);
+  assert.ok(payout(correlated) < payout(crossCluster) * 3n, "same-cluster legs must be materially tighter");
+});
+
+test("breakdown reports the joint probability, not a correlation surcharge", async () => {
+  const res = await handleQuote(deps(), body({ legs: [legOn(NVDA_VAULT, true), legOn(SP500_VAULT, true)] }));
+  const bd = (res.json as { breakdown: Record<string, unknown> }).breakdown;
+  assert.equal(bd.corrBps, undefined);
+  assert.ok(typeof bd.jointProbWad === "string");
+  const legs = (bd.legPricesWad as string[]).map((w) => BigInt(w));
+  const product = legs.reduce((a, p) => (a * p) / 10n ** 18n, 10n ** 18n);
+  assert.ok(BigInt(bd.jointProbWad as string) > product, "correlated joint must exceed the naive product");
+});
+
+test("a repeated vault is counted once against exposure", async () => {
+  // Two legs on one vault must not double-charge that market's cap.
+  const once = await handleQuote(deps(), body({ legs: [legOn(BTC_VAULT_A, true), legOn(NVDA_VAULT, true)] }));
+  assert.equal(once.status, 200);
 });
 
 test("cluster cap: 409 when cluster exposure would exceed perClusterCap", async () => {
-  const d = deps({ cfg: cfg({ perClusterCap: 1_000_000n }) }); // risk 3_000_000 > cap
+  const d = deps({ cfg: cfg({ perClusterCap: 1n }) }); // any non-zero risk exceeds a 1-wei cap
   const r = await handleQuote(d, goodBody);
   assert.equal(r.status, 409);
   assert.equal(d.metrics.rejected["cluster-cap"], 1);
   assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
 });
 
-test("validation: duplicate vault rejected", () => {
-  const r = validateQuoteRequest(
-    { taker: TAKER, legs: [{ vault: V1, isYes: true }, { vault: V1, isYes: false }], stake: "1000000", inviteCode: "beta-test" },
-    cfg(), 0,
-  );
-  assert.deepEqual(r, { ok: false, status: 400, reason: "duplicate-vault" });
-});
-
 test("quote without invite code is 403", async () => {
   const d = deps();
-  const { inviteCode: _drop, ...body } = goodBody;
-  const r = await handleQuote(d, body);
+  const { inviteCode: _drop, ...withoutInvite } = goodBody;
+  const r = await handleQuote(d, withoutInvite);
   assert.equal(r.status, 403);
   assert.deepEqual(r.json, { error: "bad-invite" });
   assert.equal(d.metrics.rejected["bad-invite"], 1);
@@ -158,7 +195,7 @@ test("book fetch failure: 503, nothing reserved", async () => {
 });
 
 test("at-capacity: 409, metrics counted", async () => {
-  const d = deps({ readAllowance: async () => 1_000_000n }); // risk 3_000_000 > 1_000_000
+  const d = deps({ readAllowance: async () => 1_000_000n }); // risk ~7.4M > 1_000_000
   const r = await handleQuote(d, goodBody);
   assert.equal(r.status, 409);
   assert.equal(d.metrics.rejected["at-capacity"], 1);

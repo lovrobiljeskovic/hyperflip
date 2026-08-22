@@ -1,6 +1,7 @@
 import http from "node:http";
 import { isAddress, type Address, type Hex } from "viem";
 import type { WriterConfig } from "./config.js";
+import { jointProbWad, type CorrLeg } from "./correlation.js";
 import { ExposureBook } from "./exposure.js";
 import { edgeBreakdown, priceParlay, totalEdgeBps } from "./pricing.js";
 import type { ParlayQuote, QuoteLeg } from "./quotes.js";
@@ -50,31 +51,13 @@ export function validateQuoteRequest(body: unknown, cfg: WriterConfig, now: numb
     return { ok: false, status: 400, reason: "bad-leg-count" };
   }
   const legs: QuoteLeg[] = [];
-  const seen = new Set<string>();
-  const seenUnderlying = new Set<string>();
-  const seenStance = new Set<string>();
   for (const l of b.legs as { vault?: unknown; isYes?: unknown }[]) {
     if (typeof l?.vault !== "string" || !isAddress(l.vault) || typeof l.isYes !== "boolean") {
       return { ok: false, status: 400, reason: "bad-leg" };
     }
     const key = l.vault.toLowerCase();
-    if (seen.has(key)) return { ok: false, status: 400, reason: "duplicate-vault" };
-    seen.add(key);
     const market = cfg.markets.get(key);
     if (!market) return { ok: false, status: 400, reason: "unknown-vault" };
-    // Same-underlying legs are ~100% correlated (or contradictory); product
-    // pricing cannot express that, so the combo is refused outright.
-    if (seenUnderlying.has(market.underlying)) return { ok: false, status: 400, reason: "same-underlying" };
-    seenUnderlying.add(market.underlying);
-    // Same-cluster legs betting the same way (e.g. BTC-up + ETH-up) comove
-    // strongly, so the naive product badly underprices the joint probability
-    // — refuse the combo. Opposite stances are anti-correlated (house-
-    // favorable) and stay allowed; "band" legs are direction-neutral.
-    if (market.direction !== "band") {
-      const stance = `${market.cluster}:${(market.direction === "up") === l.isYes ? "bull" : "bear"}`;
-      if (seenStance.has(stance)) return { ok: false, status: 400, reason: "correlated-direction" };
-      seenStance.add(stance);
-    }
     if (market.expiryMs !== undefined && now >= market.expiryMs - cfg.lockoutMs) {
       return { ok: false, status: 400, reason: "expiry-lockout" };
     }
@@ -98,7 +81,8 @@ export async function handleQuote(deps: QuoteDeps, body: unknown): Promise<{ sta
     reject(metrics, v.reason);
     return { status: v.status, json: { error: v.reason } };
   }
-  const vaults = v.legs.map((l) => l.vault);
+  // A repeated vault is one market's worth of exposure, not two.
+  const vaults = [...new Set(v.legs.map((l) => l.vault.toLowerCase()))] as Address[];
 
   let settled: Set<string>;
   let pricesWad: bigint[];
@@ -127,19 +111,25 @@ export async function handleQuote(deps: QuoteDeps, body: unknown): Promise<{ sta
     return { status: 503, json: { error: "rpc-down" } };
   }
 
-  // Correlation haircut: same-cluster legs comove, so the naive product
-  // underprices the joint probability. Charge clusterEdgeBps extra edge per
-  // same-cluster pair — with n same-cluster legs that's n*(n-1)/2 pairs.
-  const clusterCounts = new Map<string, number>();
-  for (const l of v.legs) {
-    const c = cfg.markets.get(l.vault.toLowerCase())!.cluster;
-    clusterCounts.set(c, (clusterCounts.get(c) ?? 0) + 1);
-  }
-  let pairs = 0n;
-  for (const n of clusterCounts.values()) pairs += BigInt((n * (n - 1)) / 2);
+  // Correlation lives in the probability, not the edge: legs that comove make
+  // the joint probability higher than the product of the marginals, and legs
+  // that oppose make it lower. jointProbWad returns the house-favorable end of
+  // the rho band, so a hand-set loading being optimistic costs the house less
+  // than it otherwise would.
+  const corrLegs: CorrLeg[] = v.legs.map((l, i) => {
+    const m = cfg.markets.get(l.vault.toLowerCase())!;
+    return {
+      vault: l.vault,
+      probWad: pricesWad[i],
+      cluster: m.cluster,
+      underlying: m.underlying,
+      bullish: m.direction === "band" ? null : (m.direction === "up") === l.isYes,
+    };
+  });
+  const joint = jointProbWad(corrLegs, cfg.correlations, cfg.rhoBandPct);
 
-  const edge = edgeBreakdown(v.legs.length, pairs, cfg.edgeBps, cfg.legEdgeBps, cfg.clusterEdgeBps);
-  const priced = priceParlay(pricesWad, v.stake, totalEdgeBps(edge), cfg.minPremiumBps);
+  const edge = edgeBreakdown(v.legs.length, cfg.edgeBps, cfg.legEdgeBps);
+  const priced = priceParlay(joint, v.stake, totalEdgeBps(edge), cfg.minPremiumBps);
   if (!priced.ok) {
     reject(metrics, priced.reason);
     return { status: 400, json: { error: priced.reason } };
@@ -194,13 +184,13 @@ export async function handleQuote(deps: QuoteDeps, body: unknown): Promise<{ sta
       },
       sig,
       // Informational only — not covered by the signature. Lets the UI show how
-      // the multiplier was built (per-leg book price, house edge, correlation
-      // haircut) instead of a bare number. Same order as quote.legs.
+      // the multiplier was built: per-leg book price, the correlated joint
+      // probability, then each edge component. Same order as quote.legs.
       breakdown: {
         legPricesWad: pricesWad.map((p) => p.toString()),
+        jointProbWad: joint.toString(),
         edgeBps: edge.baseBps.toString(),
         legBps: edge.legBps.toString(),
-        corrBps: edge.clusterBps.toString(),
       },
     },
   };
