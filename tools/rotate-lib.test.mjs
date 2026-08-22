@@ -144,14 +144,15 @@ test("pickBinaries drops strikes untethered from the underlying's own mid", () =
     outcome(500, "perp:BTC|threshold:100|time:20260822-0200"), // certainty wearing a mid
     outcome(501, "perp:ETH|threshold:2400|time:20260822-0200"), // 4% from spot
     outcome(502, "perp:SOL|threshold:120|time:20260822-0200"), // 31% out, mid stale at 0.5
+    outcome(503, "perp:HYPE|threshold:43|time:20260822-0200"), // 22% out — inside the 25% band
   ];
   const picked = pickBinaries({
     outcomes,
-    mids: { "#5000": "0.55", "#5010": "0.5", "#5020": "0.5", BTC: "79712", ETH: "2503.5", SOL: "91.35" },
+    mids: { "#5000": "0.55", "#5010": "0.5", "#5020": "0.5", "#5030": "0.5", BTC: "79712", ETH: "2503.5", SOL: "91.35", HYPE: "54.83" },
     knownCoins: new Set(),
     nowMs: NOW,
   });
-  assert.deepEqual(picked.map((p) => p.outcome), [501]);
+  assert.deepEqual(picked.map((p) => p.outcome), [501, 503]);
 });
 
 test("pickBinaries respects cap", () => {

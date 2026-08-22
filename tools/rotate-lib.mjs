@@ -137,10 +137,12 @@ export function pickBinaries({
     // Near the money is the only place a testnet book's price is defensible
     // without a vol model: far strikes here sit at a stale 0.5 the taker can
     // pick off from whichever side is nearly certain.
-    // ponytail: flat +/-10% band across all assets — gold moves nothing like
-    // HYPE. Upgrade path is the deferred vol-based leg pricing, which would
-    // replace this with an implied-probability sanity check.
-    if (Math.abs(moneyness) > 0.10) continue;
+    // ponytail: flat +/-25% band across all assets (was 10%; widened so the
+    // testnet's own 1d strikes like HYPE 43 vs spot 54.8 stay on the board —
+    // accepted house-loss risk on testnet). Upgrade path is the deferred
+    // vol-based leg pricing, which would replace this with an
+    // implied-probability sanity check.
+    if (Math.abs(moneyness) > 0.25) continue;
     // A mid pinned at exactly 0.5 is an untraded book. Those resolve VOID when
     // the mark never leaves the strike (the ZEC incident), so they lose every
     // tie-break to a market that has actually printed a price.

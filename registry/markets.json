@@ -87,6 +87,72 @@
       "underlying": "ZEC",
       "direction": "up",
       "expiryMs": 1787454000000
+    },
+    {
+      "vault": "0xe983796051af586abf1c47a51890750ff2704744",
+      "title": "ETH above 2000 on Aug 31?",
+      "category": "crypto",
+      "cluster": "crypto",
+      "coinYes": "#114940",
+      "coinNo": "#114941",
+      "underlying": "ETH",
+      "direction": "up",
+      "expiryMs": 1788206400000
+    },
+    {
+      "vault": "0x7f99c51a08b631c1f9c52a47f85bb08c24b09af8",
+      "title": "TSLA above 450 on Aug 31?",
+      "category": "equity",
+      "cluster": "equity",
+      "coinYes": "#112440",
+      "coinNo": "#112441",
+      "underlying": "TSLA",
+      "direction": "up",
+      "expiryMs": 1788220740000
+    },
+    {
+      "vault": "0x2c84576d7823caba4b3c37c2dbe106368ca63d23",
+      "title": "NVDA above 250 on Aug 31?",
+      "category": "equity",
+      "cluster": "equity",
+      "coinYes": "#112460",
+      "coinNo": "#112461",
+      "underlying": "NVDA",
+      "direction": "up",
+      "expiryMs": 1788220740000
+    },
+    {
+      "vault": "0x08a346e697f5db811a0a4a7cd5af7c1ee97398c4",
+      "title": "AAPL above 280 on Aug 31?",
+      "category": "equity",
+      "cluster": "equity",
+      "coinYes": "#112480",
+      "coinNo": "#112481",
+      "underlying": "AAPL",
+      "direction": "up",
+      "expiryMs": 1788220740000
+    },
+    {
+      "vault": "0x4d2168448e956c207706778993c143487b683a69",
+      "title": "HYPE above 43 on Aug 23?",
+      "category": "crypto",
+      "cluster": "crypto",
+      "coinYes": "#139870",
+      "coinNo": "#139871",
+      "underlying": "HYPE",
+      "direction": "up",
+      "expiryMs": 1787454000000
+    },
+    {
+      "vault": "0x80b6245a3605ce398344e4d5231f52a975af340e",
+      "title": "ETH above 2064.98 on Aug 29?",
+      "category": "crypto",
+      "cluster": "crypto",
+      "coinYes": "#125730",
+      "coinNo": "#125731",
+      "underlying": "ETH",
+      "direction": "up",
+      "expiryMs": 1787978580000
     }
   ],
   "archived": [
