@@ -1,8 +1,10 @@
 import Link from "next/link";
 
+import { fetchMarkets } from "@/lib/writer";
+import { fetchMids } from "@/lib/info";
 import { AppHeader, Mark } from "./app-header";
 import { InviteForm } from "./invite-form";
-import { HeroSlip, HeroStats, LiveMarketBoard } from "./live-markets";
+import { HeroSlip, HeroStats, LiveMarketBoard, type BoardSnapshot } from "./live-markets";
 
 /* A real sequence — you cannot quote before you pick, or claim before it
    settles — so these carry numbers. */
@@ -73,7 +75,20 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function Home() {
+/* The board, read once on the server and handed to every live component.
+   Both fetches are revalidated, so the page stays prerendered; a writer that
+   is down at render time yields a null board and the client falls back to
+   fetching for itself, which is what it always did. */
+async function boardSnapshot(): Promise<BoardSnapshot> {
+  const [markets, mids] = await Promise.all([
+    fetchMarkets().catch(() => null),
+    fetchMids(10),
+  ]);
+  return { markets, mids };
+}
+
+export default async function Home() {
+  const board = await boardSnapshot();
   return (
     <div className="paper flex min-h-full flex-col">
       <AppHeader ground="paper" />
@@ -82,7 +97,7 @@ export default function Home() {
         {/* 1 · hero — the slip prints itself */}
         <section className="grid items-center gap-14 py-16 lg:grid-cols-[1.05fr_0.95fr] lg:py-[72px]">
           <div>
-            <HeroStats />
+            <HeroStats board={board} />
             <h1 className="display mt-[22px] text-[clamp(2.6rem,7vw,4.75rem)] leading-[0.9] tracking-[-0.04em]">
               Two to ten legs.
               <br />
@@ -110,7 +125,7 @@ export default function Home() {
               </a>
             </div>
           </div>
-          <HeroSlip />
+          <HeroSlip board={board} />
         </section>
 
         <div className="perf" />
@@ -134,7 +149,7 @@ export default function Home() {
             take the other side of you. The testnet book quotes both sides
             flat, so it prints 0.0% until real makers show up.
           </p>
-          <LiveMarketBoard />
+          <LiveMarketBoard board={board} />
         </section>
 
         <div className="perf" />

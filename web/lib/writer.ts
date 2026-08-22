@@ -31,8 +31,11 @@ export type QuoteResult =
 
 const BASE = process.env.NEXT_PUBLIC_WRITER_URL ?? "";
 
+/* Revalidated rather than request-time so the landing page stays prerendered.
+   The option is inert in the browser, where this same function still backs the
+   client-side fallback fetch. */
 export async function fetchMarkets(): Promise<Market[]> {
-  const r = await fetch(`${BASE}/markets`);
+  const r = await fetch(`${BASE}/markets`, { next: { revalidate: 60 } });
   if (!r.ok) throw new Error(`markets ${r.status}`);
   const j = (await r.json()) as Market[] | { markets: Market[] };
   return Array.isArray(j) ? j : j.markets;

@@ -99,7 +99,7 @@ export function pct1(mid: number): string {
 }
 
 /** The book's margin on a signed quote: how far the fair multiplier exceeds
- * the one the house actually pays. Drives the width of the motif's lens, so
+ * the one the house actually pays. Drives the splay of the motif's rings, so
  * it returns 0 rather than Infinity on a degenerate quote. */
 export function quotedOverround(bd: PriceBreakdown): number {
   if (bd.actualMultiplier <= 0) return 0;

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchMarkets, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
+import { usePrinting } from "@/lib/print";
 import { pct1, until } from "@/lib/format";
 
 /* One registry fetch shared by the hero slip, the stat line, and the board.
@@ -22,9 +23,19 @@ type MarketsState =
   | { status: "offline" }
   | { status: "live"; markets: Market[] };
 
-function useMarkets(): MarketsState {
-  const [state, setState] = useState<MarketsState>({ status: "loading" });
+/* `initial` is the board as the server rendered it. Measured cold on Chrome:
+   hydration starts the client fetch at ~1.45s and /markets answers at ~2.28s,
+   while the hero's print cascade runs 240-1510ms — so a client-only fetch
+   guaranteed the slip printed placeholder legs and then swapped to the real
+   ones after the animation was already over. Seeding from the server means
+   there is one market set and one print. The fetch below is the fallback for
+   when the writer was unreachable at render time. */
+function useMarkets(initial: Market[] | null): MarketsState {
+  const [state, setState] = useState<MarketsState>(
+    initial ? { status: "live", markets: initial } : { status: "loading" },
+  );
   useEffect(() => {
+    if (initial) return;
     let alive = true;
     loadMarkets()
       .then((markets) => alive && setState({ status: "live", markets }))
@@ -32,8 +43,14 @@ function useMarkets(): MarketsState {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [initial]);
   return state;
+}
+
+/** What the server hands every live component on the landing page. */
+export interface BoardSnapshot {
+  markets: Market[] | null;
+  mids: Record<string, string>;
 }
 
 /* --- mid helpers: never fake a number, dash on missing --- */
@@ -138,9 +155,9 @@ function Slab({ children }: { children: React.ReactNode }) {
 
 /** The board for the #board section: every listed market with both sides and
  * the margin the book is charging on each. */
-export function LiveMarketBoard() {
-  const state = useMarkets();
-  const mids = useMids();
+export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
+  const state = useMarkets(board.markets);
+  const mids = useMids(board.mids);
 
   if (state.status === "loading") {
     return (
@@ -199,8 +216,8 @@ export function LiveMarketBoard() {
 }
 
 /** One line of true numbers above the headline. */
-export function HeroStats() {
-  const state = useMarkets();
+export function HeroStats({ board }: { board: BoardSnapshot }) {
+  const state = useMarkets(board.markets);
   const count =
     state.status === "live"
       ? `${state.markets.length} market${state.markets.length === 1 ? "" : "s"} live`
@@ -216,7 +233,7 @@ export function HeroStats() {
 
 /* --- the hero slip --- */
 
-type SlipLeg = { side: "YES" | "NO"; title: string; prob: number };
+type SlipLeg = { side: "YES" | "NO"; title: string; prob: number | null };
 
 const EXAMPLE_LEGS: SlipLeg[] = [
   { side: "YES", title: "BTC above 64,000 on Aug 21?", prob: 0.85 },
@@ -236,34 +253,43 @@ function Line({ i, children }: { i: number; children: React.ReactNode }) {
  * board is up and on the worked example when it isn't. It turns to face the
  * reader as they scroll. Every number shown is labelled for which it is —
  * this is fair value off the book, not a signed quote. */
-export function HeroSlip() {
-  const state = useMarkets();
-  const mids = useMids();
+export function HeroSlip({ board }: { board: BoardSnapshot }) {
+  const state = useMarkets(board.markets);
+  const mids = useMids(board.mids);
+  const printing = usePrinting();
 
-  /* Live legs only when every side has a mid — a half-priced slip would
-     print a combined implied that isn't real. */
-  let legs = EXAMPLE_LEGS;
-  let live = false;
-  if (state.status === "live" && state.markets.length >= 2) {
-    const priced = state.markets.slice(0, 3).map((m) => ({
-      side: "YES" as const,
-      title: m.title,
-      prob: midNumber(mids, m.coinYes),
-    }));
-    if (priced.every((l) => l.prob !== null)) {
-      legs = priced as SlipLeg[];
-      live = true;
-    }
-  }
+  /* Which slip this is gets decided by the board alone, not by the board plus
+     the mids. Titles are known at first paint, so the cascade never prints one
+     market set and then swaps to another under it. Prices are the only thing
+     that can still be missing, and a missing price prints an em dash rather
+     than a fabricated probability — the same rule midNumber enforces.
 
-  const combined = legs.reduce((acc, l) => acc * (l.prob as number), 1);
+     The worked example is the fallback for a registry we could not read at
+     all, which is exactly what its footnote already claims. */
+  const listed = state.status === "live" ? state.markets.slice(0, 3) : [];
+  const live = listed.length >= 2;
+  const legs: SlipLeg[] = live
+    ? listed.map((m) => ({
+        side: "YES" as const,
+        title: m.title,
+        prob: midNumber(mids, m.coinYes),
+      }))
+    : EXAMPLE_LEGS;
+
+  // A half-priced slip has no honest combined implied, so the payout goes
+  // unavailable rather than multiplying by an assumed certainty.
+  const combined = legs.every((l) => l.prob !== null)
+    ? legs.reduce((acc, l) => acc * (l.prob as number), 1)
+    : null;
   const stake = 100;
-  const fair = combined > 0 ? 1 / combined : 0;
+  const fair = combined !== null && combined > 0 ? 1 / combined : null;
 
   return (
     <div className="[perspective:1200px]">
-      <div className="slip-turn mx-auto w-[280px] shadow-[-34px_30px_60px_rgba(36,21,18,0.35)]">
-        <div className="bg-[var(--paper)] px-[22px] py-5">
+      <div
+        className={`slip-turn mx-auto w-[280px] ${printing}`}
+      >
+        <div className="torn bg-[var(--paper)] px-6 py-7">
           <Line i={0}>
             <div className="mono flex items-baseline justify-between text-[9px] uppercase tracking-[0.14em] text-dim">
               <span>Slip #0012</span>
@@ -279,7 +305,7 @@ export function HeroSlip() {
 
           <ul className="flex flex-col gap-2.5">
             {legs.map((leg, i) => (
-              <li key={leg.title}>
+              <li key={i}>
                 <Line i={2 + i}>
                   <div className="flex items-baseline justify-between gap-3 text-[11px]">
                     <span className="flex-1 truncate leading-snug">{leg.title}</span>
@@ -310,10 +336,10 @@ export function HeroSlip() {
           <Line i={4 + legs.length}>
             <div className="mt-3 flex items-end justify-between">
               <span className="mono text-[9px] uppercase tracking-[0.14em] text-dim">
-                Fair payout {fair.toFixed(2)}×
+                Fair payout {fair === null ? "—" : `${fair.toFixed(2)}×`}
               </span>
               <span className="mono text-[26px] leading-none">
-                {(stake * fair).toFixed(2)}
+                {fair === null ? "—" : (stake * fair).toFixed(2)}
               </span>
             </div>
           </Line>
@@ -337,7 +363,6 @@ export function HeroSlip() {
             </p>
           </Line>
         </div>
-        <div className="torn-edge" />
       </div>
     </div>
   );

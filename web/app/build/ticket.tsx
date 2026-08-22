@@ -6,6 +6,7 @@ import { erc20Abi, formatUnits, parseUnits } from "viem";
 import { usePublicClient, useReadContract, useWriteContract } from "wagmi";
 import { fetchLimits, requestQuote, type QuoteResult, type WriterQuote } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
+import { usePrinting } from "@/lib/print";
 import {
   formatUsdc,
   impliedPct,
@@ -169,6 +170,7 @@ export function Ticket({
   display?: boolean;
 }) {
   const mids = useMids();
+  const printing = usePrinting();
   const { ready: walletReady, address, isConnected } = useWalletState();
   const connect = useConnectAction();
 
@@ -425,7 +427,7 @@ export function Ticket({
           maxPayout,
         )
       : null;
-  // The motif's lens is the book's margin on the live quote.
+  // The motif's ring splay is the book's margin on the live quote.
   const margin = bd ? quotedOverround(bd) : null;
   // The stake you'd need to win back exactly what you paid — the honest
   // "how likely does this have to be" number behind the multiplier.
@@ -463,7 +465,9 @@ export function Ticket({
   const samplePayout = sampleMultiplier === null ? null : 100 * sampleMultiplier;
 
   return (
-    <div className="rounded-card border border-line bg-panel px-7 py-8 text-[13px] shadow-[0_24px_60px_rgba(4,10,12,0.5)]">
+    <div
+      className={`rounded-card border border-line bg-panel px-7 py-8 text-[13px] shadow-[0_24px_60px_rgba(4,10,12,0.5)] ${printing}`}
+    >
       <div className="flex items-start justify-between">
         <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Your slip</span>
         <Overround size={44} margin={margin} />
@@ -474,7 +478,7 @@ export function Ticket({
       ) : (
         <ul className="mt-4 flex flex-col gap-px bg-line">
           {legs.map((leg) => (
-            <li key={leg.vault} className="flex items-center gap-3 bg-ink px-4 py-[13px]">
+            <li key={leg.vault} className="print-line flex items-center gap-3 bg-ink px-4 py-[13px]">
               <span className={`mono text-[11px] ${leg.isYes ? "text-yes" : "text-no"}`}>
                 {leg.isYes ? "YES" : "NO"}
               </span>
@@ -564,7 +568,7 @@ export function Ticket({
           </div>
 
           {quoteResult?.ok && (
-            <div className="mono mt-4 flex flex-col gap-2 border-t border-line pt-4 text-[12px]">
+            <div className="print-line mono mt-4 flex flex-col gap-2 border-t border-line pt-4 text-[12px]">
               <DetailRow label="Stake">{formatUsdc(premium)} USDC</DetailRow>
               <DetailRow label="Combined implied">{bd ? pct(1 / bd.fairMultiplier) : "—"}</DetailRow>
               <DetailRow label="Fair" className="text-dim">
@@ -624,7 +628,7 @@ export function Ticket({
             <div className="mt-5">
               <div className="h-[3px] overflow-hidden rounded-full bg-raised">
                 <div
-                  className="h-full bg-accent transition-[width] duration-200 motion-reduce:transition-none"
+                  className="h-full bg-accent transition-[width] duration-1000 ease-linear motion-reduce:transition-none"
                   style={{ width: `${Math.max(0, Math.min(100, (ttlLeft / ttlSeconds) * 100))}%` }}
                 />
               </div>

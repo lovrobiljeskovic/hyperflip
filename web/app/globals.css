@@ -206,16 +206,43 @@ details[open] > summary::after {
   background-size: 8px 2px;
 }
 
-/* torn receipt edge — the bottom of the slip, ripped off the roll. Two triangle
-   repeats in the ground colour bite into the paper from below. */
-.torn-edge {
-  height: 9px;
-  background:
-    linear-gradient(-45deg, var(--stock) 25%, transparent 25%) repeat-x 0 0 / 12px 9px,
-    linear-gradient(45deg, var(--stock) 25%, transparent 25%) repeat-x 0 0 / 12px 9px;
+/* Hand-torn paper. The slip is a ripped rectangle, not a card: an irregular
+   clip on all four edges, a few px deep, so no side reads as a printed rule.
+   clip-path clips box-shadow too, so the drop is a filter — it follows the
+   torn silhouette instead of a hidden rectangle. */
+.torn {
+  clip-path: polygon(
+    0 3px, 7% 0, 14% 4px, 21% 1px, 28% 5px, 35% 1px, 42% 4px, 49% 0,
+    56% 4px, 63% 1px, 70% 5px, 77% 1px, 84% 4px, 91% 0, 100% 3px,
+    calc(100% - 4px) 7%, calc(100% - 1px) 14%, calc(100% - 5px) 21%,
+    calc(100% - 1px) 28%, calc(100% - 4px) 35%, calc(100% - 1px) 42%,
+    calc(100% - 5px) 49%, calc(100% - 2px) 56%, calc(100% - 4px) 63%,
+    calc(100% - 1px) 70%, calc(100% - 5px) 77%, calc(100% - 1px) 84%,
+    calc(100% - 4px) 91%, calc(100% - 2px) 100%,
+    91% calc(100% - 4px), 84% calc(100% - 1px), 77% calc(100% - 5px),
+    70% calc(100% - 1px), 63% calc(100% - 4px), 56% calc(100% - 1px),
+    49% calc(100% - 5px), 42% calc(100% - 2px), 35% calc(100% - 4px),
+    28% calc(100% - 1px), 21% calc(100% - 5px), 14% calc(100% - 1px),
+    7% calc(100% - 4px), 0 calc(100% - 2px),
+    4px 91%, 1px 84%, 5px 77%, 1px 70%, 4px 63%, 2px 56%, 5px 49%,
+    1px 42%, 4px 35%, 1px 28%, 5px 21%, 2px 14%, 4px 7%
+  );
+  filter: drop-shadow(10px 14px 0 rgba(36, 21, 18, 0.16));
 }
 
-/* the hero slip prints itself: one line at a time, ink settling */
+/* The slip prints itself: one line at a time, ink settling.
+
+   Held paused until a mount effect adds `.printing` to an ancestor. A CSS
+   animation left to start on its own begins its clock at style resolution —
+   during HTML parse, for server-rendered markup — not at first paint. The
+   cascade runs 240-1510ms and this document's parse alone takes ~1s, so any
+   slow load spends part or all of the cascade before a frame reaches the
+   screen and the slip simply appears, already printed. There is no CSS way to
+   say "start at first paint"; pausing until mount is the way to anchor it to a
+   frame the reader has actually seen.
+
+   Without scripting the class never lands, so the animation is dropped rather
+   than leaving every line paused at opacity 0 forever. */
 @keyframes print-line {
   from {
     opacity: 0;
@@ -230,13 +257,85 @@ details[open] > summary::after {
 }
 
 .print-line {
-  animation: print-line 0.28s steps(4, end) both;
+  animation: print-line 0.28s steps(4, end) both paused;
+}
+
+.printing .print-line {
+  animation-play-state: running;
+}
+
+@media (scripting: none) {
+  .print-line {
+    animation: none;
+  }
+}
+
+/* Motif 02 turns continuously. Two rings sit on planes tilted equal and
+   opposite about Y; the pair turns about a shared 3D axis, so under perspective
+   each ring reads as sweeping against the other. No mount gate — a graphic that
+   only moves once is inert in every state a taker actually sits in.
+
+   The splay between the planes is the book's margin, so it also eases between
+   values rather than jumping when a fresh quote reprices the ticket. */
+@keyframes motif-drift {
+  from {
+    transform: rotate3d(1, 1, 0, 0deg);
+  }
+  to {
+    transform: rotate3d(1, 1, 0, 360deg);
+  }
+}
+
+.motif {
+  position: relative;
+  perspective: 200px;
+}
+
+.motif-spin {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  animation: motif-drift 22s linear infinite;
+}
+
+.motif-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid;
+  /* The splay is data: when the quoted overround changes, the planes ease into
+     the new angle instead of snapping. */
+  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.motif-ring-a {
+  border-color: color-mix(in oklab, var(--color-accent) 80%, transparent);
+}
+
+.motif-ring-b {
+  border-color: color-mix(in oklab, var(--color-fg) 45%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motif-spin {
+    animation: none;
+  }
+  .motif-ring {
+    transition: none;
+  }
 }
 
 /* The ticket turns as the reader moves down the page and lands face-on.
-   Clamped to ±24° so the face is never near edge-on. Scroll-driven animation
-   is Chromium-only today; elsewhere the slip simply renders static, which is
-   the same result prefers-reduced-motion gives. */
+   Clamped to ±24° so the face is never near edge-on.
+
+   Driven by the document's scroll offset, not view(): the slip is above the
+   fold, so a view() timeline is already ~59% through its cover range on first
+   paint — past any entry-relative end — and the turn was finished before the
+   reader ever saw it. The turn belongs to the first 200px of scroll, which is
+   how far the hero travels before the slip starts leaving the viewport.
+
+   Scroll-driven animation is Chromium-only today; elsewhere the slip simply
+   renders static, which is the same result prefers-reduced-motion gives. */
 @keyframes slip-turn {
   from {
     transform: rotateY(-24deg);
@@ -250,8 +349,8 @@ details[open] > summary::after {
   transform-style: preserve-3d;
   backface-visibility: hidden;
   animation: slip-turn linear both;
-  animation-timeline: view();
-  animation-range: entry 0% cover 45%;
+  animation-timeline: scroll();
+  animation-range: 0 200px;
 }
 
 @media (prefers-reduced-motion: reduce) {
