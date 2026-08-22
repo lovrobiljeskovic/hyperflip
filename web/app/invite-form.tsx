@@ -1,17 +1,9 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import { joinWaitlist } from "@/lib/writer";
+import { joinWaitlist, WAITLIST_ERRORS } from "@/lib/writer";
 
 const KEY = "inviteCode";
-
-const WAITLIST_ERRORS: Record<string, string> = {
-  "bad-email": "Enter a valid email address.",
-  "rate-limited": "Too many signups from your connection — try again later.",
-  "email-failed": "Couldn't send the email — try again in a minute.",
-  "waitlist-unavailable": "Signups are paused right now — try again later.",
-  unreachable: "Writer unreachable — try again shortly.",
-};
 
 export function InviteForm() {
   const [code, setCode] = useState("");

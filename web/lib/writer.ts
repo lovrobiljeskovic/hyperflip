@@ -66,6 +66,15 @@ export async function fetchLimits(): Promise<WriterLimits | null> {
 
 export type WaitlistResult = { ok: true } | { ok: false; error: string };
 
+/** Writer waitlist error → user-facing copy, shared by every signup form. */
+export const WAITLIST_ERRORS: Record<string, string> = {
+  "bad-email": "Enter a valid email address.",
+  "rate-limited": "Too many signups from your connection — try again later.",
+  "email-failed": "Couldn't send the email — try again in a minute.",
+  "waitlist-unavailable": "Signups are paused right now — try again later.",
+  unreachable: "Writer unreachable — try again shortly.",
+};
+
 /** Beta waitlist signup — the writer emails back a generated invite code. */
 export async function joinWaitlist(email: string): Promise<WaitlistResult> {
   try {

@@ -95,7 +95,7 @@ export async function sendInviteEmail(apiKey: string, to: string, code: string):
       text: [
         `Your invite code: ${code}`,
         "",
-        "Enter it at https://overround.xyz/#counter and it rides along with every quote you request in the builder.",
+        "Paste it into the builder at https://overround.xyz/build and it rides along with every quote you request.",
         "",
         "Testnet funds: claim mock USDC at https://app.hyperliquid-testnet.xyz/drip, then transfer from Core to EVM for gas and stakes.",
       ].join("\n"),

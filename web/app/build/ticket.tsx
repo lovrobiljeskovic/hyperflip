@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { erc20Abi, formatUnits, parseUnits } from "viem";
 import { useBalance, usePublicClient, useReadContract, useWriteContract } from "wagmi";
-import { fetchLimits, requestQuote, type QuoteResult, type WriterQuote } from "@/lib/writer";
+import { fetchLimits, joinWaitlist, requestQuote, WAITLIST_ERRORS, type QuoteResult, type WriterQuote } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
 import {
@@ -80,7 +80,7 @@ function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: BuilderLeg
   }
   if (res.error === "clock-skew") return "Quote expired immediately — check your clock.";
   if (res.status === 0 || res.status === 503) return "Writer unreachable — retrying.";
-  if (res.status === 403) return "Invite code rejected — check it on the landing page.";
+  if (res.status === 403) return "Invite code rejected — enter a valid one below.";
   if (res.status === 409) {
     if (res.error === "leg-settled") return "A leg just settled — remove it and requote.";
     // market-cap/cluster-cap are stake-driven, not congestion: a long-shot ticket
@@ -169,11 +169,90 @@ function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown })
 type Cta =
   | { kind: "disabled"; label: string }
   | { kind: "connect"; label: string }
-  | { kind: "link"; label: string; href: string }
+  /** No saved invite code — the CTA slot renders the inline entry form. */
+  | { kind: "invite" }
   /** Off-site next step (the faucet) — opens a new tab, with a one-line hint. */
   | { kind: "external"; label: string; href: string; hint: string }
   | { kind: "done"; label: string; href: string }
   | { kind: "mint"; label: string };
+
+/** Inline invite entry — save a code, or get one emailed via the waitlist —
+ * so a tester never has to leave the builder. */
+function InviteEntry({ onSave }: { onSave: (code: string) => void }) {
+  const [code, setCode] = useState("");
+  const [email, setEmail] = useState("");
+  const [waitState, setWaitState] = useState<"idle" | "sending" | "sent">("idle");
+  const [waitError, setWaitError] = useState("");
+
+  const inputClass =
+    "w-full rounded-card border border-line bg-panel px-3 py-2 mono text-sm text-fg placeholder:text-dim focus:border-accent";
+  const buttonClass =
+    "shrink-0 rounded-card bg-accent px-4 py-2 mono text-[11px] uppercase tracking-[0.1em] text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
+
+  return (
+    <div className="mt-4 flex flex-col gap-3">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const trimmed = code.trim();
+          if (!trimmed) return;
+          localStorage.setItem("inviteCode", trimmed);
+          onSave(trimmed);
+        }}
+        className="flex gap-2"
+      >
+        <input
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="Invite code — OVR-XXXXXX"
+          aria-label="Invite code"
+          className={inputClass}
+        />
+        <button type="submit" className={buttonClass}>
+          Save
+        </button>
+      </form>
+      {waitState === "sent" ? (
+        <p className="mono text-[11px] text-yes">Invite sent — check your email, then paste the code above.</p>
+      ) : (
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setWaitError("");
+            setWaitState("sending");
+            const res = await joinWaitlist(email.trim());
+            if (res.ok) setWaitState("sent");
+            else {
+              setWaitState("idle");
+              setWaitError(WAITLIST_ERRORS[res.error] ?? res.error);
+            }
+          }}
+          noValidate
+          className="flex flex-col gap-1"
+        >
+          <div className="flex gap-2">
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              type="email"
+              autoComplete="email"
+              spellCheck={false}
+              placeholder="No code? your@email.com"
+              aria-label="Email for a beta invite"
+              className={inputClass}
+            />
+            <button type="submit" disabled={waitState === "sending"} className={buttonClass}>
+              {waitState === "sending" ? "Sending…" : "Get invite"}
+            </button>
+          </div>
+          {waitError && <p className="text-xs text-no">{waitError}</p>}
+        </form>
+      )}
+    </div>
+  );
+}
 
 const DRIP_HINT = "Claim testnet USDC at the Hyperliquid drip, then transfer it (and some HYPE for gas) from Core to EVM.";
 
@@ -435,7 +514,7 @@ export function Ticket({
     if (legs.length < MIN_LEGS) return { kind: "disabled", label: "Add 2 legs to price a ticket" };
     if (!walletReady) return { kind: "disabled", label: "Checking wallet…" };
     if (!isConnected) return { kind: "connect", label: "Connect wallet" };
-    if (!inviteCode) return { kind: "link", label: "Enter invite code", href: "/#counter" };
+    if (!inviteCode) return { kind: "invite" };
     // Empty wallet is a dead end without a next step — send the tester to the
     // faucet instead of a disabled button.
     if (usdcBalance === 0n)
@@ -722,14 +801,7 @@ export function Ticket({
                   Use {formatUsdc(BigInt(quoteResult.maxStake))} USDC
                 </button>
               )}
-              {quoteResult.status === 403 && (
-                <Link
-                  href="/#counter"
-                  className="mt-2 inline-block mono text-[11px] text-dim underline underline-offset-4 transition-colors hover:text-fg"
-                >
-                  Update invite code
-                </Link>
-              )}
+              {quoteResult.status === 403 && <InviteEntry onSave={setInviteCode} />}
             </div>
           )}
         </>
@@ -759,12 +831,11 @@ export function Ticket({
               {cta.label}
             </button>
           )}
-          {(cta.kind === "link" || cta.kind === "done") && (
+          {cta.kind === "invite" && <InviteEntry onSave={setInviteCode} />}
+          {cta.kind === "done" && (
             <Link
               href={cta.href}
-              className={`mono mt-4 block w-full rounded-card py-[15px] text-center text-[12px] uppercase tracking-[0.1em] transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90 ${
-                cta.kind === "done" ? "bg-yes text-on-accent" : "bg-accent text-on-accent"
-              }`}
+              className="mono mt-4 block w-full rounded-card bg-yes py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90"
             >
               {cta.label}
             </Link>
