@@ -29,9 +29,31 @@ test("parseBinary keeps xyz-venue perps, drops other venues and garbage", () => 
 });
 
 test("classify splits crypto, equity and commodity clusters", () => {
-  assert.deepEqual(classify({ perp: "BTC", venue: null }), { category: "crypto", cluster: "btc" });
-  assert.deepEqual(classify({ perp: "NVDA", venue: "xyz" }), { category: "equity", cluster: "equity" });
-  assert.deepEqual(classify({ perp: "GOLD", venue: "xyz" }), { category: "commodity", cluster: "commodity" });
+  assert.deepEqual(classify({ perp: "BTC", venue: null }), {
+    category: "crypto",
+    cluster: "crypto",
+    diversityKey: "btc",
+  });
+  assert.deepEqual(classify({ perp: "NVDA", venue: "xyz" }), {
+    category: "equity",
+    cluster: "equity",
+    diversityKey: "equity",
+  });
+  assert.deepEqual(classify({ perp: "GOLD", venue: "xyz" }), {
+    category: "commodity",
+    cluster: "commodity",
+    diversityKey: "commodity",
+  });
+});
+
+test("crypto perps share a correlation cluster but keep distinct diversity keys", () => {
+  // The whole point of the split. Same cluster => the writer's copula prices
+  // BTC and ETH as comoving (0.918, not 0.09). Distinct diversity keys => the
+  // picker still refuses to let one perp fill the board.
+  const btc = classify({ perp: "BTC", venue: null });
+  const eth = classify({ perp: "ETH", venue: null });
+  assert.equal(btc.cluster, eth.cluster);
+  assert.notEqual(btc.diversityKey, eth.diversityKey);
 });
 
 const SIDES = [{ name: "template:Yes" }, { name: "template:No" }];
@@ -103,6 +125,20 @@ test("pickBinaries caps one correlated bloc so equities cannot fill the board", 
   assert.equal(picked.length, 3); // perCluster
 });
 
+test("pickBinaries caps crypto per perp, not per correlation bloc", () => {
+  // Regression guard for the split: crypto legs all share cluster "crypto" for
+  // pricing, so capping the board on `cluster` would collapse it to perCluster
+  // (3) markets. The picker caps on diversityKey instead, which is per-perp,
+  // so five crypto perps still fill the board as they always did.
+  const syms = ["BTC", "ETH", "SOL", "HYPE", "ZEC"];
+  const outcomes = syms.map((sym, i) => outcome(500 + i, `perp:${sym}|threshold:1|time:20260820-0200`));
+  const mids = Object.fromEntries(outcomes.map((o) => [`#${o.outcome * 10}`, "0.4"]));
+  for (const sym of syms) mids[sym] = "1";
+  const picked = pickBinaries({ outcomes, mids, knownCoins: new Set(), nowMs: NOW });
+  assert.equal(picked.length, 5, "one crypto bloc must not be capped at perCluster");
+  assert.equal(new Set(picked.map((p) => p.perp)).size, 5);
+});
+
 test("pickBinaries drops strikes untethered from the underlying's own mid", () => {
   const outcomes = [
     outcome(500, "perp:BTC|threshold:100|time:20260822-0200"), // certainty wearing a mid
@@ -137,7 +173,7 @@ test("registryEntry and marketSymbol shape", () => {
     coinYes: "#1000",
     coinNo: "#1001",
     underlying: "BTC",
-    cluster: "btc",
+    cluster: "crypto",
     direction: "up",
     expiryMs: Date.UTC(2026, 7, 20, 2, 0),
   });

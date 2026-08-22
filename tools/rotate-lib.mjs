@@ -30,14 +30,24 @@ export function parseBinary(description) {
 
 const COMMODITIES = new Set(["GOLD", "SILVER", "NATGAS", "CL", "OIL", "COPPER"]);
 
-/** Category + correlation cluster for a parsed pick. Equities and commodities
- * co-move inside their bloc, so each is ONE cluster — the writer charges
- * CLUSTER_EDGE_BPS on any pair drawn from it, which is what NVDA x TSLA needs. */
+/** Category, correlation cluster, and board-diversity key for a parsed pick.
+ *
+ * `cluster` is a CORRELATION bloc and nothing else: the writer's copula treats
+ * two legs sharing it as comoving, and `perClusterCap` pools their exposure.
+ * Crypto used to get one cluster per perp, which made BTC and ETH look like
+ * unrelated assets — they priced at correlation 0.09 instead of 0.918, a 59%
+ * payout inflation on the most obvious parlay a user can build. One bloc per
+ * thing that actually comoves: crypto, equity, commodity.
+ *
+ * `diversityKey` is a BOARD-COMPOSITION key and nothing else — it stops one
+ * perp, or one bloc, filling every slot. It stays per-perp for crypto, which
+ * is what `cluster` used to be doing here by accident. The two were one field
+ * doing two jobs, and correctness for either meant breaking the other. */
 export function classify({ perp, venue }) {
-  if (venue === null) return { category: "crypto", cluster: perp.toLowerCase() };
+  if (venue === null) return { category: "crypto", cluster: "crypto", diversityKey: perp.toLowerCase() };
   return COMMODITIES.has(perp)
-    ? { category: "commodity", cluster: "commodity" }
-    : { category: "equity", cluster: "equity" };
+    ? { category: "commodity", cluster: "commodity", diversityKey: "commodity" }
+    : { category: "equity", cluster: "equity", diversityKey: "equity" };
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -104,7 +114,10 @@ export function pickBinaries({
     candidates.push({ outcome: o.outcome, coinYes, coinNo: `#${o.outcome * 10 + 1}`, priced: Number(mid) === 0.5 ? 0 : 1, ...parsed });
   }
   // Priced markets first, then nearest expiry; round-robin across underlyings
-  // and cap per cluster so one perp — or one correlated bloc — can't fill the board.
+  // and cap per diversity key so one perp — or one correlated bloc — can't fill
+  // the board. Deliberately NOT the correlation cluster: pooling all of crypto
+  // into one bloc is right for pricing and wrong here, where it would cut the
+  // board from eight crypto markets to three.
   candidates.sort((a, b) => b.priced - a.priced || a.expiryMs - b.expiryMs);
   const byPerp = new Map();
   for (const c of candidates) {
@@ -118,10 +131,10 @@ export function pickBinaries({
       if (picked.length >= cap) break;
       const c = list[round];
       if (!c) continue;
-      const { cluster } = classify(c);
-      const n = clusterCount.get(cluster) ?? 0;
+      const { diversityKey } = classify(c);
+      const n = clusterCount.get(diversityKey) ?? 0;
       if (n >= perCluster) continue;
-      clusterCount.set(cluster, n + 1);
+      clusterCount.set(diversityKey, n + 1);
       picked.push(c);
     }
   }
@@ -134,10 +147,14 @@ export function pickBinaries({
 export function registryEntry(pick, vault) {
   const d = new Date(pick.expiryMs);
   const title = `${pick.perp} above ${pick.threshold} on ${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}?`;
+  // diversityKey is picker-only — it governs board composition and means
+  // nothing to the writer, the keeper or the frontend, and GET /markets serves
+  // this object verbatim. Keep it out of the registry schema.
+  const { diversityKey: _diversityKey, ...classification } = classify(pick);
   return {
     vault,
     title,
-    ...classify(pick),
+    ...classification,
     coinYes: pick.coinYes,
     coinNo: pick.coinNo,
     underlying: pick.perp,
