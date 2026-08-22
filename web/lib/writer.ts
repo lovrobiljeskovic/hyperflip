@@ -64,6 +64,24 @@ export async function fetchLimits(): Promise<WriterLimits | null> {
   }
 }
 
+export type WaitlistResult = { ok: true } | { ok: false; error: string };
+
+/** Beta waitlist signup — the writer emails back a generated invite code. */
+export async function joinWaitlist(email: string): Promise<WaitlistResult> {
+  try {
+    const r = await fetch(`${BASE}/waitlist`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    if (r.ok) return { ok: true };
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, error: j.error ?? `waitlist ${r.status}` };
+  } catch {
+    return { ok: false, error: "unreachable" };
+  }
+}
+
 export async function requestQuote(req: {
   taker: `0x${string}`;
   legs: { vault: `0x${string}`; isYes: boolean }[];

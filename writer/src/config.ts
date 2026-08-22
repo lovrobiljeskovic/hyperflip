@@ -71,8 +71,13 @@ export interface WriterConfig {
   markets: Map<string, MarketInfo>;
   /** Raw registry file contents, served verbatim by GET /markets. */
   registryJson: string;
-  /** Valid invite codes; the only beta gate (spec §3). */
+  /** Valid invite codes; the only beta gate (spec §3). Waitlist-issued codes
+   * (waitlist.ts) are accepted alongside these. */
   inviteCodes: Set<string>;
+  /** Resend API key for waitlist invite emails; unset disables POST /waitlist. */
+  resendApiKey?: string;
+  /** Waitlist store path (absolute). */
+  waitlistFile: string;
 }
 
 function requireEnv(name: string): string {
@@ -198,5 +203,7 @@ export function loadConfig(): WriterConfig {
     markets,
     registryJson,
     inviteCodes: parseInviteCodes(requireEnv("INVITE_CODES")),
+    resendApiKey: process.env.RESEND_API_KEY,
+    waitlistFile: path.resolve(here, "../..", process.env.WAITLIST_FILE ?? "writer/waitlist.json"),
   };
 }

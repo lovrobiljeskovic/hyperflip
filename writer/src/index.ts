@@ -9,6 +9,7 @@ import { Poker } from "./poker.js";
 import { signQuote, type ParlayQuote, type QuoteLeg } from "./quotes.js";
 import { newMetrics, startServer, type QuoteDeps } from "./server.js";
 import { readLegStates } from "./settlement.js";
+import { RateLimiter, sendInviteEmail, Waitlist } from "./waitlist.js";
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
@@ -80,7 +81,15 @@ async function main(): Promise<void> {
       return new Set([...states].filter(([, s]) => s.settled).map(([v]) => v));
     },
     sign: (q: ParlayQuote) => signQuote(cfg.quoteSignerKey, chainId, cfg.parlayVault, q),
+    waitlist: new Waitlist(cfg.waitlistFile),
+    sendInvite: cfg.resendApiKey
+      ? (email, code) => sendInviteEmail(cfg.resendApiKey!, email, code)
+      : undefined,
+    signupLimiter: new RateLimiter(5, 60 * 60 * 1000),
   };
+  if (!cfg.resendApiKey) {
+    console.warn(JSON.stringify({ event: "waitlist-disabled", reason: "RESEND_API_KEY unset" }));
+  }
 
   const poker = new Poker({
     publicClient,

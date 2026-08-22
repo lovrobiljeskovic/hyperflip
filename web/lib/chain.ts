@@ -12,3 +12,7 @@ export const hyperEvmTestnet = defineChain({
   },
   testnet: true,
 });
+
+/** Hyperliquid testnet frontend — Core order books and the testnet faucet. */
+export const HL_APP = "https://app.hyperliquid-testnet.xyz";
+export const HL_DRIP = `${HL_APP}/drip`;

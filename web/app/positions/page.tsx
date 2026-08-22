@@ -8,7 +8,7 @@ import { scanParlayIds, type ParlayRef } from "@/lib/scan";
 import { pool } from "@/lib/pool";
 import { PARLAY_VAULT, STATUS, outcomeVaultAbi, parlayVaultAbi } from "@/lib/contracts";
 import { formatUsdc, multiplier, pct1, until } from "@/lib/format";
-import { hyperEvmTestnet } from "@/lib/chain";
+import { HL_APP, hyperEvmTestnet } from "@/lib/chain";
 import { fetchMarkets, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { useConnectAction, useWalletState } from "@/lib/wallet";
@@ -247,8 +247,15 @@ function LegTable({
         return (
           <div key={leg.vault} className="flex items-baseline gap-4 mono text-xs">
             <span className={`w-10 ${leg.isYes ? "text-yes" : "text-no"}`}>{leg.isYes ? "YES" : "NO"}</span>
+            {/* The leg is a HyperCore market — link its live order book, not the
+                EVM explorer. Explorer stays the fallback for archived legs whose
+                market (and coin) the registry no longer carries. */}
             <a
-              href={`${EXPLORER}/address/${leg.vault}`}
+              href={
+                coin === undefined
+                  ? `${EXPLORER}/address/${leg.vault}`
+                  : `${HL_APP}/trade/${encodeURIComponent(coin)}`
+              }
               target="_blank"
               rel="noreferrer"
               className="flex-1 truncate text-fg underline decoration-line underline-offset-4 transition-colors hover:decoration-dim"

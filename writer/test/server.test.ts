@@ -58,6 +58,7 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     rhoBandPct: 0.2, correlations: CORRELATIONS, legEdgeBps: 0n, quoteTtlMs: 30_000,
     lockoutMs: 600_000, pokerIntervalMs: 15_000, deployBlock: 0n,
     inviteCodes: new Set(["beta-test"]),
+    waitlistFile: "/dev/null",
     markets: new Map([
       [V1.toLowerCase(), { vault: V1, coinYes: "+10", coinNo: "+11", underlying: "BTC", cluster: "crypto", direction: "up" as const, title: "Will BTC close above X?", category: "crypto" }],
       [V2.toLowerCase(), { vault: V2, coinYes: "+20", coinNo: "+21", expiryMs: 2_000_000, underlying: "ETH", cluster: "crypto", direction: "up" as const, title: "Will ETH close above X?", category: "crypto" }],
@@ -209,6 +210,14 @@ test("quote without invite code is 403", async () => {
 test("quote with unknown invite code is 403", async () => {
   const r = await handleQuote(deps(), { ...goodBody, inviteCode: "wrong" });
   assert.equal(r.status, 403);
+});
+
+test("waitlist-issued code passes the invite gate", () => {
+  const c = cfg();
+  const body = { ...goodBody, inviteCode: "OVR-ABC123" };
+  assert.equal((validateQuoteRequest(body, c, 0) as { reason: string }).reason, "bad-invite");
+  const v = validateQuoteRequest(body, c, 0, new Set(["OVR-ABC123"]));
+  assert.ok(v.ok);
 });
 
 test("validation: unknown vault, leg count, stake cap, lockout", () => {

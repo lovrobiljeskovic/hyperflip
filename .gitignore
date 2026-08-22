@@ -22,3 +22,6 @@ docs/
 
 # Keeper settlement-fraction cache (runtime state, per deployment)
 keeper/settlement-cache.json
+
+# Beta waitlist store (emails + issued invite codes — never commit)
+writer/waitlist.json

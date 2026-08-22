@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { erc20Abi, formatUnits, parseUnits } from "viem";
-import { usePublicClient, useReadContract, useWriteContract } from "wagmi";
+import { useBalance, usePublicClient, useReadContract, useWriteContract } from "wagmi";
 import { fetchLimits, requestQuote, type QuoteResult, type WriterQuote } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
@@ -19,7 +19,7 @@ import {
   USDC_DECIMALS,
   type PriceBreakdown,
 } from "@/lib/format";
-import { hyperEvmTestnet } from "@/lib/chain";
+import { HL_DRIP, hyperEvmTestnet } from "@/lib/chain";
 import { PARLAY_VAULT, parlayVaultAbi } from "@/lib/contracts";
 import { useConnectAction, useUsdc, useWalletState } from "@/lib/wallet";
 import { Overround } from "../overround-motif";
@@ -170,8 +170,27 @@ type Cta =
   | { kind: "disabled"; label: string }
   | { kind: "connect"; label: string }
   | { kind: "link"; label: string; href: string }
+  /** Off-site next step (the faucet) — opens a new tab, with a one-line hint. */
+  | { kind: "external"; label: string; href: string; hint: string }
   | { kind: "done"; label: string; href: string }
   | { kind: "mint"; label: string };
+
+const DRIP_HINT = "Claim testnet USDC at the Hyperliquid drip, then transfer it (and some HYPE for gas) from Core to EVM.";
+
+/** Onboarding trail: each step lights up as its state is met, so a new tester
+ * always sees what's done and what's next. Hidden once everything is ready. */
+function Steps({ items }: { items: { label: string; done: boolean }[] }) {
+  if (items.every((s) => s.done)) return null;
+  return (
+    <ol className="mt-3 flex flex-wrap gap-x-4 gap-y-1 mono text-[10px] uppercase tracking-[0.16em]">
+      {items.map((s, i) => (
+        <li key={s.label} className={s.done ? "text-yes" : "text-dim"}>
+          {s.done ? "✓" : `${i + 1}.`} {s.label}
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 export function Ticket({
   legs,
@@ -199,6 +218,12 @@ export function Ticket({
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
   const { address: usdcAddr, balance: usdcBalance } = useUsdc();
+  // Native HYPE — a wallet without gas fails the mint with a raw RPC error,
+  // so catch it in the CTA before the wallet ever opens.
+  const { data: gas } = useBalance({
+    address,
+    query: { enabled: !display && !!address },
+  });
   // Drives the "1 tx / 2 tx" route line — the mint flow re-reads allowance
   // itself, so a stale value here only ever mislabels the row, never the tx.
   const { data: allowance } = useReadContract({
@@ -411,6 +436,12 @@ export function Ticket({
     if (!walletReady) return { kind: "disabled", label: "Checking wallet…" };
     if (!isConnected) return { kind: "connect", label: "Connect wallet" };
     if (!inviteCode) return { kind: "link", label: "Enter invite code", href: "/#counter" };
+    // Empty wallet is a dead end without a next step — send the tester to the
+    // faucet instead of a disabled button.
+    if (usdcBalance === 0n)
+      return { kind: "external", label: "Get testnet USDC →", href: HL_DRIP, hint: DRIP_HINT };
+    if (gas !== undefined && gas.value === 0n)
+      return { kind: "external", label: "Get HYPE for gas →", href: HL_DRIP, hint: DRIP_HINT };
     if (stakeBase === null) return { kind: "disabled", label: "Enter a stake to quote" };
     // Checked before the quote is even shown: a stake the wallet can't cover
     // would otherwise reach the approve tx and burn gas on a doomed mint.
@@ -485,6 +516,20 @@ export function Ticket({
         <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Your slip</span>
         <Overround size={44} margin={margin} />
       </div>
+
+      {!display && (
+        <Steps
+          items={[
+            { label: "Connect", done: isConnected },
+            { label: "Invite", done: !!inviteCode },
+            // gas is undefined until the read lands — don't flag "Fund" undone
+            // on a wallet we haven't finished reading.
+            { label: "Fund", done: (usdcBalance ?? 0n) > 0n && gas?.value !== 0n },
+            { label: "2+ legs", done: legs.length >= MIN_LEGS },
+            { label: "Stake", done: stakeBase !== null },
+          ]}
+        />
+      )}
 
       {legs.length === 0 ? (
         <p className="mt-4 text-dim">No legs yet — add YES or NO from the market list.</p>
@@ -723,6 +768,19 @@ export function Ticket({
             >
               {cta.label}
             </Link>
+          )}
+          {cta.kind === "external" && (
+            <>
+              <a
+                href={cta.href}
+                target="_blank"
+                rel="noreferrer"
+                className="mono mt-4 block w-full rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90"
+              >
+                {cta.label}
+              </a>
+              <p className="mt-2 text-center mono text-[11px] text-dim">{cta.hint}</p>
+            </>
           )}
           {cta.kind === "mint" && (
             <button

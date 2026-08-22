@@ -6,6 +6,7 @@ import { jointProbWad, type CorrLeg } from "./correlation.js";
 import { ExposureBook } from "./exposure.js";
 import { dominatingLeg, edgeBreakdown, priceParlay, totalEdgeBps } from "./pricing.js";
 import type { ParlayQuote, QuoteLeg } from "./quotes.js";
+import { isValidEmail, type RateLimiter, type Waitlist } from "./waitlist.js";
 
 export interface Metrics {
   quoted: number;
@@ -33,15 +34,28 @@ export interface QuoteDeps {
   now(): number;
   randomId(): Hex;
   metrics: Metrics;
+  /** Waitlist signup store + mailer; absent in tests that only quote. */
+  waitlist?: Waitlist;
+  sendInvite?(email: string, code: string): Promise<void>;
+  signupLimiter?: RateLimiter;
 }
 
 type Validated =
   | { ok: true; taker: Address; legs: QuoteLeg[]; stake: bigint }
   | { ok: false; status: number; reason: string };
 
-export function validateQuoteRequest(body: unknown, cfg: WriterConfig, now: number): Validated {
+export function validateQuoteRequest(
+  body: unknown,
+  cfg: WriterConfig,
+  now: number,
+  waitlist?: { has(code: string): boolean },
+): Validated {
   const b = body as { taker?: unknown; legs?: unknown; stake?: unknown; inviteCode?: unknown };
-  if (!b || typeof b.inviteCode !== "string" || !cfg.inviteCodes.has(b.inviteCode)) {
+  if (
+    !b ||
+    typeof b.inviteCode !== "string" ||
+    !(cfg.inviteCodes.has(b.inviteCode) || waitlist?.has(b.inviteCode))
+  ) {
     return { ok: false, status: 403, reason: "bad-invite" };
   }
   if (typeof b.taker !== "string" || !isAddress(b.taker)) {
@@ -77,7 +91,7 @@ export function validateQuoteRequest(body: unknown, cfg: WriterConfig, now: numb
 
 export async function handleQuote(deps: QuoteDeps, body: unknown): Promise<{ status: number; json: unknown }> {
   const { cfg, exposure, metrics } = deps;
-  const v = validateQuoteRequest(body, cfg, deps.now());
+  const v = validateQuoteRequest(body, cfg, deps.now(), deps.waitlist);
   if (!v.ok) {
     reject(metrics, v.reason);
     return { status: v.status, json: { error: v.reason } };
@@ -222,6 +236,36 @@ export async function handleQuote(deps: QuoteDeps, body: unknown): Promise<{ sta
   };
 }
 
+/** Public beta-waitlist signup: store the email, mail back a generated invite
+ * code. Signup is persisted before the send, so a mail failure is retryable
+ * (idempotent signup re-sends the same code). */
+export async function handleWaitlist(
+  deps: QuoteDeps,
+  body: unknown,
+  ip: string,
+): Promise<{ status: number; json: unknown }> {
+  const { waitlist, sendInvite, signupLimiter } = deps;
+  if (!waitlist || !sendInvite) return { status: 503, json: { error: "waitlist-unavailable" } };
+  const raw = (body as { email?: unknown })?.email;
+  if (typeof raw !== "string" || !isValidEmail(raw.trim())) {
+    return { status: 400, json: { error: "bad-email" } };
+  }
+  if (signupLimiter && !signupLimiter.allow(ip)) return { status: 429, json: { error: "rate-limited" } };
+  const email = raw.trim().toLowerCase();
+  const { code, isNew } = waitlist.signup(email);
+  try {
+    await sendInvite(email, code);
+  } catch (err) {
+    console.error(new Date().toISOString(), "invite email failed", err);
+    return { status: 502, json: { error: "email-failed" } };
+  }
+  // No email address in logs — the file is the record; this is the growth pulse.
+  console.log(
+    JSON.stringify({ at: new Date(deps.now()).toISOString(), event: "waitlist-signup", isNew, total: waitlist.size() }),
+  );
+  return { status: 200, json: { ok: true } };
+}
+
 const MAX_BODY = 64 * 1024;
 
 export function startServer(deps: QuoteDeps, port: number, health: () => unknown): http.Server {
@@ -266,7 +310,8 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
         }),
       );
     }
-    if (req.method === "POST" && req.url === "/quote") {
+    if (req.method === "POST" && (req.url === "/quote" || req.url === "/waitlist")) {
+      const url = req.url;
       let raw = "";
       let tooLarge = false;
       req.on("data", (c) => {
@@ -287,10 +332,19 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
           return send(400, { error: "bad-json" });
         }
         try {
-          const r = await handleQuote(deps, body);
+          if (url === "/quote") {
+            const r = await handleQuote(deps, body);
+            return send(r.status, r.json);
+          }
+          // Rate-limit key: first hop of x-forwarded-for (set by Caddy in front),
+          // falling back to the socket address for direct/local runs.
+          const fwd = req.headers["x-forwarded-for"];
+          const ip =
+            (Array.isArray(fwd) ? fwd[0] : fwd)?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
+          const r = await handleWaitlist(deps, body, ip);
           send(r.status, r.json);
         } catch (err) {
-          console.error(new Date().toISOString(), "quote handler error", err);
+          console.error(new Date().toISOString(), `${url} handler error`, err);
           send(500, { error: "internal" });
         }
       });
