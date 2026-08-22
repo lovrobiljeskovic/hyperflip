@@ -1,0 +1,179 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { buildTree, jointProbWad, pairCorrelation, parseCorrelations, type CorrLeg } from "../src/correlation.js";
+import { jointProbability, normInv } from "../src/copula.js";
+
+const WAD = 10n ** 18n;
+const wad = (p: number) => BigInt(Math.round(p * 1e18));
+
+const TABLE = parseCorrelations(
+  JSON.stringify({
+    defaults: { crypto: { global: 0.3, cluster: 0.9, underlying: 0.29 }, equity: { global: 0.3, cluster: 0.8426, underlying: 0.4 } },
+    underlyings: {
+      BTC: { global: 0.3, cluster: 0.9, underlying: 0.29 },
+      ETH: { global: 0.3, cluster: 0.92, underlying: 0.2 },
+      NVDA: { global: 0.3, cluster: 0.8426, underlying: 0.4 },
+      SP500: { global: 0.3, cluster: 0.8426, underlying: 0.4 },
+    },
+  }),
+);
+
+let vaultSeq = 0;
+/** Distinct vault per call unless one is passed — most tests are about
+ * different markets, and same-market cases must say so explicitly. */
+const leg = (
+  p: number,
+  cluster: string,
+  underlying: string,
+  bullish: boolean | null = true,
+  vault = `0x${(++vaultSeq).toString(16).padStart(40, "0")}`,
+): CorrLeg => ({ vault, probWad: wad(p), cluster, underlying, bullish });
+
+const SAME_VAULT = "0xdead00000000000000000000000000000000beef";
+
+test("pairCorrelation composes the shared factors", () => {
+  const nvda = TABLE.underlyings.NVDA;
+  const sp = TABLE.underlyings.SP500;
+  const btc = TABLE.underlyings.BTC;
+  assert.ok(Math.abs(pairCorrelation(nvda, sp, true, false) - 0.8) < 0.01);
+  assert.ok(Math.abs(pairCorrelation(nvda, btc, false, false) - 0.09) < 1e-9);
+  assert.ok(pairCorrelation(btc, btc, true, true) > 0.95);
+});
+
+test("rejects loadings whose squares reach 1", () => {
+  assert.throws(() =>
+    parseCorrelations(JSON.stringify({ defaults: {}, underlyings: { X: { global: 0.8, cluster: 0.8, underlying: 0.1 } } })),
+  );
+});
+
+test("rejects a negative or non-numeric loading", () => {
+  assert.throws(() => parseCorrelations(JSON.stringify({ defaults: {}, underlyings: { X: { global: -0.1, cluster: 0, underlying: 0 } } })));
+  assert.throws(() => parseCorrelations(JSON.stringify({ defaults: {}, underlyings: { X: { global: "a", cluster: 0, underlying: 0 } } })));
+});
+
+test("correlated same-direction legs price above the independent product", () => {
+  const legs = [leg(0.132, "equity", "NVDA"), leg(0.44, "equity", "SP500")];
+  const joint = jointProbWad(legs, TABLE, 0);
+  assert.ok(joint > wad(0.132 * 0.44), `${joint}`);
+});
+
+test("anti-correlated legs price below the independent product", () => {
+  const legs = [leg(0.132, "equity", "NVDA"), leg(0.56, "equity", "SP500", false)];
+  const joint = jointProbWad(legs, TABLE, 0);
+  assert.ok(joint < wad(0.132 * 0.56), `${joint}`);
+});
+
+test("the band always returns the house-favorable (higher) joint", () => {
+  for (const legs of [
+    [leg(0.132, "equity", "NVDA"), leg(0.44, "equity", "SP500")],
+    [leg(0.132, "equity", "NVDA"), leg(0.56, "equity", "SP500", false)],
+    [leg(0.5, "crypto", "BTC"), leg(0.132, "equity", "NVDA")],
+  ]) {
+    assert.ok(jointProbWad(legs, TABLE, 0.2) >= jointProbWad(legs, TABLE, 0), "band must not quote below mid");
+  }
+});
+
+test("the same market on both sides cannot win", () => {
+  // Exactly zero, not merely small. The copula cannot reach this on its own:
+  // MAX_EXPLAINED caps modelled correlation at 0.99 and the band quotes the
+  // loosest end, which would price this pair at a joint near 0.106.
+  const legs = [
+    leg(0.5, "crypto", "BTC", true, SAME_VAULT),
+    leg(0.5, "crypto", "BTC", false, SAME_VAULT),
+  ];
+  assert.equal(jointProbWad(legs, TABLE, 0.2), 0n);
+});
+
+test("the same market twice on the same side is one event", () => {
+  const twice = jointProbWad(
+    [leg(0.37, "crypto", "BTC", true, SAME_VAULT), leg(0.37, "crypto", "BTC", true, SAME_VAULT)],
+    TABLE,
+    0.2,
+  );
+  const once = jointProbWad([leg(0.37, "crypto", "BTC")], TABLE, 0.2);
+  assert.equal(twice, once, "a duplicated leg must not change the price");
+});
+
+test("two DIFFERENT markets on one underlying, opposite sides, stay possible", () => {
+  // BTC above 69k YES + BTC above 72k NO is satisfied whenever BTC lands
+  // between the strikes, so this must price, not round to zero. The model has
+  // no strike parsing, so it prices the general same-underlying case.
+  const legs = [leg(0.5, "crypto", "BTC"), leg(0.5, "crypto", "BTC", false)];
+  const joint = jointProbWad(legs, TABLE, 0.2);
+  assert.ok(joint > 0n, "distinct markets must not be treated as contradictory");
+  assert.ok(joint < wad(0.2), `expected a low joint for opposing legs, got ${joint}`);
+});
+
+test("an unknown underlying falls back to its cluster default", () => {
+  const known = jointProbWad([leg(0.132, "equity", "NVDA"), leg(0.44, "equity", "SP500")], TABLE, 0);
+  const unknown = jointProbWad([leg(0.132, "equity", "MYSTERY"), leg(0.44, "equity", "SP500")], TABLE, 0);
+  assert.ok(Math.abs(Number(known - unknown)) / Number(known) < 0.02, "fallback should land near the cluster default");
+});
+
+test("a lone leg returns its own marginal", () => {
+  const joint = jointProbWad([leg(0.37, "crypto", "BTC")], TABLE, 0.2);
+  assert.ok(Math.abs(Number(joint - wad(0.37))) < Number(WAD) * 1e-6, `${joint}`);
+});
+
+test("buildTree nests underlying under cluster only when the cluster is mixed", () => {
+  const tree = buildTree(
+    [
+      leg(0.5, "crypto", "BTC"),
+      leg(0.4, "crypto", "BTC"),
+      leg(0.55, "crypto", "ETH"),
+      leg(0.3, "equity", "NVDA"),
+      leg(0.6, "equity", "SP500"),
+    ],
+    TABLE,
+    1,
+  );
+  assert.equal(tree.legs.length, 0, "no cluster here has a single member");
+  assert.equal(tree.children.length, 2);
+  // crypto: two underlyings, so the BTC pair gets its own node and ETH hangs
+  // off the cluster directly.
+  const crypto = tree.children.find((c) => c.children.length === 1)!;
+  assert.ok(crypto !== undefined, "crypto should nest the BTC pair one level deeper");
+  assert.equal(crypto.legs.length, 1, "ETH hangs off the cluster node");
+  assert.equal(crypto.children[0].legs.length, 2, "the BTC pair shares an underlying factor");
+  assert.equal(crypto.children[0].legs[0].loadings.length, 3, "BTC legs load on all three factors");
+  assert.equal(crypto.legs[0].loadings.length, 2, "ETH loads on global and cluster only");
+  // equity: two lone underlyings, both directly on the cluster node.
+  const equity = tree.children.find((c) => c.children.length === 0)!;
+  assert.ok(equity !== undefined, "equity should hold two lone-underlying legs directly");
+  assert.equal(equity.legs.length, 2);
+  assert.ok(jointProbability(tree) > 0);
+});
+
+test("a cluster whose legs share one underlying collapses to a single factor", () => {
+  // Two BTC legs and nothing else in crypto: the cluster and underlying
+  // factors are indistinguishable to them, so the tree must not spend an
+  // integration level separating them.
+  const tree = buildTree([leg(0.5, "crypto", "BTC"), leg(0.45, "crypto", "BTC")], TABLE, 1);
+  assert.equal(tree.children.length, 1);
+  assert.equal(tree.children[0].children.length, 0, "no third level for a single-underlying cluster");
+  assert.equal(tree.children[0].legs.length, 2);
+  const merged = tree.children[0].legs[0].loadings;
+  assert.equal(merged.length, 2);
+  const btc = TABLE.underlyings.BTC;
+  assert.ok(Math.abs(merged[1] - Math.hypot(btc.cluster, btc.underlying)) < 1e-12);
+  // Collapsing is exact: the same legs priced through an explicit three-level
+  // tree give the same answer.
+  const explicit = jointProbability({
+    legs: [],
+    children: [
+      {
+        legs: [],
+        children: [
+          {
+            legs: [
+              { threshold: normInv(1 - 0.5), sign: 1, loadings: [btc.global, btc.cluster, btc.underlying] },
+              { threshold: normInv(1 - 0.45), sign: 1, loadings: [btc.global, btc.cluster, btc.underlying] },
+            ],
+            children: [],
+          },
+        ],
+      },
+    ],
+  });
+  assert.ok(Math.abs(jointProbability(tree) - explicit) < 1e-6, "collapse must not change the answer");
+});
