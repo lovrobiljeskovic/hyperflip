@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchMarkets, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { oddsLabel, pct1, until } from "@/lib/format";
@@ -67,36 +67,30 @@ function PriceCell({
   );
 }
 
-/** Category glyph — crypto coin, commodity ingot, chart line for the rest. */
-function CategoryIcon({ category }: { category: string }) {
-  const common = {
-    width: 14,
-    height: 14,
-    viewBox: "0 0 14 14",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: 1.3,
-    strokeLinecap: "round",
-    strokeLinejoin: "round",
-    "aria-hidden": true,
-  } as const;
-  if (category === "crypto")
+/** The venue's own asset icon — crypto perps live at coins/SYM.svg, xyz-dex
+ * assets (equities, commodities, indices) at coins/xyz:SYM.svg. Unknown
+ * symbols come back 200 with Hyperliquid's generic coin mark, so the letter
+ * badge only covers a missing underlying or a network failure. */
+function AssetIcon({ underlying, category }: { underlying?: string; category: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!underlying || failed)
     return (
-      <svg {...common}>
-        <circle cx="7" cy="7" r="5.4" />
-        <path d="M5.6 4.6h2.1a1.2 1.2 0 0 1 0 2.4H5.6h2.5a1.2 1.2 0 0 1 0 2.4H5.6M6.4 3.7v.9M6.4 9.4v.9" />
-      </svg>
+      <span className="mono flex h-5 w-5 items-center justify-center rounded-full border border-line text-[8px] text-dim">
+        {(underlying ?? "?").slice(0, 2)}
+      </span>
     );
-  if (category === "commodity")
-    return (
-      <svg {...common}>
-        <path d="M4.2 3.4h5.6l1.4 3H2.8l1.4-3ZM3.4 7.6h7.2l1.4 3H2l1.4-3Z" />
-      </svg>
-    );
+  const coin = category === "crypto" ? underlying : `xyz:${underlying}`;
   return (
-    <svg {...common}>
-      <path d="M1.8 10.8 5.4 7l2.3 2.3 4.3-4.8M8.6 4.5H12v3.4" />
-    </svg>
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={`https://app.hyperliquid.xyz/coins/${encodeURIComponent(coin)}.svg`}
+      alt=""
+      width={20}
+      height={20}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="h-5 w-5 rounded-full"
+    />
   );
 }
 
@@ -123,8 +117,8 @@ function BoardRow({
       }`}
     >
       <div className="flex min-w-0 items-center gap-2.5">
-        <span className="shrink-0 text-dim">
-          <CategoryIcon category={market.category} />
+        <span className="shrink-0">
+          <AssetIcon underlying={market.underlying} category={market.category} />
         </span>
         <div className="min-w-0">
           <p className="truncate text-[13px]">{market.title}</p>
@@ -168,19 +162,33 @@ export default function BuildPage() {
   const [markets, setMarkets] = useState<Market[] | null>(null);
   const [error, setError] = useState(false);
   const [legs, setLegs] = useState<BuilderLeg[]>([]);
+  const [tab, setTab] = useState("all");
+  const [expiryAsc, setExpiryAsc] = useState(true);
   const mids = useMids();
 
   const load = useCallback(async () => {
     setError(false);
     setMarkets(null);
     try {
-      const m = await fetchMarkets();
-      // Soonest expiry first; markets without one sink to the bottom.
-      setMarkets([...m].sort((a, b) => (a.expiryMs ?? Infinity) - (b.expiryMs ?? Infinity)));
+      setMarkets(await fetchMarkets());
     } catch {
       setError(true);
     }
   }, []);
+
+  const tabs = useMemo(
+    () => ["all", ...new Set((markets ?? []).map((m) => m.category))],
+    [markets],
+  );
+  const board = useMemo(() => {
+    const filtered = (markets ?? []).filter((m) => tab === "all" || m.category === tab);
+    // Markets without an expiry sink to the bottom in either direction.
+    return filtered.sort((a, b) => {
+      if (a.expiryMs === undefined) return b.expiryMs === undefined ? 0 : 1;
+      if (b.expiryMs === undefined) return -1;
+      return (a.expiryMs - b.expiryMs) * (expiryAsc ? 1 : -1);
+    });
+  }, [markets, tab, expiryAsc]);
 
   useEffect(() => {
     void load();
@@ -212,7 +220,27 @@ export default function BuildPage() {
             </span>
           </div>
 
-          <div className="mt-6">
+          {markets !== null && markets.length > 0 && (
+            <div className="mono mt-6 flex gap-1 text-[10px] uppercase tracking-[0.16em]">
+              {tabs.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  aria-pressed={tab === t}
+                  onClick={() => setTab(t)}
+                  className={`rounded-[4px] border px-3 py-1.5 transition-colors ${
+                    tab === t
+                      ? "border-accent bg-accent/10 text-fg"
+                      : "border-line text-dim hover:border-dim hover:text-fg"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-4">
             {error ? (
               <div className="flex flex-col items-start gap-3 rounded-card border border-line bg-panel p-6">
                 <p className="text-no">Writer unreachable.</p>
@@ -234,9 +262,16 @@ export default function BuildPage() {
                   <span>Market</span>
                   <span className="pr-2 text-right">Yes</span>
                   <span className="pr-2 text-right">No</span>
-                  <span className="text-right">Expires</span>
+                  <button
+                    type="button"
+                    onClick={() => setExpiryAsc((v) => !v)}
+                    aria-label={`Sort by expiry, ${expiryAsc ? "soonest" : "latest"} first`}
+                    className="text-right uppercase tracking-[0.16em] transition-colors hover:text-fg"
+                  >
+                    Expires {expiryAsc ? "↑" : "↓"}
+                  </button>
                 </div>
-                {markets.map((m) => (
+                {board.map((m) => (
                   <BoardRow key={m.vault} market={m} mids={mids} legs={legs} onPick={addLeg} />
                 ))}
               </div>

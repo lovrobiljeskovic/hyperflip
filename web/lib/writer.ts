@@ -4,6 +4,9 @@ export interface Market {
   category: string;
   coinYes: string;
   coinNo: string;
+  /** Perp symbol, e.g. BTC or NVDA. In the registry since the first rotation;
+   * optional here for tickets naming markets from before it existed. */
+  underlying?: string;
   expiryMs?: number;
 }
 
