@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { parseMarkets, parseInviteCodes } from "../src/config.js";
+import { parseCorrelations } from "../src/correlation.js";
 
 const VAULT = "0x1111111111111111111111111111111111111111";
 
@@ -66,4 +68,16 @@ test("parseMarkets rejects entry missing title/category", () => {
 
 test("parseInviteCodes trims and drops empties", () => {
   assert.deepEqual([...parseInviteCodes(" a, b,,c ")], ["a", "b", "c"]);
+});
+
+test("the shipped correlations file parses and covers every registry underlying", () => {
+  const raw = readFileSync(new URL("../../registry/correlations.json", import.meta.url), "utf8");
+  const table = parseCorrelations(raw);
+  const markets = parseMarkets(readFileSync(new URL("../../registry/markets.json", import.meta.url), "utf8"));
+  for (const m of markets.values()) {
+    assert.ok(
+      table.underlyings[m.underlying] !== undefined || table.fallback[m.cluster] !== undefined,
+      `no loadings and no cluster fallback for ${m.underlying} (${m.cluster})`,
+    );
+  }
 });

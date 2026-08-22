@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isAddress, type Address } from "viem";
+import { parseCorrelations, type CorrelationTable } from "./correlation.js";
 
 // .env lives at the repo root, one level above writer/ — same pattern as keeper/config.ts.
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -48,9 +49,14 @@ export interface WriterConfig {
   maxStake: bigint;
   perMarketCap: bigint;
   perClusterCap: bigint;
-  /** Extra edge (bps) charged per same-cluster leg pair — blunt correlation haircut.
-   * ponytail: flat per-pair bps; upgrade to per-pair rho estimates if volume justifies. */
-  clusterEdgeBps: bigint;
+  /** Multiplicative half-width of the correlation uncertainty band. The pricer
+   * evaluates the joint probability at (1 - x) and (1 + x) times every pairwise
+   * rho and quotes the house-favorable end, so the house is paid for the fact
+   * that the loadings table is hand-set rather than measured. */
+  rhoBandPct: number;
+  /** Factor loadings, loaded from CORRELATIONS_FILE. Writer-only — deliberately
+   * not part of markets.json, which GET /markets serves verbatim. */
+  correlations: CorrelationTable;
   /** Extra edge (bps) per leg past the first. Base edge is flat in leg count,
    * so without this a long ticket earns the same margin as a short one while
    * carrying far more risk. Set to 0 to restore flat pricing. */
@@ -150,7 +156,10 @@ export function loadConfig(): WriterConfig {
     maxStake: BigInt(requireEnv("MAX_STAKE")),
     perMarketCap: BigInt(requireEnv("PER_MARKET_CAP")),
     perClusterCap: BigInt(requireEnv("PER_CLUSTER_CAP")),
-    clusterEdgeBps: BigInt(process.env.CLUSTER_EDGE_BPS ?? 300),
+    rhoBandPct: Number(process.env.RHO_BAND_PCT ?? 0.2),
+    correlations: parseCorrelations(
+      readFileSync(path.resolve(here, "../..", process.env.CORRELATIONS_FILE ?? "registry/correlations.json"), "utf8"),
+    ),
     legEdgeBps: BigInt(process.env.LEG_EDGE_BPS ?? 300),
     quoteTtlMs: Number(process.env.QUOTE_TTL_MS ?? 30_000),
     lockoutMs: Number(process.env.LOCKOUT_MS ?? 600_000),
