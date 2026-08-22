@@ -454,8 +454,35 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   }
 
   log("keeper started", { vaults: config.vaultAddresses.length, pollIntervalMs: config.pollIntervalMs });
-  for (;;) {
-    await Promise.all([balanceLoop(), settlementLoop()]);
-    await sleep(config.pollIntervalMs);
+
+  // The two loops run on independent cadences — they used to share one
+  // Promise.all tick, so a single wedged await in balance sampling froze
+  // settlement for hours (the 0x232a strand, 2026-08-22) and the vault missed
+  // Core's ~10-minute settle→prune window for good.
+  const lastTick = { balance: Date.now(), settlement: Date.now() };
+
+  // Watchdog: a hung await never throws, so from outside the process looks
+  // healthy while doing nothing — the exact failure mode twice now. Every tick
+  // is bounded (fetch 10s, receipt waits RECEIPT_TIMEOUT_MS), so a stamp older
+  // than the worst legitimate tick means a true hang: exit and let systemd
+  // (Restart=always) bring us back with fresh sockets. setInterval still fires
+  // while a promise hangs — the event loop itself is alive.
+  const stallAfterMs = config.vaultAddresses.length * RECEIPT_TIMEOUT_MS + 120_000;
+  setInterval(() => {
+    for (const [name, t] of Object.entries(lastTick)) {
+      if (Date.now() - t > stallAfterMs) {
+        alert(`${name} loop stalled for ${Date.now() - t}ms — exiting so systemd restarts us`);
+        process.exit(1);
+      }
+    }
+  }, 10_000);
+
+  async function run(name: keyof typeof lastTick, tick: () => Promise<void>): Promise<never> {
+    for (;;) {
+      await tick();
+      lastTick[name] = Date.now();
+      await sleep(config.pollIntervalMs);
+    }
   }
+  await Promise.all([run("balance", balanceLoop), run("settlement", settlementLoop)]);
 }
