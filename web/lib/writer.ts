@@ -36,11 +36,14 @@ const BASE = process.env.NEXT_PUBLIC_WRITER_URL ?? "";
 /* Revalidated rather than request-time so the landing page stays prerendered.
    The option is inert in the browser, where this same function still backs the
    client-side fallback fetch. */
-export async function fetchMarkets(): Promise<Market[]> {
+export async function fetchMarkets(includeArchived = false): Promise<Market[]> {
   const r = await fetch(`${BASE}/markets`, { next: { revalidate: 60 } });
   if (!r.ok) throw new Error(`markets ${r.status}`);
-  const j = (await r.json()) as Market[] | { markets: Market[] };
-  return Array.isArray(j) ? j : j.markets;
+  const j = (await r.json()) as Market[] | { markets: Market[]; archived?: Market[] };
+  if (Array.isArray(j)) return j;
+  // archived = rotated-out (expired) markets — only wanted where old tickets
+  // need naming; the build board must not offer them.
+  return includeArchived ? [...j.markets, ...(j.archived ?? [])] : j.markets;
 }
 
 export interface WriterLimits {

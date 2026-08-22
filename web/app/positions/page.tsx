@@ -329,7 +329,7 @@ export default function PositionsPage() {
   // Titles/coins/expiries live in the writer's registry, not on-chain — the
   // leg detail rows fall back to the raw vault address if it's unreachable.
   useEffect(() => {
-    fetchMarkets()
+    fetchMarkets(true)
       .then(setMarkets)
       .catch(() => setMarkets([]));
   }, []);

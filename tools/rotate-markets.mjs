@@ -69,7 +69,11 @@ const picks = pickBinaries({ outcomes, mids, questions, knownCoins, nowMs });
 const expired = registry.markets.filter((m) => m.expiryMs <= nowMs);
 const kept = registry.markets.filter((m) => m.expiryMs > nowMs);
 
-const writeRegistry = (markets) => writeFileSync(REGISTRY, JSON.stringify({ markets }, null, 2) + "\n");
+// Expired entries move to `archived` rather than vanishing: writer quoting and
+// the keeper only read `.markets`, but the frontend still needs titles for
+// settled vaults on old tickets — without this they render as raw addresses.
+const archived = [...(registry.archived ?? []), ...expired];
+const writeRegistry = (markets) => writeFileSync(REGISTRY, JSON.stringify({ markets, archived }, null, 2) + "\n");
 
 console.log(`registry: ${kept.length} live, ${expired.length} expired (dropped)`);
 for (const m of expired) console.log(`  drop ${m.vault} — ${m.title}`);
