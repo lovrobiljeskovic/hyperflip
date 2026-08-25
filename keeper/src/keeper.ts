@@ -10,12 +10,11 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { keeperVerifierAbi, outcomeVaultAbi } from "./abi.js";
 import type { KeeperConfig } from "./config.js";
-import { OUTCOME_ACTIVE, OUTCOME_PRUNED, OUTCOME_SETTLED, readOutcomeStatus } from "./core814.js";
-import { fetchCoinBalanceWei } from "./infoApi.js";
+import { OUTCOME_ACTIVE, OUTCOME_PRUNED, OUTCOME_SETTLED, readOutcomeStatus, readSpotBalanceWei } from "./core814.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import {
-  coinIdForOutcome,
   decodeFractionCache,
+  encodedOutcomeAssetId,
   encodeFractionCache,
   evmToOutcomeWei,
   fractionWadFromSettledValue,
@@ -62,7 +61,7 @@ interface PendingOp {
   opId: bigint;
   opType: OpType;
   weiAmount: bigint;
-  coinId: bigint;
+  assetId: bigint;
   baseline: bigint | null;
   firstSeenAt: number;
   /** true only when `baseline` is PROVABLY pre-execution: a rolling ambient sample read strictly
@@ -171,7 +170,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
       opId,
       opType,
       weiAmount,
-      coinId: coinIdForOutcome(info.outcome, true),
+      assetId: encodedOutcomeAssetId(info.outcome, true),
       baseline,
       firstSeenAt: Date.now(),
       confidentBaseline,
@@ -194,7 +193,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     }
     try {
       const info = vaultInfo.get(vault)!;
-      const current = await fetchCoinBalanceWei(config.infoApiUrl, vault, coinIdForOutcome(info.outcome, true));
+      const current = await readSpotBalanceWei(publicClient, vault, encodedOutcomeAssetId(info.outcome, true));
       return { baseline: current, confident: false };
     } catch (err) {
       alert("fallback baseline read also failed", vault, (err as Error).message);
@@ -304,13 +303,13 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   async function balanceLoop(): Promise<void> {
     for (const vault of config.vaultAddresses) {
       const info = vaultInfo.get(vault)!;
-      const coinId = coinIdForOutcome(info.outcome, true);
+      const assetId = encodedOutcomeAssetId(info.outcome, true);
       let current: bigint;
       try {
-        current = await fetchCoinBalanceWei(config.infoApiUrl, vault, coinId);
+        current = await readSpotBalanceWei(publicClient, vault, assetId);
       } catch (err) {
-        // The info API 502s in bursts. One alert per tick per vault buries every other
-        // alert in the journal, so speak on the first failure and then once a minute,
+        // RPC reads fail in bursts (-32005 rate limits). One alert per tick per vault buries every
+        // other alert in the journal, so speak on the first failure and then once a minute,
         // and keep the nginx error page out of the log.
         const n = (sampleFailures.get(vault) ?? 0) + 1;
         sampleFailures.set(vault, n);
