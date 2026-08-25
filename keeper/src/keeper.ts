@@ -10,33 +10,45 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { keeperVerifierAbi, outcomeVaultAbi } from "./abi.js";
 import type { KeeperConfig } from "./config.js";
-import { OUTCOME_ACTIVE, OUTCOME_PRUNED, OUTCOME_SETTLED, readOutcomeStatus, readSpotBalanceWei } from "./core814.js";
+import { OUTCOME_ACTIVE, OUTCOME_PRUNED, OUTCOME_SETTLED, readOutcomeStatus } from "./core814.js";
+import { fetchCoinBalanceWei } from "./infoApi.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import {
-  blockChunks,
+  coinIdForOutcome,
   decodeFractionCache,
-  encodedOutcomeAssetId,
   encodeFractionCache,
   evmToOutcomeWei,
   fractionWadFromSettledValue,
+  newestSampleBefore,
   opKey,
   resolveBalanceCheck,
+  type BalanceSample,
   type OpType,
 } from "./pure.js";
 
 const STATUS_PENDING = 0;
 /** How long to wait for a submitted attest()/settle() tx to mine before treating it as failed. */
 const RECEIPT_TIMEOUT_MS = 60_000;
+/** Ambient balance-sample history kept per vault, in ticks — comfortably longer than
+ * watchContractEvent's ~4s default poll interval, so a sample provably pre-dating a just-detected
+ * OpQueued block is almost always already in hand. See sampleBefore. */
+const HISTORY_LIMIT = 20;
+/** The provenance check compares a sample's `readAt` (keeper wall clock) against an OpQueued
+ * block's chain timestamp. If the keeper's clock runs behind chain time, `readAt` under-reports
+ * how late a sample actually was taken, which could make a post-execution sample look "provably
+ * pre-op". Subtracting this margin from the cutoff before comparing assumes the keeper clock is
+ * never behind by more than this much. */
+const CLOCK_SKEW_MARGIN_MS = 2_000;
 /** How far past a market's registry expiry a vault may sit unsettled before the keeper alerts.
  * Core needs some time to move a market from active to settled, so this is deliberately loose —
  * it is a "nobody is settling this" tripwire, not a deadline. It exists because a keeper that is
  * dead, misconfigured, or watching the wrong vault list looks exactly like a healthy one from the
  * outside; that silence is what let the 8/19 vaults expire, prune, and strand unnoticed. */
 const SETTLEMENT_STALE_AFTER_MS = 15 * 60_000;
-/** ~2h at ~1s blocks; CANCEL_TIMEOUT (1h) bounds how old a live pending op can usefully be. */
-const OP_LOOKBACK_BLOCKS = 7_200n;
-/** Official endpoint's getLogs span cap (see rpc-check.mjs finding 2). */
-const GETLOGS_CHUNK = 1_000n;
+/** A qualifying sample must also be no older than this relative to the (skew-adjusted) cutoff, so
+ * a stalled sampler can't serve an arbitrarily old balance as a confident pre-op baseline; falls
+ * through to the unconfident/fallback path instead. */
+const MAX_SAMPLE_AGE_MS = 60_000;
 
 interface VaultInfo {
   outcome: number;
@@ -50,13 +62,14 @@ interface PendingOp {
   opId: bigint;
   opType: OpType;
   weiAmount: bigint;
-  assetId: bigint;
+  coinId: bigint;
   baseline: bigint | null;
   firstSeenAt: number;
-  /** true only when `baseline` is PROVABLY pre-execution: a 0x801 read pinned to the OpQueued
-   * block (see resolveBaseline). false whenever that can't be established — a rebuilt op whose
-   * OpQueued log is beyond the lookback window, or a failed pinned read, falls back to a
-   * best-effort latest read that is NOT provably pre-op. */
+  /** true only when `baseline` is PROVABLY pre-execution: a rolling ambient sample read strictly
+   * before the OpQueued block's own timestamp (Core cannot execute an action before the block
+   * containing it exists — see resolveLiveBaseline/sampleBefore). false whenever that can't be
+   * established — a rebuilt op after restart, or a live op with no qualifying ambient sample yet
+   * (e.g. right after startup) falls back to a best-effort read that is NOT provably pre-op. */
   confidentBaseline: boolean;
   /** Suppresses repeat alerts once a low-confidence op has already been flagged as held. */
   holdAlerted: boolean;
@@ -115,6 +128,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
       alert("could not persist settlement cache", config.settlementCachePath, (err as Error).message);
     }
   }
+  const balanceHistory = new Map<Address, BalanceSample[]>(); // ambient yes-coin samples, per vault
   const staleAlerted = new Set<Address>(); // suppresses repeat past-expiry alerts, per vault
 
   async function readVault<T>(vault: Address, functionName: string, args: readonly unknown[] = []): Promise<T> {
@@ -132,6 +146,17 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     log("vault config", vault, { outcome: Number(outcome), question: Number(question), verifier });
   }
 
+  function recordSample(vault: Address, balance: bigint): void {
+    const arr = balanceHistory.get(vault) ?? [];
+    arr.push({ readAt: Date.now(), balance });
+    if (arr.length > HISTORY_LIMIT) arr.shift();
+    balanceHistory.set(vault, arr);
+  }
+
+  function sampleBefore(vault: Address, beforeMs: number): BalanceSample | undefined {
+    return newestSampleBefore(balanceHistory.get(vault) ?? [], beforeMs, CLOCK_SKEW_MARGIN_MS, MAX_SAMPLE_AGE_MS);
+  }
+
   function track(
     vault: Address,
     opId: bigint,
@@ -146,7 +171,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
       opId,
       opType,
       weiAmount,
-      assetId: encodedOutcomeAssetId(info.outcome, true),
+      coinId: coinIdForOutcome(info.outcome, true),
       baseline,
       firstSeenAt: Date.now(),
       confidentBaseline,
@@ -155,51 +180,26 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     log("tracking op", vault, opId.toString(), opType === 0 ? "Split" : "Merge", "confident:", confidentBaseline);
   }
 
-  /** Baseline for an op. A read pinned to the OpQueued block is provably pre-execution BY
-   * CONSTRUCTION — precompile values match Core state at block construction, and Core cannot
-   * execute an action before the block containing it exists — so no wall-clock provenance is
-   * needed (the sample-history machinery this replaced). `blockNumber === null` (rebuilt op whose
-   * OpQueued log is beyond the getLogs lookback) or a failed pinned read falls back to a
-   * best-effort latest read that is explicitly NOT confident, preserving the invariant that
-   * attest(executed=false) only ever fires on a confident baseline. */
-  async function resolveBaseline(
-    vault: Address,
-    assetId: bigint,
-    blockNumber: bigint | null,
-  ): Promise<{ baseline: bigint | null; confident: boolean }> {
-    if (blockNumber !== null) {
-      try {
-        const b = await readSpotBalanceWei(publicClient, vault, assetId, blockNumber);
-        return { baseline: b, confident: true };
-      } catch (err) {
-        alert("pinned baseline read failed, falling back to unconfident latest", vault, (err as Error).message);
-      }
+  /** Resolves a baseline for a live-detected op from the rolling ambient sample history (remedy
+   * for the timing race: a synchronous read at detection time can already be post-execution,
+   * since Core may execute before the watcher even notices the log). Falls back to a best-effort
+   * immediate read — explicitly marked NOT confident — only when no provable sample exists yet. */
+  async function resolveLiveBaseline(vault: Address, blockNumber: bigint): Promise<{ baseline: bigint | null; confident: boolean }> {
+    try {
+      const block = await publicClient.getBlock({ blockNumber });
+      const sample = sampleBefore(vault, Number(block.timestamp) * 1000);
+      if (sample) return { baseline: sample.balance, confident: true };
+    } catch (err) {
+      alert("could not establish provable baseline provenance, falling back", vault, (err as Error).message);
     }
     try {
-      const b = await readSpotBalanceWei(publicClient, vault, assetId);
-      return { baseline: b, confident: false };
+      const info = vaultInfo.get(vault)!;
+      const current = await fetchCoinBalanceWei(config.infoApiUrl, vault, coinIdForOutcome(info.outcome, true));
+      return { baseline: current, confident: false };
     } catch (err) {
       alert("fallback baseline read also failed", vault, (err as Error).message);
       return { baseline: null, confident: false };
     }
-  }
-
-  /** OpQueued block for a rebuilt op, or null when it is beyond the lookback — the vault stores
-   * no queue block, so the log is the only source. opId is indexed, so the RPC filters it. */
-  async function findOpQueuedBlock(vault: Address, opId: bigint): Promise<bigint | null> {
-    const head = await publicClient.getBlockNumber();
-    for (const { from, to } of blockChunks(head, OP_LOOKBACK_BLOCKS, GETLOGS_CHUNK)) {
-      const logs = await publicClient.getContractEvents({
-        address: vault,
-        abi: outcomeVaultAbi,
-        eventName: "OpQueued",
-        args: { opId },
-        fromBlock: from,
-        toBlock: to,
-      });
-      if (logs.length > 0) return logs[0].blockNumber;
-    }
-    return null; // ponytail: beyond the 7200-block window stays unconfident/hold; archive-node getLogs if it ever occurs
   }
 
   async function trackIfStillPending(vault: Address, opId: bigint, opType: OpType, weiAmount: bigint, info: VaultInfo): Promise<void> {
@@ -211,16 +211,12 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
       args: [key],
     });
     if (Number(status) !== STATUS_PENDING) return; // already attested (this or a prior run)
-    const queuedAt = await findOpQueuedBlock(vault, opId);
-    const { baseline, confident } = await resolveBaseline(vault, encodedOutcomeAssetId(info.outcome, true), queuedAt);
-    track(vault, opId, opType, weiAmount, info, baseline, confident);
+    track(vault, opId, opType, weiAmount, info, null, false); // rebuilt: no provable pre-op baseline exists
   }
 
   // Stateless rebuild: the vault allows at most one open op at a time (_requireIdle), so its own
   // pendingDeposit/pendingRedeem state on-chain IS the pending-op set on restart — no OpQueued
-  // log replay needed. A rebuilt op recovers a confident baseline via the OpQueued log whenever it
-  // is within OP_LOOKBACK_BLOCKS (see trackIfStillPending/findOpQueuedBlock); beyond that it falls
-  // back to an unconfident baseline.
+  // log replay needed. (See balanceLoop for how a rebuilt op's uncertain baseline is handled.)
   async function seedPendingOps(vault: Address): Promise<void> {
     const info = vaultInfo.get(vault)!;
     const [depUser, depAmount, depOpId] = await readVault<[Address, bigint, bigint, bigint]>(vault, "pendingDeposit");
@@ -250,7 +246,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
               blockNumber: bigint;
             };
             if (pendingOps.has(vault)) continue;
-            const { baseline, confident } = await resolveBaseline(vault, encodedOutcomeAssetId(info.outcome, true), blockNumber);
+            const { baseline, confident } = await resolveLiveBaseline(vault, blockNumber);
             track(vault, args.opId, Number(args.opType) as OpType, args.weiAmount, info, baseline, confident);
           }
         })().catch((err) => alert("OpQueued handler crashed", vault, (err as Error).message));
@@ -294,18 +290,44 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     }
   }
 
-  // Balance-verification loop. Reads happen only while an op is pending — the ambient
-  // sampler role died with the info API: baselines now come from block-pinned precompile
-  // reads, not from a history of wall-clock samples.
+  // Balance-verification loop. Also doubles as the ambient sampler: every tick it reads and
+  // records each vault's yes-coin balance regardless of whether an op is pending, so
+  // resolveLiveBaseline almost always has a provably pre-execution sample in hand the moment an
+  // OpQueued log is noticed. Only ops with confidentBaseline may reach attest(executed=false) on
+  // timeout — see the failed-attestation-rule comment below; everything else times out to "hold".
+  // ponytail: a held op (no confident baseline ever established, e.g. a rebuilt op) stays pending
+  // forever if it truly dropped on Core — recovery is manual/owner-driven (setVerifier), same as
+  // any other case this design defers to the owner rather than trusting elapsed time.
+  // Consecutive failed info-API samples per vault — throttles the alert, nothing else.
+  const sampleFailures = new Map<string, number>();
+
   async function balanceLoop(): Promise<void> {
-    for (const [vault, op] of pendingOps) {
+    for (const vault of config.vaultAddresses) {
+      const info = vaultInfo.get(vault)!;
+      const coinId = coinIdForOutcome(info.outcome, true);
       let current: bigint;
       try {
-        current = await readSpotBalanceWei(publicClient, vault, op.assetId);
+        current = await fetchCoinBalanceWei(config.infoApiUrl, vault, coinId);
       } catch (err) {
-        alert("balance read failed", vault, (err as Error).message.split("\n")[0].slice(0, 200));
+        // The info API 502s in bursts. One alert per tick per vault buries every other
+        // alert in the journal, so speak on the first failure and then once a minute,
+        // and keep the nginx error page out of the log.
+        const n = (sampleFailures.get(vault) ?? 0) + 1;
+        sampleFailures.set(vault, n);
+        if (n === 1 || (n * config.pollIntervalMs) % 60_000 < config.pollIntervalMs) {
+          alert("balance sample failed", vault, `x${n}`, (err as Error).message.split("\n")[0].slice(0, 200));
+        }
         continue;
       }
+      const failed = sampleFailures.get(vault);
+      if (failed) {
+        log("balance sample recovered", vault, `after ${failed} failures`);
+        sampleFailures.delete(vault);
+      }
+      recordSample(vault, current);
+
+      const op = pendingOps.get(vault);
+      if (!op) continue;
       try {
         if (op.baseline === null) {
           op.baseline = current; // late capture (fallback path only); confidence already false
@@ -335,8 +357,11 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
         if (verdict === "attest-false") {
           // Failed-attestation rule: attest executed=false only on positive evidence of a
           // dropped op if such evidence exists. Core gives none — a rejected split/merge is
-          // silent. The generous no-delta timeout is KEEPER-SIDE POLICY — the recovery anchor
-          // remains OutcomeVault.setVerifier, not this timeout.
+          // silent (FINDINGS.md step 5: oversized send rejected with no error, no event, no
+          // balance change). So a generous no-delta timeout is KEEPER-SIDE POLICY, not something
+          // the chain trusts: it only decides which verdict this keeper attests, never proves
+          // anything on its own. If the keeper is wrong here the owner can always swap it out via
+          // OutcomeVault.setVerifier — that recovery path, not this timeout, is the trust anchor.
           alert("balance timeout with no delta, attesting executed=false", vault, op.opId.toString());
         }
         if (await attest(vault, op.opId, verdict === "attest-true")) pendingOps.delete(vault);
