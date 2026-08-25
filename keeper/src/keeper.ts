@@ -61,7 +61,6 @@ interface PendingOp {
   opId: bigint;
   opType: OpType;
   weiAmount: bigint;
-  assetId: bigint;
   baseline: bigint | null;
   firstSeenAt: number;
   /** true only when `baseline` is PROVABLY pre-execution: a rolling ambient sample read strictly
@@ -170,7 +169,6 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
       opId,
       opType,
       weiAmount,
-      assetId: encodedOutcomeAssetId(info.outcome, true),
       baseline,
       firstSeenAt: Date.now(),
       confidentBaseline,
@@ -297,7 +295,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   // ponytail: a held op (no confident baseline ever established, e.g. a rebuilt op) stays pending
   // forever if it truly dropped on Core — recovery is manual/owner-driven (setVerifier), same as
   // any other case this design defers to the owner rather than trusting elapsed time.
-  // Consecutive failed info-API samples per vault — throttles the alert, nothing else.
+  // Consecutive failed balance-read samples per vault — throttles the alert, nothing else.
   const sampleFailures = new Map<string, number>();
 
   async function balanceLoop(): Promise<void> {

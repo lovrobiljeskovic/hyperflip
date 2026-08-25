@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  blockChunks,
-  coinIdForOutcome,
   decodeFractionCache,
   deltaMatches,
   encodeFractionCache,
@@ -12,8 +10,6 @@ import {
   fractionWadFromSettledValue,
   newestSampleBefore,
   opKey,
-  parseCoinId,
-  parseDecimalToUnits,
   parseRegistryMarkets,
   resolveBalanceCheck,
   WAD,
@@ -30,33 +26,6 @@ test("opKey matches Solidity keccak256(abi.encode(vault, opId))", () => {
 test("opKey differs by opId (padded word, not concatenation ambiguity)", () => {
   const vault = "0x1234567890123456789012345678901234567890";
   assert.notEqual(opKey(vault, 1n), opKey(vault, 2n));
-});
-
-test("parseCoinId strips '+' and parses the outcome coin id", () => {
-  assert.equal(parseCoinId("+123850"), 123850n);
-  assert.equal(parseCoinId("+123851"), 123851n);
-});
-
-test("parseCoinId rejects non-outcome coins", () => {
-  assert.equal(parseCoinId("USDC"), null);
-  assert.equal(parseCoinId("-123850"), null);
-  assert.equal(parseCoinId("+12a"), null);
-});
-
-test("coinIdForOutcome matches the spike-observed encoding", () => {
-  // FINDINGS.md: split on outcome 12385 minted coins "+123850" (yes) and "+123851" (no).
-  assert.equal(coinIdForOutcome(12385, true), 123850n);
-  assert.equal(coinIdForOutcome(12385, false), 123851n);
-});
-
-test("parseDecimalToUnits: whole share", () => {
-  assert.equal(parseDecimalToUnits("10.0", 5), 1_000_000n);
-});
-
-test("parseDecimalToUnits: sub-share fraction, no decimal point, and truncation", () => {
-  assert.equal(parseDecimalToUnits("0.007", 5), 700n);
-  assert.equal(parseDecimalToUnits("5", 5), 500_000n);
-  assert.equal(parseDecimalToUnits("1.123456", 5), 112_345n); // extra digit truncated, not rounded
 });
 
 test("evmToOutcomeWei mirrors CoreConstants._convert for 6-decimal USDC", () => {
@@ -217,16 +186,4 @@ test("encodedOutcomeAssetId matches L1Read.sol: 100000000 + 10*outcome + side", 
   assert.equal(encodedOutcomeAssetId(13734, true), 100_137_340n);
   assert.equal(encodedOutcomeAssetId(13734, false), 100_137_341n);
   assert.equal(encodedOutcomeAssetId(0, true), 100_000_000n);
-});
-
-test("blockChunks pages newest-first in <=chunk ranges covering exactly (head-lookback, head]", () => {
-  assert.deepEqual(blockChunks(10_000n, 2_500n, 1_000n), [
-    { from: 9_001n, to: 10_000n },
-    { from: 8_001n, to: 9_000n },
-    { from: 7_501n, to: 8_000n },
-  ]);
-});
-
-test("blockChunks clamps at genesis instead of going negative", () => {
-  assert.deepEqual(blockChunks(500n, 7_200n, 1_000n), [{ from: 1n, to: 500n }]);
 });

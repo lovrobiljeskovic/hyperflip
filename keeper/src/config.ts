@@ -14,7 +14,6 @@ export interface KeeperConfig {
   rpcUrl: string;
   keeperPrivateKey: `0x${string}`;
   vaultAddresses: Address[];
-  infoApiUrl: string;
   /** How often the balance loop and settlement loop each tick. */
   pollIntervalMs: number;
   /** Keeper-side policy timeout for "no balance delta observed" — see keeper.ts balanceLoop. */
@@ -75,7 +74,6 @@ export function loadConfig(): KeeperConfig {
     rpcUrl,
     keeperPrivateKey: keeperPrivateKey as `0x${string}`,
     vaultAddresses,
-    infoApiUrl: process.env.INFO_API_URL ?? "https://api.hyperliquid-testnet.xyz/info",
     pollIntervalMs: Number(process.env.POLL_INTERVAL_MS ?? 5_000),
     balanceTimeoutMs: Number(process.env.BALANCE_TIMEOUT_MS ?? 60_000),
     settlementCachePath: process.env.SETTLEMENT_CACHE_PATH ?? path.resolve(here, "../settlement-cache.json"),

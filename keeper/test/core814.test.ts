@@ -34,13 +34,6 @@ test("readSpotBalanceWei sends abi.encode(user, token) to 0x801 and returns only
   );
   assert.equal(user.toLowerCase(), VAULT.toLowerCase());
   assert.equal(token, 100_137_340n);
-  assert.equal(client.calls[0].blockNumber, undefined); // latest when unpinned
-});
-
-test("readSpotBalanceWei pins the read when blockNumber is given", async () => {
-  const client = fakeClient(0n);
-  await readSpotBalanceWei(client as never, VAULT, 100_137_340n, 62_500_000n);
-  assert.equal(client.calls[0].blockNumber, 62_500_000n);
 });
 
 test("readSpotBalanceWei throws on an empty response rather than inventing a zero balance", async () => {

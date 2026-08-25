@@ -23,52 +23,12 @@ export function evmToOutcomeWei(amountEvm: bigint, evmUnitsPerShare: bigint): bi
   return w;
 }
 
-/** Core's coin encoding for one side of an outcome: coin name "+<id>", id = 10*outcome + side
- * (0 = yes, 1 = no). FINDINGS.md confirmed live as "+123850" / "+123851". */
-export function coinIdForOutcome(outcome: number, yes: boolean): bigint {
-  return 10n * BigInt(outcome) + (yes ? 0n : 1n);
-}
-
 /** Encoded outcome asset id accepted by the 0x801 spot-balance and 0x808 spot-px precompiles
  * (2026-08 testnet update): 100000000 + 10*outcome + side (0 = yes, 1 = no). Official
- * L1Read.sol. Distinct from the info-API coin id, which has no base offset. */
+ * L1Read.sol. */
 export const OUTCOME_ASSET_BASE = 100_000_000n;
 export function encodedOutcomeAssetId(outcome: number, yes: boolean): bigint {
   return OUTCOME_ASSET_BASE + 10n * BigInt(outcome) + (yes ? 0n : 1n);
-}
-
-/** Newest-first [from, to] block ranges covering (head-lookback, head], each at most `chunk`
- * blocks — the official RPC caps getLogs spans at 1000, so the OpQueued rebuild scan must page.
- * Newest-first because a rebuilt op is far more likely recent than at the lookback horizon. */
-export function blockChunks(head: bigint, lookback: bigint, chunk: bigint): { from: bigint; to: bigint }[] {
-  const floor = head - lookback < 0n ? 0n : head - lookback;
-  const ranges: { from: bigint; to: bigint }[] = [];
-  let to = head;
-  while (to > floor) {
-    const lowest = floor + 1n;
-    const from = to - chunk + 1n > lowest ? to - chunk + 1n : lowest;
-    ranges.push({ from, to });
-    to = from - 1n;
-  }
-  return ranges;
-}
-
-/** Parses a spotClearinghouseState `coin` field like "+123850" into its numeric id. Returns
- * null for anything that isn't that shape (e.g. "USDC") so callers can filter non-outcome coins. */
-export function parseCoinId(coin: string): bigint | null {
-  if (!/^\+\d+$/.test(coin)) return null;
-  return BigInt(coin.slice(1));
-}
-
-/** Decimal balance string ("10.0", "0.007") -> bigint at `decimals` precision. Truncates (does
- * not round) extra fractional digits — inputs here are exact info-API output, not user entry. */
-export function parseDecimalToUnits(value: string, decimals: number): bigint {
-  const neg = value.startsWith("-");
-  const body = neg ? value.slice(1) : value;
-  const [intPart, fracPart = ""] = body.split(".");
-  const frac = (fracPart + "0".repeat(decimals)).slice(0, decimals);
-  const units = BigInt(intPart || "0") * 10n ** BigInt(decimals) + BigInt(frac || "0");
-  return neg ? -units : units;
 }
 
 /** OutcomeVault.OpType: Split = 0, Merge = 1. */

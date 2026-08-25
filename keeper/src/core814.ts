@@ -31,18 +31,20 @@ export const SPOT_BALANCE_PRECOMPILE = "0x00000000000000000000000000000000000008
 
 /** Raw 0x801 read — the same request CoreConstants.spotBalance makes on-chain. `token` accepts
  * the encoded outcome asset id (pure.ts encodedOutcomeAssetId) since the 2026-08 testnet update.
- * Returns SpotBalance.total in Core wei (5-decimal for outcome coins). `blockNumber` pins the
- * read: precompile values are guaranteed to match Core state at that block's construction, which
- * is what makes a read pinned to an OpQueued block provably pre-execution (Core cannot execute
- * an action before the block containing it exists). */
+ * Returns SpotBalance.total in Core wei (5-decimal for outcome coins), read at latest state only.
+ * "Precompile values match Core state at block construction" holds only INSIDE real block
+ * execution (e.g. a contract reading 0x801 mid-tx); a pinned `eth_call` via RPC does not replay
+ * that block — it returns LIVE Core state regardless of the block number given (0x809 probe,
+ * 2026-08-25, see spec "Historical reads"). So this function must never be used to claim a
+ * pre-op baseline by pinning it to an OpQueued block; see keeper.ts resolveLiveBaseline for how
+ * pre-op baselines are actually established (ambient sampling, not a pinned read). */
 export async function readSpotBalanceWei(
   client: Pick<PublicClient, "call">,
   user: Address,
   token: bigint,
-  blockNumber?: bigint,
 ): Promise<bigint> {
   const data = encodeAbiParameters([{ type: "address" }, { type: "uint64" }], [user, token]);
-  const { data: ret } = await client.call({ to: SPOT_BALANCE_PRECOMPILE, data, blockNumber });
+  const { data: ret } = await client.call({ to: SPOT_BALANCE_PRECOMPILE, data });
   if (!ret) throw new Error("empty spotBalance response");
   const [total] = decodeAbiParameters([{ type: "uint64" }, { type: "uint64" }, { type: "uint64" }], ret);
   return total;

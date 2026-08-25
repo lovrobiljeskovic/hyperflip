@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Off-chain keeper: watches OutcomeVault ops, verifies execution via the Hyperliquid info API, attests to KeeperVerifier, and cranks settlement.",
+  "description": "Off-chain keeper: watches OutcomeVault ops, verifies execution via the 0x801 spot-balance precompile, attests to KeeperVerifier, and cranks settlement.",
   "scripts": {
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
