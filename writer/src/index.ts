@@ -5,6 +5,7 @@ import { parlayVaultAbi } from "./abi.js";
 import { loadConfig } from "./config.js";
 import { ExposureBook } from "./exposure.js";
 import { fetchBestAskWad } from "./infoApi.js";
+import { readSpotPxWad } from "./spotPx.js";
 import { Poker } from "./poker.js";
 import { signQuote, type ParlayQuote, type QuoteLeg } from "./quotes.js";
 import { newMetrics, startServer, type QuoteDeps } from "./server.js";
@@ -65,9 +66,21 @@ async function main(): Promise<void> {
     randomId: () => `0x${crypto.randomBytes(32).toString("hex")}` as Hex,
     fetchLegPriceWad: async (leg: QuoteLeg) => {
       const market = cfg.markets.get(leg.vault.toLowerCase())!; // validated upstream
-      const wad = await fetchBestAskWad(cfg.infoApiUrl, leg.isYes ? market.coinYes : market.coinNo);
-      lastBookFetchMs = Date.now();
-      return wad;
+      const coin = leg.isYes ? market.coinYes : market.coinNo;
+      // Best ask first: executable and conservative — the house never sells below the book.
+      // Empty book or info-API failure falls back to the 0x808 spotPx precompile, the only
+      // mid source that exists for outcome coins (allMids carries none, verified 2026-08-25).
+      // ponytail: spotPx is last-traded px and can be stale on a dead market — edgeBps and
+      // exposure caps bound the damage; revisit if the writer ever hedges by taking the book.
+      let ask: bigint | null = null;
+      try {
+        ask = await fetchBestAskWad(cfg.infoApiUrl, coin);
+        lastBookFetchMs = Date.now();
+      } catch (err) {
+        console.warn(JSON.stringify({ event: "book-fetch-failed", coin, error: (err as Error).message.slice(0, 200) }));
+      }
+      if (ask !== null) return ask;
+      return readSpotPxWad(publicClient, BigInt(coin.slice(1)));
     },
     readAllowance: () =>
       publicClient.readContract({

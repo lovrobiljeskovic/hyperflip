@@ -14,29 +14,21 @@ export function bestAskWad(book: unknown): bigint | null {
   return parseDecimalToUnits(ask.px, 18);
 }
 
-/** POST {type:"l2Book", coin} — best ask for the coin, as WAD probability/price.
+/** POST {type:"l2Book", coin} — best ask for the coin as WAD, or null on an empty book.
  * Coin strings come from the config market map; exact outcome-coin naming is
  * testnet-verified config, not code (spec §3, keeper FINDINGS pattern).
- * Empty book falls back to the allMids mid — testnet outcome books often carry
- * no resting orders while allMids still tracks the market; edgeBps covers the
- * mid-vs-ask gap. ponytail: mid is not executable depth; drop the fallback if
- * the writer ever hedges by taking the book. */
-export async function fetchBestAskWad(infoApiUrl: string, coin: string): Promise<bigint> {
+ * The old allMids fallback is gone: allMids carries no outcome coins at all
+ * (verified 2026-08-25), so it could never answer — null lets the caller fall
+ * back to the 0x808 spotPx precompile instead. The timeout mirrors the keeper's
+ * hard-learned rule (0x232a strand): a stalled fetch must fail the quote, not
+ * hang the request. */
+export async function fetchBestAskWad(infoApiUrl: string, coin: string): Promise<bigint | null> {
   const res = await fetch(infoApiUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ type: "l2Book", coin }),
+    signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) throw new Error(`info API ${res.status}: ${await res.text()}`);
-  const wad = bestAskWad(await res.json());
-  if (wad !== null) return wad;
-  const midsRes = await fetch(infoApiUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type: "allMids" }),
-  });
-  if (!midsRes.ok) throw new Error(`info API ${midsRes.status}: ${await midsRes.text()}`);
-  const mid = ((await midsRes.json()) as Record<string, string>)[coin];
-  if (typeof mid !== "string") throw new Error(`empty book and no mid for ${coin}`);
-  return parseDecimalToUnits(mid, 18);
+  return bestAskWad(await res.json());
 }
