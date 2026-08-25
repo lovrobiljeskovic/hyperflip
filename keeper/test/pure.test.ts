@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  blockChunks,
   coinIdForOutcome,
   decodeFractionCache,
   deltaMatches,
   encodeFractionCache,
+  encodedOutcomeAssetId,
   evmToOutcomeWei,
   expectedDelta,
   fractionWadFromSettledValue,
@@ -208,4 +210,23 @@ test("parseRegistryMarkets: a malformed registry fails loudly rather than watchi
   assert.throws(() => parseRegistryMarkets('{"markets":[{"title":"no vault"}]}'), /invalid vault/);
   assert.throws(() => parseRegistryMarkets('{"markets":[{"vault":"0xnothex"}]}'), /invalid vault/);
   assert.throws(() => parseRegistryMarkets('{"markets":[{"vault":"0x1234"}]}'), /invalid vault/); // truncated address
+});
+
+test("encodedOutcomeAssetId matches L1Read.sol: 100000000 + 10*outcome + side", () => {
+  // outcome 13734 = live NVDA market, coinYes "#137340" -> asset id 100137340 (testnet-verified)
+  assert.equal(encodedOutcomeAssetId(13734, true), 100_137_340n);
+  assert.equal(encodedOutcomeAssetId(13734, false), 100_137_341n);
+  assert.equal(encodedOutcomeAssetId(0, true), 100_000_000n);
+});
+
+test("blockChunks pages newest-first in <=chunk ranges covering exactly (head-lookback, head]", () => {
+  assert.deepEqual(blockChunks(10_000n, 2_500n, 1_000n), [
+    { from: 9_001n, to: 10_000n },
+    { from: 8_001n, to: 9_000n },
+    { from: 7_501n, to: 8_000n },
+  ]);
+});
+
+test("blockChunks clamps at genesis instead of going negative", () => {
+  assert.deepEqual(blockChunks(500n, 7_200n, 1_000n), [{ from: 1n, to: 500n }]);
 });
