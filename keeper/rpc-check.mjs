@@ -1,6 +1,6 @@
 // Acceptance test for a candidate HyperEVM RPC endpoint.
 //
-// Three things have actually bitten this project, so all three are checked:
+// Four things have actually bitten this project, so all four are checked:
 //   1. 0x814 precompile — the keeper reads outcome status through it. dRPC answers normal calls
 //      fine but fails this one ("out of gas"), which is why the keeper is still pinned to the
 //      official endpoint while only the writer moved off it.
@@ -8,11 +8,14 @@
 //      chunked scan.
 //   3. burst tolerance — the official endpoint returns -32005 under a burst, which is what left
 //      the poker unable to finish a catch-up scan at all.
-//   4. 0x801 outcome asset id support at latest (the keeper's balance path since the 2026-08
-//      precompile update), plus an informational probe recording that pinned precompile reads
-//      serve live state.
+//   4. 0x801 outcome asset id support at latest — the keeper's balance-verification path since
+//      the 2026-08 precompile update. This one is FATAL for keeper use: an endpoint that fails it
+//      must be dropped from TESTNET_RPC, since the keeper can no longer tell an executed op from
+//      a no-op there. Alongside it runs the 0x809 pinned-read honesty probe, which is
+//      informational only — it records whether pinned precompile reads serve live state and never
+//      fails an endpoint.
 //
-// An endpoint passing all three lets WRITER_RPC collapse back into TESTNET_RPC.
+// An endpoint passing all four lets WRITER_RPC collapse back into TESTNET_RPC.
 //
 // Usage: node rpc-check.mjs <url> [<url> ...]
 
@@ -39,7 +42,11 @@ if (urls.length === 0) {
 
 const short = (err) => String(err).split("\n")[0].slice(0, 80);
 
-async function check(url) {
+// Per-endpoint latest 0x809 value, indexed by position (not by url — the same url can appear
+// twice, e.g. when smoke-testing the comparison itself), filled in by the 0x809 probe below.
+const latestL1 = [];
+
+async function check(url, idx) {
   // No retries: retries would mask exactly the rate limiting this is trying to measure.
   const client = createPublicClient({ transport: http(url, { retryCount: 0, timeout: 15_000 }) });
   const results = [];
@@ -100,6 +107,7 @@ async function check(url) {
     ]);
     const p = BigInt(pinned.data);
     const l = BigInt(latest.data);
+    latestL1[idx] = l;
     const historical = l - p > 500n; // ~1000 EVM blocks apart must differ by many L1 blocks if real
     results.push(["0x809 pinned honesty", true, historical ? `HISTORICAL STATE SERVED (pinned ${p}, latest ${l}) — pinned-baseline design viable!` : `live-state only (pinned ${p} ≈ latest ${l}), as expected`]);
   } catch (err) {
@@ -148,9 +156,27 @@ async function check(url) {
   return results;
 }
 
-for (const url of urls) {
-  console.log(`\n${url}`);
-  for (const [name, ok, detail] of await check(url)) {
+for (let i = 0; i < urls.length; i++) {
+  console.log(`\n${urls[i]}`);
+  for (const [name, ok, detail] of await check(urls[i], i)) {
     console.log(`  ${ok ? "PASS" : "FAIL"}  ${name.padEnd(20)} ${detail}`);
   }
+}
+
+// Core-freshness cross-check (only meaningful with 2+ endpoints): balance reads via 0x801 can
+// land on any endpoint in the fallback list, so an endpoint whose HyperCore view lags the rest by
+// more than balanceTimeoutMs (60s ~ 60 L1 blocks) risks a false executed=false attestation. This
+// is a report line, not a per-endpoint failure — an endpoint stays otherwise PASS/FAIL on its own
+// merits above.
+const known = latestL1.map((l, i) => [i, l]).filter(([, l]) => l !== undefined);
+if (urls.length > 1 && known.length > 1) {
+  const max = known.reduce((m, [, l]) => (l > m ? l : m), known[0][1]);
+  const behind = known.filter(([, l]) => max - l > 60n);
+  console.log(
+    behind.length === 0
+      ? `\nCore-freshness: all ${known.length} endpoints within 60 L1 blocks of the max (${max})`
+      : `\nCore-freshness: ${behind
+          .map(([i, l]) => `${urls[i]} (#${i}) is ${max - l} L1 blocks behind (latest ${l} vs max ${max})`)
+          .join("; ")}`,
+  );
 }

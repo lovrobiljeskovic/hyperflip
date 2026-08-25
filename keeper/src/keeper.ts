@@ -88,7 +88,8 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   // TESTNET_RPC takes a comma-separated list; viem's fallback tries them in order. The primary
   // endpoint is a free public service with no SLA, and an unusable RPC is exactly what stranded
   // the 8/19 vaults, so a second one costs nothing to keep behind it. Note the whole list must
-  // serve the 0x814 precompile — see keeper/rpc-check.mjs.
+  // serve the 0x814 and 0x801 precompiles (0x801 with outcome-encoded asset ids is the
+  // balance-verification path) — see keeper/rpc-check.mjs.
   const rpcUrls = config.rpcUrl.split(",").map((u) => u.trim()).filter(Boolean);
   const chain = defineChain({
     id: 998,

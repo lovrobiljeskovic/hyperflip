@@ -74,6 +74,15 @@ service uses it, and it has no business on an internet-facing box. Everything el
 
 The file is mode 600, owned by `hype`. Both services load it via dotenv from the repo root.
 
+### Keeper RPC endpoints
+
+`TESTNET_RPC` is a comma-separated fallback list, and every endpoint in it now serves the
+keeper's safety-critical 0x801 balance reads (not just 0x814 status), since a balance read can
+land on any endpoint in the list. That means every endpoint must be Core-state-fresh: one whose
+HyperCore view lags by more than `balanceTimeoutMs` (60s) can show no delta on an executed op and
+drive a false `executed=false` attestation. Run `keeper/rpc-check.mjs` with the full list (it
+cross-checks freshness across endpoints) before changing `TESTNET_RPC`.
+
 ## Services
 
 Two systemd units, `keeper.service` and `writer.service`, both running as the unprivileged
