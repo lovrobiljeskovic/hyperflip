@@ -8,17 +8,28 @@
 //      chunked scan.
 //   3. burst tolerance — the official endpoint returns -32005 under a burst, which is what left
 //      the poker unable to finish a catch-up scan at all.
+//   4. 0x801 outcome asset id support at latest (the keeper's balance path since the 2026-08
+//      precompile update), plus an informational probe recording that pinned precompile reads
+//      serve live state.
 //
 // An endpoint passing all three lets WRITER_RPC collapse back into TESTNET_RPC.
 //
 // Usage: node rpc-check.mjs <url> [<url> ...]
 
 import { createPublicClient, http, encodeAbiParameters, decodeAbiParameters } from "viem";
+import { readFileSync } from "node:fs";
 
 const OUTCOME_STATUS_PRECOMPILE = "0x0000000000000000000000000000000000000814";
+const SPOT_BALANCE_PRECOMPILE = "0x0000000000000000000000000000000000000801";
+const L1_BLOCK_PRECOMPILE = "0x0000000000000000000000000000000000000809";
 const PARLAY_VAULT = "0x407CDc0B15E8d81f4D122481Ecf92Dbe07DC0169";
 const KNOWN_OUTCOME = 13162;
 const BURST = 20; // one tick of a modest catch-up scan
+
+// A live outcome asset id, derived from the registry (nightly rotation would stale a hardcoded
+// one): coinYes "#137340" -> 100000000 + 137340. Mirrors pure.ts encodedOutcomeAssetId.
+const registry = JSON.parse(readFileSync(new URL("../registry/markets.json", import.meta.url), "utf8"));
+const OUTCOME_ASSET_ID = 100_000_000n + BigInt(registry.markets[0].coinYes.slice(1));
 
 const urls = process.argv.slice(2);
 if (urls.length === 0) {
@@ -55,6 +66,44 @@ async function check(url) {
     results.push(["0x814 precompile", true, `status ${status}, question ${question}`]);
   } catch (err) {
     results.push(["0x814 precompile", false, short(err)]);
+  }
+
+  // 1b. 0x801 with an outcome-encoded asset id (2026-08 update) at latest — the keeper's
+  // actual balance-read path since the info API was dropped.
+  try {
+    const { data } = await client.call({
+      to: SPOT_BALANCE_PRECOMPILE,
+      data: encodeAbiParameters(
+        [{ type: "address" }, { type: "uint64" }],
+        [PARLAY_VAULT, OUTCOME_ASSET_ID],
+      ),
+    });
+    const [total] = decodeAbiParameters(
+      [{ type: "uint64" }, { type: "uint64" }, { type: "uint64" }],
+      data,
+    );
+    results.push(["0x801 outcome latest", true, `total ${total}`]);
+  } catch (err) {
+    results.push(["0x801 outcome latest", false, short(err)]);
+  }
+
+  // 1c. Pinned-read honesty probe (informational, never fails the endpoint): pin the L1 block
+  // number precompile ~1000 blocks back and compare with latest. Every endpoint tested 2026-08-25
+  // serves LIVE Core state for pinned precompile calls — which is exactly why the keeper takes no
+  // provenance from pinned reads. If an endpoint ever answers with a genuinely smaller (older)
+  // value, historical precompile state has become real and the pinned-baseline keeper design
+  // (see spec "Historical reads") is back on the table.
+  try {
+    const [pinned, latest] = await Promise.all([
+      client.call({ to: L1_BLOCK_PRECOMPILE, data: "0x", blockNumber: head - 1000n }),
+      client.call({ to: L1_BLOCK_PRECOMPILE, data: "0x" }),
+    ]);
+    const p = BigInt(pinned.data);
+    const l = BigInt(latest.data);
+    const historical = l - p > 500n; // ~1000 EVM blocks apart must differ by many L1 blocks if real
+    results.push(["0x809 pinned honesty", true, historical ? `HISTORICAL STATE SERVED (pinned ${p}, latest ${l}) — pinned-baseline design viable!` : `live-state only (pinned ${p} ≈ latest ${l}), as expected`]);
+  } catch (err) {
+    results.push(["0x809 pinned honesty", false, short(err)]);
   }
 
   // 2. getLogs range. Every endpoint tested so far caps well below 5000, so the question is
