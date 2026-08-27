@@ -105,6 +105,13 @@ export interface WriterConfig {
   resendApiKey?: string;
   /** Waitlist store path (absolute). */
   waitlistFile: string;
+  /** Browser-origin allowlist for CORS on sensitive routes (/quote, /waitlist,
+   * /limits, /health, /metrics). Browser-enforcement only — a non-browser
+   * caller (curl, the poker script) ignores CORS entirely, so this is not an
+   * auth boundary; the invite gate and exposure caps remain that. /markets is
+   * deliberately left `*` — it's public registry data the UI may fetch from
+   * anywhere. */
+  corsOrigins: string[];
 }
 
 function requireEnv(name: string): string {
@@ -166,6 +173,14 @@ export function parseMarkets(raw: string): Map<string, MarketInfo> {
 
 export function parseInviteCodes(raw: string): Set<string> {
   return new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
+}
+
+/** CORS_ORIGINS default: the two known deployed frontends (project deploy state,
+ * mainnet-hardening handoff). Override via env for other environments. */
+export const DEFAULT_CORS_ORIGINS = "https://overround.xyz,https://overround-wine.vercel.app";
+
+export function parseCorsOrigins(raw: string): string[] {
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
 /** Default PER_TAKER_RESERVED_CAP when unset — see WriterConfig.perTakerReservedCap
@@ -248,5 +263,6 @@ export function loadConfig(): WriterConfig {
     inviteCodes: parseInviteCodes(requireEnv("INVITE_CODES")),
     resendApiKey: process.env.RESEND_API_KEY,
     waitlistFile: path.resolve(here, "../..", process.env.WAITLIST_FILE ?? "writer/waitlist.json"),
+    corsOrigins: parseCorsOrigins(process.env.CORS_ORIGINS ?? DEFAULT_CORS_ORIGINS),
   };
 }

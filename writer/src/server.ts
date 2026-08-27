@@ -287,6 +287,26 @@ export async function handleWaitlist(
 
 const MAX_BODY = 64 * 1024;
 
+/** CORS is browser-enforcement only — a non-browser caller (curl, the poker
+ * script) never sends an Origin header and ignores these headers entirely, so
+ * omitting Access-Control-Allow-Origin never blocks that caller's request; it
+ * only stops a browser from letting a disallowed page's JS read the response.
+ * The invite gate and exposure caps are the actual blast-radius bound. */
+function corsAllowedOrigin(req: http.IncomingMessage, allowlist: string[]): string | undefined {
+  const raw = req.headers.origin;
+  const origin = Array.isArray(raw) ? raw[0] : raw;
+  return origin && allowlist.includes(origin) ? origin : undefined;
+}
+
+/** Headers for a route locked to the allowlist (everything but GET /markets).
+ * No Origin header (non-browser caller) or a disallowed Origin both yield {}
+ * — no ACAO header, so the request still proceeds; only a browser reading the
+ * response is stopped, and only for a disallowed origin. */
+function lockedCors(req: http.IncomingMessage, allowlist: string[]): Record<string, string> {
+  const origin = corsAllowedOrigin(req, allowlist);
+  return origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : {};
+}
+
 export function startServer(deps: QuoteDeps, port: number, health: () => unknown): http.Server {
   const server = http.createServer((req, res) => {
     // Unhandled 'error' on req/res (e.g. client resets mid-upload) is otherwise an
@@ -299,12 +319,12 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
       console.error(new Date().toISOString(), "response stream error", err);
     });
     const send = (status: number, json: unknown) => {
-      res.writeHead(status, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      res.writeHead(status, { "Content-Type": "application/json", ...lockedCors(req, deps.cfg.corsOrigins) });
       res.end(JSON.stringify(json));
     };
     if (req.method === "OPTIONS") {
       res.writeHead(204, {
-        "Access-Control-Allow-Origin": "*",
+        ...lockedCors(req, deps.cfg.corsOrigins),
         "Access-Control-Allow-Methods": "GET, POST",
         "Access-Control-Allow-Headers": "content-type",
         "Access-Control-Max-Age": "86400",
@@ -320,7 +340,7 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
     // Quote-shaping limits the builder needs before it can even offer a stake
     // preset — a chip above maxStake is a button that always 400s.
     if (req.method === "GET" && req.url === "/limits") {
-      res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      res.writeHead(200, { "Content-Type": "application/json", ...lockedCors(req, deps.cfg.corsOrigins) });
       return res.end(
         JSON.stringify({
           maxStake: deps.cfg.maxStake.toString(),

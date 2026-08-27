@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseMarkets, parseInviteCodes, defaultPerTakerReservedCap } from "../src/config.js";
+import { parseMarkets, parseInviteCodes, parseCorsOrigins, defaultPerTakerReservedCap } from "../src/config.js";
 import { parseCorrelations } from "../src/correlation.js";
 
 const VAULT = "0x1111111111111111111111111111111111111111";
@@ -68,6 +68,13 @@ test("parseMarkets rejects entry missing title/category", () => {
 
 test("parseInviteCodes trims and drops empties", () => {
   assert.deepEqual([...parseInviteCodes(" a, b,,c ")], ["a", "b", "c"]);
+});
+
+test("parseCorsOrigins trims and drops empties", () => {
+  assert.deepEqual(parseCorsOrigins(" https://overround.xyz, https://overround-wine.vercel.app,, "), [
+    "https://overround.xyz",
+    "https://overround-wine.vercel.app",
+  ]);
 });
 
 // mainnet-hardening P0-4: the default PER_TAKER_RESERVED_CAP must track

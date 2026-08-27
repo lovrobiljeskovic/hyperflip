@@ -63,6 +63,7 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     lockoutMs: 600_000, pokerIntervalMs: 15_000, deployBlock: 0n,
     inviteCodes: new Set(["beta-test"]),
     waitlistFile: "/dev/null",
+    corsOrigins: ["https://overround.xyz"],
     markets: new Map([
       [V1.toLowerCase(), { vault: V1, coinYes: "+10", coinNo: "+11", underlying: "BTC", cluster: "crypto", direction: "up" as const, title: "Will BTC close above X?", category: "crypto" }],
       [V2.toLowerCase(), { vault: V2, coinYes: "+20", coinNo: "+21", expiryMs: 2_000_000, underlying: "ETH", cluster: "crypto", direction: "up" as const, title: "Will ETH close above X?", category: "crypto" }],
@@ -366,14 +367,80 @@ test("GET /markets serves registry verbatim with CORS", async () => {
   }
 });
 
-test("OPTIONS preflight returns 204 with CORS headers", async () => {
+test("OPTIONS preflight returns 204 with CORS headers for an allowed origin", async () => {
+  const server = startServer(deps(), 0, () => ({ ok: true }));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/quote`, {
+      method: "OPTIONS",
+      headers: { origin: "https://overround.xyz" },
+    });
+    assert.equal(r.status, 204);
+    assert.equal(r.headers.get("access-control-allow-origin"), "https://overround.xyz");
+    assert.match(r.headers.get("access-control-allow-headers") ?? "", /content-type/i);
+  } finally {
+    server.close();
+  }
+});
+
+test("OPTIONS preflight still 204s with no Origin header (no ACAO to echo)", async () => {
   const server = startServer(deps(), 0, () => ({ ok: true }));
   const port = (server.address() as AddressInfo).port;
   try {
     const r = await fetch(`http://127.0.0.1:${port}/quote`, { method: "OPTIONS" });
     assert.equal(r.status, 204);
-    assert.equal(r.headers.get("access-control-allow-origin"), "*");
-    assert.match(r.headers.get("access-control-allow-headers") ?? "", /content-type/i);
+    assert.equal(r.headers.get("access-control-allow-origin"), null);
+  } finally {
+    server.close();
+  }
+});
+
+test("POST /quote: allowed origin gets ACAO echo", async () => {
+  const d = deps();
+  const server = startServer(d, 0, () => ({ ok: true }));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/quote`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://overround.xyz" },
+      body: JSON.stringify(goodBody),
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get("access-control-allow-origin"), "https://overround.xyz");
+  } finally {
+    server.close();
+  }
+});
+
+test("POST /quote: disallowed origin gets no ACAO (browser would block) but request still succeeds server-side", async () => {
+  const d = deps();
+  const server = startServer(d, 0, () => ({ ok: true }));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/quote`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://evil.example" },
+      body: JSON.stringify(goodBody),
+    });
+    assert.equal(r.status, 200); // CORS is browser-enforcement only — fetch() here ignores it, like curl would.
+    assert.equal(r.headers.get("access-control-allow-origin"), null);
+  } finally {
+    server.close();
+  }
+});
+
+test("POST /quote: no Origin header (CLI/curl caller) is unaffected — no ACAO, request proceeds", async () => {
+  const d = deps();
+  const server = startServer(d, 0, () => ({ ok: true }));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/quote`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(goodBody),
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get("access-control-allow-origin"), null);
   } finally {
     server.close();
   }
