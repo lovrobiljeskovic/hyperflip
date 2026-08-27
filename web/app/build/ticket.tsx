@@ -588,7 +588,7 @@ export function Ticket({
 
   return (
     <div
-      className={`rounded-card border border-line bg-panel px-7 py-8 text-[13px] shadow-[0_24px_60px_rgba(4,10,12,0.5)] ${printing}`}
+      className={`rounded-card border border-line bg-panel px-5 py-6 text-[13px] shadow-[0_24px_60px_rgba(4,10,12,0.5)] sm:px-7 sm:py-8 ${printing}`}
     >
       <div className="flex items-start justify-between">
         <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Your slip</span>

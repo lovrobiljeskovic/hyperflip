@@ -226,8 +226,8 @@ function LegTable({
   mids: Record<string, string>;
 }) {
   return (
-    <div className="flex flex-col gap-2 border-l-2 border-line bg-raised/30 px-5 py-4">
-      <div className="flex gap-4 mono text-[9px] uppercase tracking-[0.16em] text-dim">
+    <div className="flex flex-col gap-2 border-l-2 border-line bg-raised/30 px-4 py-4 sm:px-5">
+      <div className="hidden gap-4 mono text-[9px] uppercase tracking-[0.16em] text-dim sm:flex">
         <span className="w-10">Side</span>
         <span className="flex-1">Market</span>
         <span className="w-16 text-right">Live</span>
@@ -245,7 +245,9 @@ function LegTable({
         const live = Number.isFinite(n) && n > 0 && n < 1 ? n : null;
         const verdict = VERDICT_STYLE[row.legVerdicts[i]];
         return (
-          <div key={leg.vault} className="flex items-baseline gap-4 mono text-xs">
+          // flex-wrap: on mobile the meta line's basis-full pushes it to a
+          // second row; live/expires columns only exist at sm+.
+          <div key={leg.vault} className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 mono text-xs">
             <span className={`w-10 ${leg.isYes ? "text-yes" : "text-no"}`}>{leg.isYes ? "YES" : "NO"}</span>
             {/* The leg is a HyperCore market — link its live order book, not the
                 EVM explorer. Explorer stays the fallback for archived legs whose
@@ -258,15 +260,18 @@ function LegTable({
               }
               target="_blank"
               rel="noreferrer"
-              className="flex-1 truncate text-fg underline decoration-line underline-offset-4 transition-colors hover:decoration-dim"
+              className="min-w-0 flex-1 truncate text-fg underline decoration-line underline-offset-4 transition-colors hover:decoration-dim"
             >
               {m?.title ?? leg.vault}
             </a>
-            <span className="w-16 text-right text-dim">
+            <span className="hidden w-16 text-right text-dim sm:block">
               {live === null ? "—" : pct1(live)}
             </span>
-            <span className="w-16 text-right text-dim">{m?.expiryMs ? until(m.expiryMs) : "—"}</span>
-            <span className={`w-20 text-right ${verdict.className}`}>{verdict.label}</span>
+            <span className="hidden w-16 text-right text-dim sm:block">{m?.expiryMs ? until(m.expiryMs) : "—"}</span>
+            <span className={`text-right sm:w-20 ${verdict.className}`}>{verdict.label}</span>
+            <span className="basis-full pl-14 text-[10px] text-dim sm:hidden">
+              {live === null ? "—" : pct1(live)} live · expires {m?.expiryMs ? until(m.expiryMs) : "—"}
+            </span>
           </div>
         );
       })}
@@ -402,7 +407,7 @@ export default function PositionsPage() {
     <div className="min-h-screen text-[13px] text-fg">
       <AppHeader ground="dark" />
 
-      <main className="mx-auto max-w-6xl px-6 py-10">
+      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
         <h1 className="display text-[26px] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
           Your slips
         </h1>
@@ -449,7 +454,97 @@ export default function PositionsPage() {
         ) : (
           <>
             <SummaryStrip rows={rows} />
-            <div className="mt-4 overflow-x-auto rounded-card border border-line bg-panel">
+
+            {/* Mobile: one card per slip; the table needs 860px and horizontal
+                scrolling a slip list shouldn't. */}
+            <div className="mt-4 flex flex-col gap-3 md:hidden">
+              {rows.map((row) => {
+                const view = deriveRow(row);
+                const isPending = pending?.id === row.id;
+                const rowError = actionError?.id === row.id ? actionError.msg : null;
+                const isOpen = expanded === row.id;
+                return (
+                  <div
+                    key={row.id.toString()}
+                    className={`overflow-hidden rounded-card border ${
+                      view.action?.kind === "claim"
+                        ? "border-accent/40 bg-accent/[0.06]"
+                        : "border-line bg-panel"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setExpanded((cur) => (cur === row.id ? null : row.id))}
+                      aria-expanded={isOpen}
+                      className="mono w-full px-4 py-3 text-left text-[12px]"
+                    >
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span>
+                          #{row.id.toString().padStart(4, "0")}
+                          <span className="ml-2 text-[11px] text-dim">{ago(row.mintedAtMs)}</span>
+                        </span>
+                        <span className={view.statusClass}>{view.statusLabel}</span>
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-2 text-dim">
+                        {row.parlay.legs.length} {row.parlay.legs.length === 1 ? "leg" : "legs"}
+                        <LegDots verdicts={row.legVerdicts} />
+                        <span
+                          className={`ml-auto transition-transform motion-reduce:transition-none ${isOpen ? "rotate-90" : ""}`}
+                          aria-hidden
+                        >
+                          ›
+                        </span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-3 gap-2">
+                        {(
+                          [
+                            ["Stake", formatUsdc(row.parlay.premium), ""],
+                            ["Mult", multiplier(row.parlay.premium, row.parlay.maxPayout), ""],
+                            ["Max payout", formatUsdc(row.parlay.maxPayout), view.payoutClass],
+                          ] as const
+                        ).map(([label, value, cls]) => (
+                          <div key={label}>
+                            <p className="text-[9px] uppercase tracking-[0.16em] text-dim">{label}</p>
+                            <p className={`mt-0.5 ${cls}`}>{value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </button>
+                    {view.action && (
+                      <div className="px-4 pb-3">
+                        <button
+                          type="button"
+                          disabled={isPending}
+                          onClick={() => void act(row, view.action!.kind)}
+                          className={`mono w-full rounded-[4px] px-3 py-2 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                            view.action.kind === "claim"
+                              ? "bg-accent font-medium text-on-accent hover:opacity-90"
+                              : "border border-line text-fg hover:border-dim"
+                          }`}
+                        >
+                          {isPending
+                            ? view.action.kind === "claim"
+                              ? "Claiming…"
+                              : "Resolving…"
+                            : view.action.label}
+                        </button>
+                        {rowError && <p className="mt-2 text-[11px] text-no">{rowError}</p>}
+                      </div>
+                    )}
+                    {!view.action && rowError && (
+                      <p className="px-4 pb-3 text-[11px] text-no">{rowError}</p>
+                    )}
+                    {isOpen && (
+                      <div className="border-t border-line">
+                        <LegTable row={row} markets={marketsByVault} mids={mids} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-4 hidden overflow-x-auto rounded-card border border-line bg-panel md:block">
               <table className="w-full min-w-[860px] text-left text-sm">
                 <thead className="mono text-[9px] uppercase tracking-[0.16em] text-dim">
                   <tr className="border-b border-line">

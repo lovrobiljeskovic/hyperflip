@@ -320,7 +320,7 @@ export default async function Home() {
               overround
             </span>
           </Link>
-          <p>HyperEVM testnet beta · not investment advice</p>
+          <p>HyperEVM testnet beta</p>
           <div className="flex gap-5">
             <a href="https://hyperliquid.xyz" className="transition-colors hover:text-fg">
               Hyperliquid

@@ -47,10 +47,17 @@ function PriceCell({
       disabled={mid === null}
       aria-pressed={selected}
       aria-label={label}
-      className={`mono w-full px-2 py-1 text-right transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-        selected ? "bg-accent" : ""
+      className={`mono w-full rounded-[4px] border border-line px-2 py-1.5 text-center transition-colors disabled:cursor-not-allowed disabled:opacity-40 sm:rounded-none sm:border-0 sm:py-1 sm:text-right ${
+        selected ? "border-accent bg-accent" : ""
       }`}
     >
+      <span
+        className={`mr-1.5 text-[10px] uppercase sm:hidden ${
+          selected ? "text-on-accent/70" : "text-dim"
+        }`}
+      >
+        {side}
+      </span>
       <span
         className={`text-[13px] ${
           selected ? "text-on-accent" : side === "YES" ? "text-yes" : "text-no"
@@ -112,7 +119,7 @@ function BoardRow({
   const no = midOf(mids, market.coinNo);
   return (
     <div
-      className={`grid grid-cols-[1fr_110px_110px_90px] items-center gap-x-3 border-t border-line px-5 py-3 ${
+      className={`border-t border-line px-4 py-3 sm:grid sm:grid-cols-[1fr_110px_110px_90px] sm:items-center sm:gap-x-3 sm:px-5 ${
         current ? "bg-accent/[0.07]" : ""
       }`}
     >
@@ -124,24 +131,32 @@ function BoardRow({
           <p className="truncate text-[13px]">{market.title}</p>
           <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">
             {market.category}
+            <span className="sm:hidden">
+              {" · "}
+              {market.expiryMs ? until(market.expiryMs) : "—"}
+            </span>
           </p>
         </div>
       </div>
-      <PriceCell
-        mid={yes}
-        side="YES"
-        selected={current?.isYes === true}
-        label={`Take YES on ${market.title} at ${yes === null ? "no price" : pct1(yes)}`}
-        onPick={() => onPick(market, true)}
-      />
-      <PriceCell
-        mid={no}
-        side="NO"
-        selected={current?.isYes === false}
-        label={`Take NO on ${market.title} at ${no === null ? "no price" : pct1(no)}`}
-        onPick={() => onPick(market, false)}
-      />
-      <span className="mono text-right text-[12px] text-dim">
+      {/* Mobile: two half-width buttons under the title; sm+: `contents`
+          dissolves the wrapper so the cells land in the outer 4-col grid. */}
+      <div className="mt-2 grid grid-cols-2 gap-2 sm:contents">
+        <PriceCell
+          mid={yes}
+          side="YES"
+          selected={current?.isYes === true}
+          label={`Take YES on ${market.title} at ${yes === null ? "no price" : pct1(yes)}`}
+          onPick={() => onPick(market, true)}
+        />
+        <PriceCell
+          mid={no}
+          side="NO"
+          selected={current?.isYes === false}
+          label={`Take NO on ${market.title} at ${no === null ? "no price" : pct1(no)}`}
+          onPick={() => onPick(market, false)}
+        />
+      </div>
+      <span className="mono hidden text-right text-[12px] text-dim sm:block">
         {market.expiryMs ? until(market.expiryMs) : "—"}
       </span>
     </div>
@@ -218,7 +233,7 @@ export default function BuildPage() {
     <div className="min-h-screen text-[13px] text-fg">
       <AppHeader ground="dark" />
 
-      <main className="mx-auto grid max-w-6xl px-6 py-10 lg:grid-cols-[1fr_380px]">
+      <main className="mx-auto grid max-w-6xl px-4 py-8 pb-24 sm:px-6 sm:py-10 lg:grid-cols-[1fr_380px] lg:pb-10">
         <section className="lg:border-r lg:border-line lg:pr-8">
           <div className="flex items-baseline justify-between gap-4">
             <h1 className="display text-[26px] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
@@ -267,10 +282,10 @@ export default function BuildPage() {
               <p className="rounded-card border border-line bg-panel p-6 text-dim">No markets listed.</p>
             ) : (
               <div className="border border-line">
-                <div className="mono grid grid-cols-[1fr_110px_110px_90px] gap-x-3 bg-panel px-5 py-3 text-[9px] uppercase tracking-[0.16em] text-dim">
+                <div className="mono flex justify-between gap-x-3 bg-panel px-4 py-3 text-[9px] uppercase tracking-[0.16em] text-dim sm:grid sm:grid-cols-[1fr_110px_110px_90px] sm:px-5">
                   <span>Market</span>
-                  <span className="pr-2 text-right">Yes</span>
-                  <span className="pr-2 text-right">No</span>
+                  <span className="hidden pr-2 text-right sm:block">Yes</span>
+                  <span className="hidden pr-2 text-right sm:block">No</span>
                   <button
                     type="button"
                     onClick={() => setExpiryAsc((v) => !v)}
@@ -288,10 +303,25 @@ export default function BuildPage() {
           </div>
         </section>
 
-        <aside className="mt-8 lg:mt-0 lg:sticky lg:top-24 lg:self-start lg:pl-8">
+        <aside id="slip" className="mt-8 scroll-mt-20 lg:mt-0 lg:sticky lg:top-24 lg:self-start lg:pl-8">
           <Ticket legs={legs} onRemove={removeLeg} />
         </aside>
       </main>
+
+      {/* Mobile: the slip lives below the whole board — this bar keeps the
+          picked legs one tap away instead of a long scroll. */}
+      {legs.length > 0 && (
+        <button
+          type="button"
+          onClick={() => document.getElementById("slip")?.scrollIntoView({ block: "start" })}
+          className="mono fixed inset-x-4 bottom-4 z-20 flex items-center justify-between rounded-card bg-accent px-5 py-3 text-[12px] font-medium text-on-accent shadow-[0_12px_32px_rgba(4,10,12,0.5)] lg:hidden"
+        >
+          <span>View slip</span>
+          <span>
+            {legs.length} {legs.length === 1 ? "leg" : "legs"}
+          </span>
+        </button>
+      )}
     </div>
   );
 }
