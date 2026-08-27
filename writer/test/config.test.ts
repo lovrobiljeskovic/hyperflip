@@ -1,7 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseMarkets, parseInviteCodes, parseCorsOrigins, defaultPerTakerReservedCap } from "../src/config.js";
+import {
+  parseMarkets,
+  parseInviteCodes,
+  parseCorsOrigins,
+  defaultPerTakerReservedCap,
+  syncedPerTakerReservedCap,
+  loadConfig,
+} from "../src/config.js";
 import { parseCorrelations } from "../src/correlation.js";
 
 const VAULT = "0x1111111111111111111111111111111111111111";
@@ -87,6 +94,58 @@ test("defaultPerTakerReservedCap tracks minPremiumBps, not a fixed multiple of m
   assert.equal(defaultPerTakerReservedCap(1_000_000n, 200n), 1_000_000n * 147n);
   // a looser 50bps doubles it -> 10000/50 - 1 = 199x, *3 = 597x
   assert.equal(defaultPerTakerReservedCap(1_000_000n, 50n), 1_000_000n * 597n);
+});
+
+// mainnet-hardening final review: index.ts overwrites cfg.minPremiumBps with
+// the chain value after loadConfig runs, so a PER_TAKER_RESERVED_CAP left to
+// default must be recomputed off that chain value too, or it silently keeps
+// pricing against the stale env minPremiumBps.
+test("syncedPerTakerReservedCap recomputes the default off the chain value, but never touches an explicit override", () => {
+  assert.equal(
+    syncedPerTakerReservedCap(false, 1_000_000n * 297n, 1_000_000n, 200n),
+    defaultPerTakerReservedCap(1_000_000n, 200n),
+  );
+  const explicit = 42n;
+  assert.equal(syncedPerTakerReservedCap(true, explicit, 1_000_000n, 200n), explicit);
+});
+
+// mainnet-hardening final review: isSpotPxStale is `now - lastFreshMs > staleMs`;
+// a NaN staleMs makes every comparison false, silently disabling the P0-1
+// freshness gate. loadConfig must refuse to boot instead.
+test("loadConfig throws on a non-numeric SPOT_PX_STALE_MS", () => {
+  const keys = [
+    "MARKETS_FILE",
+    "MAX_STAKE",
+    "PER_MARKET_CAP",
+    "PER_CLUSTER_CAP",
+    "INVITE_CODES",
+    "PARLAY_VAULT_ADDRESS",
+    "WRITER_ADDRESS",
+    "QUOTE_SIGNER_PRIVATE_KEY",
+    "POKER_PRIVATE_KEY",
+    "TESTNET_RPC",
+    "SPOT_PX_STALE_MS",
+  ];
+  const saved = new Map(keys.map((k) => [k, process.env[k]]));
+  try {
+    process.env.MARKETS_FILE = "registry/markets.json";
+    process.env.MAX_STAKE = "1000000";
+    process.env.PER_MARKET_CAP = "1000000";
+    process.env.PER_CLUSTER_CAP = "1000000";
+    process.env.INVITE_CODES = "test";
+    process.env.PARLAY_VAULT_ADDRESS = "0x1111111111111111111111111111111111111111";
+    process.env.WRITER_ADDRESS = "0x2222222222222222222222222222222222222222";
+    process.env.QUOTE_SIGNER_PRIVATE_KEY = `0x${"11".repeat(32)}`;
+    process.env.POKER_PRIVATE_KEY = `0x${"22".repeat(32)}`;
+    process.env.TESTNET_RPC = "http://localhost:1";
+    process.env.SPOT_PX_STALE_MS = "not-a-number";
+    assert.throws(() => loadConfig(), /SPOT_PX_STALE_MS/);
+  } finally {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
 });
 
 test("the shipped correlations file parses and covers a registry's clusters and underlyings", () => {

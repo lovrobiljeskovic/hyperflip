@@ -57,11 +57,15 @@ export interface WriterConfig {
    * pinning quotable headroom for everyone else (mainnet-hardening P0-4) — a
    * liveness refinement, not a solvency cap; the allowance stays that.
    * Default derivation: priceParlay's floorCap caps a single quote's risk at
-   * (BPS/minPremiumBps - 1) * stake — computed from the live minPremiumBps
-   * config, not a hardcoded multiple, so a deployment that changes
-   * MIN_PREMIUM_BPS without setting PER_TAKER_RESERVED_CAP still gets a
-   * default that matches its own floorCap (~99x maxStake at the default
-   * 100bps). poker's polling lag (pokerIntervalMs, default 15s) means a
+   * (BPS/minPremiumBps - 1) * stake — computed from minPremiumBps, not a
+   * hardcoded multiple, so a deployment that changes MIN_PREMIUM_BPS without
+   * setting PER_TAKER_RESERVED_CAP still gets a default that matches its own
+   * floorCap (~99x maxStake at the default 100bps). minPremiumBps is
+   * owner-settable on-chain and the chain value always wins over env at
+   * startup (index.ts) — when PER_TAKER_RESERVED_CAP was left unset, index.ts
+   * recomputes this default off the synced chain value so it still tracks
+   * the live floorCap, not the stale env one. poker's polling lag
+   * (pokerIntervalMs, default 15s) means a
    * just-minted reservation can still count as "reserved" for a beat after the
    * taker already minted, so honest sequential minting can briefly hold 2-3
    * near-max reservations at once — hence the further *3 below, giving room
@@ -190,6 +194,19 @@ export function defaultPerTakerReservedCap(maxStake: bigint, minPremiumBps: bigi
   return maxStake * (BPS / minPremiumBps - 1n) * 3n;
 }
 
+/** Refresh perTakerReservedCap after index.ts syncs minPremiumBps from chain
+ * (chain always wins — see WriterConfig.minPremiumBps). Only recomputes when
+ * PER_TAKER_RESERVED_CAP was left unset at load time, so an explicit env
+ * override is never silently clobbered by the chain sync. */
+export function syncedPerTakerReservedCap(
+  envWasSet: boolean,
+  current: bigint,
+  maxStake: bigint,
+  chainMinPremiumBps: bigint,
+): bigint {
+  return envWasSet ? current : defaultPerTakerReservedCap(maxStake, chainMinPremiumBps);
+}
+
 export function loadConfig(): WriterConfig {
   const registryJson = readFileSync(path.resolve(here, "../..", requireEnv("MARKETS_FILE")), "utf8");
   const correlations = parseCorrelations(
@@ -225,6 +242,14 @@ export function loadConfig(): WriterConfig {
   }
   const maxStake = BigInt(requireEnv("MAX_STAKE"));
   const minPremiumBps = BigInt(process.env.MIN_PREMIUM_BPS ?? 100);
+  const spotPxStaleMs = Number(process.env.SPOT_PX_STALE_MS ?? 60_000);
+  // isSpotPxStale is `now - lastFreshMs > staleMs`; a NaN staleMs makes every
+  // comparison false, silently disabling the P0-1 freshness gate instead of
+  // refusing quotes. Same "refuse to boot on malformed input" posture as the
+  // correlation table check above.
+  if (!Number.isFinite(spotPxStaleMs)) {
+    throw new Error("SPOT_PX_STALE_MS must be a finite number");
+  }
   return {
     // The writer never touches the 0x814 precompile (keeper-only), which is the sole
     // reason TESTNET_RPC is pinned to the official endpoint — and that endpoint
@@ -251,7 +276,7 @@ export function loadConfig(): WriterConfig {
     correlations,
     legEdgeBps: BigInt(process.env.LEG_EDGE_BPS ?? 300),
     quoteTtlMs: Number(process.env.QUOTE_TTL_MS ?? 30_000),
-    spotPxStaleMs: Number(process.env.SPOT_PX_STALE_MS ?? 60_000),
+    spotPxStaleMs,
     // ponytail: 50 is a placeholder floor, not a measured mainnet depth figure —
     // recalibrate against real outcome-book liquidity before mainnet launch.
     minBookDepthWad: parseDecimalToUnits(process.env.MIN_BOOK_DEPTH ?? "50", 18),
