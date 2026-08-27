@@ -198,7 +198,7 @@ export async function handleQuote(
   // All chain/API reads happened above; the signing await happens after the reserve.
   const now = deps.now();
   const risk = priced.maxPayout - priced.premium;
-  const check = exposure.check(risk, vaults, allowance, cfg.perMarketCap, now, cfg.perClusterCap);
+  const check = exposure.check(risk, vaults, allowance, cfg.perMarketCap, now, cfg.perClusterCap, v.taker, cfg.perTakerReservedCap);
   if (!check.ok) {
     reject(metrics, check.reason);
     // Structured at-capacity log: the bankroll topup signal (spec §6).
@@ -211,7 +211,7 @@ export async function handleQuote(
     return { status: 409, json: { error: check.reason, maxStake: fitStake.toString() } };
   }
   const quoteId = deps.randomId();
-  exposure.reserve(quoteId, risk, vaults, now + cfg.quoteTtlMs);
+  exposure.reserve(quoteId, risk, vaults, now + cfg.quoteTtlMs, v.taker);
 
   const quote: ParlayQuote = {
     taker: v.taker,

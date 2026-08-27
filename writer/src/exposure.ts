@@ -2,6 +2,7 @@ interface Reservation {
   risk: bigint;
   vaults: string[];
   expiresAt: number;
+  taker: string;
 }
 
 interface OpenParlay {
@@ -54,6 +55,19 @@ export class ExposureBook {
     return sum;
   }
 
+  /** Reserved-but-unminted risk for one taker (mainnet-hardening P0-4). Opens are
+   * deliberately excluded: once a reservation converts via onMinted it's covered
+   * by the allowance/per-market/per-cluster caps like any other open position,
+   * so counting it again here would punish honest sequential minting instead of
+   * throttling a taker who never mints. */
+  reservedByTaker(taker: string, now: number): bigint {
+    this.pruneExpired(now);
+    const t = taker.toLowerCase();
+    let sum = 0n;
+    for (const r of this.reservations.values()) if (r.taker === t) sum += r.risk;
+    return sum;
+  }
+
   check(
     risk: bigint,
     vaults: string[],
@@ -61,7 +75,9 @@ export class ExposureBook {
     perMarketCap: bigint,
     now: number,
     perClusterCap?: bigint,
-  ): { ok: true } | { ok: false; reason: "at-capacity" | "market-cap" | "cluster-cap"; headroom: bigint } {
+    taker?: string,
+    perTakerCap?: bigint,
+  ): { ok: true } | { ok: false; reason: "at-capacity" | "market-cap" | "cluster-cap" | "taker-cap"; headroom: bigint } {
     // `headroom` is what the binding cap has left. Risk scales linearly with
     // stake, so the caller can turn it into "this ticket fits at stake X"
     // instead of a dead end the taker cannot act on.
@@ -84,11 +100,20 @@ export class ExposureBook {
         if (risk > room) return { ok: false, reason: "cluster-cap", headroom: room > 0n ? room : 0n };
       }
     }
+    if (taker !== undefined && perTakerCap !== undefined) {
+      const room = perTakerCap - this.reservedByTaker(taker, now);
+      if (risk > room) return { ok: false, reason: "taker-cap", headroom: room > 0n ? room : 0n };
+    }
     return { ok: true };
   }
 
-  reserve(quoteId: string, risk: bigint, vaults: string[], expiresAt: number): void {
-    this.reservations.set(quoteId, { risk, vaults: vaults.map((v) => v.toLowerCase()), expiresAt });
+  reserve(quoteId: string, risk: bigint, vaults: string[], expiresAt: number, taker: string): void {
+    this.reservations.set(quoteId, {
+      risk,
+      vaults: vaults.map((v) => v.toLowerCase()),
+      expiresAt,
+      taker: taker.toLowerCase(),
+    });
   }
 
   /** Undo a reservation that never became a mint (e.g. signing failed after reserve). */

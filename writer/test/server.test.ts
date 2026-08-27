@@ -56,6 +56,7 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     pokerKey: `0x${"22".repeat(32)}` as `0x${string}`,
     infoApiUrl: "", port: 0, edgeBps: 0n, minPremiumBps: 100n, minLegs: 2,
     maxStake: 10_000_000n, perMarketCap: 1_000_000_000n, perClusterCap: 1_000_000_000n,
+    perTakerReservedCap: 1_000_000_000n,
     rhoBandPct: 0.2, correlations: CORRELATIONS, legEdgeBps: 0n, quoteTtlMs: 30_000,
     spotPxStaleMs: 60_000,
     minBookDepthWad: 0n,
@@ -274,6 +275,32 @@ test("at-capacity: 409, metrics counted", async () => {
   assert.equal(r.status, 409);
   assert.equal(d.metrics.rejected["at-capacity"], 1);
   assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
+});
+
+test("taker-cap: 409 once one taker's unminted reservations hit their cap; a second taker is unaffected", async () => {
+  const OTHER_TAKER = "0x4444444444444444444444444444444444444444" as Address;
+  // goodBody's risk is 7_422_341n (see the happy-path test); cap it just under
+  // that so a second quote from the same taker trips the per-taker gate.
+  const d = deps({ cfg: cfg({ perTakerReservedCap: 7_422_341n }) });
+  const first = await handleQuote(d, goodBody);
+  assert.equal(first.status, 200);
+  const second = await handleQuote(d, goodBody);
+  assert.equal(second.status, 409);
+  assert.deepEqual(second.json, { error: "taker-cap", maxStake: "0" });
+  assert.equal(d.metrics.rejected["taker-cap"], 1);
+  // A different taker, same market/cluster headroom, is unaffected.
+  const other = await handleQuote(d, { ...goodBody, taker: OTHER_TAKER });
+  assert.equal(other.status, 200);
+});
+
+test("taker-cap: reservation expiry frees the taker's budget for a new quote", async () => {
+  const d = deps({ cfg: cfg({ perTakerReservedCap: 7_422_341n }) });
+  let now = 1_000_000;
+  const dWithClock = { ...d, now: () => now };
+  assert.equal((await handleQuote(dWithClock, goodBody)).status, 200);
+  assert.equal((await handleQuote(dWithClock, goodBody)).status, 409);
+  now += 30_001; // past the 30s quoteTtlMs default -> reservation expired
+  assert.equal((await handleQuote(dWithClock, goodBody)).status, 200);
 });
 
 test("sign failure: 503, reservation released, metrics counted", async () => {

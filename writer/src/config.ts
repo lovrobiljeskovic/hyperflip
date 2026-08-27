@@ -51,6 +51,20 @@ export interface WriterConfig {
   maxStake: bigint;
   perMarketCap: bigint;
   perClusterCap: bigint;
+  /** Cap on one taker's reserved-but-unminted risk (sum of live /quote
+   * reservations keyed by `taker`), independent of the per-IP request-rate
+   * limiter. Mitigates a taker who quotes repeatedly and never mints from
+   * pinning quotable headroom for everyone else (mainnet-hardening P0-4) — a
+   * liveness refinement, not a solvency cap; the allowance stays that.
+   * Default derivation: priceParlay's floorCap caps a single quote's risk at
+   * (BPS/minPremiumBps - 1) * stake, ~99x maxStake at the default 100bps
+   * minPremiumBps; poker's polling lag (pokerIntervalMs, default 15s) means a
+   * just-minted reservation can still count as "reserved" for a beat after the
+   * taker already minted, so honest sequential minting can briefly hold 2-3
+   * near-max reservations at once. 300x maxStake covers ~3 such reservations
+   * with room to spare, while still bounding a single address to a small slice
+   * of a real bankroll's allowance/perMarketCap. */
+  perTakerReservedCap: bigint;
   /** Multiplicative half-width of the correlation uncertainty band. The pricer
    * evaluates the joint probability at (1 - x) and (1 + x) times every pairwise
    * rho and quotes the house-favorable end, so the house is paid for the fact
@@ -184,6 +198,7 @@ export function loadConfig(): WriterConfig {
       }),
     );
   }
+  const maxStake = BigInt(requireEnv("MAX_STAKE"));
   return {
     // The writer never touches the 0x814 precompile (keeper-only), which is the sole
     // reason TESTNET_RPC is pinned to the official endpoint — and that endpoint
@@ -200,9 +215,10 @@ export function loadConfig(): WriterConfig {
     edgeBps: BigInt(process.env.EDGE_BPS ?? 500),
     minPremiumBps: BigInt(process.env.MIN_PREMIUM_BPS ?? 100),
     minLegs: Number(process.env.MIN_LEGS ?? 2),
-    maxStake: BigInt(requireEnv("MAX_STAKE")),
+    maxStake,
     perMarketCap: BigInt(requireEnv("PER_MARKET_CAP")),
     perClusterCap: BigInt(requireEnv("PER_CLUSTER_CAP")),
+    perTakerReservedCap: process.env.PER_TAKER_RESERVED_CAP ? BigInt(process.env.PER_TAKER_RESERVED_CAP) : maxStake * 300n,
     rhoBandPct: Number(process.env.RHO_BAND_PCT ?? 0.2),
     correlations,
     legEdgeBps: BigInt(process.env.LEG_EDGE_BPS ?? 300),
