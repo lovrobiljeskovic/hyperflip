@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isAddress, type Address } from "viem";
 import { parseCorrelations, type CorrelationTable } from "./correlation.js";
+import { parseDecimalToUnits } from "./pure.js";
 
 // .env lives at the repo root, one level above writer/ — same pattern as keeper/config.ts.
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -67,6 +68,11 @@ export interface WriterConfig {
    * confirmed-live timestamp is older than this. spotPx has no on-chain timestamp
    * (see writer/src/spotPx.ts), so freshness is tracked writer-side off book fetches. */
   spotPxStaleMs: number;
+  /** Minimum cumulative ask-side `sz` (same units as l2Book's `sz`, WAD-scaled) a
+   * book must cover before its price is trusted; below this it's treated as empty
+   * and falls through to spotPx (mainnet-hardening P0-3 — a 1-lot spoofed top
+   * can't move a quote). See writer/src/infoApi.ts `bestAskWad`. */
+  minBookDepthWad: bigint;
   lockoutMs: number;
   pokerIntervalMs: number;
   /** Block ParlayVault was deployed at — startup event scan starts here. */
@@ -202,6 +208,9 @@ export function loadConfig(): WriterConfig {
     legEdgeBps: BigInt(process.env.LEG_EDGE_BPS ?? 300),
     quoteTtlMs: Number(process.env.QUOTE_TTL_MS ?? 30_000),
     spotPxStaleMs: Number(process.env.SPOT_PX_STALE_MS ?? 60_000),
+    // ponytail: 50 is a placeholder floor, not a measured mainnet depth figure —
+    // recalibrate against real outcome-book liquidity before mainnet launch.
+    minBookDepthWad: parseDecimalToUnits(process.env.MIN_BOOK_DEPTH ?? "50", 18),
     lockoutMs: Number(process.env.LOCKOUT_MS ?? 600_000),
     pokerIntervalMs: Number(process.env.POKER_INTERVAL_MS ?? 15_000),
     deployBlock: BigInt(process.env.PARLAY_DEPLOY_BLOCK ?? 0),

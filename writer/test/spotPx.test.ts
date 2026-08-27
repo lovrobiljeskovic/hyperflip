@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { decodeAbiParameters, encodeAbiParameters } from "viem";
 import { buildPriceFreshness, isSpotPxStale, makeLegPriceFetcher, readSpotPxWad, SPOT_PX_PRECOMPILE } from "../src/spotPx.js";
+import { bestAskWad } from "../src/infoApi.js";
+import { parseDecimalToUnits } from "../src/pure.js";
 
 /** Fake viem client: records the call, returns a canned uint64 px encoding. */
 function fakeClient(raw: bigint) {
@@ -116,4 +118,43 @@ test("buildPriceFreshness: /health per-coin age — fresh coin is a number, unco
   const markets = [{ coinYes: "+1", coinNo: "+2" }];
   const freshness = buildPriceFreshness(markets, (coin) => fetcher.ageMs(coin));
   assert.deepEqual(freshness, { "+1": 0, "+2": null });
+});
+
+// mainnet-hardening P0-3: bestAskWad (infoApi.ts) now returns null for a book
+// too thin to cover MIN_BOOK_DEPTH — the same "no usable ask" signal an empty
+// book gives. These wire that straight into makeLegPriceFetcher to check the
+// interaction P0-1 depends on: a too-thin ask must not stamp freshness, or a
+// spoofed 1-lot could fake liveness and keep the staleness clock from ever
+// expiring.
+test("makeLegPriceFetcher: a too-thin book falls back to spotPx and does not stamp freshness", async () => {
+  const minDepthWad = parseDecimalToUnits("50", 18);
+  const thinBook = { levels: [[], [{ px: "0.05", sz: "1", n: 1 }]] }; // 1-lot spoof, short of depth
+  const fetcher = makeLegPriceFetcher({
+    fetchBook: async () => bestAskWad(thinBook, minDepthWad),
+    readSpotPx: async () => 999n,
+    staleMs: 60_000,
+    now: () => 1_000_000,
+  });
+  // Never confirmed live (thin book never stamps) -> spotPx stale by definition -> refused.
+  await assert.rejects(() => fetcher.fetch("+1"), /stale/);
+  assert.equal(fetcher.ageMs("+1"), null);
+});
+
+test("makeLegPriceFetcher: a depth-covering ask stamps freshness; a later too-thin read doesn't erase it", async () => {
+  const minDepthWad = parseDecimalToUnits("50", 18);
+  const fatBook = { levels: [[], [{ px: "0.60", sz: "100", n: 1 }]] }; // covers depth alone
+  const thinBook = { levels: [[], [{ px: "0.05", sz: "1", n: 1 }]] }; // 1-lot spoof, short of depth
+  let now = 1_000_000;
+  let book = fatBook;
+  const fetcher = makeLegPriceFetcher({
+    fetchBook: async () => bestAskWad(book, minDepthWad),
+    readSpotPx: async () => 999n,
+    staleMs: 60_000,
+    now: () => now,
+  });
+  assert.equal(await fetcher.fetch("+1"), 600_000_000_000_000_000n); // depth-covering ask prices normally, stamps fresh
+  now = 1_030_000; // 30s later, still inside the 60s staleness window
+  book = thinBook; // book goes thin — spoofed top only
+  assert.equal(await fetcher.fetch("+1"), 999n); // treated as empty -> spotPx (still fresh from the earlier real ask)
+  assert.equal(fetcher.ageMs("+1"), 30_000); // age dates to the last depth-covering ask, not the thin read
 });

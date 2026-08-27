@@ -58,6 +58,7 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     maxStake: 10_000_000n, perMarketCap: 1_000_000_000n, perClusterCap: 1_000_000_000n,
     rhoBandPct: 0.2, correlations: CORRELATIONS, legEdgeBps: 0n, quoteTtlMs: 30_000,
     spotPxStaleMs: 60_000,
+    minBookDepthWad: 0n,
     lockoutMs: 600_000, pokerIntervalMs: 15_000, deployBlock: 0n,
     inviteCodes: new Set(["beta-test"]),
     waitlistFile: "/dev/null",

@@ -68,7 +68,7 @@ async function main(): Promise<void> {
   // leg once that coin hasn't had a real book price in SPOT_PX_STALE_MS — see mainnet-hardening
   // P0-1. exposure caps still bound the damage from a normal (in-window) fallback.
   const legPriceFetcher = makeLegPriceFetcher({
-    fetchBook: (coin) => fetchBestAskWad(cfg.infoApiUrl, coin),
+    fetchBook: (coin) => fetchBestAskWad(cfg.infoApiUrl, coin, cfg.minBookDepthWad),
     readSpotPx: (coin) => readSpotPxWad(publicClient, BigInt(coin.slice(1))),
     staleMs: cfg.spotPxStaleMs,
     now: () => Date.now(),
