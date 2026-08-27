@@ -25,3 +25,4 @@ keeper/settlement-cache.json
 
 # Beta waitlist store (emails + issued invite codes — never commit)
 writer/waitlist.json
+.superpowers/
