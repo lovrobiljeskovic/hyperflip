@@ -299,12 +299,14 @@ function corsAllowedOrigin(req: http.IncomingMessage, allowlist: string[]): stri
 }
 
 /** Headers for a route locked to the allowlist (everything but GET /markets).
- * No Origin header (non-browser caller) or a disallowed Origin both yield {}
- * — no ACAO header, so the request still proceeds; only a browser reading the
- * response is stopped, and only for a disallowed origin. */
+ * A disallowed or missing Origin omits Access-Control-Allow-Origin — the
+ * request still proceeds server-side; only a browser reading the response is
+ * stopped, and only for a disallowed origin. Vary: Origin is set either way
+ * since the response headers differ by Origin regardless of match — without
+ * it a cache could serve one origin's ACAO (or lack of it) to another. */
 function lockedCors(req: http.IncomingMessage, allowlist: string[]): Record<string, string> {
   const origin = corsAllowedOrigin(req, allowlist);
-  return origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : {};
+  return { Vary: "Origin", ...(origin ? { "Access-Control-Allow-Origin": origin } : {}) };
 }
 
 export function startServer(deps: QuoteDeps, port: number, health: () => unknown): http.Server {
@@ -323,8 +325,12 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
       res.end(JSON.stringify(json));
     };
     if (req.method === "OPTIONS") {
+      // /markets is open (*) on the real GET, so its preflight (browsers only send
+      // one for non-simple requests — a plain GET here never triggers it in
+      // practice) must match, not fall through to the locked-route default.
+      const cors = req.url === "/markets" ? { "Access-Control-Allow-Origin": "*" } : lockedCors(req, deps.cfg.corsOrigins);
       res.writeHead(204, {
-        ...lockedCors(req, deps.cfg.corsOrigins),
+        ...cors,
         "Access-Control-Allow-Methods": "GET, POST",
         "Access-Control-Allow-Headers": "content-type",
         "Access-Control-Max-Age": "86400",

@@ -395,6 +395,38 @@ test("OPTIONS preflight still 204s with no Origin header (no ACAO to echo)", asy
   }
 });
 
+test("OPTIONS /markets preflight stays open (*), not locked to the allowlist", async () => {
+  const server = startServer(deps(), 0, () => ({ ok: true }));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/markets`, {
+      method: "OPTIONS",
+      headers: { origin: "https://evil.example" },
+    });
+    assert.equal(r.status, 204);
+    assert.equal(r.headers.get("access-control-allow-origin"), "*");
+  } finally {
+    server.close();
+  }
+});
+
+test("POST /quote: disallowed origin still gets Vary: Origin (response is origin-dependent either way)", async () => {
+  const d = deps();
+  const server = startServer(d, 0, () => ({ ok: true }));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/quote`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://evil.example" },
+      body: JSON.stringify(goodBody),
+    });
+    assert.equal(r.headers.get("access-control-allow-origin"), null);
+    assert.equal(r.headers.get("vary"), "Origin");
+  } finally {
+    server.close();
+  }
+});
+
 test("POST /quote: allowed origin gets ACAO echo", async () => {
   const d = deps();
   const server = startServer(d, 0, () => ({ ok: true }));
