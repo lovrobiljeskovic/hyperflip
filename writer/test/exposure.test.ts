@@ -128,3 +128,29 @@ test("taker-cap: address matching is case-insensitive", () => {
   b.reserve("q1", 60n, [V1], 10_000, T1.toUpperCase().replace("0X", "0x"));
   assert.equal(b.reservedByTaker(T1, 0), 60n);
 });
+
+// mainnet-hardening P1-7: reserve->mint accounting gap. Without a grace period, a
+// reservation that expires right as the taker mints vanishes from the book before
+// the poker's next tick detects the mint and re-adds it as `open` — a second quote
+// landing in that gap sees stale (too-low) exposure and could push a per-market cap.
+test("reservationGraceMs: an expired-but-undetected reservation keeps counting until grace elapses", () => {
+  const b = new ExposureBook(undefined, 500);
+  b.reserve("q1", 60n, [V1], 1000, T1); // TTL expires at t=1000
+  // t=1001: past the TTL, but still within the 500ms grace -> still counted.
+  const r = b.check(50n, [V2], 100n, 1000n, 1001);
+  assert.deepEqual(r, { ok: false, reason: "at-capacity", headroom: 40n }); // 100 allowance - 60 still held
+});
+
+test("reservationGraceMs: onMinted converts the reservation immediately, grace or not", () => {
+  const b = new ExposureBook(undefined, 500);
+  b.reserve("q1", 60n, [V1], 1000, T1);
+  b.onMinted("q1", "1", 60n, [V1]); // mint detected before grace would have elapsed
+  assert.equal(b.reservedGlobal(1001), 0n); // no double count once it's real `open`
+  assert.equal(b.perMarket(V1, 1001), 60n);
+});
+
+test("reservationGraceMs: a truly abandoned reservation is still pruned once grace elapses", () => {
+  const b = new ExposureBook(undefined, 500);
+  b.reserve("q1", 60n, [V1], 1000, T1);
+  assert.equal(b.check(50n, [V2], 100n, 1000n, 1501).ok, true); // 1000 + 500 <= 1501
+});

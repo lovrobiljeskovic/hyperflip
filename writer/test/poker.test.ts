@@ -175,3 +175,74 @@ test("fetchEvents: a failed chunk keeps earlier chunks and resumes there next ti
   await poker.tick();
   assert.deepEqual(requested, [2000n]); // resumed where it left off, did not rescan 0..1999
 });
+
+// mainnet-hardening P1-6: a restart with N open parlays on-chain must rebuild `open`
+// (and thus the caps) without scanning from deployBlock.
+test("seed: rebuilds open (and caps) from on-chain state, then tick resumes at head not deployBlock", async () => {
+  const V2 = "0x2222222222222222222222222222222222222222" as Address;
+  const exposure = new ExposureBook();
+  const requestedFrom: bigint[] = [];
+  const deps: PokerDeps = {
+    publicClient: null as unknown as PokerDeps["publicClient"],
+    parlayVault: VAULT,
+    exposure,
+    metrics: newMetrics(),
+    fromBlock: 0n, // would rescan from genesis if seed() didn't override nextBlock
+    resolve: async () => {},
+    log: () => {},
+    fetchOpenParlays: async () => ({
+      open: [
+        { id: 5n, legs: [{ vault: V1, isYes: true }], risk: 30n },
+        { id: 9n, legs: [{ vault: V2, isYes: false }], risk: 20n },
+      ],
+      headBlock: 500_000n,
+    }),
+    fetchEvents: async (fromBlock) => {
+      requestedFrom.push(fromBlock);
+      return { minted: [], resolvedIds: [], toBlock: fromBlock };
+    },
+    fetchLegStates: async () => new Map(),
+  };
+  const poker = new Poker(deps);
+  await poker.seed();
+
+  assert.equal(poker.openCount(), 2); // both open parlays rebuilt, N=2
+  assert.equal(exposure.perMarket(V1, 0), 30n); // per-market cap sees true exposure immediately
+  assert.equal(exposure.perMarket(V2, 0), 20n);
+
+  await poker.tick();
+  assert.deepEqual(requestedFrom, [500_001n]); // resumed at head+1, not deployBlock (fromBlock=0n)
+});
+
+test("fetchOpenParlays default: reads nextId + parlay(id), keeps only Status.Open ids", async () => {
+  const nextId = 4n;
+  const parlays: Record<string, { legs: { vault: Address; isYes: boolean }[]; premium: bigint; maxPayout: bigint; status: number }> = {
+    "1": { legs: [{ vault: V1, isYes: true }], premium: 1n, maxPayout: 5n, status: 0 }, // Open
+    "2": { legs: [{ vault: V1, isYes: true }], premium: 1n, maxPayout: 5n, status: 2 }, // Dead
+    "3": { legs: [{ vault: V1, isYes: true }], premium: 1n, maxPayout: 5n, status: 0 }, // Open
+    "4": { legs: [{ vault: V1, isYes: true }], premium: 1n, maxPayout: 5n, status: 1 }, // Won
+  };
+  const publicClient = {
+    getBlockNumber: async () => 777n,
+    readContract: async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+      if (functionName === "nextId") return nextId;
+      if (functionName === "parlay") return parlays[(args![0] as bigint).toString()];
+      throw new Error(`unexpected readContract call: ${functionName}`);
+    },
+  } as unknown as PokerDeps["publicClient"];
+  const exposure = new ExposureBook();
+
+  const poker = new Poker({
+    publicClient,
+    parlayVault: VAULT,
+    exposure,
+    metrics: newMetrics(),
+    fromBlock: 0n,
+    resolve: async () => {},
+    log: () => {},
+  });
+  await poker.seed();
+
+  assert.equal(poker.openCount(), 2); // only ids 1 and 3 are Status.Open
+  assert.equal(exposure.perMarket(V1, 0), 8n); // (5-1) + (5-1)
+});

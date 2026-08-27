@@ -13,20 +13,34 @@ interface OpenParlay {
 /** In-memory exposure state (spec §4). Global truth is the on-chain writer allowance —
  * this book only tracks live quote reservations on top of it, plus per-market open
  * exposure (which the flat allowance number cannot break down). Lost on restart by
- * design: reservations expire within the quote TTL, per-market opens are rebuilt from
- * ParlayMinted/ParlayResolved events at startup. */
+ * design: reservations expire within the quote TTL (+ grace, see below); per-market
+ * opens are rebuilt from on-chain state at startup (Poker.seed(), mainnet-hardening
+ * P1-6) instead of replaying ParlayMinted/ParlayResolved from genesis. */
 export class ExposureBook {
   private reservations = new Map<string, Reservation>();
   private open = new Map<string, OpenParlay>();
 
-  /** Maps a lowercase vault address to its correlation cluster; injected so the
-   * book can bucket entries recorded before/after registry changes without
-   * storing cluster snapshots. Default: no clusters (cluster cap inert). */
-  constructor(private clusterOf: (vault: string) => string | undefined = () => undefined) {}
+  /** @param clusterOf Maps a lowercase vault address to its correlation cluster;
+   * injected so the book can bucket entries recorded before/after registry changes
+   * without storing cluster snapshots. Default: no clusters (cluster cap inert).
+   * @param reservationGraceMs Keeps an expired-but-undetected reservation counted
+   * past its TTL (mainnet-hardening P1-7). Without this, a taker who mints right at
+   * the TTL deadline has their risk vanish from the book the instant the reservation
+   * expires, but the poker doesn't detect the mint (and re-add it as `open`) until
+   * its next tick — up to `pokerIntervalMs` later. A second quote request landing in
+   * that gap would see stale headroom and could push real per-market/cluster exposure
+   * past the configured cap. `onMinted` still deletes the reservation immediately
+   * once the mint IS detected, so a real mint is never double-counted; this grace
+   * only delays pruning a reservation nobody has confirmed onto/off chain yet.
+   * Default 0 (exact-TTL pruning, pre-P1-7 behavior). */
+  constructor(
+    private clusterOf: (vault: string) => string | undefined = () => undefined,
+    private reservationGraceMs: number = 0,
+  ) {}
 
   private pruneExpired(now: number): void {
     for (const [id, r] of this.reservations) {
-      if (r.expiresAt <= now) this.reservations.delete(id);
+      if (r.expiresAt + this.reservationGraceMs <= now) this.reservations.delete(id);
     }
   }
 

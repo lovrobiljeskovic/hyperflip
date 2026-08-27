@@ -59,7 +59,13 @@ async function main(): Promise<void> {
   const pokerAccount = privateKeyToAccount(cfg.pokerKey);
   const walletClient = createWalletClient({ account: pokerAccount, transport });
 
-  const exposure = new ExposureBook((v) => cfg.markets.get(v)?.cluster);
+  // Grace period (mainnet-hardening P1-7): a reservation that expires right before its
+  // mint lands stays counted until the poker has had a fair chance to detect the mint
+  // and convert it to `open` — otherwise a second quote could land in that gap and
+  // push real per-market/cluster exposure past the configured cap. 2x pokerIntervalMs
+  // covers "detected on the tick after the one that should have caught it" without
+  // holding a truly abandoned reservation much longer than that.
+  const exposure = new ExposureBook((v) => cfg.markets.get(v)?.cluster, cfg.pokerIntervalMs * 2);
   const metrics = newMetrics();
   // Best ask first: executable and conservative — the house never sells below the book.
   // Empty book or info-API failure falls back to the 0x808 spotPx precompile, the only
@@ -130,6 +136,11 @@ async function main(): Promise<void> {
     },
     log: (msg) => console.log(JSON.stringify({ at: new Date().toISOString(), ...msg })),
   });
+  // Rebuild `open` from on-chain state before quoting starts (mainnet-hardening P1-6)
+  // instead of leaving per-market/cluster caps blind to real exposure until the
+  // deployBlock->head scan catches up — this runs on every nightly rotate.service
+  // restart, so it has to be both fast and correct every night, not just at genesis.
+  await poker.seed();
 
   // POKER_INTERVAL_MS=0 turns the poker off. Quoting and minting are unaffected —
   // the poker only recycles house escrow off DEAD tickets and keeps the exposure
