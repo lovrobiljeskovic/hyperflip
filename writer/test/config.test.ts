@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseMarkets, parseInviteCodes } from "../src/config.js";
+import { parseMarkets, parseInviteCodes, defaultPerTakerReservedCap } from "../src/config.js";
 import { parseCorrelations } from "../src/correlation.js";
 
 const VAULT = "0x1111111111111111111111111111111111111111";
@@ -68,6 +68,18 @@ test("parseMarkets rejects entry missing title/category", () => {
 
 test("parseInviteCodes trims and drops empties", () => {
   assert.deepEqual([...parseInviteCodes(" a, b,,c ")], ["a", "b", "c"]);
+});
+
+// mainnet-hardening P0-4: the default PER_TAKER_RESERVED_CAP must track
+// minPremiumBps, not a hardcoded multiple, or it silently stops matching its
+// own justification (floorCap in pricing.ts) whenever MIN_PREMIUM_BPS changes.
+test("defaultPerTakerReservedCap tracks minPremiumBps, not a fixed multiple of maxStake", () => {
+  // default 100bps -> floorCap multiple = 10000/100 - 1 = 99x, *3 = 297x
+  assert.equal(defaultPerTakerReservedCap(1_000_000n, 100n), 1_000_000n * 297n);
+  // a stricter 200bps halves the floorCap multiple -> 10000/200 - 1 = 49x, *3 = 147x
+  assert.equal(defaultPerTakerReservedCap(1_000_000n, 200n), 1_000_000n * 147n);
+  // a looser 50bps doubles it -> 10000/50 - 1 = 199x, *3 = 597x
+  assert.equal(defaultPerTakerReservedCap(1_000_000n, 50n), 1_000_000n * 597n);
 });
 
 test("the shipped correlations file parses and covers a registry's clusters and underlyings", () => {

@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isAddress, type Address } from "viem";
 import { parseCorrelations, type CorrelationTable } from "./correlation.js";
-import { parseDecimalToUnits } from "./pure.js";
+import { BPS, parseDecimalToUnits } from "./pure.js";
 
 // .env lives at the repo root, one level above writer/ — same pattern as keeper/config.ts.
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -57,13 +57,16 @@ export interface WriterConfig {
    * pinning quotable headroom for everyone else (mainnet-hardening P0-4) — a
    * liveness refinement, not a solvency cap; the allowance stays that.
    * Default derivation: priceParlay's floorCap caps a single quote's risk at
-   * (BPS/minPremiumBps - 1) * stake, ~99x maxStake at the default 100bps
-   * minPremiumBps; poker's polling lag (pokerIntervalMs, default 15s) means a
+   * (BPS/minPremiumBps - 1) * stake — computed from the live minPremiumBps
+   * config, not a hardcoded multiple, so a deployment that changes
+   * MIN_PREMIUM_BPS without setting PER_TAKER_RESERVED_CAP still gets a
+   * default that matches its own floorCap (~99x maxStake at the default
+   * 100bps). poker's polling lag (pokerIntervalMs, default 15s) means a
    * just-minted reservation can still count as "reserved" for a beat after the
    * taker already minted, so honest sequential minting can briefly hold 2-3
-   * near-max reservations at once. 300x maxStake covers ~3 such reservations
-   * with room to spare, while still bounding a single address to a small slice
-   * of a real bankroll's allowance/perMarketCap. */
+   * near-max reservations at once — hence the further *3 below, giving room
+   * for ~3 such reservations while still bounding a single address to a small
+   * slice of a real bankroll's allowance/perMarketCap. */
   perTakerReservedCap: bigint;
   /** Multiplicative half-width of the correlation uncertainty band. The pricer
    * evaluates the joint probability at (1 - x) and (1 + x) times every pairwise
@@ -165,6 +168,13 @@ export function parseInviteCodes(raw: string): Set<string> {
   return new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
 }
 
+/** Default PER_TAKER_RESERVED_CAP when unset — see WriterConfig.perTakerReservedCap
+ * for the reasoning. Pulled out as a pure function so the derivation is
+ * unit-testable without going through loadConfig's env/file plumbing. */
+export function defaultPerTakerReservedCap(maxStake: bigint, minPremiumBps: bigint): bigint {
+  return maxStake * (BPS / minPremiumBps - 1n) * 3n;
+}
+
 export function loadConfig(): WriterConfig {
   const registryJson = readFileSync(path.resolve(here, "../..", requireEnv("MARKETS_FILE")), "utf8");
   const correlations = parseCorrelations(
@@ -199,6 +209,7 @@ export function loadConfig(): WriterConfig {
     );
   }
   const maxStake = BigInt(requireEnv("MAX_STAKE"));
+  const minPremiumBps = BigInt(process.env.MIN_PREMIUM_BPS ?? 100);
   return {
     // The writer never touches the 0x814 precompile (keeper-only), which is the sole
     // reason TESTNET_RPC is pinned to the official endpoint — and that endpoint
@@ -213,12 +224,14 @@ export function loadConfig(): WriterConfig {
     infoApiUrl: process.env.INFO_API_URL ?? "https://api.hyperliquid-testnet.xyz/info",
     port: Number(process.env.WRITER_PORT ?? 8787),
     edgeBps: BigInt(process.env.EDGE_BPS ?? 500),
-    minPremiumBps: BigInt(process.env.MIN_PREMIUM_BPS ?? 100),
+    minPremiumBps,
     minLegs: Number(process.env.MIN_LEGS ?? 2),
     maxStake,
     perMarketCap: BigInt(requireEnv("PER_MARKET_CAP")),
     perClusterCap: BigInt(requireEnv("PER_CLUSTER_CAP")),
-    perTakerReservedCap: process.env.PER_TAKER_RESERVED_CAP ? BigInt(process.env.PER_TAKER_RESERVED_CAP) : maxStake * 300n,
+    perTakerReservedCap: process.env.PER_TAKER_RESERVED_CAP
+      ? BigInt(process.env.PER_TAKER_RESERVED_CAP)
+      : defaultPerTakerReservedCap(maxStake, minPremiumBps),
     rhoBandPct: Number(process.env.RHO_BAND_PCT ?? 0.2),
     correlations,
     legEdgeBps: BigInt(process.env.LEG_EDGE_BPS ?? 300),
