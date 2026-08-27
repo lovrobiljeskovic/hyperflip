@@ -158,3 +158,18 @@ test("makeLegPriceFetcher: a depth-covering ask stamps freshness; a later too-th
   assert.equal(await fetcher.fetch("+1"), 999n); // treated as empty -> spotPx (still fresh from the earlier real ask)
   assert.equal(fetcher.ageMs("+1"), 30_000); // age dates to the last depth-covering ask, not the thin read
 });
+
+// Testnet escape hatch: SPOT_PX_STALE_MS=0 disables the freshness gate entirely.
+// Testnet outcome books are empty (the reason the spotPx fallback exists at all,
+// de592e9), so no coin ever earns a book-ask freshness stamp and the gate would
+// otherwise 503 every quote. Infinity = gate off.
+test("staleMs=Infinity disables the gate: never-stamped coin still prices off spotPx", async () => {
+  assert.equal(isSpotPxStale(undefined, 1_000_000, Infinity), false);
+  const f = makeLegPriceFetcher({
+    fetchBook: async () => null, // book empty, never stamps
+    readSpotPx: async () => 123n,
+    staleMs: Infinity,
+    now: () => 1_000_000,
+  });
+  assert.equal(await f.fetch("#1"), 123n);
+});

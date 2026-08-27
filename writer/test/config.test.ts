@@ -140,6 +140,10 @@ test("loadConfig throws on a non-numeric SPOT_PX_STALE_MS", () => {
     process.env.TESTNET_RPC = "http://localhost:1";
     process.env.SPOT_PX_STALE_MS = "not-a-number";
     assert.throws(() => loadConfig(), /SPOT_PX_STALE_MS/);
+    // 0 = gate explicitly off (testnet: empty books never stamp freshness),
+    // mapped to Infinity so isSpotPxStale never refuses.
+    process.env.SPOT_PX_STALE_MS = "0";
+    assert.equal(loadConfig().spotPxStaleMs, Infinity);
   } finally {
     for (const [k, v] of saved) {
       if (v === undefined) delete process.env[k];

@@ -79,6 +79,9 @@ function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: BuilderLeg
       : "These legs move together so tightly the combo pays less than one leg alone — drop a leg or mix in something less correlated.";
   }
   if (res.error === "clock-skew") return "Quote expired immediately — check your clock.";
+  // stale-book is a writer refusal (no trustworthy price for a leg right now),
+  // not an outage — "unreachable" sends people to check their connection.
+  if (res.error === "stale-book") return "No live price for one of these markets right now — try again shortly.";
   if (res.status === 0 || res.status === 503) return "Writer unreachable — retrying.";
   if (res.status === 403) return "Invite code rejected — enter a valid one below.";
   if (res.status === 409) {

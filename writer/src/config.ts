@@ -246,14 +246,19 @@ export function loadConfig(): WriterConfig {
   }
   const maxStake = BigInt(requireEnv("MAX_STAKE"));
   const minPremiumBps = BigInt(process.env.MIN_PREMIUM_BPS ?? 100);
-  const spotPxStaleMs = Number(process.env.SPOT_PX_STALE_MS ?? 60_000);
+  const spotPxStaleMsRaw = Number(process.env.SPOT_PX_STALE_MS ?? 60_000);
   // isSpotPxStale is `now - lastFreshMs > staleMs`; a NaN staleMs makes every
   // comparison false, silently disabling the P0-1 freshness gate instead of
   // refusing quotes. Same "refuse to boot on malformed input" posture as the
   // correlation table check above.
-  if (!Number.isFinite(spotPxStaleMs)) {
+  if (!Number.isFinite(spotPxStaleMsRaw)) {
     throw new Error("SPOT_PX_STALE_MS must be a finite number");
   }
+  // 0 = gate explicitly OFF (mapped to Infinity for isSpotPxStale). Testnet
+  // outcome books are empty, so no coin ever earns a book-ask freshness stamp
+  // and a finite window 503s every quote (stale-book). Play-money deployments
+  // opt out; mainnet keeps the finite default.
+  const spotPxStaleMs = spotPxStaleMsRaw === 0 ? Infinity : spotPxStaleMsRaw;
   return {
     // The writer never touches the 0x814 precompile (keeper-only), which is the sole
     // reason TESTNET_RPC is pinned to the official endpoint — and that endpoint
