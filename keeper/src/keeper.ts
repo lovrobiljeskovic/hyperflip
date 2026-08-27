@@ -13,6 +13,7 @@ import type { KeeperConfig } from "./config.js";
 import { OUTCOME_ACTIVE, OUTCOME_PRUNED, OUTCOME_SETTLED, readOutcomeStatus, readSpotBalanceWei } from "./core814.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import {
+  createSerializer,
   decodeFractionCache,
   encodedOutcomeAssetId,
   encodeFractionCache,
@@ -103,6 +104,11 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   const transport = fallback(rpcUrls.map((u) => http(u, { retryCount: 6, retryDelay: 2_000 })));
   const publicClient = createPublicClient({ chain, transport });
   const walletClient = createWalletClient({ account, chain, transport });
+  // attest() (balanceLoop) and settle() (settlementLoop) both send from `account` with no
+  // explicit nonce; serializing the send through this queue is what stops the two loops racing
+  // viem's nonce derivation. See createSerializer for why only the send is wrapped, not the
+  // receipt wait.
+  const sendTx = createSerializer();
 
   const vaultInfo = new Map<Address, VaultInfo>();
   const pendingOps = new Map<Address, PendingOp>();
@@ -260,14 +266,16 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     const info = vaultInfo.get(vault)!;
     const key = opKey(vault, opId);
     try {
-      const hash = await walletClient.writeContract({
-        address: info.verifier,
-        abi: keeperVerifierAbi,
-        functionName: "attest",
-        args: [key, executed],
-        chain,
-        account,
-      });
+      const hash = await sendTx(() =>
+        walletClient.writeContract({
+          address: info.verifier,
+          abi: keeperVerifierAbi,
+          functionName: "attest",
+          args: [key, executed],
+          chain,
+          account,
+        }),
+      );
       const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
       if (receipt.status !== "success") {
         alert("attest tx reverted", vault, opId.toString(), hash);
@@ -373,14 +381,16 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
    * for this vault can't fire a duplicate while the first is still in flight. */
   async function settle(vault: Address, fractionWad: bigint): Promise<void> {
     try {
-      const hash = await walletClient.writeContract({
-        address: vault,
-        abi: outcomeVaultAbi,
-        functionName: "settle",
-        args: [fractionWad],
-        chain,
-        account,
-      });
+      const hash = await sendTx(() =>
+        walletClient.writeContract({
+          address: vault,
+          abi: outcomeVaultAbi,
+          functionName: "settle",
+          args: [fractionWad],
+          chain,
+          account,
+        }),
+      );
       const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
       if (receipt.status !== "success") {
         alert("settle tx reverted", vault, hash);

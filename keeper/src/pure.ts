@@ -143,6 +143,26 @@ export function decodeFractionCache(json: string): Map<string, bigint> {
   return out;
 }
 
+/** Serializes async calls through a promise chain: each call waits for the previous one to
+ * settle (success or failure) before starting. keeper.ts uses one shared instance to wrap every
+ * walletClient.writeContract call — attest() (balanceLoop) and settle() (settlementLoop) send
+ * from the same account with no explicit nonce, so viem derives the nonce at send time from the
+ * account's pending tx count; two concurrent sends would race that derivation and collide on the
+ * same nonce. Only wrap the send itself (through the point a hash comes back), not any
+ * subsequent receipt wait — the nonce is consumed once the node accepts the tx into its pool, and
+ * holding the queue through a ~60s receipt wait would stall the other loop for no reason. */
+export function createSerializer(): <T>(fn: () => Promise<T>) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve();
+  return function sendTx<T>(fn: () => Promise<T>): Promise<T> {
+    const result = tail.then(fn, fn);
+    tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
+}
+
 /** Markets out of registry/markets.json (the file the writer serves at GET /markets).
  *
  * The keeper and the writer used to keep separate market lists — VAULT_ADDRESSES env here,

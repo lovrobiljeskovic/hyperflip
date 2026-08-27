@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  createSerializer,
   decodeFractionCache,
   deltaMatches,
   encodeFractionCache,
@@ -179,6 +180,36 @@ test("parseRegistryMarkets: a malformed registry fails loudly rather than watchi
   assert.throws(() => parseRegistryMarkets('{"markets":[{"title":"no vault"}]}'), /invalid vault/);
   assert.throws(() => parseRegistryMarkets('{"markets":[{"vault":"0xnothex"}]}'), /invalid vault/);
   assert.throws(() => parseRegistryMarkets('{"markets":[{"vault":"0x1234"}]}'), /invalid vault/); // truncated address
+});
+
+test("createSerializer CRITICAL: second send does not start until the first completes (nonce race)", async () => {
+  // Simulates attest() and settle() both firing in the same tick: two concurrent callers hit the
+  // shared sendTx wrapper at once. If the second's send-fn body started before the first's
+  // finished, both would have raced viem's nonce derivation from the same account.
+  const events: string[] = [];
+  const sendTx = createSerializer();
+
+  async function fakeSend(name: string, delayMs: number): Promise<string> {
+    events.push(`${name}:start`);
+    await new Promise((r) => setTimeout(r, delayMs));
+    events.push(`${name}:end`);
+    return `${name}-hash`;
+  }
+
+  const p1 = sendTx(() => fakeSend("attest", 20));
+  const p2 = sendTx(() => fakeSend("settle", 0));
+  const [h1, h2] = await Promise.all([p1, p2]);
+
+  assert.deepEqual(events, ["attest:start", "attest:end", "settle:start", "settle:end"]);
+  assert.equal(h1, "attest-hash");
+  assert.equal(h2, "settle-hash");
+});
+
+test("createSerializer: a failed send does not wedge the queue for the next one", async () => {
+  const sendTx = createSerializer();
+  await assert.rejects(() => sendTx(() => Promise.reject(new Error("nonce too low"))), /nonce too low/);
+  const result = await sendTx(() => Promise.resolve("ok"));
+  assert.equal(result, "ok");
 });
 
 test("encodedOutcomeAssetId matches L1Read.sol: 100000000 + 10*outcome + side", () => {
