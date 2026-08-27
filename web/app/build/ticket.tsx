@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { erc20Abi, formatUnits, parseUnits } from "viem";
-import { useBalance, usePublicClient, useReadContract, useWriteContract } from "wagmi";
+import { useAccount, useBalance, usePublicClient, useReadContract, useSwitchChain, useWriteContract } from "wagmi";
 import { fetchLimits, joinWaitlist, requestQuote, WAITLIST_ERRORS, type QuoteResult, type WriterQuote } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
@@ -83,9 +83,14 @@ function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: BuilderLeg
   // not an outage — "unreachable" sends people to check their connection.
   if (res.error === "stale-book") return "No live price for one of these markets right now — try again shortly.";
   if (res.status === 0 || res.status === 503) return "Writer unreachable — retrying.";
+  if (res.status === 429) return "Too many quotes too fast — pausing a moment.";
   if (res.status === 403) return "Invite code rejected — enter a valid one below.";
   if (res.status === 409) {
     if (res.error === "leg-settled") return "A leg just settled — remove it and requote.";
+    // quota-cap is the invite code's own reservation quota, not a stake problem —
+    // shrinking the stake does not help, unlike the market-cap/cluster-cap case below.
+    if (res.error === "quota-cap")
+      return "This invite code has hit its open-ticket quota — wait ~a minute for reservations to clear or use another code.";
     // market-cap/cluster-cap are stake-driven, not congestion: a long-shot ticket
     // asks for a payout bigger than the house caps for those markets. Saying
     // "at capacity" sends the taker away from a ticket that fits at a lower stake.
@@ -177,6 +182,7 @@ type Cta =
   /** Off-site next step (the faucet) — opens a new tab, with a one-line hint. */
   | { kind: "external"; label: string; href: string; hint: string }
   | { kind: "done"; label: string; href: string }
+  | { kind: "switch-chain"; label: string }
   | { kind: "mint"; label: string };
 
 /** Inline invite entry — save a code, or get one emailed via the waitlist —
@@ -217,6 +223,7 @@ function InviteEntry({ onSave }: { onSave: (code: string) => void }) {
           Save
         </button>
       </form>
+      <p className="mono text-[11px] text-dim">Saved — checked on your first quote.</p>
       {waitState === "sent" ? (
         <p className="mono text-[11px] text-yes">Invite sent — check your email, then paste the code above.</p>
       ) : (
@@ -284,6 +291,8 @@ export function Ticket({
 
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
+  const { chainId } = useAccount();
+  const { switchChain } = useSwitchChain();
   const { address: usdcAddr, balance: usdcBalance } = useUsdc();
   // Native HYPE — a wallet without gas fails the mint with a raw RPC error,
   // so catch it in the CTA before the wallet ever opens.
@@ -502,6 +511,8 @@ export function Ticket({
     if (legs.length < MIN_LEGS) return { kind: "disabled", label: "Add 2 legs to price a ticket" };
     if (!walletReady) return { kind: "disabled", label: "Checking wallet…" };
     if (!isConnected) return { kind: "connect", label: "Connect wallet" };
+    if (chainId !== undefined && chainId !== hyperEvmTestnet.id)
+      return { kind: "switch-chain", label: `Switch to ${hyperEvmTestnet.name}` };
     if (!inviteCode) return { kind: "invite" };
     // Empty wallet is a dead end without a next step — send the tester to the
     // faucet instead of a disabled button.
@@ -753,7 +764,7 @@ export function Ticket({
               {errorMessage(quoteResult, legs) !== quoteResult.error && (
                 <p className="mt-1 mono text-[11px] text-no/70">{quoteResult.error}</p>
               )}
-              {(quoteResult.status === 0 || quoteResult.status === 503) && (
+              {(quoteResult.status === 0 || quoteResult.status === 503 || quoteResult.status === 429) && (
                 <button
                   type="button"
                   onClick={() => {
@@ -800,6 +811,15 @@ export function Ticket({
             <button
               type="button"
               onClick={() => connect()}
+              className="mono mt-4 w-full rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90"
+            >
+              {cta.label}
+            </button>
+          )}
+          {cta.kind === "switch-chain" && (
+            <button
+              type="button"
+              onClick={() => switchChain({ chainId: hyperEvmTestnet.id })}
               className="mono mt-4 w-full rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90"
             >
               {cta.label}

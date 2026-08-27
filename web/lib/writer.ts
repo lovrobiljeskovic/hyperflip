@@ -102,11 +102,21 @@ export async function requestQuote(req: {
 }): Promise<QuoteResult> {
   let r: Response;
   try {
-    r = await fetch(`${BASE}/quote`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(req),
-    });
+    // A hung writer would otherwise leave the CTA reading "Quoting…" forever —
+    // bound the wait and surface it as the same status-0 shape as a network
+    // failure, so the existing retry UI renders.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    try {
+      r = await fetch(`${BASE}/quote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
   } catch {
     return { ok: false, status: 0, error: "writer-unreachable" };
   }

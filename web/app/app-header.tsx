@@ -70,7 +70,7 @@ export function AppHeader({ ground }: { ground: "paper" | "dark" }) {
                 className={
                   active
                     ? "border-b border-accent pb-[3px] text-fg"
-                    : `text-dim transition-colors hover:text-fg ${paper ? "hidden md:block" : ""}`
+                    : "text-dim transition-colors hover:text-fg"
                 }
               >
                 {l.label}

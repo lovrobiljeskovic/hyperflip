@@ -181,7 +181,11 @@ export default function BuildPage() {
     [markets],
   );
   const board = useMemo(() => {
-    const filtered = (markets ?? []).filter((m) => tab === "all" || m.category === tab);
+    const filtered = (markets ?? [])
+      .filter((m) => tab === "all" || m.category === tab)
+      // Expired-but-not-yet-rotated markets are dead weight on the board —
+      // filter them out client-side rather than let a stale price look pickable.
+      .filter((m) => m.expiryMs === undefined || m.expiryMs >= Date.now());
     // Markets without an expiry sink to the bottom in either direction.
     return filtered.sort((a, b) => {
       if (a.expiryMs === undefined) return b.expiryMs === undefined ? 0 : 1;

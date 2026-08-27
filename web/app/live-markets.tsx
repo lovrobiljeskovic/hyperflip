@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchMarkets, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
@@ -30,10 +30,18 @@ type MarketsState =
    ones after the animation was already over. Seeding from the server means
    there is one market set and one print. The fetch below is the fallback for
    when the writer was unreachable at render time. */
-function useMarkets(initial: Market[] | null): MarketsState {
+function useMarkets(initial: Market[] | null): { state: MarketsState; retry: () => void } {
   const [state, setState] = useState<MarketsState>(
     initial ? { status: "live", markets: initial } : { status: "loading" },
   );
+  // Manual retry for the offline state — loadMarkets() already clears
+  // marketsCache on failure, so this just re-runs the same fetch.
+  const retry = useCallback(() => {
+    setState({ status: "loading" });
+    loadMarkets()
+      .then((markets) => setState({ status: "live", markets }))
+      .catch(() => setState({ status: "offline" }));
+  }, []);
   useEffect(() => {
     if (initial) return;
     let alive = true;
@@ -44,7 +52,7 @@ function useMarkets(initial: Market[] | null): MarketsState {
       alive = false;
     };
   }, [initial]);
-  return state;
+  return { state, retry };
 }
 
 /** What the server hands every live component on the landing page. */
@@ -142,7 +150,7 @@ function Slab({ children }: { children: React.ReactNode }) {
 /** The board for the #board section: every listed market with both sides
  * priced live. */
 export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
-  const state = useMarkets(board.markets);
+  const { state, retry } = useMarkets(board.markets);
   const mids = useMids(board.mids);
 
   if (state.status === "loading") {
@@ -168,6 +176,13 @@ export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
           <p className="mt-2 text-sm text-dim">
             The registry is unreachable. Prices come back when the writer does.
           </p>
+          <button
+            type="button"
+            onClick={retry}
+            className="mono mt-4 rounded-[4px] border border-line px-4 py-2 text-xs uppercase tracking-wide text-dim transition-colors hover:border-dim hover:text-fg"
+          >
+            Retry
+          </button>
         </div>
       </Slab>
     );
@@ -202,7 +217,7 @@ export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
 
 /** One line of true numbers above the headline. */
 export function HeroStats({ board }: { board: BoardSnapshot }) {
-  const state = useMarkets(board.markets);
+  const { state } = useMarkets(board.markets);
   const count =
     state.status === "live"
       ? `${state.markets.length} market${state.markets.length === 1 ? "" : "s"} live`
@@ -239,7 +254,7 @@ function Line({ i, children }: { i: number; children: React.ReactNode }) {
  * reader as they scroll. Every number shown is labelled for which it is —
  * this is fair value off the book, not a signed quote. */
 export function HeroSlip({ board }: { board: BoardSnapshot }) {
-  const state = useMarkets(board.markets);
+  const { state } = useMarkets(board.markets);
   const mids = useMids(board.mids);
   const printing = usePrinting();
 

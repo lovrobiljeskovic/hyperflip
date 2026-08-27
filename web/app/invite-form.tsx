@@ -51,7 +51,7 @@ export function InviteForm() {
     return (
       <div className="bg-[var(--paper)] p-6 text-left shadow-[6px_8px_0_rgba(36,21,18,0.14)]">
         <p className="mono text-[11px] uppercase tracking-wide text-[var(--hit)]">
-          Code saved
+          Code saved — checked on your first quote
         </p>
         <p className="mt-2 text-[15px] leading-relaxed">
           It rides along with every quote you request in the builder.

@@ -336,9 +336,12 @@ export default function PositionsPage() {
   // Titles/coins/expiries live in the writer's registry, not on-chain — the
   // leg detail rows fall back to the raw vault address if it's unreachable.
   useEffect(() => {
+    // A failed fetch here used to wipe markets to [], which turns every leg's
+    // title into its raw vault address on a transient blip — keep whatever
+    // we last had instead of clobbering it.
     fetchMarkets(true)
       .then(setMarkets)
-      .catch(() => setMarkets([]));
+      .catch(() => {});
   }, []);
   const marketsByVault = useMemo(
     () => new Map(markets.map((m) => [m.vault.toLowerCase(), m])),
