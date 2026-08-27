@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { blockRanges } from "../src/pure.js";
+import { blockRanges, isStalled, stallThresholdMs } from "../src/pure.js";
 
 test("blockRanges: single range when span fits", () => {
   assert.deepEqual(blockRanges(10n, 20n, 1000n), [{ from: 10n, to: 20n }]);
@@ -27,4 +27,17 @@ test("blockRanges: empty when to < from", () => {
 
 test("blockRanges: single block", () => {
   assert.deepEqual(blockRanges(7n, 7n, 1000n), [{ from: 7n, to: 7n }]);
+});
+
+test("stallThresholdMs: scales with open count and tick interval, plus fixed margin", () => {
+  assert.equal(stallThresholdMs(0, 60_000, 15_000), 15_000 + 120_000);
+  assert.equal(stallThresholdMs(3, 60_000, 15_000), 3 * 60_000 + 15_000 + 120_000);
+  assert.equal(stallThresholdMs(0, 60_000, 15_000, 5_000), 15_000 + 5_000);
+});
+
+test("isStalled: false within threshold, true once elapsed exceeds it", () => {
+  const lastTickAt = 1_000_000;
+  assert.equal(isStalled(lastTickAt, lastTickAt + 120_000, 120_000), false); // exactly at bound: not yet stalled
+  assert.equal(isStalled(lastTickAt, lastTickAt + 120_001, 120_000), true);
+  assert.equal(isStalled(lastTickAt, lastTickAt, 120_000), false); // no time elapsed
 });

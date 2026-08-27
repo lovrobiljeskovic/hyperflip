@@ -7,10 +7,16 @@ import { ExposureBook } from "./exposure.js";
 import { fetchBestAskWad } from "./infoApi.js";
 import { readSpotPxWad } from "./spotPx.js";
 import { Poker } from "./poker.js";
+import { isStalled, stallThresholdMs } from "./pure.js";
 import { signQuote, type ParlayQuote, type QuoteLeg } from "./quotes.js";
 import { newMetrics, startServer, type QuoteDeps } from "./server.js";
 import { readLegStates } from "./settlement.js";
 import { RateLimiter, sendInviteEmail, Waitlist } from "./waitlist.js";
+
+// Mirrors the keeper's RECEIPT_TIMEOUT_MS (keeper/src/keeper.ts:30). Without it a stuck
+// resolveParlay tx hangs waitForTransactionReceipt forever, which hangs poker.tick() forever,
+// which stops the poker dead (found in mainnet-hardening P0-2).
+const RECEIPT_TIMEOUT_MS = 60_000;
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
@@ -120,7 +126,7 @@ async function main(): Promise<void> {
         functionName: "resolveParlay",
         args: [id],
       });
-      await publicClient.waitForTransactionReceipt({ hash });
+      await publicClient.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
     },
     log: (msg) => console.log(JSON.stringify({ at: new Date().toISOString(), ...msg })),
   });
@@ -134,16 +140,38 @@ async function main(): Promise<void> {
   // live reservations, so they bind looser than configured — acceptable while the
   // allowance is small, not something to leave off once the bankroll grows.
   if (cfg.pokerIntervalMs > 0) {
+    let lastTickAt = Date.now();
     const tick = async () => {
       try {
         await poker.tick();
       } catch (err) {
         console.error(new Date().toISOString(), "poker tick failed", err);
       } finally {
+        lastTickAt = Date.now();
         setTimeout(tick, cfg.pokerIntervalMs);
       }
     };
     void tick();
+
+    // Watchdog: a hung await (e.g. the old unbounded waitForTransactionReceipt) never throws,
+    // so from outside the process looks healthy while the poker has stopped ticking entirely.
+    // Every tick is now bounded (each poke's receipt wait capped at RECEIPT_TIMEOUT_MS), so a
+    // stamp older than the worst legitimate tick means a true hang: exit and let systemd
+    // (Restart=always) bring us back. Mirrors the keeper's watchdog (keeper/src/keeper.ts:462-476).
+    setInterval(() => {
+      const threshold = stallThresholdMs(poker.openCount(), RECEIPT_TIMEOUT_MS, cfg.pokerIntervalMs);
+      if (isStalled(lastTickAt, Date.now(), threshold)) {
+        console.error(
+          JSON.stringify({
+            at: new Date().toISOString(),
+            event: "poker-watchdog-stalled",
+            staleMs: Date.now() - lastTickAt,
+            thresholdMs: threshold,
+          }),
+        );
+        process.exit(1);
+      }
+    }, 10_000);
   } else {
     console.log(JSON.stringify({ at: new Date().toISOString(), event: "poker-disabled" }));
   }

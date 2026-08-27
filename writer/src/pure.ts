@@ -13,6 +13,25 @@ export function blockRanges(from: bigint, to: bigint, size: bigint): { from: big
   return out;
 }
 
+/** Watchdog stall threshold for the poker tick loop — mirrors the keeper's formula
+ * (keeper/src/keeper.ts:468, docs/mainnet-hardening-facts.md): a tick sequentially pokes every
+ * open parlay, each resolve() receipt wait capped at receiptTimeoutMs, plus the gap the tick
+ * loop itself leaves between ticks (tickIntervalMs); marginMs covers everything else with no
+ * explicit timeout (getLogs/getBlockNumber/readContract). */
+export function stallThresholdMs(
+  openCount: number,
+  receiptTimeoutMs: number,
+  tickIntervalMs: number,
+  marginMs = 120_000,
+): number {
+  return openCount * receiptTimeoutMs + tickIntervalMs + marginMs;
+}
+
+/** Pure watchdog predicate: has the last-tick stamp gone stale? */
+export function isStalled(lastTickAt: number, now: number, thresholdMs: number): boolean {
+  return now - lastTickAt > thresholdMs;
+}
+
 export function parseDecimalToUnits(value: string, decimals: number): bigint {
   const neg = value.startsWith("-");
   const body = neg ? value.slice(1) : value;

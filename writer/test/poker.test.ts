@@ -102,6 +102,40 @@ test("tick: a failing resolve() does not abort poking the rest of the batch", as
   assert.deepEqual(attempted, [1n, 2n]); // both attempted despite id 1 throwing
 });
 
+test("tick: a resolve() that times out does not stop subsequent ticks from poking again", async () => {
+  // Regression for P0-2: the old unbounded waitForTransactionReceipt let a stuck resolveParlay
+  // tx hang forever, which hung tick() forever, which stopped the poker dead. With a timeout,
+  // resolve() rejects instead of hanging — tick() must still return, and the next tick must
+  // still attempt the poke again (the dead parlay stays open until ParlayResolved lands).
+  const attempts: bigint[] = [];
+  let shouldTimeout = true;
+  const deps: PokerDeps = {
+    publicClient: null as unknown as PokerDeps["publicClient"],
+    parlayVault: VAULT,
+    exposure: new ExposureBook(),
+    metrics: newMetrics(),
+    fromBlock: 0n,
+    resolve: async (id) => {
+      attempts.push(id);
+      if (shouldTimeout) throw new Error("TimeoutError: waitForTransactionReceipt timed out");
+    },
+    log: () => {},
+    fetchEvents: async () => ({ minted: [{ id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n }], resolvedIds: [], toBlock: 10n }),
+    fetchLegs: async () => [{ vault: V1, isYes: true }],
+    fetchLegStates: async () => new Map([[V1.toLowerCase(), { settled: true, fractionWad: 0n }]]),
+  };
+  const poker = new Poker(deps);
+
+  await poker.tick(); // resolve() times out
+  assert.deepEqual(attempts, [1n]);
+  assert.equal(poker.openCount(), 1); // still open — no ParlayResolved event landed
+
+  shouldTimeout = false;
+  await poker.tick(); // next tick retries the poke, this time it succeeds
+  assert.deepEqual(attempts, [1n, 1n]);
+  assert.equal(poker.openCount(), 1); // still open until the resolve event lands (asserted elsewhere)
+});
+
 test("fetchEvents: a failed chunk keeps earlier chunks and resumes there next tick", async () => {
   // Regression for the 8/20 wedge: an all-or-nothing chunk scan meant one rate-limited
   // chunk discarded the whole batch and left nextBlock untouched, so a cold start far
