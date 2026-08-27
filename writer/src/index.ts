@@ -5,7 +5,7 @@ import { parlayVaultAbi } from "./abi.js";
 import { loadConfig } from "./config.js";
 import { ExposureBook } from "./exposure.js";
 import { fetchBestAskWad } from "./infoApi.js";
-import { makeLegPriceFetcher, readSpotPxWad } from "./spotPx.js";
+import { buildPriceFreshness, makeLegPriceFetcher, readSpotPxWad } from "./spotPx.js";
 import { Poker } from "./poker.js";
 import { isStalled, stallThresholdMs } from "./pure.js";
 import { signQuote, type ParlayQuote, type QuoteLeg } from "./quotes.js";
@@ -186,11 +186,7 @@ async function main(): Promise<void> {
     for (const v of cfg.markets.keys()) perMarket[v] = exposure.perMarket(v, now).toString();
     // Per-coin, not a single global: a fresh BTC book must not hide a dead NVDA book
     // silently riding stale spotPx (mainnet-hardening P0-1). null = never confirmed live.
-    const priceFreshnessMs: Record<string, number | null> = {};
-    for (const m of cfg.markets.values()) {
-      priceFreshnessMs[m.coinYes] = legPriceFetcher.ageMs(m.coinYes);
-      priceFreshnessMs[m.coinNo] = legPriceFetcher.ageMs(m.coinNo);
-    }
+    const priceFreshnessMs = buildPriceFreshness(cfg.markets.values(), (coin) => legPriceFetcher.ageMs(coin));
     return {
       ok: true,
       openParlays: poker.openCount(),

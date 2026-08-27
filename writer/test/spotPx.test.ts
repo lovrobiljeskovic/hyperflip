@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { decodeAbiParameters, encodeAbiParameters } from "viem";
-import { isSpotPxStale, makeLegPriceFetcher, readSpotPxWad, SPOT_PX_PRECOMPILE } from "../src/spotPx.js";
+import { buildPriceFreshness, isSpotPxStale, makeLegPriceFetcher, readSpotPxWad, SPOT_PX_PRECOMPILE } from "../src/spotPx.js";
 
 /** Fake viem client: records the call, returns a canned uint64 px encoding. */
 function fakeClient(raw: bigint) {
@@ -103,4 +103,17 @@ test("makeLegPriceFetcher: freshness is tracked per coin, not globally", async (
   // though "+1" (a different coin on the same market) is fresh.
   await assert.rejects(() => fetcher.fetch("+2"), /stale/);
   assert.equal(await fetcher.fetch("+1"), 7n); // book now empty, falls back to still-fresh spotPx
+});
+
+test("buildPriceFreshness: /health per-coin age — fresh coin is a number, unconfirmed coin is null", async () => {
+  const fetcher = makeLegPriceFetcher({
+    fetchBook: async (coin) => (coin === "+1" ? 5n : null), // "+1" always books; "+2" never does
+    readSpotPx: async () => 7n,
+    staleMs: 60_000,
+    now: () => 1_000_000,
+  });
+  await fetcher.fetch("+1"); // stamps "+1" fresh
+  const markets = [{ coinYes: "+1", coinNo: "+2" }];
+  const freshness = buildPriceFreshness(markets, (coin) => fetcher.ageMs(coin));
+  assert.deepEqual(freshness, { "+1": 0, "+2": null });
 });

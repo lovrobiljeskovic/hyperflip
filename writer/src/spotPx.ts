@@ -62,3 +62,18 @@ export function makeLegPriceFetcher(opts: {
     },
   };
 }
+
+/** Builds the /health per-coin freshness map: every coinYes/coinNo across the
+ * registry, keyed to its age via the supplied lookup. Pulled out of index.ts's
+ * health closure so it's unit-testable without booting main(). */
+export function buildPriceFreshness(
+  markets: Iterable<{ coinYes: string; coinNo: string }>,
+  ageMs: (coin: string) => number | null,
+): Record<string, number | null> {
+  const out: Record<string, number | null> = {};
+  for (const m of markets) {
+    out[m.coinYes] = ageMs(m.coinYes);
+    out[m.coinNo] = ageMs(m.coinNo);
+  }
+  return out;
+}
