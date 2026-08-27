@@ -1,8 +1,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseBinary, parseRecurring, pickBinaries, registryEntry, marketSymbol, classify } from "./rotate-lib.mjs";
+import { parseBinary, parseRecurring, pickBinaries, registryEntry, marketSymbol, classify, filterMappedPicks } from "./rotate-lib.mjs";
 
 const NOW = Date.UTC(2026, 7, 18, 12, 0); // 2026-08-18T12:00Z
+
+const btcSource = {
+  schemaVersion: 1,
+  underlying: "BTC",
+  sourceNetwork: "mainnet",
+  sourceCoin: "BTC",
+  cluster: "crypto",
+  calendar: "continuous",
+  eligible: true,
+  fallbackEligible: false,
+};
+
+test("rotation keeps only explicit source mappings without exceeding the active cap", () => {
+  const sources = { schemaVersion: 1, sources: [btcSource] };
+  assert.deepEqual(filterMappedPicks([{ perp: "BTC" }, { perp: "DOGE" }], sources, new Set(), 20), [{ perp: "BTC" }]);
+  assert.throws(() => filterMappedPicks([{ perp: "BTC" }], sources, new Set(Array.from({ length: 20 }, (_, i) => `A${i}`)), 20), /at most 20/);
+});
 
 test("parseBinary happy path", () => {
   assert.deepEqual(parseBinary("perp:BTC|threshold:64200|time:20260820-0200"), {

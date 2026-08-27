@@ -1,0 +1,43 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { parseSourceRegistry, sourceFor } from "../src/research/types.js";
+
+const fixture = (name: string) => new URL(`./fixtures/research/${name}`, import.meta.url);
+
+const btcSource = {
+  schemaVersion: 1,
+  underlying: "BTC",
+  sourceNetwork: "mainnet",
+  sourceCoin: "BTC",
+  cluster: "crypto",
+  calendar: "continuous",
+  eligible: true,
+  fallbackEligible: false,
+};
+
+test("source registry rejects duplicates and more than twenty underlyings", () => {
+  assert.throws(() => parseSourceRegistry(readFileSync(fixture("sources-invalid-over-cap.json"), "utf8")), /at most 20/);
+  assert.throws(() => parseSourceRegistry(JSON.stringify({ schemaVersion: 1, sources: [btcSource, btcSource] })), /duplicate underlying/);
+});
+
+test("source registry maps the active logical set and looks it up by underlying", () => {
+  const registry = parseSourceRegistry(readFileSync(new URL("../../registry/correlation-sources.json", import.meta.url), "utf8"));
+  assert.deepEqual(registry.sources.map((source) => source.underlying), ["BTC", "ETH", "SOL", "HYPE", "ZEC", "NVDA", "SP500", "SNDK", "TSLA", "AAPL", "GOLD"]);
+  assert.deepEqual(sourceFor(registry, "BTC"), btcSource);
+  assert.equal(sourceFor(registry, "NVDA")?.sourceCoin, "xyz:NVDA");
+  assert.equal(sourceFor(registry, "DOGE"), undefined);
+});
+
+test("source registry rejects unknown versions, duplicate source coins, and malformed sessions", () => {
+  assert.throws(() => parseSourceRegistry(JSON.stringify({ schemaVersion: 2, sources: [btcSource] })), /schemaVersion/);
+  assert.throws(() => parseSourceRegistry(JSON.stringify({ schemaVersion: 1, sources: [{ ...btcSource, cluster: "rates" }] })), /cluster/);
+  assert.throws(
+    () => parseSourceRegistry(JSON.stringify({ schemaVersion: 1, sources: [btcSource, { ...btcSource, underlying: "WBTC" }] })),
+    /duplicate source coin/,
+  );
+  assert.throws(
+    () => parseSourceRegistry(JSON.stringify({ schemaVersion: 1, sources: [{ ...btcSource, calendar: "session", session: { timeZone: "UTC", weekdays: [1], openLocal: "09:00", closeLocal: "09:00", closedDates: [] } }] })),
+    /session/,
+  );
+});

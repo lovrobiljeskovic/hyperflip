@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    { "schemaVersion": 1, "underlying": "A01", "sourceNetwork": "mainnet", "sourceCoin": "A01", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A02", "sourceNetwork": "mainnet", "sourceCoin": "A02", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A03", "sourceNetwork": "mainnet", "sourceCoin": "A03", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A04", "sourceNetwork": "mainnet", "sourceCoin": "A04", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A05", "sourceNetwork": "mainnet", "sourceCoin": "A05", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A06", "sourceNetwork": "mainnet", "sourceCoin": "A06", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A07", "sourceNetwork": "mainnet", "sourceCoin": "A07", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A08", "sourceNetwork": "mainnet", "sourceCoin": "A08", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A09", "sourceNetwork": "mainnet", "sourceCoin": "A09", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A10", "sourceNetwork": "mainnet", "sourceCoin": "A10", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A11", "sourceNetwork": "mainnet", "sourceCoin": "A11", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A12", "sourceNetwork": "mainnet", "sourceCoin": "A12", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A13", "sourceNetwork": "mainnet", "sourceCoin": "A13", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A14", "sourceNetwork": "mainnet", "sourceCoin": "A14", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A15", "sourceNetwork": "mainnet", "sourceCoin": "A15", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A16", "sourceNetwork": "mainnet", "sourceCoin": "A16", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A17", "sourceNetwork": "mainnet", "sourceCoin": "A17", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A18", "sourceNetwork": "mainnet", "sourceCoin": "A18", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A19", "sourceNetwork": "mainnet", "sourceCoin": "A19", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A20", "sourceNetwork": "mainnet", "sourceCoin": "A20", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false },
+    { "schemaVersion": 1, "underlying": "A21", "sourceNetwork": "mainnet", "sourceCoin": "A21", "cluster": "crypto", "calendar": "continuous", "eligible": true, "fallbackEligible": false }
+  ]
+}

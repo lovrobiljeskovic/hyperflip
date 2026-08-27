@@ -176,6 +176,16 @@ export function pickBinaries({
   return picked;
 }
 
+/** Keep picks to source-registry mappings and refuse a new active set over cap. */
+export function filterMappedPicks(picks, registry, activeUnderlyings, max = 20) {
+  const mapped = new Set(registry.sources.map((source) => source.underlying));
+  const filtered = picks.filter((pick) => mapped.has(pick.perp));
+  const active = new Set(activeUnderlyings);
+  for (const pick of filtered) active.add(pick.perp);
+  if (active.size > max) throw new Error(`at most ${max} active underlyings are allowed`);
+  return filtered;
+}
+
 /** Registry entry in the exact shape registry/markets.json uses.
  * Must satisfy writer/src/config.ts parseMarkets — it hard-fails on a missing
  * field, and the writer is the only consumer that validates the shape. */

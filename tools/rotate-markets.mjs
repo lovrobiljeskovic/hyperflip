@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { pickBinaries, registryEntry, marketSymbol } from "./rotate-lib.mjs";
+import { filterMappedPicks, pickBinaries, registryEntry, marketSymbol } from "./rotate-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const INFO_URL = "https://api.hyperliquid-testnet.xyz/info";
@@ -19,6 +19,7 @@ const INFO_URL = "https://api.hyperliquid-testnet.xyz/info";
 // polling, dRPC drops upstreams) — retry each deploy alternating between them.
 const DEPLOY_RPCS = ["https://hyperliquid-testnet.drpc.org", "https://rpc.hyperliquid-testnet.xyz/evm"];
 const REGISTRY = path.join(ROOT, "registry/markets.json");
+const SOURCES = path.join(ROOT, "registry/correlation-sources.json");
 const ENV_FILE = path.join(ROOT, ".env");
 // Constants from the 2026-08-19 deploys (broadcast/Deploy.s.sol/998).
 // KEEPER_ADDRESS is deliberately NOT pinned here — it comes from .env, because
@@ -62,12 +63,22 @@ const [{ outcomes, questions }, mids, xyzMids] = await Promise.all([
 ]);
 Object.assign(mids, xyzMids);
 const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));
+const sources = JSON.parse(readFileSync(SOURCES, "utf8"));
 const nowMs = Date.now();
 const knownCoins = new Set(registry.markets.map((m) => m.coinYes));
 
-const picks = pickBinaries({ outcomes, mids, questions, knownCoins, nowMs });
 const expired = registry.markets.filter((m) => m.expiryMs <= nowMs);
 const kept = registry.markets.filter((m) => m.expiryMs > nowMs);
+const candidates = pickBinaries({ outcomes, mids, questions, knownCoins, nowMs });
+let picks;
+try {
+  picks = filterMappedPicks(candidates, sources, new Set(kept.map((market) => market.underlying)));
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+}
+const mappedUnderlyings = new Set(sources.sources.map((source) => source.underlying));
+for (const pick of candidates) if (!mappedUnderlyings.has(pick.perp)) console.log(`skip unmapped ${pick.perp}`);
 
 // Expired entries move to `archived` rather than vanishing: writer quoting and
 // the keeper only read `.markets`, but the frontend still needs titles for
