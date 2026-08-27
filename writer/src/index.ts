@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { createPublicClient, createWalletClient, erc20Abi, fallback, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { parlayVaultAbi } from "./abi.js";
-import { loadConfig, syncedPerTakerReservedCap } from "./config.js";
+import { loadConfig, syncedPerCodeReservedCap } from "./config.js";
 import { ExposureBook } from "./exposure.js";
 import { fetchBestAskWad } from "./infoApi.js";
 import { buildPriceFreshness, makeLegPriceFetcher, readSpotPxWad } from "./spotPx.js";
@@ -54,12 +54,12 @@ async function main(): Promise<void> {
       }),
     );
   }
-  // PER_TAKER_RESERVED_CAP's default is derived from minPremiumBps (config.ts);
+  // PER_CODE_RESERVED_CAP's default is derived from minPremiumBps (config.ts);
   // if it was left unset, recompute it off the just-synced chain value so the
   // default keeps tracking priceParlay's floorCap instead of the stale env one.
-  cfg.perTakerReservedCap = syncedPerTakerReservedCap(
-    !!process.env.PER_TAKER_RESERVED_CAP,
-    cfg.perTakerReservedCap,
+  cfg.perCodeReservedCap = syncedPerCodeReservedCap(
+    !!process.env.PER_CODE_RESERVED_CAP,
+    cfg.perCodeReservedCap,
     cfg.maxStake,
     chainMinPremiumBps,
   );

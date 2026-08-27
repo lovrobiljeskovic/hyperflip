@@ -51,27 +51,31 @@ export interface WriterConfig {
   maxStake: bigint;
   perMarketCap: bigint;
   perClusterCap: bigint;
-  /** Cap on one taker's reserved-but-unminted risk (sum of live /quote
-   * reservations keyed by `taker`), independent of the per-IP request-rate
-   * limiter. Mitigates a taker who quotes repeatedly and never mints from
+  /** Cap on one invite code's reserved-but-unminted risk (sum of live /quote
+   * reservations keyed by `inviteCode`), independent of the per-IP request-rate
+   * limiter. Mitigates a caller who quotes repeatedly and never mints from
    * pinning quotable headroom for everyone else (mainnet-hardening P0-4) — a
    * liveness refinement, not a solvency cap; the allowance stays that.
+   * Keyed on the code, not the taker address: addresses rotate for free
+   * (defeating the cap) and an attacker could spam a victim's address to lock
+   * them out; codes are limited-supply, revocable, and burn the sender's own
+   * budget. People sharing one code share one budget — deliberate.
    * Default derivation: priceParlay's floorCap caps a single quote's risk at
    * (BPS/minPremiumBps - 1) * stake — computed from minPremiumBps, not a
    * hardcoded multiple, so a deployment that changes MIN_PREMIUM_BPS without
-   * setting PER_TAKER_RESERVED_CAP still gets a default that matches its own
+   * setting PER_CODE_RESERVED_CAP still gets a default that matches its own
    * floorCap (~99x maxStake at the default 100bps). minPremiumBps is
    * owner-settable on-chain and the chain value always wins over env at
-   * startup (index.ts) — when PER_TAKER_RESERVED_CAP was left unset, index.ts
+   * startup (index.ts) — when PER_CODE_RESERVED_CAP was left unset, index.ts
    * recomputes this default off the synced chain value so it still tracks
    * the live floorCap, not the stale env one. poker's polling lag
    * (pokerIntervalMs, default 15s) means a
    * just-minted reservation can still count as "reserved" for a beat after the
    * taker already minted, so honest sequential minting can briefly hold 2-3
    * near-max reservations at once — hence the further *3 below, giving room
-   * for ~3 such reservations while still bounding a single address to a small
+   * for ~3 such reservations while still bounding a single code to a small
    * slice of a real bankroll's allowance/perMarketCap. */
-  perTakerReservedCap: bigint;
+  perCodeReservedCap: bigint;
   /** Multiplicative half-width of the correlation uncertainty band. The pricer
    * evaluates the joint probability at (1 - x) and (1 + x) times every pairwise
    * rho and quotes the house-favorable end, so the house is paid for the fact
@@ -187,24 +191,24 @@ export function parseCorsOrigins(raw: string): string[] {
   return raw.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
-/** Default PER_TAKER_RESERVED_CAP when unset — see WriterConfig.perTakerReservedCap
+/** Default PER_CODE_RESERVED_CAP when unset — see WriterConfig.perCodeReservedCap
  * for the reasoning. Pulled out as a pure function so the derivation is
  * unit-testable without going through loadConfig's env/file plumbing. */
-export function defaultPerTakerReservedCap(maxStake: bigint, minPremiumBps: bigint): bigint {
+export function defaultPerCodeReservedCap(maxStake: bigint, minPremiumBps: bigint): bigint {
   return maxStake * (BPS / minPremiumBps - 1n) * 3n;
 }
 
-/** Refresh perTakerReservedCap after index.ts syncs minPremiumBps from chain
+/** Refresh perCodeReservedCap after index.ts syncs minPremiumBps from chain
  * (chain always wins — see WriterConfig.minPremiumBps). Only recomputes when
- * PER_TAKER_RESERVED_CAP was left unset at load time, so an explicit env
+ * PER_CODE_RESERVED_CAP was left unset at load time, so an explicit env
  * override is never silently clobbered by the chain sync. */
-export function syncedPerTakerReservedCap(
+export function syncedPerCodeReservedCap(
   envWasSet: boolean,
   current: bigint,
   maxStake: bigint,
   chainMinPremiumBps: bigint,
 ): bigint {
-  return envWasSet ? current : defaultPerTakerReservedCap(maxStake, chainMinPremiumBps);
+  return envWasSet ? current : defaultPerCodeReservedCap(maxStake, chainMinPremiumBps);
 }
 
 export function loadConfig(): WriterConfig {
@@ -269,9 +273,9 @@ export function loadConfig(): WriterConfig {
     maxStake,
     perMarketCap: BigInt(requireEnv("PER_MARKET_CAP")),
     perClusterCap: BigInt(requireEnv("PER_CLUSTER_CAP")),
-    perTakerReservedCap: process.env.PER_TAKER_RESERVED_CAP
-      ? BigInt(process.env.PER_TAKER_RESERVED_CAP)
-      : defaultPerTakerReservedCap(maxStake, minPremiumBps),
+    perCodeReservedCap: process.env.PER_CODE_RESERVED_CAP
+      ? BigInt(process.env.PER_CODE_RESERVED_CAP)
+      : defaultPerCodeReservedCap(maxStake, minPremiumBps),
     rhoBandPct: Number(process.env.RHO_BAND_PCT ?? 0.2),
     correlations,
     legEdgeBps: BigInt(process.env.LEG_EDGE_BPS ?? 300),

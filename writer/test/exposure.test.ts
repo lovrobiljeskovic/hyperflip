@@ -89,15 +89,15 @@ test("headroom never goes negative when a cap is already breached", () => {
 
 // mainnet-hardening P0-4: a taker who quotes repeatedly and never mints
 // shouldn't be able to pin quotable headroom for everyone else.
-test("taker-cap: one taker cannot reserve past their per-taker cap", () => {
+test("quota-cap: one taker cannot reserve past their per-taker cap", () => {
   const b = new ExposureBook();
   b.reserve("q1", 60n, [V1], 10_000, T1);
   // T1 already holds 60 of unminted risk against a 80 cap; a further 25 breaches it.
   const r = b.check(25n, [V2], 1_000_000n, 1_000_000n, 0, undefined, T1, 80n);
-  assert.deepEqual(r, { ok: false, reason: "taker-cap", headroom: 20n }); // cap 80 - reserved 60
+  assert.deepEqual(r, { ok: false, reason: "quota-cap", headroom: 20n }); // cap 80 - reserved 60
 });
 
-test("taker-cap: a second taker is unaffected by the first taker's reservations", () => {
+test("quota-cap: a second taker is unaffected by the first taker's reservations", () => {
   const b = new ExposureBook();
   b.reserve("q1", 60n, [V1], 10_000, T1);
   // Same 80 cap, but T2 has no reservations of its own.
@@ -105,28 +105,33 @@ test("taker-cap: a second taker is unaffected by the first taker's reservations"
   assert.equal(r.ok, true);
 });
 
-test("taker-cap: expiry frees the taker's reserved budget", () => {
+test("quota-cap: expiry frees the taker's reserved budget", () => {
   const b = new ExposureBook();
   b.reserve("q1", 60n, [V1], 1000, T1);
-  assert.equal(b.reservedByTaker(T1, 500), 60n);
-  assert.equal(b.reservedByTaker(T1, 1001), 0n); // reservation expired at t=1000
+  assert.equal(b.reservedByKey(T1, 500), 60n);
+  assert.equal(b.reservedByKey(T1, 1001), 0n); // reservation expired at t=1000
   assert.equal(b.check(75n, [V2], 1_000_000n, 1_000_000n, 1001, undefined, T1, 80n).ok, true);
 });
 
-test("taker-cap: minting converts the reservation, freeing the taker's budget immediately", () => {
+test("quota-cap: minting converts the reservation, freeing the taker's budget immediately", () => {
   const b = new ExposureBook();
   b.reserve("q1", 60n, [V1], 10_000, T1);
   b.onMinted("q1", "1", 60n, [V1]);
-  // Risk is now "open", not "reserved" — reservedByTaker no longer counts it,
+  // Risk is now "open", not "reserved" — reservedByKey no longer counts it,
   // so T1 can quote again right away instead of waiting for the TTL.
-  assert.equal(b.reservedByTaker(T1, 0), 0n);
+  assert.equal(b.reservedByKey(T1, 0), 0n);
   assert.equal(b.check(75n, [V2], 1_000_000n, 1_000_000n, 0, undefined, T1, 80n).ok, true);
 });
 
-test("taker-cap: address matching is case-insensitive", () => {
+test("quota-cap: keys are opaque exact-match strings (invite codes), shared across takers", () => {
   const b = new ExposureBook();
-  b.reserve("q1", 60n, [V1], 10_000, T1.toUpperCase().replace("0X", "0x"));
-  assert.equal(b.reservedByTaker(T1, 0), 60n);
+  // Two reservations under one invite code — different taker addresses don't
+  // matter; the code is the quota identity and the budget is shared.
+  b.reserve("q1", 30n, [V1], 10_000, "beta-test");
+  b.reserve("q2", 30n, [V2], 10_000, "beta-test");
+  assert.equal(b.reservedByKey("beta-test", 0), 60n);
+  // Exact match only: the invite gate admits canonical codes, so no case folding.
+  assert.equal(b.reservedByKey("BETA-TEST", 0), 0n);
 });
 
 // mainnet-hardening P1-7: reserve->mint accounting gap. Without a grace period, a

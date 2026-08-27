@@ -2,7 +2,12 @@ interface Reservation {
   risk: bigint;
   vaults: string[];
   expiresAt: number;
-  taker: string;
+  /** Quota identity the reservation counts against — the invite code, not the
+   * taker address. Codes are limited-supply and gate /quote already, so rotating
+   * them is not free (unlike addresses), and spam naming a victim's address burns
+   * the attacker's own code budget. Opaque exact-match string: the invite gate
+   * only admits canonical codes, so no case normalization here. */
+  quotaKey: string;
 }
 
 interface OpenParlay {
@@ -69,16 +74,16 @@ export class ExposureBook {
     return sum;
   }
 
-  /** Reserved-but-unminted risk for one taker (mainnet-hardening P0-4). Opens are
+  /** Reserved-but-unminted risk for one quota key — the invite code
+   * (mainnet-hardening P0-4, re-keyed from taker address). Opens are
    * deliberately excluded: once a reservation converts via onMinted it's covered
    * by the allowance/per-market/per-cluster caps like any other open position,
    * so counting it again here would punish honest sequential minting instead of
-   * throttling a taker who never mints. */
-  reservedByTaker(taker: string, now: number): bigint {
+   * throttling a caller who never mints. */
+  reservedByKey(quotaKey: string, now: number): bigint {
     this.pruneExpired(now);
-    const t = taker.toLowerCase();
     let sum = 0n;
-    for (const r of this.reservations.values()) if (r.taker === t) sum += r.risk;
+    for (const r of this.reservations.values()) if (r.quotaKey === quotaKey) sum += r.risk;
     return sum;
   }
 
@@ -89,9 +94,9 @@ export class ExposureBook {
     perMarketCap: bigint,
     now: number,
     perClusterCap?: bigint,
-    taker?: string,
-    perTakerCap?: bigint,
-  ): { ok: true } | { ok: false; reason: "at-capacity" | "market-cap" | "cluster-cap" | "taker-cap"; headroom: bigint } {
+    quotaKey?: string,
+    perKeyCap?: bigint,
+  ): { ok: true } | { ok: false; reason: "at-capacity" | "market-cap" | "cluster-cap" | "quota-cap"; headroom: bigint } {
     // `headroom` is what the binding cap has left. Risk scales linearly with
     // stake, so the caller can turn it into "this ticket fits at stake X"
     // instead of a dead end the taker cannot act on.
@@ -114,19 +119,19 @@ export class ExposureBook {
         if (risk > room) return { ok: false, reason: "cluster-cap", headroom: room > 0n ? room : 0n };
       }
     }
-    if (taker !== undefined && perTakerCap !== undefined) {
-      const room = perTakerCap - this.reservedByTaker(taker, now);
-      if (risk > room) return { ok: false, reason: "taker-cap", headroom: room > 0n ? room : 0n };
+    if (quotaKey !== undefined && perKeyCap !== undefined) {
+      const room = perKeyCap - this.reservedByKey(quotaKey, now);
+      if (risk > room) return { ok: false, reason: "quota-cap", headroom: room > 0n ? room : 0n };
     }
     return { ok: true };
   }
 
-  reserve(quoteId: string, risk: bigint, vaults: string[], expiresAt: number, taker: string): void {
+  reserve(quoteId: string, risk: bigint, vaults: string[], expiresAt: number, quotaKey: string): void {
     this.reservations.set(quoteId, {
       risk,
       vaults: vaults.map((v) => v.toLowerCase()),
       expiresAt,
-      taker: taker.toLowerCase(),
+      quotaKey,
     });
   }
 

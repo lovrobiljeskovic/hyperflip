@@ -48,7 +48,7 @@ export interface QuoteDeps {
 }
 
 type Validated =
-  | { ok: true; taker: Address; legs: QuoteLeg[]; stake: bigint }
+  | { ok: true; taker: Address; legs: QuoteLeg[]; stake: bigint; inviteCode: string }
   | { ok: false; status: number; reason: string };
 
 export function validateQuoteRequest(
@@ -93,7 +93,7 @@ export function validateQuoteRequest(
   }
   if (stake <= 0n) return { ok: false, status: 400, reason: "bad-stake" };
   if (stake > cfg.maxStake) return { ok: false, status: 400, reason: "stake-too-big" };
-  return { ok: true, taker: b.taker as Address, legs, stake };
+  return { ok: true, taker: b.taker as Address, legs, stake, inviteCode: b.inviteCode };
 }
 
 export async function handleQuote(
@@ -198,7 +198,10 @@ export async function handleQuote(
   // All chain/API reads happened above; the signing await happens after the reserve.
   const now = deps.now();
   const risk = priced.maxPayout - priced.premium;
-  const check = exposure.check(risk, vaults, allowance, cfg.perMarketCap, now, cfg.perClusterCap, v.taker, cfg.perTakerReservedCap);
+  // Quota keyed on the invite code, not the taker address: codes are limited-supply
+  // and already gate this endpoint, so rotating them isn't free — and spam that names
+  // someone else's address burns the spammer's own code budget, not the victim's.
+  const check = exposure.check(risk, vaults, allowance, cfg.perMarketCap, now, cfg.perClusterCap, v.inviteCode, cfg.perCodeReservedCap);
   if (!check.ok) {
     reject(metrics, check.reason);
     // Structured at-capacity log: the bankroll topup signal (spec §6).
@@ -211,7 +214,7 @@ export async function handleQuote(
     return { status: 409, json: { error: check.reason, maxStake: fitStake.toString() } };
   }
   const quoteId = deps.randomId();
-  exposure.reserve(quoteId, risk, vaults, now + cfg.quoteTtlMs, v.taker);
+  exposure.reserve(quoteId, risk, vaults, now + cfg.quoteTtlMs, v.inviteCode);
 
   const quote: ParlayQuote = {
     taker: v.taker,

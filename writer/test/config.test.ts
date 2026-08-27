@@ -5,8 +5,8 @@ import {
   parseMarkets,
   parseInviteCodes,
   parseCorsOrigins,
-  defaultPerTakerReservedCap,
-  syncedPerTakerReservedCap,
+  defaultPerCodeReservedCap,
+  syncedPerCodeReservedCap,
   loadConfig,
 } from "../src/config.js";
 import { parseCorrelations } from "../src/correlation.js";
@@ -84,29 +84,29 @@ test("parseCorsOrigins trims and drops empties", () => {
   ]);
 });
 
-// mainnet-hardening P0-4: the default PER_TAKER_RESERVED_CAP must track
+// mainnet-hardening P0-4: the default PER_CODE_RESERVED_CAP must track
 // minPremiumBps, not a hardcoded multiple, or it silently stops matching its
 // own justification (floorCap in pricing.ts) whenever MIN_PREMIUM_BPS changes.
-test("defaultPerTakerReservedCap tracks minPremiumBps, not a fixed multiple of maxStake", () => {
+test("defaultPerCodeReservedCap tracks minPremiumBps, not a fixed multiple of maxStake", () => {
   // default 100bps -> floorCap multiple = 10000/100 - 1 = 99x, *3 = 297x
-  assert.equal(defaultPerTakerReservedCap(1_000_000n, 100n), 1_000_000n * 297n);
+  assert.equal(defaultPerCodeReservedCap(1_000_000n, 100n), 1_000_000n * 297n);
   // a stricter 200bps halves the floorCap multiple -> 10000/200 - 1 = 49x, *3 = 147x
-  assert.equal(defaultPerTakerReservedCap(1_000_000n, 200n), 1_000_000n * 147n);
+  assert.equal(defaultPerCodeReservedCap(1_000_000n, 200n), 1_000_000n * 147n);
   // a looser 50bps doubles it -> 10000/50 - 1 = 199x, *3 = 597x
-  assert.equal(defaultPerTakerReservedCap(1_000_000n, 50n), 1_000_000n * 597n);
+  assert.equal(defaultPerCodeReservedCap(1_000_000n, 50n), 1_000_000n * 597n);
 });
 
 // mainnet-hardening final review: index.ts overwrites cfg.minPremiumBps with
-// the chain value after loadConfig runs, so a PER_TAKER_RESERVED_CAP left to
+// the chain value after loadConfig runs, so a PER_CODE_RESERVED_CAP left to
 // default must be recomputed off that chain value too, or it silently keeps
 // pricing against the stale env minPremiumBps.
-test("syncedPerTakerReservedCap recomputes the default off the chain value, but never touches an explicit override", () => {
+test("syncedPerCodeReservedCap recomputes the default off the chain value, but never touches an explicit override", () => {
   assert.equal(
-    syncedPerTakerReservedCap(false, 1_000_000n * 297n, 1_000_000n, 200n),
-    defaultPerTakerReservedCap(1_000_000n, 200n),
+    syncedPerCodeReservedCap(false, 1_000_000n * 297n, 1_000_000n, 200n),
+    defaultPerCodeReservedCap(1_000_000n, 200n),
   );
   const explicit = 42n;
-  assert.equal(syncedPerTakerReservedCap(true, explicit, 1_000_000n, 200n), explicit);
+  assert.equal(syncedPerCodeReservedCap(true, explicit, 1_000_000n, 200n), explicit);
 });
 
 // mainnet-hardening final review: isSpotPxStale is `now - lastFreshMs > staleMs`;
