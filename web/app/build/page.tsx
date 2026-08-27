@@ -195,10 +195,15 @@ export default function BuildPage() {
   }, [load]);
 
   function addLeg(market: Market, isYes: boolean) {
-    setLegs((prev) => [
-      ...prev.filter((l) => l.vault !== market.vault),
-      { vault: market.vault, isYes, title: market.title, coin: isYes ? market.coinYes : market.coinNo },
-    ]);
+    setLegs((prev) => {
+      const rest = prev.filter((l) => l.vault !== market.vault);
+      // Clicking the already-selected side toggles the leg off; the other side swaps it.
+      if (prev.some((l) => l.vault === market.vault && l.isYes === isYes)) return rest;
+      return [
+        ...rest,
+        { vault: market.vault, isYes, title: market.title, coin: isYes ? market.coinYes : market.coinNo },
+      ];
+    });
   }
 
   function removeLeg(vault: `0x${string}`) {
