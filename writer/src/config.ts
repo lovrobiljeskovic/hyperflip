@@ -63,6 +63,10 @@ export interface WriterConfig {
    * carrying far more risk. Set to 0 to restore flat pricing. */
   legEdgeBps: bigint;
   quoteTtlMs: number;
+  /** A leg priced off spotPx (book empty/failed) is refused once its coin's last
+   * confirmed-live timestamp is older than this. spotPx has no on-chain timestamp
+   * (see writer/src/spotPx.ts), so freshness is tracked writer-side off book fetches. */
+  spotPxStaleMs: number;
   lockoutMs: number;
   pokerIntervalMs: number;
   /** Block ParlayVault was deployed at — startup event scan starts here. */
@@ -197,6 +201,7 @@ export function loadConfig(): WriterConfig {
     correlations,
     legEdgeBps: BigInt(process.env.LEG_EDGE_BPS ?? 300),
     quoteTtlMs: Number(process.env.QUOTE_TTL_MS ?? 30_000),
+    spotPxStaleMs: Number(process.env.SPOT_PX_STALE_MS ?? 60_000),
     lockoutMs: Number(process.env.LOCKOUT_MS ?? 600_000),
     pokerIntervalMs: Number(process.env.POKER_INTERVAL_MS ?? 15_000),
     deployBlock: BigInt(process.env.PARLAY_DEPLOY_BLOCK ?? 0),

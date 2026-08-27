@@ -5,7 +5,7 @@ import { parlayVaultAbi } from "./abi.js";
 import { loadConfig } from "./config.js";
 import { ExposureBook } from "./exposure.js";
 import { fetchBestAskWad } from "./infoApi.js";
-import { readSpotPxWad } from "./spotPx.js";
+import { makeLegPriceFetcher, readSpotPxWad } from "./spotPx.js";
 import { Poker } from "./poker.js";
 import { isStalled, stallThresholdMs } from "./pure.js";
 import { signQuote, type ParlayQuote, type QuoteLeg } from "./quotes.js";
@@ -61,7 +61,20 @@ async function main(): Promise<void> {
 
   const exposure = new ExposureBook((v) => cfg.markets.get(v)?.cluster);
   const metrics = newMetrics();
-  let lastBookFetchMs = 0;
+  // Best ask first: executable and conservative — the house never sells below the book.
+  // Empty book or info-API failure falls back to the 0x808 spotPx precompile, the only
+  // mid source that exists for outcome coins (allMids carries none, verified 2026-08-25).
+  // spotPx has no on-chain timestamp, so a per-coin freshness gate (spotPx.ts) refuses the
+  // leg once that coin hasn't had a real book price in SPOT_PX_STALE_MS — see mainnet-hardening
+  // P0-1. exposure caps still bound the damage from a normal (in-window) fallback.
+  const legPriceFetcher = makeLegPriceFetcher({
+    fetchBook: (coin) => fetchBestAskWad(cfg.infoApiUrl, coin),
+    readSpotPx: (coin) => readSpotPxWad(publicClient, BigInt(coin.slice(1))),
+    staleMs: cfg.spotPxStaleMs,
+    now: () => Date.now(),
+    onBookError: (coin, err) =>
+      console.warn(JSON.stringify({ event: "book-fetch-failed", coin, error: (err as Error).message.slice(0, 200) })),
+  });
 
   const deps: QuoteDeps = {
     cfg,
@@ -73,20 +86,7 @@ async function main(): Promise<void> {
     fetchLegPriceWad: async (leg: QuoteLeg) => {
       const market = cfg.markets.get(leg.vault.toLowerCase())!; // validated upstream
       const coin = leg.isYes ? market.coinYes : market.coinNo;
-      // Best ask first: executable and conservative — the house never sells below the book.
-      // Empty book or info-API failure falls back to the 0x808 spotPx precompile, the only
-      // mid source that exists for outcome coins (allMids carries none, verified 2026-08-25).
-      // ponytail: spotPx is last-traded px and can be stale on a dead market — edgeBps and
-      // exposure caps bound the damage; revisit if the writer ever hedges by taking the book.
-      let ask: bigint | null = null;
-      try {
-        ask = await fetchBestAskWad(cfg.infoApiUrl, coin);
-        lastBookFetchMs = Date.now();
-      } catch (err) {
-        console.warn(JSON.stringify({ event: "book-fetch-failed", coin, error: (err as Error).message.slice(0, 200) }));
-      }
-      if (ask !== null) return ask;
-      return readSpotPxWad(publicClient, BigInt(coin.slice(1)));
+      return legPriceFetcher.fetch(coin);
     },
     readAllowance: () =>
       publicClient.readContract({
@@ -184,10 +184,17 @@ async function main(): Promise<void> {
     const now = Date.now();
     const perMarket: Record<string, string> = {};
     for (const v of cfg.markets.keys()) perMarket[v] = exposure.perMarket(v, now).toString();
+    // Per-coin, not a single global: a fresh BTC book must not hide a dead NVDA book
+    // silently riding stale spotPx (mainnet-hardening P0-1). null = never confirmed live.
+    const priceFreshnessMs: Record<string, number | null> = {};
+    for (const m of cfg.markets.values()) {
+      priceFreshnessMs[m.coinYes] = legPriceFetcher.ageMs(m.coinYes);
+      priceFreshnessMs[m.coinNo] = legPriceFetcher.ageMs(m.coinNo);
+    }
     return {
       ok: true,
       openParlays: poker.openCount(),
-      lastBookFetchAgeMs: lastBookFetchMs ? Date.now() - lastBookFetchMs : null,
+      priceFreshnessMs,
       perMarketCap: cfg.perMarketCap.toString(),
       reservedGlobal: exposure.reservedGlobal(now).toString(),
       perMarket,

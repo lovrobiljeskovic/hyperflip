@@ -57,6 +57,7 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     infoApiUrl: "", port: 0, edgeBps: 0n, minPremiumBps: 100n, minLegs: 2,
     maxStake: 10_000_000n, perMarketCap: 1_000_000_000n, perClusterCap: 1_000_000_000n,
     rhoBandPct: 0.2, correlations: CORRELATIONS, legEdgeBps: 0n, quoteTtlMs: 30_000,
+    spotPxStaleMs: 60_000,
     lockoutMs: 600_000, pokerIntervalMs: 15_000, deployBlock: 0n,
     inviteCodes: new Set(["beta-test"]),
     waitlistFile: "/dev/null",
