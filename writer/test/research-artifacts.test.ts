@@ -160,6 +160,16 @@ test("artifact validation repeats schedule-aware trailing freshness", () => {
   } finally { rmSync(fixture.root, { recursive: true, force: true }); }
 });
 
+test("artifact validation rejects a last usable observation after dataAsOf", () => {
+  const fixture = setup();
+  try {
+    const future = structuredClone(fixture.artifact);
+    future.quality.lastUsableObservationMs.BTC = Date.parse("2026-08-28T13:00:00.000Z");
+    const validation = { ...fixture.validation, candidateSha256: sha256(`${canonicalJson(future)}\n`) };
+    assert.throws(() => validate(fixture, future, validation), /future.*observation|trailing freshness/i);
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
 test("promotion refuses stale, rejected, unverified, and baseline-mismatched candidates", () => {
   for (const kind of ["stale", "rejected", "manifest", "baseline"] as const) {
     const fixture = setup(kind === "stale" ? STALE : VALID);

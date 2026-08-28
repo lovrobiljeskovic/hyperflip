@@ -289,3 +289,72 @@ exit 0
 - **Import boundary:** the research CLI no longer imports dotenv-backed live config; writer callers retain the existing config exports.
 - **Worker lifecycle:** timeout/error/exit clears pending timers immediately, retains the worker identity during asynchronous termination, returns stable `worker cleanup pending`, and creates a replacement only after termination settles.
 - **Preserved invariants:** promotion/rename code, quote ordering, queue limit, one-second timeout, quadrature budgets, pricing inputs, golden payouts, and exposure/allowance/dominance gates were not changed. No dependency or external state was added or touched.
+
+## Fix Round 2: Future Observation Rejection
+
+Covering test: `writer/test/research-artifacts.test.ts` now passes a literal 13:00 `lastUsableObservationMs` to a candidate whose `dataAsOf` is 12:00 and requires validation to reject it.
+
+### RED
+
+```sh
+cd writer && ./node_modules/.bin/tsx --test test/research-artifacts.test.ts
+```
+
+```text
+not ok 7 - artifact validation rejects a last usable observation after dataAsOf
+error: 'Missing expected exception.'
+1..11
+# tests 11
+# pass 10
+# fail 1
+# duration_ms 1169.585
+exit 1
+```
+
+### GREEN
+
+The narrow fix bounds schedule-fresh observations to `timestamp <= asOfMs` in `trailingFresh`.
+
+```sh
+cd writer && ./node_modules/.bin/tsx --test test/research-artifacts.test.ts
+```
+
+```text
+1..11
+# tests 11
+# pass 11
+# fail 0
+# duration_ms 1170.639542
+exit 0
+```
+
+```sh
+cd writer && npm run research:check -- --test-name-pattern='artifact|promotion'
+```
+
+```text
+1..74
+# tests 74
+# pass 74
+# fail 0
+# duration_ms 34468.404292
+exit 0
+```
+
+```sh
+cd writer && npm run check
+```
+
+```text
+> parlay-writer@1.0.0 typecheck
+> tsc --noEmit
+
+1..246
+# tests 246
+# pass 246
+# fail 0
+# duration_ms 35270.950291
+exit 0
+```
+
+Round-2 self-review: only the freshness upper bound, its direct artifact regression, and this report changed. Schedule-derived lower bounds, weekend/session behavior, promotion atomicity, quote/worker behavior, and live pricing gates remain unchanged.

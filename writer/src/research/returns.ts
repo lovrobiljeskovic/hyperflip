@@ -185,7 +185,7 @@ export function trailingFresh(source: SourceEntry, observedTimes: number[], asOf
   const cutoff = asOfMs - graceMs;
   const window = { asOfMs: cutoff, lookbackMs: source.calendar === "continuous" ? 2 * HOUR : 400 * 86_400_000 };
   const expected = expectedIntervals(source, window).filter((timestamp) => timestamp + HOUR - 1 <= cutoff).at(-1);
-  return expected === undefined || observedTimes.some((timestamp) => timestamp >= expected);
+  return expected === undefined || observedTimes.some((timestamp) => timestamp >= expected && timestamp <= asOfMs);
 }
 
 export function quality(observations: number, expected: number, mode: QualityMode, exclusions: ExclusionRecord[] = []): QualityResult {
