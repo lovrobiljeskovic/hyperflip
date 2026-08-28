@@ -62,13 +62,13 @@ test("trailing freshness follows expected sessions instead of global dataAsOf", 
   assert.equal(trailingFresh(continuousSource, [fridayClose], saturdayNoon), false);
 });
 
-test("pair coverage uses the requested window for simultaneous and edge outages", () => {
+test("a leading-window gap reduces the fixed pair coverage denominator", () => {
   const rows = fixture("candles-continuous.jsonl");
   const peer = rows.map((row) => ({ ...row, underlying: "ETH", sourceCoin: "ETH" }));
   const result = alignPair(rows, peer, continuousSource, { ...continuousSource, underlying: "ETH", sourceCoin: "ETH" }, window(0, 5 * HOUR), "hourly-within-cluster");
   assert.equal(result.quality.expected, 5);
-  assert.equal(result.quality.observations, 1);
-  assert.equal(result.quality.coverage, 0.2);
+  assert.equal(result.quality.observations, 0);
+  assert.equal(result.quality.coverage, 0);
   assert.equal(result.quality.eligible, false);
   assert.ok(result.quality.exclusions.some((row) => row.reason === "missing-interval"));
 });
@@ -102,11 +102,13 @@ test("derived partitions are immutable and deterministic after manifest verifica
     mkdirSync(join(root, "raw", "candles", "1970", "01", "01", "BTC"), { recursive: true });
     writeFileSync(join(root, "facts", "source-registries", `${sourceHash}.json`), registryBytes);
     writeFileSync(join(root, "state", "collector.json"), canonicalJson({ schemaVersion: 1, sourceRegistrySha256: sourceHash, sources: {} }));
-    writeFileSync(raw, gzipSync(`${fixture("candles-continuous.jsonl").map((row) => JSON.stringify(row)).join("\n")}\n`));
+    const rows = [candle(0, "100", "1", 1, "BTC", "OTHER"), ...fixture("candles-continuous.jsonl")];
+    writeFileSync(raw, gzipSync(`${rows.map((row) => JSON.stringify(row)).join("\n")}\n`));
     writeFileSync(`${raw}.provenance.json`, canonicalJson({ schemaVersion: 1, sourceRegistrySha256: sourceHash }));
     const manifest = buildDailyManifest(root, "1970-01-01");
     const first = deriveReturns(root, manifest, window(0, 5 * HOUR));
     const second = deriveReturns(root, manifest, window(0, 5 * HOUR));
+    assert.equal(first.rows, 0);
     assert.equal(first.path, second.path);
     assert.equal(readFileSync(first.path).equals(readFileSync(second.path)), true);
     assert.throws(() => deriveReturns(root, { ...manifest, files: [] }, window(0, 5 * HOUR)), /manifest/);

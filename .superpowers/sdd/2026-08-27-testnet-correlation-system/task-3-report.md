@@ -43,3 +43,33 @@ GREEN output: focused `npm test` 185 passing / 0 failing; `tsc --noEmit` exited 
 ## Concerns
 
 - None. Promotion-time consumers can reuse exported `trailingFresh` with their own 30-hour candidate-age gate.
+
+## Fix Round 1
+
+### Changes
+
+- `deriveReturns` now filters raw records by the registry source's underlying, source network, source coin, and `1h` interval before constructing returns.
+- `writer/test/fixtures/research/candles-continuous.jsonl` now begins after the calibration-window start; its coverage test proves the leading gap counts against the fixed denominator.
+
+### Coverage and TDD Evidence
+
+Covering file: `writer/test/research-returns.test.ts`.
+
+RED command:
+
+```sh
+cd writer && ./node_modules/.bin/tsx --test test/research-returns.test.ts --test-name-pattern='leading-window gap|derived partitions'
+```
+
+RED output: 6 passing / 2 failing. The leading-gap assertion received `1` observation instead of `0`; the foreign-source fixture made `deriveReturns` emit `1` row instead of `0`.
+
+GREEN commands:
+
+```sh
+cd writer && ./node_modules/.bin/tsx --test test/research-returns.test.ts --test-name-pattern='leading-window gap|derived partitions'
+cd writer && npm test -- --test-name-pattern='missing intervals|session close|quality gates|leading-window gap|derived partitions'
+cd writer && npm run typecheck
+cd writer && npm run research:check -- --test-name-pattern='return|quality|derive|leading-window gap'
+```
+
+GREEN output: focused file 8 passing / 0 failing; `npm test` 185 passing / 0 failing; `tsc --noEmit` exited 0; research check 30 passing / 0 failing.

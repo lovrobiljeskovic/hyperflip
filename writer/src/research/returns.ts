@@ -229,7 +229,7 @@ export function deriveReturns(root: string, manifest: DataManifest, window: Wind
   const registry = parseSourceRegistry(readFileSync(registryFile, "utf8"));
   const candles = manifest.files.filter((file) => file.path.endsWith(".jsonl.gz")).flatMap((file) => readCandlePartition(join(root, file.path)));
   const records = registry.sources.flatMap((source) => {
-    const own = candles.filter((candle) => candle.underlying === source.underlying);
+    const own = candles.filter((candle) => candle.underlying === source.underlying && candle.sourceNetwork === source.sourceNetwork && candle.sourceCoin === source.sourceCoin && candle.interval === "1h");
     return [...buildHourlyReturns(own, source, window), ...buildDailyReturns(own, source, window)];
   }).sort((a, b) => a.underlying.localeCompare(b.underlying) || a.interval.localeCompare(b.interval) || a.timestampMs - b.timestampMs);
   const identity = sha256(canonicalJson({ dataManifestSha256: sha256(canonicalJson(manifest)), transformationVersion: TRANSFORMATION_VERSION, window }));
