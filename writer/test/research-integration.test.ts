@@ -5,10 +5,9 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import test from "node:test";
 import { gzipSync } from "node:zlib";
-import type { Address, Hex } from "viem";
+import { hashTypedData, type Address, type Hex } from "viem";
 import { ExposureBook } from "../src/exposure.js";
 import { WAD } from "../src/pure.js";
-import { quoteDigest } from "../src/quotes.js";
 import { handleQuote, newMetrics, type QuoteDeps } from "../src/server.js";
 import { parseCorrelationArtifact, promoteCandidate } from "../src/research/artifacts.js";
 import { collectSources } from "../src/research/candles.js";
@@ -36,6 +35,24 @@ const source = (underlying: string): SourceEntry => ({
   fallbackEligible: false,
 });
 
+const fixturePartition = (price: string): Buffer => gzipSync(`${canonicalJson({
+  schemaVersion: 1,
+  source: "hyperliquid-info",
+  sourceNetwork: "mainnet",
+  underlying: "BTC",
+  sourceCoin: "BTC",
+  interval: "1h",
+  openTimeMs: NOW - 3_600_000,
+  closeTimeMs: NOW - 1,
+  open: price,
+  high: price,
+  low: price,
+  close: price,
+  volume: "1",
+  tradeCount: 1,
+  retrievedAtMs: NOW,
+})}\n`);
+
 function filesBelow(root: string): string[] {
   return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
     const path = join(root, entry.name);
@@ -60,7 +77,7 @@ function artifactFixture(root: string): {
 
   const partitionRelative = "raw/candles/2026/08/28/BTC/fixture.jsonl.gz";
   const partition = join(root, partitionRelative);
-  const expectedPartition = gzipSync('{"fixture":true}\n');
+  const expectedPartition = fixturePartition("100");
   const manifest: DataManifest = {
     schemaVersion: 1,
     createdAt: "2026-08-28T12:00:00.000Z",
@@ -176,6 +193,32 @@ function hash(value: bigint): Hex {
   return `0x${value.toString(16).padStart(64, "0")}`;
 }
 
+function expectedQuoteDigest(
+  chainId: number,
+  verifyingContract: Address,
+  quote: { taker: Address; legs: { vault: Address; isYes: boolean }[]; premium: bigint; maxPayout: bigint; deadline: bigint; quoteId: Hex },
+): Hex {
+  return hashTypedData({
+    domain: { name: "ParlayVault", version: "1", chainId, verifyingContract },
+    types: {
+      Quote: [
+        { name: "taker", type: "address" },
+        { name: "legs", type: "Leg[]" },
+        { name: "premium", type: "uint96" },
+        { name: "maxPayout", type: "uint96" },
+        { name: "deadline", type: "uint256" },
+        { name: "quoteId", type: "bytes32" },
+      ],
+      Leg: [
+        { name: "vault", type: "address" },
+        { name: "isYes", type: "bool" },
+      ],
+    },
+    primaryType: "Quote",
+    message: quote,
+  });
+}
+
 function runRepositoryGate(root: string): string[] {
   const bin = join(root, "bin");
   const log = join(root, "commands.log");
@@ -205,8 +248,8 @@ test("correlation beta acceptance is deterministic, durable, joined, isolated, a
     assert.throws(() => promoteCandidate(roots[0], candidate, artifact.sources, artifact.markets, NOW), /manifest file mismatch/);
     assert.deepEqual(readFileSync(artifact.champion), priorChampion);
     mkdirSync(resolve(artifact.partition, ".."), { recursive: true });
-    writeFileSync(artifact.partition, "corrupt partition");
-    assert.throws(() => promoteCandidate(roots[0], candidate, artifact.sources, artifact.markets, NOW));
+    writeFileSync(artifact.partition, fixturePartition("101"));
+    assert.throws(() => promoteCandidate(roots[0], candidate, artifact.sources, artifact.markets, NOW), /manifest file mismatch/);
     assert.deepEqual(readFileSync(artifact.champion), priorChampion);
 
     writeFileSync(artifact.champion, artifact.candidateRaw);
@@ -228,7 +271,7 @@ test("correlation beta acceptance is deterministic, durable, joined, isolated, a
     const quoteFile = filesBelow(join(roots[0], "journal", "quotes"))[0];
     const recorded = JSON.parse(readFileSync(quoteFile, "utf8")) as { quoteId: string; quoteDigest: string };
     assert.equal(recorded.quoteId, returned.quoteId);
-    assert.equal(recorded.quoteDigest, quoteDigest(deps.chainId, deps.cfg.parlayVault, { taker: TAKER, legs: returned.legs, premium: BigInt(returned.premium), maxPayout: BigInt(returned.maxPayout), deadline: BigInt(returned.deadline), quoteId: returned.quoteId }));
+    assert.equal(recorded.quoteDigest, expectedQuoteDigest(deps.chainId, deps.cfg.parlayVault, { taker: TAKER, legs: returned.legs, premium: BigInt(returned.premium), maxPayout: BigInt(returned.maxPayout), deadline: BigInt(returned.deadline), quoteId: returned.quoteId }));
     assert.ok(statSync(quoteFile).size > 0);
 
     const chain = new FixtureChain(returned);
