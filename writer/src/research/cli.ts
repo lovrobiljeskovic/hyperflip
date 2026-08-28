@@ -2,11 +2,12 @@ import "dotenv/config";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { collectSources } from "./candles.js";
+import { calibrate } from "./calibration.js";
 import { deriveReturns } from "./returns.js";
 import { parseSourceRegistry } from "./types.js";
 
-if (process.argv[2] !== "collect" && process.argv[2] !== "derive") {
-  console.error("usage: npm run research -- collect|derive");
+if (process.argv[2] !== "collect" && process.argv[2] !== "derive" && process.argv[2] !== "calibrate") {
+  console.error("usage: npm run research -- collect|derive|calibrate");
   process.exitCode = 2;
 } else if (process.argv[2] === "collect") {
   const root = process.env.RESEARCH_ROOT;
@@ -23,7 +24,7 @@ if (process.argv[2] !== "collect" && process.argv[2] !== "derive") {
     console.log(JSON.stringify(summary));
     if (summary.failures.length) process.exitCode = 1;
   }
-} else {
+} else if (process.argv[2] === "derive") {
   const root = process.env.RESEARCH_ROOT;
   const manifestFile = process.env.RESEARCH_MANIFEST_FILE;
   const asOfMs = Number(process.env.RESEARCH_AS_OF_MS);
@@ -34,5 +35,16 @@ if (process.argv[2] !== "collect" && process.argv[2] !== "derive") {
   } else {
     const output = deriveReturns(resolve(root), JSON.parse(readFileSync(resolve(manifestFile), "utf8")), { asOfMs, lookbackMs });
     console.log(JSON.stringify(output));
+  }
+} else {
+  const root = process.env.RESEARCH_ROOT;
+  const manifestFile = process.env.RESEARCH_MANIFEST_FILE;
+  const derivedManifestPath = process.env.RESEARCH_DERIVED_MANIFEST_FILE;
+  if (!root || !manifestFile || !derivedManifestPath) {
+    console.error("RESEARCH_ROOT, RESEARCH_MANIFEST_FILE, and RESEARCH_DERIVED_MANIFEST_FILE are required");
+    process.exitCode = 2;
+  } else {
+    const artifact = calibrate({ root: resolve(root), manifest: JSON.parse(readFileSync(resolve(manifestFile), "utf8")), derivedManifestPath });
+    console.log(JSON.stringify({ modelVersion: artifact.modelVersion, dataAsOf: artifact.dataAsOf }));
   }
 }

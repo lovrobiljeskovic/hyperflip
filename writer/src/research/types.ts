@@ -109,6 +109,7 @@ export interface CorrelationArtifact {
     highamProjectionDelta: number;
     clippedNegativePairs: { pair: [string, string]; target: number }[];
     signedPsdTarget: number[][];
+    diagnosticMatrices: Record<"30" | "90" | "180", (number | null)[][]>;
   };
   validation: { status: "pending" };
   clusters: Record<string, Record<string, {
