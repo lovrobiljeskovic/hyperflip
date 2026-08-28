@@ -198,6 +198,58 @@ export function assertNever(value: never): never {
   throw new Error(`unexpected value: ${String(value)}`);
 }
 
+const SHA256 = /^[0-9a-f]{64}$/;
+
+function assertSafeIntegerTimestamp(value: number, label: string): void {
+  if (!Number.isSafeInteger(value)) throw new Error(`${label} must be a safe integer millisecond timestamp`);
+}
+
+function assertSha256(value: string, label: string): void {
+  if (!SHA256.test(value)) throw new Error(`${label} must be a lowercase 64-character hex hash`);
+}
+
+export function assertCandleRecord(record: CandleRecord): void {
+  assertSafeIntegerTimestamp(record.openTimeMs, "openTimeMs");
+  assertSafeIntegerTimestamp(record.closeTimeMs, "closeTimeMs");
+  assertSafeIntegerTimestamp(record.retrievedAtMs, "retrievedAtMs");
+}
+
+export function assertExclusionRecord(record: ExclusionRecord): void {
+  if (record.timestampMs !== null) assertSafeIntegerTimestamp(record.timestampMs, "timestampMs");
+}
+
+export function assertDataManifest(record: DataManifest): void {
+  assertSha256(record.sourceRegistrySha256, "sourceRegistrySha256");
+  assertSafeIntegerTimestamp(record.sourceRange.fromMs, "sourceRange.fromMs");
+  assertSafeIntegerTimestamp(record.sourceRange.toMs, "sourceRange.toMs");
+  for (const [underlying, observations] of Object.entries(record.underlyings)) {
+    if (observations.firstUsableObservationMs !== null) assertSafeIntegerTimestamp(observations.firstUsableObservationMs, `underlyings.${underlying}.firstUsableObservationMs`);
+    if (observations.lastUsableObservationMs !== null) assertSafeIntegerTimestamp(observations.lastUsableObservationMs, `underlyings.${underlying}.lastUsableObservationMs`);
+    for (const timestampMs of observations.missingIntervals) assertSafeIntegerTimestamp(timestampMs, `underlyings.${underlying}.missingIntervals`);
+  }
+  for (const file of record.files) assertSha256(file.sha256, "files.sha256");
+}
+
+export function assertCorrelationArtifact(record: CorrelationArtifact): void {
+  assertSha256(record.dataManifestSha256, "dataManifestSha256");
+  assertSha256(record.sourceRegistrySha256, "sourceRegistrySha256");
+  for (const [underlying, timestampMs] of Object.entries(record.quality.lastUsableObservationMs)) {
+    if (timestampMs !== null) assertSafeIntegerTimestamp(timestampMs, `quality.lastUsableObservationMs.${underlying}`);
+  }
+}
+
+export function assertQuoteDecision(record: QuoteDecision): void {
+  assertSafeIntegerTimestamp(record.recordedAtMs, "recordedAtMs");
+  for (const input of record.bookInputs) assertSafeIntegerTimestamp(input.observedAtMs, "bookInputs.observedAtMs");
+  assertSha256(record.dataManifestSha256, "dataManifestSha256");
+  assertSha256(record.sourceRegistrySha256, "sourceRegistrySha256");
+  assertSha256(record.signatureHash, "signatureHash");
+}
+
+export function assertJoinedEventRecord(record: JoinedEventRecord): void {
+  assertSafeIntegerTimestamp(record.recordedAtMs, "recordedAtMs");
+}
+
 const CLUSTERS = new Set<SourceEntry["cluster"]>(["crypto", "equity", "commodity"]);
 const CALENDARS = new Set<SourceEntry["calendar"]>(["continuous", "session"]);
 const LOCAL_TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
