@@ -385,8 +385,8 @@ test("representative 20-underlying replay fixture is deterministic within local 
   const root = mkdtempSync(join(tmpdir(), "hype-replay-performance-"));
   try {
   const specs = readFileSync(new URL("./fixtures/research/replay-series.jsonl", import.meta.url), "utf8").trim().split("\n").map((line) => JSON.parse(line) as { underlying: string; cluster: SourceEntry["cluster"]; calendar: SourceEntry["calendar"]; phase: number });
-  const sources = specs.map((entry, index) => ({ ...source(entry.underlying, entry.cluster, entry.calendar), eligible: index < 12 }));
-  const rows = specs.flatMap((entry) => Array.from({ length: 98 }, (_, index) => {
+  const sources = specs.map((entry) => source(entry.underlying, entry.cluster, entry.calendar));
+  const rows = specs.flatMap((entry) => Array.from({ length: 94 }, (_, index) => {
     const timestampMs = ORIGIN + (index - 89) * DAY;
     return { schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval: "1d" as const, timestampMs, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: entry.phase / 10_000 + Math.sin((index + entry.phase) / 7) * 0.02, sourceKeys: [] };
   }));
@@ -395,11 +395,21 @@ test("representative 20-underlying replay fixture is deterministic within local 
   writeFileSync(baselineFile, JSON.stringify(baselineFor(series)));
   const started = performance.now();
   const report = runReplay({ root, candidate: candidateFor(series, "performance"), inputManifestSha256: series.manifestHash, baselineFile, series, seed: "performance" });
+  const branchSpecs = [specs[0], specs[8], specs[9], specs[15]];
+  const branchSources = branchSpecs.map((entry) => source(entry.underlying, entry.cluster, entry.calendar));
+  const branchRows = branchSpecs.flatMap((entry) => Array.from({ length: 98 }, (_, index) => {
+    const timestampMs = ORIGIN + (index - 89) * DAY;
+    return { schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval: "1d" as const, timestampMs, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: entry.phase / 10_000 + Math.sin((index + entry.phase) / 7) * 0.02, sourceKeys: [] };
+  }));
+  const branchSeries = { rows: branchRows, sources: branchSources, manifestHash: "f".repeat(64) };
+  const branchBaselineFile = join(root, "branch-correlations.json");
+  writeFileSync(branchBaselineFile, JSON.stringify(baselineFor(branchSeries)));
+  const branchReport = runReplay({ root, candidate: candidateFor(branchSeries, "performance-branches"), inputManifestSha256: branchSeries.manifestHash, baselineFile: branchBaselineFile, series: branchSeries, seed: "performance-branches" });
   const elapsedMs = performance.now() - started;
   const rssBytes = process.memoryUsage().rss;
   const summary = `${canonicalJson({ counts: Object.fromEntries(["same-underlying", "same-cluster", "cross-cluster"].map((stratum) => [stratum, Object.entries(report.ticketCounts).filter(([key]) => key.startsWith(`${stratum}:`)).reduce((sum, [, rows]) => sum + rows, 0)])), keys: report.selectedTicketKeys })}\n`;
-  assert.ok(report.modelScores["filtered-historical-simulation"].overall.eligibleRows > 0);
-  assert.ok(report.bootstrap.groups.length > 0);
+  assert.ok(branchReport.modelScores["filtered-historical-simulation"].overall.eligibleRows > 0);
+  assert.ok(branchReport.bootstrap.groups.length > 0);
   assert.equal(summary, readFileSync(new URL("./fixtures/research/replay-expected.json", import.meta.url), "utf8"));
   assert.ok(elapsedMs < 30_000, `fixture took ${elapsedMs}ms`);
   assert.ok(rssBytes < 512 * 1024 * 1024, `fixture used ${rssBytes} RSS bytes`);

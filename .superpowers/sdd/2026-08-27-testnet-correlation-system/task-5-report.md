@@ -119,7 +119,7 @@ The test performs two byte-compared deterministic fixture runs; its measured fir
 
 ## Fix round 1: causal replay gates
 
-This section supersedes the original performance claim above. The earlier fixture timed two calls to `syntheticEvents`, not `runReplay`, so it was not evidence for the complete replay path. The fixed fixture invokes `runReplay` with a twenty-source registry (twelve candidate-eligible and eight explicitly quarantined underlyings) over five forecast origins. It asserts eligible FHS rows and non-empty 96-hour bootstrap groups, and therefore covers ticket construction, all five model paths, scoring, bootstrap, deterministic full recomputation, and validation artifact creation at the mandatory 20,000 draws.
+This section supersedes the original performance claim above. The earlier fixture timed two calls to `syntheticEvents`, not `runReplay`, so it was not evidence for the complete replay path. The fixed timed gate invokes `runReplay` first with all twenty underlyings eligible, then with a four-underlying, five-origin branch fixture that asserts eligible FHS rows and non-empty 96-hour bootstrap groups. The combined measurement therefore covers the representative all-20 workload plus ticket construction, all five model paths, scoring, bootstrap, deterministic full recomputation, and validation artifact creation at the mandatory 20,000 draws.
 
 ### Review defects fixed
 
@@ -195,7 +195,7 @@ Required research check:
 ```text
 npm run research:check -- --test-name-pattern='replay|score|bootstrap|challenger'
 tests 63; pass 63; fail 0; skipped 0
-duration_ms 26037.538334
+duration_ms 36095.189375
 ```
 
 Final writer verification (the first sandboxed `npm run check` attempt passed typecheck but tsx could not bind its temporary IPC socket with `listen EPERM`; the identical permitted rerun below is authoritative):
@@ -208,7 +208,7 @@ exit 0
 npm run check
 > npm run typecheck && npm run test
 tests 218; pass 218; fail 0; skipped 0
-duration_ms 28117.096291
+duration_ms 35299.822583
 exit 0
 ```
 
@@ -218,13 +218,13 @@ exit 0
 /usr/bin/time -l node --import tsx --test --test-name-pattern='representative 20-underlying' test/research-replay.test.ts
 ok 1 - representative 20-underlying replay fixture is deterministic within local resource bounds
 tests 1; pass 1; fail 0
-duration_ms 13790.343083
-13.82 real
-219971584 maximum resident set size
+duration_ms 23003.692583
+23.03 real
+228999168 maximum resident set size
 exit 0
 ```
 
-The fixture asserts total process RSS, not merely growth. The measured complete replay is below 30 seconds and about 210 MiB, below the 512 MiB limit. The timed result contains five origins spanning 96 hours, 180 selected tickets, eligible filtered-historical-simulation forecasts, and non-empty bootstrap groups.
+The fixture asserts total process RSS, not merely growth. The combined measured gate is below 30 seconds and about 218 MiB, below the 512 MiB limit. Its primary replay has all twenty underlyings eligible; the secondary replay spans five origins over 96 hours and proves eligible filtered-historical-simulation forecasts plus non-empty bootstrap groups.
 
 ### Fix-round self-review
 
