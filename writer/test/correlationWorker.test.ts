@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 import { test } from "node:test";
@@ -42,7 +43,7 @@ test("near-budget tickets keep two live risk integrations plus one unbiased work
   assert.equal(await worker.bestEstimate(legs, TABLE), jointProbWad(legs, TABLE, 0));
 });
 
-test("CorrelationWorker bounds its queue at sixteen and cleans up timed-out work", async (context) => {
+test("CorrelationWorker bounds its queue at sixteen and rejects timed-out work", async (context) => {
   let calls = 0;
   const workerUrl = new URL("../src/correlationWorker.ts", import.meta.url).href;
   const factory = () => ++calls === 1
@@ -55,5 +56,29 @@ test("CorrelationWorker bounds its queue at sixteen and cleans up timed-out work
   await assert.rejects(worker.bestEstimate(legs, TABLE), (error: unknown) => error instanceof PricingUnavailableError && /queue full/.test(error.message));
   await assert.rejects(stuck[0], (error: unknown) => error instanceof PricingUnavailableError && /timeout/.test(error.message));
   await Promise.allSettled(stuck.slice(1));
+});
+
+test("CorrelationWorker refuses overlap until a timed-out worker has terminated", async (context) => {
+  let calls = 0;
+  let finishTermination!: () => void;
+  const workerUrl = new URL("../src/correlationWorker.ts", import.meta.url).href;
+  const factory = () => {
+    calls++;
+    if (calls > 1) return new Worker(`import("tsx/esm/api").then(({tsImport})=>tsImport(${JSON.stringify(workerUrl)},${JSON.stringify(workerUrl)}))`, { eval: true });
+    const stuck = new EventEmitter() as unknown as Worker;
+    stuck.unref = () => stuck;
+    stuck.postMessage = () => undefined;
+    stuck.terminate = () => new Promise<number>((resolve) => { finishTermination = () => resolve(1); });
+    return stuck;
+  };
+  const worker = new CorrelationWorker(factory);
+  context.after(() => worker.close());
+  const legs = [leg(0.5, "crypto", "BTC"), leg(0.5, "crypto", "ETH")];
+  await assert.rejects(worker.bestEstimate(legs, TABLE), /timeout/);
+  await assert.rejects(worker.bestEstimate(legs, TABLE), /cleanup pending/);
+  assert.equal(calls, 1);
+  finishTermination();
+  await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(await worker.bestEstimate(legs, TABLE), jointProbWad(legs, TABLE, 0));
+  assert.equal(calls, 2);
 });

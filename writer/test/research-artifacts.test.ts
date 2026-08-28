@@ -142,7 +142,7 @@ test("artifact validation repeats schedule-aware trailing freshness", () => {
     const weekend = structuredClone(fixture.artifact);
     weekend.dataAsOf = "2026-08-30T12:00:00.000Z";
     weekend.createdAt = "2026-08-30T12:00:00.000Z";
-    weekend.quality.lastUsableObservationMs.BTC = Date.parse("2026-08-30T05:00:00.000Z");
+    weekend.quality.lastUsableObservationMs.BTC = Date.parse("2026-08-30T11:00:00.000Z");
     weekend.quality.lastUsableObservationMs.ETH = Date.parse("2026-08-28T16:00:00.000Z");
     const now = Date.parse("2026-08-30T18:00:00.000Z");
     const manifest = { ...fixture.manifest, sourceRegistrySha256: sha256(canonicalJson(session)), createdAt: weekend.createdAt };
@@ -150,6 +150,10 @@ test("artifact validation repeats schedule-aware trailing freshness", () => {
     weekend.dataManifestSha256 = sha256(canonicalJson(manifest));
     const validation = { ...fixture.validation, candidateSha256: sha256(`${canonicalJson(weekend)}\n`), inputManifestSha256: weekend.dataManifestSha256 };
     assert.doesNotThrow(() => validateArtifact(`${canonicalJson(weekend)}\n`, { manifest, sources: session, markets: fixture.markets, validation }, now));
+    weekend.quality.lastUsableObservationMs.BTC = Date.parse("2026-08-30T04:00:00.000Z");
+    validation.candidateSha256 = sha256(`${canonicalJson(weekend)}\n`);
+    assert.throws(() => validateArtifact(`${canonicalJson(weekend)}\n`, { manifest, sources: session, markets: fixture.markets, validation }, now), /trailing freshness/);
+    weekend.quality.lastUsableObservationMs.BTC = Date.parse("2026-08-30T11:00:00.000Z");
     weekend.quality.lastUsableObservationMs.ETH = Date.parse("2026-08-28T15:00:00.000Z");
     validation.candidateSha256 = sha256(`${canonicalJson(weekend)}\n`);
     assert.throws(() => validateArtifact(`${canonicalJson(weekend)}\n`, { manifest, sources: session, markets: fixture.markets, validation }, now), /trailing freshness/);
@@ -194,4 +198,11 @@ test("promotion CLI refuses automatic latest selection and requires an explicit 
   });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /--candidate/);
+});
+
+test("research CLI import does not initialize live dotenv config", () => {
+  const result = spawnSync(process.execPath, ["--import", "tsx", "src/research/cli.ts", "promote", "--latest"], {
+    cwd: resolve(import.meta.dirname, ".."), encoding: "utf8", env: { RESEARCH_ROOT: "/tmp", CORRELATION_SOURCES_FILE: "/tmp/sources", MARKETS_FILE: "/tmp/markets" },
+  });
+  assert.doesNotMatch(result.stdout, /injected env|dotenv/i);
 });

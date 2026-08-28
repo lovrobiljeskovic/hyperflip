@@ -20,6 +20,7 @@ interface Pending {
 
 export class CorrelationWorker {
   private worker: Worker | null = null;
+  private cleaning = false;
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
   private readonly createWorker: () => Worker;
@@ -48,17 +49,23 @@ export class CorrelationWorker {
   }
 
   private failAll(error: PricingUnavailableError): void {
+    if (this.cleaning) return;
     const worker = this.worker;
-    this.worker = null;
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(error);
     }
     this.pending.clear();
-    if (worker) void worker.terminate();
+    if (!worker) return;
+    this.cleaning = true;
+    void worker.terminate().catch(() => undefined).finally(() => {
+      if (this.worker === worker) this.worker = null;
+      this.cleaning = false;
+    });
   }
 
   bestEstimate(legs: CorrLeg[], table: CorrelationTable): Promise<bigint> {
+    if (this.cleaning) return Promise.reject(new PricingUnavailableError("worker cleanup pending"));
     if (this.pending.size >= MAX_QUEUE) return Promise.reject(new PricingUnavailableError("worker queue full"));
     const id = this.nextId++;
     return new Promise<bigint>((resolve, reject) => {

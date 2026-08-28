@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isAddress, type Address } from "viem";
 import type { CorrelationTable } from "./correlation.js";
+import { parseMarkets, type MarketInfo } from "./markets.js";
 import { BPS, parseDecimalToUnits } from "./pure.js";
 import { parseCorrelationArtifact, type ArtifactModelMetadata } from "./research/artifacts.js";
 import { parseSourceRegistry } from "./research/types.js";
@@ -12,31 +13,8 @@ import { parseSourceRegistry } from "./research/types.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 loadDotenv({ path: path.resolve(here, "../../.env") });
 
-export interface MarketInfo {
-  vault: Address;
-  /** Core l2Book coin string for the YES side (e.g. "+123850"). */
-  coinYes: string;
-  /** Core l2Book coin string for the NO side (e.g. "+123851"). */
-  coinNo: string;
-  /** Underlying asset (e.g. "BTC"). Feeds the correlation model in
-   * correlation.ts: legs sharing an underlying are priced as near-certainly
-   * (or, on opposite sides, impossibly) correlated by the copula, not refused. */
-  underlying: string;
-  /** Correlation cluster (e.g. "crypto"). Feeds the correlation model in
-   * correlation.ts and scopes the perClusterCap exposure cap. */
-  cluster: string;
-  /** Which way YES bets the underlying: "up" (above-strike), "down" (below-strike),
-   * "band" (between-strikes, direction-neutral). Combined with a leg's isYes, this
-   * gives its bullish/bearish stance for the copula ("band" is non-directional —
-   * bullish: null). */
-  direction: "up" | "down" | "band";
-  /** Optional market expiry (ms epoch); legs inside the lockout window are refused. */
-  expiryMs?: number;
-  /** Human-readable market question, shown by the frontend. */
-  title: string;
-  /** Display grouping (e.g. "crypto", "sports"). */
-  category: string;
-}
+export { parseMarkets } from "./markets.js";
+export type { MarketInfo } from "./markets.js";
 
 export interface WriterConfig {
   rpcUrl: string;
@@ -147,42 +125,6 @@ function requireAddress(name: string): Address {
   return v;
 }
 
-/** Registry: JSON array, or { markets: [...] }, of
- * { vault, coinYes, coinNo, underlying, cluster, direction, title, category, expiryMs? }. */
-export function parseMarkets(raw: string): Map<string, MarketInfo> {
-  const parsed = JSON.parse(raw);
-  const list = Array.isArray(parsed) ? parsed : parsed?.markets;
-  if (!Array.isArray(list)) throw new Error("MARKETS must be a JSON array or { markets: [...] }");
-  const map = new Map<string, MarketInfo>();
-  for (const m of list) {
-    if (!isAddress(m.vault)) throw new Error(`invalid market vault: ${m.vault}`);
-    if (typeof m.coinYes !== "string" || typeof m.coinNo !== "string") {
-      throw new Error(`market ${m.vault} missing coinYes/coinNo`);
-    }
-    if (typeof m.underlying !== "string" || m.underlying === "" || typeof m.cluster !== "string" || m.cluster === "") {
-      throw new Error(`market ${m.vault} missing underlying/cluster`);
-    }
-    if (m.direction !== "up" && m.direction !== "down" && m.direction !== "band") {
-      throw new Error(`market ${m.vault} direction must be "up", "down", or "band"`);
-    }
-    if (typeof m.title !== "string" || m.title === "" || typeof m.category !== "string" || m.category === "") {
-      throw new Error(`market ${m.vault} missing title/category`);
-    }
-    map.set(m.vault.toLowerCase(), {
-      vault: m.vault as Address,
-      coinYes: m.coinYes,
-      coinNo: m.coinNo,
-      underlying: m.underlying,
-      cluster: m.cluster,
-      direction: m.direction,
-      title: m.title,
-      category: m.category,
-      expiryMs: typeof m.expiryMs === "number" ? m.expiryMs : undefined,
-    });
-  }
-  return map;
-}
-
 export function parseInviteCodes(raw: string): Set<string> {
   return new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
 }
@@ -217,8 +159,9 @@ export function syncedPerCodeReservedCap(
 
 export function loadConfig(nowMs = Date.now()): WriterConfig {
   const registryJson = readFileSync(path.resolve(here, "../..", requireEnv("MARKETS_FILE")), "utf8");
+  const markets = parseMarkets(registryJson);
   const sources = parseSourceRegistry(readFileSync(path.resolve(here, "../..", process.env.CORRELATION_SOURCES_FILE ?? "registry/correlation-sources.json"), "utf8"));
-  const champion = parseCorrelationArtifact(readFileSync(path.resolve(here, "../..", requireEnv("CORRELATION_ARTIFACT_FILE")), "utf8"), nowMs, sources);
+  const champion = parseCorrelationArtifact(readFileSync(path.resolve(here, "../..", requireEnv("CORRELATION_ARTIFACT_FILE")), "utf8"), nowMs, sources, markets);
   const { table: correlations, model } = champion;
   // Boot-time signal, not per-request noise: the shipped table's shrunk
   // clusters don't change quote to quote, so this fires once here rather than
@@ -226,7 +169,6 @@ export function loadConfig(nowMs = Date.now()): WriterConfig {
   if (correlations.shrunkClusters.length > 0) {
     console.warn(JSON.stringify({ event: "correlation-fallback-shrunk", clusters: correlations.shrunkClusters }));
   }
-  const markets = parseMarkets(registryJson);
   // An empty table is not a degraded mode, it is silent mispricing: every leg
   // falls through to zero loadings and every parlay quotes as independent,
   // with nothing in the logs to say so. Refuse to boot.

@@ -10,7 +10,7 @@ import { sha256 } from "./store.js";
 import { parseSourceRegistry } from "./types.js";
 import type { ReturnRecord } from "./returns.js";
 import type { CorrelationArtifact } from "./types.js";
-import { parseMarkets } from "../config.js";
+import { parseMarkets } from "../markets.js";
 import { promoteCandidate } from "./artifacts.js";
 
 if (process.argv[2] !== "collect" && process.argv[2] !== "derive" && process.argv[2] !== "calibrate" && process.argv[2] !== "replay" && process.argv[2] !== "promote") {

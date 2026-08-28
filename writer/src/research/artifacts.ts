@@ -1,6 +1,6 @@
 import { closeSync, existsSync, fsyncSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import type { MarketInfo } from "../config.js";
+import type { MarketInfo } from "../markets.js";
 import { parseCorrelations, type CorrelationTable } from "../correlation.js";
 import type { ValidationReport } from "./replay.js";
 import { trailingFresh } from "./returns.js";
@@ -86,7 +86,7 @@ function validateMatrix(value: unknown, size: number, label: string, nullable = 
   }
 }
 
-export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), sources?: SourceRegistry): ValidatedArtifact {
+export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), sources?: SourceRegistry, markets?: Map<string, MarketInfo>): ValidatedArtifact {
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { fail("malformed JSON"); }
   const artifact = parsed as CorrelationArtifact;
@@ -98,6 +98,8 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
   const createdAtMs = timestamp(root.createdAt, "createdAt");
   const dataAsOfMs = timestamp(root.dataAsOf, "dataAsOf");
   if (dataAsOfMs > createdAtMs) fail("dataAsOf must not follow createdAt");
+  if (!Number.isSafeInteger(nowMs)) fail("nowMs must be a safe integer");
+  if (dataAsOfMs > nowMs) fail("dataAsOf is in the future");
   const dataManifestSha256 = hash(root.dataManifestSha256, "dataManifestSha256");
   const sourceRegistrySha256 = hash(root.sourceRegistrySha256, "sourceRegistrySha256");
   const policy = object(root.policy, "policy");
@@ -174,15 +176,26 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
   const validation = object(root.validation, "validation");
   if (validation.status !== "pending") fail("candidate validation status must be pending");
   const table = parseCorrelations(raw);
-  const ageMs = Math.max(0, nowMs - dataAsOfMs);
   const sourceByUnderlying = new Map(sources?.sources.map((entry) => [entry.underlying, entry]) ?? []);
+  if (sources) {
+    if (sha256(canonicalJson(sources)) !== sourceRegistrySha256) fail("current source registry hash mismatch");
+    if (!same(sourceByUnderlying.keys(), matrixOrder)) fail("source registry and matrixOrder disagree");
+    for (const [underlying, cluster] of clusterByUnderlying) if (sourceByUnderlying.get(underlying)?.cluster !== cluster) fail(`source/artifact cluster disagreement for ${underlying}`);
+    for (const market of markets?.values() ?? []) {
+      const source = sourceByUnderlying.get(market.underlying);
+      if (!source || source.cluster !== market.cluster) fail(`source/market cluster disagreement for ${market.underlying}`);
+      const artifactCluster = clusterByUnderlying.get(market.underlying);
+      if (artifactCluster !== undefined && artifactCluster !== market.cluster) fail(`market/artifact cluster disagreement for ${market.underlying}`);
+    }
+  }
+  const ageMs = nowMs - dataAsOfMs;
   const eligibleUnderlyings = new Set([...eligible].filter((underlying) => sources === undefined || sourceByUnderlying.get(underlying)?.eligible === true));
   const fallbackEligible = new Set(sources?.sources.filter((entry) => entry.fallbackEligible).map((entry) => entry.underlying) ?? []);
   return { artifact, table, model: { version: modelVersion, dataAsOf: artifact.dataAsOf, dataManifestSha256, sourceRegistrySha256, ageMs, multiAssetEnabled: ageMs < CHAMPION_MAX_AGE_MS, eligibleUnderlyings, quarantinedUnderlyings: quarantined, fallbackEligible, pairEligibility: pairs } };
 }
 
 export function validateArtifact(raw: string, context: Context, nowMs: number): ValidatedArtifact {
-  const result = parseCorrelationArtifact(raw, nowMs, context.sources);
+  const result = parseCorrelationArtifact(raw, nowMs, context.sources, context.markets);
   const { artifact } = result;
   if (!Number.isSafeInteger(nowMs)) fail("nowMs must be a safe integer");
   const ageMs = nowMs - Date.parse(artifact.dataAsOf);
@@ -193,16 +206,6 @@ export function validateArtifact(raw: string, context: Context, nowMs: number): 
   if (context.manifest.createdAt !== artifact.createdAt) fail("manifest createdAt mismatch");
   if (sha256(canonicalJson(context.sources)) !== artifact.sourceRegistrySha256) fail("source registry hash mismatch");
   const sourceByUnderlying = new Map(context.sources.sources.map((entry) => [entry.underlying, entry]));
-  if (!same(sourceByUnderlying.keys(), artifact.quality.matrixOrder)) fail("source registry and matrixOrder disagree");
-  for (const [cluster, entries] of Object.entries(artifact.clusters)) for (const underlying of Object.keys(entries)) {
-    if (sourceByUnderlying.get(underlying)?.cluster !== cluster) fail(`source/artifact cluster disagreement for ${underlying}`);
-  }
-  for (const market of context.markets.values()) {
-    const source = sourceByUnderlying.get(market.underlying);
-    if (source && source.cluster !== market.cluster) fail(`source/market cluster disagreement for ${market.underlying}`);
-    const artifactCluster = Object.entries(artifact.clusters).find(([, entries]) => market.underlying in entries)?.[0];
-    if (artifactCluster && artifactCluster !== market.cluster) fail(`market/artifact cluster disagreement for ${market.underlying}`);
-  }
   for (const underlying of artifact.quality.eligibleUnderlyings) {
     const source = sourceByUnderlying.get(underlying)!;
     if (!source.eligible) fail(`eligible artifact entry has ineligible source ${underlying}`);
