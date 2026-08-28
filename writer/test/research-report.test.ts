@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { generateReport, renderReport, type ReportInput } from "../src/research/report.js";
+import { generateReport, journalFunnel, renderReport, type ReportInput } from "../src/research/report.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
 
 const score = {
@@ -56,6 +56,25 @@ test("research report renders deterministic escaped evidence with every required
   assert.equal(/<(?:link|script)\b/i.test(html), false);
 });
 
+test("journal funnel joins only quoted canonical mints to their matching parlay resolution", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-report-funnel-"));
+  try {
+    mkdirSync(join(root, "journal", "quotes"), { recursive: true });
+    writeFileSync(join(root, "journal", "quotes", "quotes.jsonl"), `${canonicalJson({ quoteId: "q1" })}\n`);
+    mkdirSync(join(root, "journal", "events"), { recursive: true });
+    const rows = [
+      { kind: "minted", eventKey: "tx1:0", blockHash: "0xaaa", quoteId: "q1", parlayId: "1" },
+      { kind: "resolved", eventKey: "tx2:0", blockHash: "0xbbb", quoteId: "q1", parlayId: "1" },
+      { kind: "minted", eventKey: "tx3:0", blockHash: "0xccc", quoteId: "q2", parlayId: "2" },
+      { kind: "resolved", eventKey: "tx4:0", blockHash: "0xddd", quoteId: "q2", parlayId: "2" },
+      { kind: "resolved", eventKey: "tx5:0", blockHash: "0xeee", quoteId: "q1", parlayId: "99" },
+      { kind: "orphaned", targetKind: "chain-log", targetKey: "tx3:0:0xccc" },
+    ];
+    writeFileSync(join(root, "journal", "events", "events.jsonl"), `${rows.map(canonicalJson).join("\n")}\n`);
+    assert.deepEqual(journalFunnel(root), { quotes: 1, minted: 1, resolved: 1 });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("research report verifies every immutable reference before writing the deterministic path", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-report-"));
   try {
@@ -88,7 +107,10 @@ test("research report verifies every immutable reference before writing the dete
     writeFileSync(join(root, "journal", "requests", "2026", "08", "27.jsonl"), `${canonicalJson({ schemaVersion: 1, sourceKey: "mainnet:ETH", startTime: 1, endTime: 2, retrievedAtMs: 3, httpStatus: 503, error: "info API 503", returnedRows: 0 })}\n`);
     mkdirSync(join(root, "state"), { recursive: true });
     writeFileSync(join(root, "state", "collector.json"), canonicalJson({ schemaVersion: 1, sourceRegistrySha256: sourceHash, sources: { "mainnet:BTC": 1, "mainnet:ETH": 2 } }));
-    writeFileSync(join(root, "state", "calibrator.json"), canonicalJson({ schemaVersion: 1, modelVersion: "beta-1", dataManifestSha256: fixture.candidate.dataManifestSha256, status: "complete" }));
+    writeFileSync(join(root, "state", "calibrator.json"), canonicalJson({ schemaVersion: 1, operation: "calibrator", status: "succeeded", startedAt: "2026-08-27T00:00:00.000Z", endedAt: "2026-08-27T00:01:00.000Z", error: null, details: { modelVersion: "beta-1" } }));
+    writeFileSync(join(root, "state", "daily.json"), canonicalJson({ schemaVersion: 1, operation: "daily", status: "failed", startedAt: "2026-08-27T01:00:00.000Z", endedAt: "2026-08-27T01:01:00.000Z", error: "replay exited 1", details: {} }));
+    writeFileSync(join(root, "state", "join.json"), canonicalJson({ schemaVersion: 1, operation: "join", status: "succeeded", startedAt: "2026-08-27T02:00:00.000Z", endedAt: "2026-08-27T02:01:00.000Z", error: null, details: {} }));
+    writeFileSync(join(root, "state", "backup.json"), canonicalJson({ schemaVersion: 1, operation: "backup", status: "failed", startedAt: "2026-08-27T03:00:00.000Z", endedAt: "2026-08-27T03:01:00.000Z", error: "backup total timeout", details: {} }));
 
     const first = generateReport(root, candidatePath);
     const second = generateReport(root, candidatePath);
@@ -97,7 +119,19 @@ test("research report verifies every immutable reference before writing the dete
     assert.equal(second.bytes, first.bytes);
     assert.match(first.bytes, /collector request mainnet:ETH: HTTP 503 — info API 503/);
     assert.match(first.bytes, /collector state: 2 source checkpoints/);
-    assert.match(first.bytes, /calibrator state: beta-1 — complete/);
+    assert.match(first.bytes, /calibrator state: succeeded — beta-1/);
+    assert.match(first.bytes, /daily state: failed — replay exited 1/);
+    assert.match(first.bytes, /join state: succeeded/);
+    assert.match(first.bytes, /backup state: failed — backup total timeout/);
+
+    const stateTarget = join(root, "daily-state-target.json");
+    const dailyState = readFileSync(join(root, "state", "daily.json"));
+    writeFileSync(stateTarget, dailyState);
+    rmSync(join(root, "state", "daily.json"));
+    symlinkSync(stateTarget, join(root, "state", "daily.json"));
+    assert.throws(() => generateReport(root, candidatePath), /symbolic link/);
+    rmSync(join(root, "state", "daily.json"));
+    writeFileSync(join(root, "state", "daily.json"), dailyState);
 
     const unsafeCandidate = { ...fixture.candidate, modelVersion: "../../escape" };
     writeFileSync(candidatePath, `${canonicalJson(unsafeCandidate)}\n`);

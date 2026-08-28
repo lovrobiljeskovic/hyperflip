@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -8,10 +8,12 @@ import {
   brier,
   blockBootstrap,
   filteredHistoricalSimulation,
+  fitReplayDependence,
   forecastAt,
   logLoss,
   replayOrigins,
   runReplay,
+  loadReplaySourceRegistry,
   scoreForecasts,
   selectDegreesOfFreedom,
   signedTCopula,
@@ -65,7 +67,7 @@ function candidateFor(series: ReplaySeries, modelVersion = "fixture", signedPsdT
     schemaVersion: 1, modelVersion, modelFamily: "hierarchical-gaussian-factor", createdAt: "2026-08-01T00:00:00.000Z", dataAsOf: "2026-07-31T00:00:00.000Z",
     dataManifestSha256: series.manifestHash, sourceRegistrySha256: "d".repeat(64),
     policy: { lookbackDays: 180, halfLifeDays: 45, diagnosticWindowsDays: [30, 90, 180], minHourly: 1000, minDaily: 90, minCoverage: 0.8, maxProjectionError: 0.10 },
-    quality: { matrixOrder, eligibleUnderlyings: matrixOrder, quarantinedUnderlyings: series.sources.filter((entry) => !entry.eligible).map((entry) => ({ underlying: entry.underlying, reason: "fixture-ineligible" })), pairEligibility: [], lastUsableObservationMs: {}, pairDiagnostics: [], maxProjectionError: 0, highamProjectionDelta: 0, clippedNegativePairs: [], signedPsdTarget: signedPsdTarget ?? matrixOrder.map((_, row) => matrixOrder.map((__, column) => row === column ? 1 : 0)), diagnosticMatrices: { "30": [], "90": [], "180": [] } },
+    quality: { matrixOrder, eligibleUnderlyings: matrixOrder, quarantinedUnderlyings: series.sources.filter((entry) => !entry.eligible).map((entry) => ({ underlying: entry.underlying, reason: "fixture-ineligible" })), pairEligibility: matrixOrder.flatMap((left, index) => matrixOrder.slice(index + 1).map((right) => ({ pair: [left, right] as [string, string], status: "direct" as const, reason: "fixture" }))), lastUsableObservationMs: Object.fromEntries(matrixOrder.map((underlying) => [underlying, ORIGIN - DAY])), pairDiagnostics: [], maxProjectionError: 0, highamProjectionDelta: 0, clippedNegativePairs: [], signedPsdTarget: signedPsdTarget ?? matrixOrder.map((_, row) => matrixOrder.map((__, column) => row === column ? 1 : 0)), diagnosticMatrices: { "30": [], "90": [], "180": [] } },
     validation: { status: "pending" },
     clusters,
   };
@@ -92,6 +94,45 @@ test("future mutation cannot change an earlier forecast", () => {
   const selected = syntheticEvents(ORIGIN, series, future).map(({ outcome: _, ...ticket }) => ticket);
   const mutated = syntheticEvents(ORIGIN, series, future.map((row) => ({ ...row, value: row.value + 100 }))).map(({ outcome: _, ...ticket }) => ticket);
   assert.deepEqual(mutated, selected);
+
+  const notYetObserved = series.sources.map((entry, asset) => ({
+    schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval: "1d" as const,
+    timestampMs: ORIGIN, observationCloseTimeMs: ORIGIN + DAY, sessionDate: new Date(ORIGIN).toISOString().slice(0, 10), value: 100 + asset, sourceKeys: [],
+  }));
+  assert.deepEqual(forecastAt(ORIGIN, { ...series, rows: [...series.rows, ...notYetObserved] }), before);
+});
+
+test("replay loads the immutable canonical source-registry fact instead of mutable pretty bytes", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-replay-source-fact-"));
+  try {
+    const registry = { schemaVersion: 1 as const, sources: [source("A", "crypto"), source("B", "crypto")] };
+    const canonical = canonicalJson(registry);
+    const sourceHash = sha256(canonical);
+    mkdirSync(join(root, "facts", "source-registries"), { recursive: true });
+    writeFileSync(join(root, "facts", "source-registries", `${sourceHash}.json`), canonical);
+    const pretty = JSON.stringify(registry, null, 2);
+    assert.notEqual(sha256(pretty), sourceHash);
+    assert.deepEqual(loadReplaySourceRegistry(root, sourceHash), registry.sources);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("historical dependence enforces candidate quarantine, pair quality, and explicit fallback policy", () => {
+  const complete = dailySeries(130);
+  const quarantined = candidateFor(complete, "policy");
+  quarantined.quality.eligibleUnderlyings = quarantined.quality.eligibleUnderlyings.filter((underlying) => underlying !== "C");
+  quarantined.quality.quarantinedUnderlyings.push({ underlying: "C", reason: "fixture-quarantine" });
+  const fit = fitReplayDependence(complete.rows, complete.sources, quarantined, ORIGIN - DAY);
+  assert.equal(fit.sources.some((entry) => entry.underlying === "C"), false);
+
+  const sources = [source("A", "crypto"), source("B", "equity")];
+  const sparse = { ...dailySeries(89), sources, rows: dailySeries(89).rows.filter((row) => row.underlying === "A" || row.underlying === "B") };
+  const direct = candidateFor(sparse, "direct");
+  assert.equal(fitReplayDependence(sparse.rows, sources, direct, ORIGIN - DAY).admittedPairs.has("A:B"), false);
+  const fallbackSources = sources.map((entry) => ({ ...entry, fallbackEligible: true }));
+  const fallbackSeries = { ...sparse, sources: fallbackSources };
+  const fallback = candidateFor(fallbackSeries, "fallback");
+  fallback.quality.pairEligibility = [{ pair: ["A", "B"], status: "fallback", reason: "operator-reviewed" }];
+  assert.equal(fitReplayDependence(sparse.rows, fallbackSources, fallback, ORIGIN - DAY).admittedPairs.has("A:B"), true);
 });
 
 test("daily replay origins stay on an exact 24-hour UTC cadence", () => {
@@ -321,7 +362,7 @@ test("failed dependence fit yields a serializable Rejected report", () => {
   }
 });
 
-test("runReplay signed t probabilities consume the candidate PSD matrix order", () => {
+test("runReplay signed t probabilities use each origin's fitted matrix, not the terminal candidate PSD", () => {
   const roots = [mkdtempSync(join(tmpdir(), "hype-replay-positive-")), mkdtempSync(join(tmpdir(), "hype-replay-signed-"))];
   try {
     const series = dailySeries(95);
@@ -334,10 +375,20 @@ test("runReplay signed t probabilities consume the candidate PSD matrix order", 
       const candidate = candidateFor(series, `candidate-matrix-${index}`, index === 0 ? positive : signed);
       return runReplay({ root, candidate, inputManifestSha256: series.manifestHash, baselineFile, series, seed: "candidate-matrix" }).modelScores["signed-t-copula"].overall.logLoss;
     });
-    assert.notEqual(scores[0], scores[1]);
+    assert.equal(scores[0], scores[1]);
   } finally {
     for (const root of roots) rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("runReplay rejects unsafe modelVersion paths before writing artifacts", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-replay-path-"));
+  try {
+    const series = dailySeries(95);
+    const baselineFile = join(root, "correlations.json");
+    writeFileSync(baselineFile, JSON.stringify(baselineFor(series)));
+    assert.throws(() => runReplay({ root, candidate: candidateFor(series, "../escape"), inputManifestSha256: series.manifestHash, baselineFile, series, seed: "path" }), /safe artifact filename/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("fresh runReplay artifacts are byte-identical and cover full replay determinism", () => {
@@ -365,7 +416,7 @@ test("replay CLI requires explicit immutable inputs", () => {
     env: {},
   });
   assert.equal(result.status, 2);
-  assert.match(result.stderr, /RESEARCH_ROOT, RESEARCH_CANDIDATE_FILE, RESEARCH_DERIVED_MANIFEST_FILE, CORRELATION_SOURCES_FILE, CORRELATIONS_FILE, and RESEARCH_REPLAY_SEED are required/);
+  assert.match(result.stderr, /RESEARCH_ROOT, RESEARCH_CANDIDATE_FILE, RESEARCH_DERIVED_MANIFEST_FILE, CORRELATIONS_FILE, and RESEARCH_REPLAY_SEED are required/);
 });
 
 test("replay fixes challenger simulation at exactly 20,000 draws", () => {

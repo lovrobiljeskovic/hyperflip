@@ -11,7 +11,7 @@ import { buildPriceFreshness, makeLegPriceFetcher, readSpotPxWad } from "./spotP
 import { Poker } from "./poker.js";
 import { isStalled, stallThresholdMs } from "./pure.js";
 import { signQuote, type ParlayQuote, type QuoteLeg } from "./quotes.js";
-import { newMetrics, startServer, type QuoteDeps } from "./server.js";
+import { currentModelStatus, newMetrics, startServer, type QuoteDeps } from "./server.js";
 import { readLegStates } from "./settlement.js";
 import { RateLimiter, sendInviteEmail, Waitlist } from "./waitlist.js";
 
@@ -212,6 +212,7 @@ async function main(): Promise<void> {
     // reservation. ponytail: unauthenticated, so it does show house posture to
     // anyone who asks; gate it behind an ops token once the bankroll is real.
     const now = Date.now();
+    const modelStatus = currentModelStatus(cfg.model, now);
     const perMarket: Record<string, string> = {};
     for (const v of cfg.markets.keys()) perMarket[v] = exposure.perMarket(v, now).toString();
     // Per-coin, not a single global: a fresh BTC book must not hide a dead NVDA book
@@ -220,7 +221,7 @@ async function main(): Promise<void> {
     return {
       ok: true,
       quoteJournalLastAppendMs: lastQuoteJournalAppendMs,
-      model: { version: cfg.model.version, dataAsOf: cfg.model.dataAsOf, dataManifestSha256: cfg.model.dataManifestSha256, sourceRegistrySha256: cfg.model.sourceRegistrySha256 },
+      model: { version: cfg.model.version, dataAsOf: cfg.model.dataAsOf, dataManifestSha256: cfg.model.dataManifestSha256, sourceRegistrySha256: cfg.model.sourceRegistrySha256, ...modelStatus },
       openParlays: poker.openCount(),
       priceFreshnessMs,
       perMarketCap: cfg.perMarketCap.toString(),

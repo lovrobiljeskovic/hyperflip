@@ -78,6 +78,7 @@ test("event resume: checkpoints an inclusive 1,001-block scan before a later RPC
   chain.failFrom = 1000n;
 
   await assert.rejects(joinEvents(root, deps(chain)), /simulated RPC failure/);
+  assert.equal(JSON.parse(readFileSync(join(root, "state", "join.json"), "utf8")).status, "failed");
   assert.deepEqual(chain.requests.filter((request) => request.event === "ParlayMinted").map(({ from, to }) => [from, to]), [[0n, 999n], [1000n, 1001n]]);
   assert.deepEqual(JSON.parse(readFileSync(join(root, "state", "event-joiner.json"), "utf8")), {
     schemaVersion: 1, nextBlock: "1000",
@@ -87,6 +88,7 @@ test("event resume: checkpoints an inclusive 1,001-block scan before a later RPC
   chain.failFrom = null;
   chain.requests.length = 0;
   await joinEvents(root, deps(chain));
+  assert.equal(JSON.parse(readFileSync(join(root, "state", "join.json"), "utf8")).status, "succeeded");
   assert.deepEqual(chain.requests.filter((request) => request.event === "ParlayMinted").map(({ from, to }) => [from, to]), [[990n, 1001n]]);
   const events = readFileSync(join(root, "journal", "events", "2024", "08", "30.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
   assert.equal(events.filter((event) => event.kind === "minted").length, 1);
@@ -109,6 +111,27 @@ test("event join: preserves confirmed canonical records when rerun", async () =>
   const first = readFileSync(file, "utf8");
   await joinEvents(root, deps(chain));
   assert.equal(readFileSync(file, "utf8"), first);
+});
+
+test("orphaning one physical chain log permits the same transaction/log identity to be canonically re-included", async () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-event-reinclude-"));
+  const chain = new FakeChain();
+  chain.head = 12n;
+  addMint(chain, 1n, "0x01", 1n);
+  appendQuoteDecision(root, quote("0x01"));
+  await joinEvents(root, deps(chain));
+
+  chain.hashes.set(1n, `0x${"f".repeat(64)}` as `0x${string}`);
+  chain.logs.minted[0].blockNumber = 2n;
+  chain.logs.minted[0].blockHash = hash(2n);
+  const reIncluded = await joinEvents(root, deps(chain));
+  const after = readFileSync(join(root, "journal", "events", "2024", "08", "30.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  assert.equal(after.filter((record) => record.kind === "minted").length, 2);
+  assert.equal(after.filter((record) => record.kind === "orphaned" && record.targetKind === "chain-log").length, 1);
+  assert.ok(reIncluded.appended >= 2);
+
+  const third = await joinEvents(root, deps(chain));
+  assert.equal(third.appended, 0);
 });
 
 test("void outcome: reads each leg at one confirmed block, delays detail, and restores orphaned observations to pending", async () => {

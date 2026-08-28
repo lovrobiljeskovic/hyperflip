@@ -16,6 +16,8 @@ export interface ReturnRecord {
   underlying: string;
   interval: "1h" | "1d";
   timestampMs: number;
+  /** Earliest close timestamp at which both prices used by this return were known. */
+  observationCloseTimeMs?: number;
   sessionDate: string;
   value: number;
   sourceKeys: string[];
@@ -84,8 +86,9 @@ export function expectedIntervals(source: SourceEntry, window: Window): number[]
     if (!session.weekdays.includes(weekday) || session.closedDates.includes(date)) continue;
     const [openHour, openMinute] = session.openLocal.split(":").map(Number);
     const [closeHour, closeMinute] = session.closeLocal.split(":").map(Number);
+    const openMinutes = openHour * 60 + openMinute;
     for (let minute = openHour * 60 + openMinute; minute < closeHour * 60 + closeMinute; minute += 60) {
-      const timestamp = localDateTimeMs(date, `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`, session.timeZone);
+      const timestamp = open + (minute - openMinutes) * 60_000;
       if (timestamp >= from && timestamp <= window.asOfMs) intervals.push(timestamp);
     }
   }
@@ -145,7 +148,7 @@ function hourlySeries(candles: CandleRecord[], source: SourceEntry, window: Wind
     possible.push(String(timestamp));
     const prior = active.get(before);
     const current = active.get(timestamp);
-    if (prior && current) records.push({ schemaVersion: 1, transformationVersion: TRANSFORMATION_VERSION, underlying: source.underlying, interval: "1h", timestampMs: timestamp, sessionDate: localDate(source, timestamp), value: Math.log(Number(current.close) / Number(prior.close)), sourceKeys: [key(prior), key(current)] });
+    if (prior && current) records.push({ schemaVersion: 1, transformationVersion: TRANSFORMATION_VERSION, underlying: source.underlying, interval: "1h", timestampMs: timestamp, observationCloseTimeMs: current.closeTimeMs, sessionDate: localDate(source, timestamp), value: Math.log(Number(current.close) / Number(prior.close)), sourceKeys: [key(prior), key(current)] });
   }
   return { records, possible, exclusions };
 }
@@ -172,7 +175,7 @@ function dailySeries(candles: CandleRecord[], source: SourceEntry, window: Windo
     const previousClose = closes.get(dates[index - 1]);
     const current = closes.get(dates[index]);
     possible.push(dates[index]);
-    if (previousClose && current) records.push({ schemaVersion: 1, transformationVersion: TRANSFORMATION_VERSION, underlying: source.underlying, interval: "1d", timestampMs: current.openTimeMs, sessionDate: dates[index], value: Math.log(Number(current.close) / Number(previousClose.close)), sourceKeys: [key(previousClose), key(current)] });
+    if (previousClose && current) records.push({ schemaVersion: 1, transformationVersion: TRANSFORMATION_VERSION, underlying: source.underlying, interval: "1d", timestampMs: current.openTimeMs, observationCloseTimeMs: current.closeTimeMs, sessionDate: dates[index], value: Math.log(Number(current.close) / Number(previousClose.close)), sourceKeys: [key(previousClose), key(current)] });
   }
   return { records, possible, exclusions };
 }
@@ -222,23 +225,45 @@ export function alignPair(a: CandleRecord[], b: CandleRecord[], sourceA: SourceE
   return { samples, a: first.records, b: second.records, quality: { ...result, eligible: result.eligible && fresh }, fresh };
 }
 
-export interface DerivedOutput { path: string; manifestPath: string; rows: number }
+export interface DerivedOutput { path: string; exclusionPath: string; manifestPath: string; rows: number; exclusions: number }
+
+function writeImmutable(file: string, bytes: string | Uint8Array, label: string): void {
+  const expected = Buffer.from(bytes);
+  if (existsSync(file)) {
+    if (!readFileSync(file).equals(expected)) throw new Error(`${label} already exists with different bytes`);
+    return;
+  }
+  if (!atomicWriteNew(file, expected) && !readFileSync(file).equals(expected)) throw new Error(`${label} already exists with different bytes`);
+}
+
 export function deriveReturns(root: string, manifest: DataManifest, window: Window): DerivedOutput {
   verifyManifest(root, manifest);
   const registryFile = join(root, "facts", "source-registries", `${manifest.sourceRegistrySha256}.json`);
   const registry = parseSourceRegistry(readFileSync(registryFile, "utf8"));
   const candles = manifest.files.filter((file) => file.path.endsWith(".jsonl.gz")).flatMap((file) => readCandlePartition(join(root, file.path)));
-  const records = registry.sources.flatMap((source) => {
+  const derived = registry.sources.flatMap((source) => {
     const own = candles.filter((candle) => candle.underlying === source.underlying && candle.sourceNetwork === source.sourceNetwork && candle.sourceCoin === source.sourceCoin && candle.interval === "1h");
-    return [...buildHourlyReturns(own, source, window), ...buildDailyReturns(own, source, window)];
-  }).sort((a, b) => a.underlying.localeCompare(b.underlying) || a.interval.localeCompare(b.interval) || a.timestampMs - b.timestampMs);
+    return [hourlySeries(own, source, window), dailySeries(own, source, window)];
+  });
+  const lexical = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
+  const records = derived.flatMap((series) => series.records).sort((a, b) => lexical(a.underlying, b.underlying) || lexical(a.interval, b.interval) || a.timestampMs - b.timestampMs);
+  const exclusions = derived.flatMap((series) => series.exclusions).sort((a, b) => lexical(canonicalJson(a), canonicalJson(b)));
   const identity = sha256(canonicalJson({ dataManifestSha256: sha256(canonicalJson(manifest)), transformationVersion: TRANSFORMATION_VERSION, window }));
   const day = new Date(window.asOfMs).toISOString().slice(0, 10).replace(/-/g, "/");
   const path = join(root, "derived", "returns", day, `${identity}.jsonl.gz`);
   const bytes = gzipSync(`${records.map(canonicalJson).join("\n")}${records.length ? "\n" : ""}`);
-  if (!existsSync(path)) atomicWriteNew(path, bytes);
+  writeImmutable(path, bytes, "immutable derived returns");
+  const exclusionPath = join(root, "derived", "exclusions", day, `${identity}.jsonl.gz`);
+  const exclusionBytes = gzipSync(`${exclusions.map(canonicalJson).join("\n")}${exclusions.length ? "\n" : ""}`);
+  writeImmutable(exclusionPath, exclusionBytes, "immutable derived exclusions");
   const manifestPath = `${path}.manifest.json`;
-  const derivedManifest = canonicalJson({ schemaVersion: 1, transformationVersion: TRANSFORMATION_VERSION, dataManifestSha256: sha256(canonicalJson(manifest)), sourceRegistrySha256: manifest.sourceRegistrySha256, window, files: [{ path: path.slice(root.length + 1), bytes: statSync(path).size, sha256: sha256(readFileSync(path)), rows: records.length, schemaVersion: 1 }] });
-  if (!existsSync(manifestPath)) atomicWriteNew(manifestPath, derivedManifest);
-  return { path, manifestPath, rows: records.length };
+  const derivedManifest = canonicalJson({
+    schemaVersion: 1, transformationVersion: TRANSFORMATION_VERSION, dataManifestSha256: sha256(canonicalJson(manifest)), sourceRegistrySha256: manifest.sourceRegistrySha256, window,
+    files: [
+      { kind: "returns", path: path.slice(root.length + 1), bytes: statSync(path).size, sha256: sha256(readFileSync(path)), rows: records.length, schemaVersion: 1 },
+      { kind: "exclusions", path: exclusionPath.slice(root.length + 1), bytes: statSync(exclusionPath).size, sha256: sha256(readFileSync(exclusionPath)), rows: exclusions.length, schemaVersion: 1 },
+    ],
+  });
+  writeImmutable(manifestPath, derivedManifest, "immutable derived manifest");
+  return { path, exclusionPath, manifestPath, rows: records.length, exclusions: exclusions.length };
 }

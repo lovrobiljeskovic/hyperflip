@@ -1,10 +1,10 @@
-import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, fsyncSync, openSync, readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { parseAbiItem, type Address, type PublicClient } from "viem";
 import { parlayVaultAbi, outcomeVaultAbi } from "../abi.js";
 import { WAD, blockRanges } from "../pure.js";
-import { atomicWrite, canonicalJson, durableAppend } from "./store.js";
+import { atomicWrite, canonicalJson, durableAppend, durableMkdir, operationError, writeOperationState } from "./store.js";
 import { assertJoinedEventRecord } from "./types.js";
 import type { ChainLogRecord, JoinedEventRecord, OrphanCorrectionRecord, QuoteDecision, StateObservationRecord } from "./types.js";
 
@@ -34,7 +34,7 @@ function eventJournalDir(root: string): string {
 
 export function initializeQuoteJournal(root: string): void {
   const directory = quoteJournalDir(root);
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  durableMkdir(directory, 0o700);
   chmodSync(directory, 0o700);
 }
 
@@ -42,11 +42,8 @@ export function appendQuoteDecision(root: string, decision: QuoteDecision): void
   initializeQuoteJournal(root);
   const date = new Date(decision.recordedAtMs);
   const file = join(quoteJournalDir(root), String(date.getUTCFullYear()), String(date.getUTCMonth() + 1).padStart(2, "0"), `${String(date.getUTCDate()).padStart(2, "0")}.jsonl`);
-  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  durableMkdir(dirname(file), 0o700);
   chmodSync(dirname(file), 0o700);
-  const fd = openSync(file, "a", 0o600);
-  closeSync(fd);
-  chmodSync(file, 0o600);
   durableAppend(file, canonicalJson(decision));
   chmodSync(file, 0o600);
   const directory = openSync(dirname(file), "r");
@@ -151,11 +148,8 @@ function appendEventRecord(root: string, record: JoinedEventRecord): void {
   assertJoinedEventRecord(record);
   const date = new Date(record.recordedAtMs);
   const file = join(eventJournalDir(root), String(date.getUTCFullYear()), String(date.getUTCMonth() + 1).padStart(2, "0"), `${String(date.getUTCDate()).padStart(2, "0")}.jsonl`);
-  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  durableMkdir(dirname(file), 0o700);
   chmodSync(dirname(file), 0o700);
-  const fd = openSync(file, "a", 0o600);
-  closeSync(fd);
-  chmodSync(file, 0o600);
   durableAppend(file, canonicalJson(record));
   chmodSync(file, 0o600);
   const directory = openSync(dirname(file), "r");
@@ -166,10 +160,12 @@ function appendEventRecord(root: string, record: JoinedEventRecord): void {
   }
 }
 
+const physicalChainKey = (record: Pick<ChainLogRecord, "eventKey" | "blockHash">): string => `${record.eventKey}:${record.blockHash.toLowerCase()}`;
+
 function activeRecords(records: JoinedEventRecord[]): { chain: ChainLogRecord[]; observations: StateObservationRecord[] } {
   const orphaned = new Set(records.filter((record): record is OrphanCorrectionRecord => record.kind === "orphaned").map((record) => `${record.targetKind}:${record.targetKey}`));
   return {
-    chain: records.filter((record): record is ChainLogRecord => (record.kind === "minted" || record.kind === "resolved") && !orphaned.has(`chain-log:${record.eventKey}`)),
+    chain: records.filter((record): record is ChainLogRecord => (record.kind === "minted" || record.kind === "resolved") && !orphaned.has(`chain-log:${physicalChainKey(record)}`)),
     observations: records.filter((record): record is StateObservationRecord => record.kind === "leg-finalized" && !orphaned.has(`state-observation:${record.observationKey}`)),
   };
 }
@@ -192,7 +188,7 @@ async function verifyOverlap(root: string, client: PublicClient, from: bigint, t
     if (hash === storedHash.toLowerCase()) continue;
     const correction: OrphanCorrectionRecord = {
       schemaVersion: 1, kind: "orphaned", targetKind: record.kind === "leg-finalized" ? "state-observation" : "chain-log",
-      targetKey: record.kind === "leg-finalized" ? record.observationKey : record.eventKey,
+      targetKey: record.kind === "leg-finalized" ? record.observationKey : physicalChainKey(record),
       detectedAtBlockNumber: to.toString(), canonicalBlockHash: hash, recordedAtMs: now,
     };
     appendEventRecord(root, correction);
@@ -286,7 +282,7 @@ function pendingAndResolutions(records: JoinedEventRecord[], knownQuoteIds: Set<
 }
 
 /** Appends canonical chain facts and resumable state without rewriting prior history. */
-export async function joinEvents(root: string, deps: JoinDeps): Promise<JoinSummary> {
+async function joinEventsImpl(root: string, deps: JoinDeps): Promise<JoinSummary> {
   const now = (deps.now ?? Date.now)();
   const state = readState(root, deps.deployBlock);
   const head = await deps.client.getBlockNumber();
@@ -354,6 +350,24 @@ export async function joinEvents(root: string, deps: JoinDeps): Promise<JoinSumm
   const finalState: EventJoinerState = { schemaVersion: 1, nextBlock: scannedTo === null ? state.nextBlock : (scannedTo + 1n).toString(), pending: joined.pending };
   writeState(root, finalState);
   return { scannedFrom: from.toString(), scannedTo: scannedTo?.toString() ?? null, nextBlock: finalState.nextBlock, appended, resolutions: joined.resolutions };
+}
+
+export async function joinEvents(root: string, deps: JoinDeps): Promise<JoinSummary> {
+  const now = deps.now ?? Date.now;
+  const started = now();
+  const persist = (status: "running" | "succeeded" | "failed", error: string | null, details: Record<string, string | number | boolean | null> = {}): void => {
+    const at = status === "running" ? started : now();
+    writeOperationState(root, "join.json", { schemaVersion: 1, operation: "join", status, startedAt: new Date(started).toISOString(), endedAt: status === "running" ? null : new Date(at).toISOString(), error, details });
+  };
+  persist("running", null);
+  try {
+    const summary = await joinEventsImpl(root, { ...deps, now: () => started });
+    persist("succeeded", null, { appended: summary.appended, nextBlock: summary.nextBlock });
+    return summary;
+  } catch (error) {
+    persist("failed", operationError(error));
+    throw error;
+  }
 }
 
 export function redactQuoteDecision(

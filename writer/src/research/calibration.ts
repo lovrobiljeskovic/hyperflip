@@ -1,13 +1,13 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { expectedIntervals, HOUR, quality, sessionDates, trailingFresh, TRANSFORMATION_VERSION, classifyCandle } from "./returns.js";
 import type { QualityMode, ReturnRecord, Window } from "./returns.js";
 import { nearestCorrelationResult, shrinkLambda, structuredTargets, weightedCorrelation } from "./matrix.js";
 import type { PairEstimate } from "./matrix.js";
-import { atomicWriteNew, canonicalJson, readCandlePartition, sha256, verifyManifest } from "./store.js";
-import { parseSourceRegistry } from "./types.js";
-import type { CandleRecord, CorrelationArtifact, DataManifest, SourceEntry } from "./types.js";
+import { atomicWriteNew, canonicalJson, containedPath, operationError, readCandlePartition, readSourceRegistryFact, sha256, verifyManifest, writeOperationState } from "./store.js";
+import { assertExclusionRecord } from "./types.js";
+import type { CandleRecord, CorrelationArtifact, DataManifest, ExclusionRecord, SourceEntry } from "./types.js";
 
 const MAX_LOADING = Math.sqrt(0.99);
 const lexical = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
@@ -16,6 +16,7 @@ export interface CalibrationInput {
   root: string;
   manifest: DataManifest;
   derivedManifestPath: string;
+  now?: () => number;
 }
 
 export interface FactorFit {
@@ -94,7 +95,7 @@ function fit(target: number[][], sources: SourceEntry[], admitted?: Set<string>)
   return { global: values.global, clusters: Object.fromEntries(clusterNames.map((name) => [name, values[name]])), loadings, implied, objective: objective() };
 }
 
-export function fitHierarchical(target: number[][], sources: SourceEntry[]): FactorFit { return fit(target, sources); }
+export function fitHierarchical(target: number[][], sources: SourceEntry[], admitted?: Set<string>): FactorFit { return fit(target, sources, admitted); }
 
 interface DerivedManifest {
   schemaVersion: 1;
@@ -102,10 +103,10 @@ interface DerivedManifest {
   dataManifestSha256: string;
   sourceRegistrySha256: string;
   window: Window;
-  files: { path: string; bytes: number; sha256: string; rows: number; schemaVersion: 1 }[];
+  files: { kind: "returns" | "exclusions"; path: string; bytes: number; sha256: string; rows: number; schemaVersion: 1 }[];
 }
 
-interface AlignedPair {
+export interface AlignedPair {
   rows: { timestampMs: number; a: number; b: number }[];
   mode: QualityMode;
   expected: number;
@@ -113,14 +114,16 @@ interface AlignedPair {
   eligible: boolean;
 }
 
+export interface CalibrationAlignmentCache {
+  possible: Map<string, string[]>;
+  returns: Map<string, Map<string, ReturnRecord>>;
+}
+
 const pairName = (left: string, right: string): string => left < right ? `${left}:${right}` : `${right}:${left}`;
 const candleKey = (candle: CandleRecord): string => `${candle.sourceNetwork}:${candle.sourceCoin}:${candle.interval}:${candle.openTimeMs}`;
-const inside = (root: string, path: string): boolean => path === root || path.startsWith(`${root}/`);
-
 function verifiedReturns(input: CalibrationInput): { manifest: DerivedManifest; rows: ReturnRecord[] } {
   const root = resolve(input.root);
-  const manifestPath = resolve(root, input.derivedManifestPath);
-  if (!inside(root, manifestPath)) throw new Error("derived manifest path escapes root");
+  const manifestPath = containedPath(root, input.derivedManifestPath);
   const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as Partial<DerivedManifest>;
   const dataManifestSha256 = sha256(canonicalJson(input.manifest));
   if (parsed.schemaVersion !== 1 || parsed.transformationVersion !== TRANSFORMATION_VERSION || parsed.dataManifestSha256 !== dataManifestSha256 || parsed.sourceRegistrySha256 !== input.manifest.sourceRegistrySha256) throw new Error("derived manifest identity mismatch");
@@ -129,16 +132,21 @@ function verifiedReturns(input: CalibrationInput): { manifest: DerivedManifest; 
   if (!Array.isArray(parsed.files) || !parsed.files.length) throw new Error("derived manifest has no files");
   const rows: ReturnRecord[] = [];
   for (const file of parsed.files) {
-    const path = resolve(root, file.path);
-    if (!inside(root, path)) throw new Error("derived manifest file path escapes root");
+    const path = containedPath(root, file.path);
     if (file.schemaVersion !== 1 || !file.path.endsWith(".jsonl.gz") || !existsSync(path) || statSync(path).size !== file.bytes || sha256(readFileSync(path)) !== file.sha256) throw new Error(`derived manifest file mismatch: ${file.path}`);
     const text = gunzipSync(readFileSync(path)).toString("utf8").trim();
-    const fileRows = text ? text.split("\n").map((line) => JSON.parse(line) as ReturnRecord) : [];
+    const fileRows = text ? text.split("\n").map((line) => JSON.parse(line) as ReturnRecord | ExclusionRecord) : [];
     if (fileRows.length !== file.rows) throw new Error(`derived manifest file mismatch: ${file.path}`);
-    for (const row of fileRows) {
-      if (row.schemaVersion !== 1 || row.transformationVersion !== TRANSFORMATION_VERSION || (row.interval !== "1h" && row.interval !== "1d") || !Number.isSafeInteger(row.timestampMs) || !Number.isFinite(row.value) || typeof row.sessionDate !== "string" || !Array.isArray(row.sourceKeys) || row.sourceKeys.some((key) => typeof key !== "string")) throw new Error("invalid derived return record");
+    if (file.kind === "exclusions") {
+      for (const row of fileRows as ExclusionRecord[]) assertExclusionRecord(row);
+      continue;
     }
-    rows.push(...fileRows);
+    if (file.kind !== "returns") throw new Error(`derived manifest file kind is invalid: ${file.path}`);
+    for (const row of fileRows) {
+      const record = row as ReturnRecord;
+      if (record.schemaVersion !== 1 || record.transformationVersion !== TRANSFORMATION_VERSION || (record.interval !== "1h" && record.interval !== "1d") || !Number.isSafeInteger(record.timestampMs) || (record.observationCloseTimeMs !== undefined && (!Number.isSafeInteger(record.observationCloseTimeMs) || record.observationCloseTimeMs < record.timestampMs)) || !Number.isFinite(record.value) || typeof record.sessionDate !== "string" || !Array.isArray(record.sourceKeys) || record.sourceKeys.some((key) => typeof key !== "string")) throw new Error("invalid derived return record");
+    }
+    rows.push(...fileRows as ReturnRecord[]);
   }
   return { manifest: parsed as DerivedManifest, rows };
 }
@@ -154,15 +162,30 @@ function possibleKeys(source: SourceEntry, window: Window, mode: QualityMode): s
   return keys;
 }
 
-function alignReturns(records: ReturnRecord[], left: SourceEntry, right: SourceEntry, window: Window): AlignedPair {
+export function calibrationPairSample(records: ReturnRecord[], left: SourceEntry, right: SourceEntry, window: Window, cache?: CalibrationAlignmentCache): AlignedPair {
   const mode: QualityMode = left.cluster === right.cluster ? "hourly-within-cluster" : "daily-cross-session";
   const interval = mode === "hourly-within-cluster" ? "1h" : "1d";
   const fromMs = window.asOfMs - window.lookbackMs;
-  const own = (source: SourceEntry) => new Map(records.filter((row) => row.underlying === source.underlying && row.interval === interval && row.timestampMs >= fromMs && row.timestampMs <= window.asOfMs).map((row) => [mode === "hourly-within-cluster" ? String(row.timestampMs) : row.sessionDate, row]));
+  const own = (source: SourceEntry) => {
+    const key = `${source.underlying}:${interval}:${fromMs}:${window.asOfMs}`;
+    const existing = cache?.returns.get(key);
+    if (existing) return existing;
+    const built = new Map(records.filter((row) => row.underlying === source.underlying && row.interval === interval && row.timestampMs >= fromMs && row.timestampMs <= window.asOfMs).map((row) => [mode === "hourly-within-cluster" ? String(row.timestampMs) : row.sessionDate, row]));
+    cache?.returns.set(key, built);
+    return built;
+  };
+  const possibleFor = (source: SourceEntry): string[] => {
+    const key = `${source.underlying}:${mode}:${fromMs}:${window.asOfMs}`;
+    const existing = cache?.possible.get(key);
+    if (existing) return existing;
+    const built = possibleKeys(source, window, mode);
+    cache?.possible.set(key, built);
+    return built;
+  };
   const a = own(left);
   const b = own(right);
-  const rightPossible = new Set(possibleKeys(right, window, mode));
-  const possible = possibleKeys(left, window, mode).filter((key) => rightPossible.has(key));
+  const rightPossible = new Set(possibleFor(right));
+  const possible = possibleFor(left).filter((key) => rightPossible.has(key));
   const rows: AlignedPair["rows"] = [];
   for (const key of possible) {
     const first = a.get(key);
@@ -198,12 +221,11 @@ function usableCandles(candles: CandleRecord[], source: SourceEntry, window: Win
   return own.filter((candle, index) => candle.openTimeMs >= fromMs && candle.openTimeMs <= window.asOfMs && Number.isFinite(Number(candle.close)) && Number(candle.close) > 0 && classifyCandle(candle, source, own[index - 1]) === "active");
 }
 
-export function calibrate(input: CalibrationInput): CorrelationArtifact {
+function calibrateImpl(input: CalibrationInput): CorrelationArtifact {
   verifyManifest(input.root, input.manifest);
   const root = resolve(input.root);
   const dataManifestSha256 = sha256(canonicalJson(input.manifest));
-  const registryPath = join(root, "facts", "source-registries", `${input.manifest.sourceRegistrySha256}.json`);
-  const sources = parseSourceRegistry(readFileSync(registryPath, "utf8")).sources.sort((a, b) => lexical(a.underlying, b.underlying));
+  const sources = readSourceRegistryFact(root, input.manifest.sourceRegistrySha256).registry.sources.sort((a, b) => lexical(a.underlying, b.underlying));
   const derived = verifiedReturns(input);
   if (derived.rows.some((row) => !sources.some((source) => source.underlying === row.underlying))) throw new Error("derived return references unknown source");
   const candles = input.manifest.files.filter((file) => file.path.endsWith(".jsonl.gz")).flatMap((file) => readCandlePartition(join(root, file.path)));
@@ -229,7 +251,7 @@ export function calibrate(input: CalibrationInput): CorrelationArtifact {
     const a = sources[left];
     const b = sources[right];
     const key = pairName(a.underlying, b.underlying);
-    const sample = alignReturns(derived.rows, a, b, derived.manifest.window);
+    const sample = calibrationPairSample(derived.rows, a, b, derived.manifest.window);
     aligned.set(key, sample);
     if (sample.rows.length >= 2) {
       try {
@@ -298,7 +320,7 @@ export function calibrate(input: CalibrationInput): CorrelationArtifact {
   const diagnosticMatrices = Object.fromEntries(([30, 90, 180] as const).map((days) => {
     const window = { asOfMs: derived.manifest.window.asOfMs, lookbackMs: days * 86_400_000 };
     const matrix: (number | null)[][] = sources.map((source, row) => sources.map((_, column) => row === column ? (derived.rows.some((record) => record.underlying === source.underlying && record.timestampMs >= window.asOfMs - window.lookbackMs && record.timestampMs <= window.asOfMs) ? 1 : null) : null));
-    for (let left = 0; left < sources.length; left++) for (let right = left + 1; right < sources.length; right++) matrix[left][right] = matrix[right][left] = unweighted(alignReturns(derived.rows, sources[left], sources[right], window).rows);
+    for (let left = 0; left < sources.length; left++) for (let right = left + 1; right < sources.length; right++) matrix[left][right] = matrix[right][left] = unweighted(calibrationPairSample(derived.rows, sources[left], sources[right], window).rows);
     return [String(days), matrix];
   })) as CorrelationArtifact["quality"]["diagnosticMatrices"];
   const dataAsOf = new Date(dataAsOfMs).toISOString();
@@ -325,4 +347,22 @@ export function calibrate(input: CalibrationInput): CorrelationArtifact {
     if (readFileSync(candidate, "utf8") !== bytes) throw new Error("candidate already exists with different bytes");
   } else if (!atomicWriteNew(candidate, bytes) && readFileSync(candidate, "utf8") !== bytes) throw new Error("candidate already exists with different bytes");
   return artifact;
+}
+
+export function calibrate(input: CalibrationInput): CorrelationArtifact {
+  const now = input.now ?? Date.now;
+  const started = now();
+  const persist = (status: "running" | "succeeded" | "failed", error: string | null, details: Record<string, string | number | boolean | null> = {}): void => {
+    const at = status === "running" ? started : now();
+    writeOperationState(input.root, "calibrator.json", { schemaVersion: 1, operation: "calibrator", status, startedAt: new Date(started).toISOString(), endedAt: status === "running" ? null : new Date(at).toISOString(), error, details });
+  };
+  persist("running", null);
+  try {
+    const artifact = calibrateImpl(input);
+    persist("succeeded", null, { modelVersion: artifact.modelVersion, dataManifestSha256: artifact.dataManifestSha256 });
+    return artifact;
+  } catch (error) {
+    persist("failed", operationError(error));
+    throw error;
+  }
 }

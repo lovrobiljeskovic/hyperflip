@@ -96,7 +96,7 @@ function calibrationRoot(options: { staleParticipatingUnderlying?: string; const
     schemaVersion: 1, transformationVersion: "returns-v1",
     dataManifestSha256: sha256(canonicalJson(manifest)), sourceRegistrySha256: registryHash,
     window: { asOfMs: AS_OF_MS, lookbackMs: 180 * 86_400_000 },
-    files: [{ path: derivedPath, bytes: derivedBytes.length, sha256: sha256(derivedBytes), rows: 450, schemaVersion: 1 }],
+    files: [{ kind: "returns", path: derivedPath, bytes: derivedBytes.length, sha256: sha256(derivedBytes), rows: 450, schemaVersion: 1 }],
   };
   const derivedManifestPath = join(root, `${derivedPath}.manifest.json`);
   writeFileSync(derivedManifestPath, canonicalJson(derivedManifest));
@@ -120,8 +120,10 @@ test("calibration preserves signed negatives and writes a byte-identical immutab
     assert.ok(artifact.quality.signedPsdTarget.flat().some((value) => value < 0));
     assert.ok(artifact.quality.pairEligibility.every((pair) => pair.status === "direct"));
     assert.deepEqual(Object.keys(artifact.quality.diagnosticMatrices), ["30", "90", "180"]);
+    assert.equal(JSON.parse(readFileSync(join(first.root, "state", "calibrator.json"), "utf8")).status, "succeeded");
     writeFileSync(join(first.root, "artifacts", "candidates", `${artifact.modelVersion}.json`), "different");
     assert.throws(() => calibrate(first.input), /different bytes/);
+    assert.equal(JSON.parse(readFileSync(join(first.root, "state", "calibrator.json"), "utf8")).status, "failed");
   } finally {
     rmSync(first.root, { recursive: true, force: true });
     rmSync(second.root, { recursive: true, force: true });

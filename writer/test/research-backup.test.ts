@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -115,6 +115,13 @@ test("research backup signs, skips verified objects, and restores the immutable 
     writeFileSync(validationPath, `${canonicalJson({ ...validation, modelVersion: 7 })}\n`);
     await assert.rejects(backupResearch(root, config), /safe artifact filename/);
     writeFileSync(validationPath, `${canonicalJson(validation)}\n`);
+    const outsideBaseline = join(root, "outside-baseline.json");
+    writeFileSync(outsideBaseline, baselineBytes);
+    rmSync(join(root, baselinePath));
+    symlinkSync(outsideBaseline, join(root, baselinePath));
+    await assert.rejects(backupResearch(root, config), /symbolic link/);
+    rmSync(join(root, baselinePath));
+    writeFileSync(join(root, baselinePath), baselineBytes);
     const corrupt = { ...artifact, dataManifestSha256: "f".repeat(64) };
     const corruptBytes = `${canonicalJson(corrupt)}\n`;
     writeFileSync(join(root, "artifacts", "candidates", "backup-fixture.json"), corruptBytes);
@@ -127,7 +134,7 @@ test("research backup signs, skips verified objects, and restores the immutable 
     const second = await backupResearch(root, config);
     assert.ok(first.uploaded > 0);
     assert.equal(second.uploaded, 1); // backup.json changed after the first completed run
-    assert.equal(second.skipped, firstPuts);
+    assert.equal(second.skipped, firstPuts - 1); // the in-progress backup state changes each invocation
     assert.ok(objects.has("quarantine/fixture.jsonl"));
     assert.equal(attempts.get(`HEAD:${reportRelative}`)! >= 3, true);
 
@@ -171,5 +178,8 @@ test("research backup total deadline starts before synchronous closure traversal
       fetch: async () => { fetches++; throw new Error("must not fetch"); },
     }), /backup total timeout/);
     assert.equal(fetches, 0);
+    const state = JSON.parse(readFileSync(join(root, "state", "backup.json"), "utf8"));
+    assert.equal(state.status, "failed");
+    assert.equal(state.error, "backup total timeout");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

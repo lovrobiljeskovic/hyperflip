@@ -38,6 +38,12 @@ test("missing intervals stay missing and are never forward-filled", () => {
   assert.deepEqual(returns, []);
 });
 
+test("returns persist the close time at which the return becomes observable", () => {
+  const rows = buildHourlyReturns([candle(0, "100"), candle(HOUR, "110")], continuousSource, window(0, HOUR));
+  assert.equal(rows[0].timestampMs, HOUR);
+  assert.equal(rows[0].observationCloseTimeMs, 2 * HOUR - 1);
+});
+
 test("zero-volume repeated session close is stale", () => {
   assert.equal(classifyCandle(candle(HOUR, "100", "0", 0, "NVDA", "xyz:NVDA"), sessionSource, candle(0, "100", "1", 1, "NVDA", "xyz:NVDA")), "stale");
 });
@@ -111,6 +117,12 @@ test("derived partitions are immutable and deterministic after manifest verifica
     assert.equal(first.rows, 0);
     assert.equal(first.path, second.path);
     assert.equal(readFileSync(first.path).equals(readFileSync(second.path)), true);
+    const derivedManifest = JSON.parse(readFileSync(first.manifestPath, "utf8"));
+    assert.deepEqual(derivedManifest.files.map((file: { kind: string }) => file.kind).sort(), ["exclusions", "returns"]);
+    const exclusionFile = derivedManifest.files.find((file: { kind: string }) => file.kind === "exclusions");
+    assert.ok(exclusionFile.rows > 0);
+    writeFileSync(first.path, "corrupt immutable return bytes");
+    assert.throws(() => deriveReturns(root, manifest, window(0, 5 * HOUR)), /different bytes/);
     assert.throws(() => deriveReturns(root, { ...manifest, files: [] }, window(0, 5 * HOUR)), /manifest/);
   } finally {
     rmSync(root, { recursive: true, force: true });

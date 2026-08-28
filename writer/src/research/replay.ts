@@ -2,10 +2,10 @@ import { createHash, hash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { jointProbWad, parseCorrelations, type CorrLeg, type CorrelationTable } from "../correlation.js";
-import { fitHierarchical } from "./calibration.js";
+import { calibrationPairSample, fitHierarchical, type CalibrationAlignmentCache } from "./calibration.js";
 import { cholesky, nearestCorrelation, shrinkPair, structuredTargets, weightedCorrelation, type PairEstimate } from "./matrix.js";
-import type { ReturnRecord } from "./returns.js";
-import { atomicWriteNew, canonicalJson, sha256 } from "./store.js";
+import { trailingFresh, type ReturnRecord } from "./returns.js";
+import { atomicWriteNew, canonicalJson, readSourceRegistryFact, sha256 } from "./store.js";
 import type { CorrelationArtifact, SourceEntry } from "./types.js";
 
 const DAY = 86_400_000;
@@ -16,6 +16,13 @@ const QUANTILES = [0.25, 0.5, 0.75] as const;
 const DFS = [4, 6, 8, 12, 20, 30] as const;
 const MODELS = ["independence", "static-hierarchical-gaussian", "measured-hierarchical-gaussian", "signed-t-copula", "filtered-historical-simulation"] as const;
 const STRESS_REGIMES = ["drawdown-stress", "high-volatility", "normal"] as const;
+const SAFE_MODEL_VERSION = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const observationTime = (row: ReturnRecord): number => row.observationCloseTimeMs ?? row.timestampMs;
+const pairName = (left: string, right: string): string => left < right ? `${left}:${right}` : `${right}:${left}`;
+
+export function loadReplaySourceRegistry(root: string, sourceRegistrySha256: string): SourceEntry[] {
+  return readSourceRegistryFact(root, sourceRegistrySha256).registry.sources;
+}
 
 export type Direction = "up" | "down";
 export type TicketStratum = "same-underlying" | "same-cluster" | "cross-cluster";
@@ -347,7 +354,7 @@ function intervalFor(series: ReplaySeries, underlyings: string[], strict = false
 
 function cumulativeSamples(rows: ReturnRecord[], underlying: string, interval: "1h" | "1d", horizonHours: number, originMs: number): number[] {
   const size = interval === "1h" ? horizonHours : horizonHours / 24;
-  const own = rows.filter((row) => row.underlying === underlying && row.interval === interval && row.timestampMs <= originMs).sort((left, right) => left.timestampMs - right.timestampMs);
+  const own = rows.filter((row) => row.underlying === underlying && row.interval === interval && observationTime(row) <= originMs).sort((left, right) => left.timestampMs - right.timestampMs);
   const samples: number[] = [];
   for (let start = 0; start + size <= own.length; start++) {
     const block = own.slice(start, start + size);
@@ -376,14 +383,19 @@ function contradictory(legs: SyntheticLeg[]): boolean {
   return false;
 }
 
-export function syntheticEvents(originMs: number, series: ReplaySeries, future: ReturnRecord[]): SyntheticTicket[] {
+export function syntheticEvents(originMs: number, series: ReplaySeries, future: ReturnRecord[], admittedPairs?: Set<string>): SyntheticTicket[] {
   if (!Number.isSafeInteger(originMs) || !/^[0-9a-f]{64}$/.test(series.manifestHash)) throw new Error("synthetic replay requires a safe origin and manifest hash");
   const sources = [...series.sources].filter((source) => source.eligible).sort((left, right) => left.underlying.localeCompare(right.underlying));
   const groups: Record<TicketStratum, SourceEntry[][]> = { "same-underlying": [], "same-cluster": [], "cross-cluster": [] };
+  const admitted = (selected: SourceEntry[]): boolean => {
+    const underlyings = [...new Set(selected.map((source) => source.underlying))];
+    for (let left = 0; left < underlyings.length; left++) for (let right = left + 1; right < underlyings.length; right++) if (admittedPairs && !admittedPairs.has(pairName(underlyings[left], underlyings[right]))) return false;
+    return true;
+  };
   for (const size of [2, 3, 4]) {
     if (size <= 3) groups["same-underlying"].push(...sources.map((source) => Array.from({ length: size }, () => source)));
-    for (const cluster of [...new Set(sources.map((source) => source.cluster))]) groups["same-cluster"].push(...combinations(sources.filter((source) => source.cluster === cluster), size));
-    groups["cross-cluster"].push(...combinations(sources, size).filter((selected) => new Set(selected.map((source) => source.cluster)).size >= 2));
+    for (const cluster of [...new Set(sources.map((source) => source.cluster))]) groups["same-cluster"].push(...combinations(sources.filter((source) => source.cluster === cluster), size).filter(admitted));
+    groups["cross-cluster"].push(...combinations(sources, size).filter((selected) => new Set(selected.map((source) => source.cluster)).size >= 2 && admitted(selected)));
   }
   const output: SyntheticTicket[] = [];
   const legs = new Map<string, SyntheticLeg | null>();
@@ -474,13 +486,13 @@ export function syntheticEvents(originMs: number, series: ReplaySeries, future: 
 }
 
 export function forecastAt(originMs: number, series: ReplaySeries): SyntheticTicket[] {
-  return syntheticEvents(originMs, { ...series, rows: series.rows.filter((row) => row.timestampMs <= originMs) }, []);
+  return syntheticEvents(originMs, { ...series, rows: series.rows.filter((row) => observationTime(row) <= originMs) }, []);
 }
 
 interface FhsResult { available: boolean; probability: number | null; hits: number; blocks: number; originMean: number[]; originSigma: number[]; reason: "insufficient-sample" | null }
 
 function alignedRows(series: ReplaySeries, underlyings: string[], interval: "1h" | "1d", originMs = Number.POSITIVE_INFINITY): { timestampMs: number; values: number[]; contiguous: boolean }[] {
-  const ordered = underlyings.map((underlying) => series.rows.filter((row) => row.underlying === underlying && row.interval === interval && row.timestampMs <= originMs).sort((left, right) => left.timestampMs - right.timestampMs));
+  const ordered = underlyings.map((underlying) => series.rows.filter((row) => row.underlying === underlying && row.interval === interval && observationTime(row) <= originMs).sort((left, right) => left.timestampMs - right.timestampMs));
   const maps = ordered.map((rows) => new Map(rows.map((row) => [interval === "1h" ? String(row.timestampMs) : row.sessionDate, row])));
   const positions = ordered.map((rows) => new Map(rows.map((row, index) => [interval === "1h" ? String(row.timestampMs) : row.sessionDate, index])));
   const common = [...maps[0].keys()].filter((key) => maps.every((map) => map.has(key))).sort((left, right) => (maps[0].get(left)!.timestampMs - maps[0].get(right)!.timestampMs));
@@ -563,6 +575,70 @@ function fittedMatrix(rows: ReturnRecord[], sources: SourceEntry[], originMs = N
   return { matrix: nearestCorrelation(raw), values: base.map((row) => row.values), observationTimes: base.map((row) => row.timestampMs), sources: sorted };
 }
 
+export interface ReplayDependenceFit {
+  matrix: number[][];
+  values: number[][];
+  observationTimes: number[];
+  sources: SourceEntry[];
+  admittedPairs: Set<string>;
+}
+
+export function fitReplayDependence(rows: ReturnRecord[], sources: SourceEntry[], candidate: CorrelationArtifact, originMs: number, fits?: Map<number, ReplayDependenceFit>): ReplayDependenceFit {
+  const cached = fits?.get(originMs);
+  if (cached) return cached;
+  const window = { asOfMs: originMs, lookbackMs: 180 * DAY };
+  const causal = rows.filter((row) => observationTime(row) <= originMs && row.timestampMs >= originMs - window.lookbackMs);
+  const quarantined = new Set(candidate.quality.quarantinedUnderlyings.map((entry) => entry.underlying));
+  const eligible = new Set(candidate.quality.eligibleUnderlyings);
+  const sorted = sources.filter((source) => source.eligible && eligible.has(source.underlying) && !quarantined.has(source.underlying))
+    .filter((source) => trailingFresh(source, causal.filter((row) => row.underlying === source.underlying).map((row) => row.timestampMs), originMs))
+    .sort((left, right) => left.underlying < right.underlying ? -1 : left.underlying > right.underlying ? 1 : 0);
+  if (sorted.length < 2) throw new Error("dependence fit requires two eligible fresh sources");
+  const policy = new Map(candidate.quality.pairEligibility.map((entry) => [pairName(...entry.pair), entry.status]));
+  const estimates: PairEstimate[] = [];
+  const samples = new Map<string, ReturnType<typeof calibrationPairSample>>();
+  const alignment: CalibrationAlignmentCache = { possible: new Map(), returns: new Map() };
+  for (let left = 0; left < sorted.length; left++) for (let right = left + 1; right < sorted.length; right++) {
+    const a = sorted[left];
+    const b = sorted[right];
+    const key = pairName(a.underlying, b.underlying);
+    const sample = calibrationPairSample(causal, a, b, window, alignment);
+    samples.set(key, sample);
+    if (policy.get(key) !== "direct" || !sample.eligible || sample.rows.length < 2) continue;
+    try {
+      estimates.push({ pair: [a.underlying, b.underlying], ...weightedCorrelation(sample.rows, 45, originMs), eligible: true });
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "weighted correlation requires non-constant series") throw error;
+    }
+  }
+  const targets = structuredTargets(estimates, sorted);
+  const estimatesByPair = new Map(estimates.map((estimate) => [pairName(...estimate.pair), estimate]));
+  const admittedPairs = new Set<string>();
+  const raw = sorted.map((left, row) => sorted.map((right, column) => {
+    if (row === column) return 1;
+    const key = pairName(left.underlying, right.underlying);
+    const status = policy.get(key);
+    const target = left.cluster === right.cluster ? targets.clusters[left.cluster] : targets.global;
+    const estimate = estimatesByPair.get(key);
+    if (status === "direct" && estimate && samples.get(key)?.eligible) {
+      admittedPairs.add(key);
+      return shrinkPair(estimate, target);
+    }
+    if (status === "fallback" && left.fallbackEligible && right.fallbackEligible) {
+      admittedPairs.add(key);
+      return target;
+    }
+    return 0;
+  }));
+  const series: ReplaySeries = { rows: causal, sources: sorted, manifestHash: "0".repeat(64) };
+  const daily = alignedRows(series, sorted.map((source) => source.underlying), "1d", originMs);
+  const base = daily.length >= 3 ? daily : alignedRows(series, sorted.map((source) => source.underlying), "1h", originMs);
+  if (base.length < 3) throw new Error("dependence fit requires at least three complete rows");
+  const result = { matrix: nearestCorrelation(raw), values: base.map((row) => row.values), observationTimes: base.map((row) => row.timestampMs), sources: sorted, admittedPairs };
+  fits?.set(originMs, result);
+  return result;
+}
+
 function determinantFromCholesky(lower: number[][]): number {
   return lower.reduce((product, row, index) => product * row[index] ** 2, 1);
 }
@@ -588,14 +664,16 @@ function tLogLikelihood(values: number[][], matrix: number[][], df: number, fitV
   }, 0);
 }
 
-export function selectDegreesOfFreedom(rows: ReturnRecord[], sources: SourceEntry[], _seed = "replay", originMs = Number.POSITIVE_INFINITY): number {
-  const causal = rows.filter((row) => row.timestampMs <= originMs);
-  const fitted = fittedMatrix(causal, sources, originMs);
+export function selectDegreesOfFreedom(rows: ReturnRecord[], sources: SourceEntry[], _seed = "replay", originMs = Number.POSITIVE_INFINITY, candidate?: CorrelationArtifact, fits?: Map<number, ReplayDependenceFit>): number {
+  const causal = rows.filter((row) => observationTime(row) <= originMs);
+  const fitted = candidate ? fitReplayDependence(causal, sources, candidate, originMs, fits) : fittedMatrix(causal, sources, originMs);
   const split = Math.max(3, Math.floor(fitted.values.length * 0.8));
   const fitValues = fitted.values.slice(0, split);
   const validation = fitted.values.slice(split);
   const cutoff = fitted.observationTimes[split - 1];
-  const matrix = fittedMatrix(causal.filter((row) => row.timestampMs <= cutoff), sources, cutoff).matrix;
+  const matrix = candidate
+    ? fitReplayDependence(causal.filter((row) => observationTime(row) <= cutoff), sources, candidate, cutoff, fits).matrix
+    : fittedMatrix(causal.filter((row) => observationTime(row) <= cutoff), sources, cutoff).matrix;
   let selected: number = DFS[0];
   let best = Number.NEGATIVE_INFINITY;
   for (const df of DFS) {
@@ -756,6 +834,7 @@ interface ReplayComputation {
 export function runReplay(input: ReplayInput): ValidationReport {
   const root = resolve(input.root);
   if ("draws" in input) throw new Error("replay uses exactly 20,000 draws");
+  if (!SAFE_MODEL_VERSION.test(input.candidate.modelVersion)) throw new Error("replay modelVersion is not a safe artifact filename");
   if (input.inputManifestSha256 !== input.candidate.dataManifestSha256 || input.series.manifestHash !== input.inputManifestSha256) throw new Error("replay immutable input identities differ");
   const candidateSha256 = sha256(input.candidateBytes ?? canonicalJson(input.candidate));
   const outputPath = validationPath(root, input.candidate.modelVersion);
@@ -779,26 +858,43 @@ export function runReplay(input: ReplayInput): ValidationReport {
   let hadNonFinite = false;
   const stressThresholds: StressThreshold[] = [];
   const degreeOfFreedomSelections: { originMs: number; df: number }[] = [];
+  const fittedByOrigin = new Map<number, ReplayDependenceFit>();
   const selectedTicketKeys: string[] = [];
   const ticketCounts: Record<string, number> = Object.fromEntries((["same-underlying", "same-cluster", "cross-cluster"] as TicketStratum[]).flatMap((stratum) => [2, 3, 4].map((size) => [`${stratum}:${size}`, 0])));
   for (const originMs of origins) {
-    const training = { ...input.series, rows: input.series.rows.filter((row) => row.timestampMs <= originMs) };
-    const future = input.series.rows.filter((row) => row.timestampMs > originMs);
-    const selected = syntheticEvents(originMs, training, future);
+    let df: number = DFS[0];
+    let fitted: ReplayDependenceFit | null = null;
+    try {
+      fitted = fitReplayDependence(input.series.rows, input.series.sources, input.candidate, originMs, fittedByOrigin);
+      if (fitted.admittedPairs.size) df = selectDegreesOfFreedom(input.series.rows, input.series.sources, `${input.seed}:${originMs}`, originMs, input.candidate, fittedByOrigin);
+    } catch {
+      matrixFailure = true;
+      exclusions.push({ originMs, ticketKey: null, model: "measured-hierarchical-gaussian", reason: "non-finite-probability" });
+    }
+    const training = {
+      ...input.series,
+      sources: fitted?.sources ?? [],
+      rows: input.series.rows.filter((row) => observationTime(row) <= originMs && row.timestampMs >= originMs - 180 * DAY),
+    };
+    const future = input.series.rows.filter((row) => observationTime(row) > originMs);
+    const selected = syntheticEvents(originMs, training, future, fitted?.admittedPairs ?? new Set());
     const tickets = selected.filter((ticket) => ticket.outcome !== null);
     exclusions.push({ originMs, ticketKey: null, model: null, reason: "structurally-unavailable", stratum: "same-underlying", legCount: 4 });
     selectedTicketKeys.push(...selected.map((ticket) => ticket.key));
     for (const ticket of selected) ticketCounts[ticketCountKey(ticket)] = (ticketCounts[ticketCountKey(ticket)] ?? 0) + 1;
-    let df: number = DFS[0];
-    let fitted: ReturnType<typeof fittedMatrix> | null = null;
-    try {
-      df = selectDegreesOfFreedom(training.rows, training.sources, `${input.seed}:${originMs}`, originMs);
-      fitted = fittedMatrix(training.rows, training.sources, originMs);
-    } catch { matrixFailure = true; }
     degreeOfFreedomSelections.push({ originMs, df });
-    const order = input.candidate.quality.matrixOrder;
-    const generated = matrixFailure ? [] : tDraws(input.candidate.quality.signedPsdTarget, df, draws, `${input.seed}:${originMs}:${df}`);
-    const measuredCorrelation = fitted ? measuredTable(fitHierarchical(fitted.matrix, fitted.sources).loadings) : null;
+    const order = fitted?.sources.map((source) => source.underlying) ?? [];
+    const generated = fitted && !matrixFailure ? tDraws(fitted.matrix, df, draws, `${input.seed}:${originMs}:${df}`) : [];
+    const measuredCorrelation = fitted ? measuredTable(fitHierarchical(fitted.matrix, fitted.sources, fitted.admittedPairs).loadings) : null;
+    const tThresholds = new Map<number, number>();
+    const tThreshold = (probability: number): number => {
+      const bounded = Math.min(1 - 1e-12, Math.max(1e-12, probability));
+      const existing = tThresholds.get(bounded);
+      if (existing !== undefined) return existing;
+      const value = studentTInv(1 - bounded, df);
+      tThresholds.set(bounded, value);
+      return value;
+    };
     for (const ticket of tickets) {
       const stress = ticketStress(ticket, training, future);
       stressThresholds.push(stress);
@@ -806,7 +902,7 @@ export function runReplay(input: ReplayInput): ValidationReport {
       const fhs = filteredHistoricalSimulation(ticket, training);
       if (!fhs.available) exclusions.push({ originMs, ticketKey: ticket.key, model: "filtered-historical-simulation", reason: "insufficient-sample" });
       const tResult = generated.length ? (() => {
-        const thresholds = ticket.legs.map((leg) => studentTInv(1 - Math.min(1 - 1e-12, Math.max(1e-12, leg.marginalProbability)), df));
+        const thresholds = ticket.legs.map((leg) => tThreshold(leg.marginalProbability));
         let hits = 0;
         for (const draw of generated) if (ticket.legs.every((leg, index) => {
           const value = draw[order.indexOf(leg.underlying)];

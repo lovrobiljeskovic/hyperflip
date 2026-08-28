@@ -56,12 +56,18 @@ type Validated =
   | { ok: false; status: number; reason: string };
 
 const pairKey = (left: string, right: string): string => left < right ? `${left}:${right}` : `${right}:${left}`;
+const MODEL_MAX_AGE_MS = 7 * 86_400_000;
 
-export function correlationEligibility(legs: QuoteLeg[], cfg: WriterConfig): string | null {
+export function currentModelStatus(model: WriterConfig["model"], now: number): { ageMs: number; multiAssetEnabled: boolean } {
+  const ageMs = Math.max(0, now - Date.parse(model.dataAsOf));
+  return { ageMs, multiAssetEnabled: model.multiAssetEnabled && ageMs < MODEL_MAX_AGE_MS };
+}
+
+export function correlationEligibility(legs: QuoteLeg[], cfg: WriterConfig, now: number): string | null {
   const markets = legs.map((leg) => cfg.markets.get(leg.vault.toLowerCase())!);
   const underlyings = [...new Set(markets.map((market) => market.underlying))].sort();
   if (underlyings.length <= 1) return null;
-  if (!cfg.model.multiAssetEnabled || markets.some((market) => market.direction === "band")) return "correlation-unavailable";
+  if (!currentModelStatus(cfg.model, now).multiAssetEnabled || markets.some((market) => market.direction === "band")) return "correlation-unavailable";
   for (const underlying of underlyings) if (!cfg.model.eligibleUnderlyings.has(underlying) || cfg.model.quarantinedUnderlyings.has(underlying)) return "correlation-unavailable";
   for (let left = 0; left < underlyings.length; left++) for (let right = left + 1; right < underlyings.length; right++) {
     const entry = cfg.model.pairEligibility.get(pairKey(underlyings[left], underlyings[right]));
@@ -105,7 +111,7 @@ export function validateQuoteRequest(
     }
     legs.push({ vault: l.vault as Address, isYes: l.isYes });
   }
-  const correlationReason = correlationEligibility(legs, cfg);
+  const correlationReason = correlationEligibility(legs, cfg, now);
   if (correlationReason) return { ok: false, status: 400, reason: correlationReason };
   let stake: bigint;
   try {

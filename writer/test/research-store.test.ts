@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -52,6 +52,7 @@ test("manifest verification rederives metadata, registry content, and contained 
   const registryHash = sha256(registryBytes);
   const raw = join(root, "raw", "candles", "1970", "01", "01", "BTC", "0-1-0.jsonl.gz");
   const escaped = resolve(root, "raw/../../escaped");
+  const outside = join(root, "..", `${root.split("/").at(-1)}-outside`);
   try {
     mkdirSync(join(root, "facts", "source-registries"), { recursive: true });
     mkdirSync(join(root, "state"), { recursive: true });
@@ -69,8 +70,13 @@ test("manifest verification rederives metadata, registry content, and contained 
 
     writeFileSync(escaped, "escape");
     assert.throws(() => verifyManifest(root, { ...manifest, files: [...manifest.files, { path: "raw/../../escaped", bytes: statSync(escaped).size, sha256: sha256(readFileSync(escaped)), rows: 1, schemaVersion: 1 }] }), /escapes root/);
+
+    writeFileSync(outside, "outside");
+    symlinkSync(outside, join(root, "linked"));
+    assert.throws(() => verifyManifest(root, { ...manifest, files: [...manifest.files, { path: "linked", bytes: 7, sha256: sha256("outside"), rows: 1, schemaVersion: 1 }] }), /symbolic link/);
   } finally {
     rmSync(escaped, { force: true });
+    rmSync(outside, { force: true });
     rmSync(root, { recursive: true, force: true });
   }
 });

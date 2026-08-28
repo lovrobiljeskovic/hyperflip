@@ -153,8 +153,8 @@ allows only 5 failed validations per hostname per hour.
 cd <repo root>
 forge build   # only if contracts changed
 
-rsync -az --delete --exclude node_modules --exclude .env --exclude research --exclude settlement-cache.json keeper/ root@91.99.94.25:/opt/hype/keeper/
-rsync -az --delete --exclude node_modules --exclude .env --exclude research --exclude waitlist.json writer/ root@91.99.94.25:/opt/hype/writer/
+rsync -az --delete --exclude node_modules --exclude .env --exclude settlement-cache.json keeper/ root@91.99.94.25:/opt/hype/keeper/
+rsync -az --delete --exclude node_modules --exclude .env --exclude waitlist.json writer/ root@91.99.94.25:/opt/hype/writer/
 # Registry is BOX-AUTHORITATIVE (rotate.timer rewrites it nightly) — pull, never push:
 rsync -az root@91.99.94.25:/opt/hype/registry/ registry/
 
@@ -182,7 +182,7 @@ root. After changing rotation code:
 
 ```bash
 rsync -az --delete --exclude node_modules --exclude .git --exclude cache --exclude out \
-  --exclude broadcast --exclude web --exclude research --exclude '.env*' --exclude registry --exclude '*.html' \
+  --exclude broadcast --exclude web --exclude '.env*' --exclude registry --exclude '*.html' \
   ./ root@91.99.94.25:/opt/hype/repo/
 ssh root@91.99.94.25 'cd /opt/hype/repo && node tools/rotate-markets.mjs --dry-run'  # sanity
 ssh root@91.99.94.25 'systemctl start rotate.service'                                # live run
@@ -235,8 +235,10 @@ ssh -o BatchMode=yes root@91.99.94.25 'chown hype:hype /opt/hype/registry/correl
 `/opt/hype/research.env` is owned by `hype:hype`, mode `0600`, and contains only these public or
 read-only inputs: `RESEARCH_ROOT`, `RESEARCH_INFO_API_URL`, `WRITER_RPC`,
 `PARLAY_VAULT_ADDRESS`, `PARLAY_DEPLOY_BLOCK`, `CORRELATION_SOURCES_FILE`,
-`CORRELATIONS_FILE`, `MARKETS_FILE`, `RESEARCH_MANIFEST_FILE`,
-`RESEARCH_DERIVED_MANIFEST_FILE`, and `RESEARCH_CANDIDATE_FILE`. It contains no signer, poker,
+`CORRELATIONS_FILE`, `MARKETS_FILE`, and `RESEARCH_REPLAY_SEED`. Collection publishes the
+mapping-epoch-specific rolling closure through `manifests/current.json`; daily derives its fixed
+180-day window and as-of from that pointer, then passes the derived manifest and candidate paths
+between steps without mutable environment pins. The file contains no signer, poker,
 invite, waitlist, deployer, or keeper secret. `/opt/hype/research-backup.env` is separate, mode
 `0600`, is never loaded by writer/keeper, and contains only `RESEARCH_BACKUP_ENDPOINT`,
 `RESEARCH_BACKUP_REGION`, `RESEARCH_BACKUP_BUCKET`, `RESEARCH_BACKUP_ACCESS_KEY`, and

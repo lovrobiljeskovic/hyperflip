@@ -49,7 +49,25 @@ test("journal: fsyncs the daily directory after appending a new file", async (t)
   const journal = await import(`../src/research/journal.js?daily-directory-fsync=${Date.now()}`);
   journal.appendQuoteDecision(root, decision);
   const file = join(root, "journal", "quotes", "2024", "08", "30.jsonl");
-  assert.ok(fsynced.includes(dirname(file)));
+  assert.deepEqual([
+    root,
+    join(root, "journal"),
+    join(root, "journal", "quotes"),
+    join(root, "journal", "quotes", "2024"),
+    dirname(file),
+  ].filter((path) => !fsynced.includes(path)), []);
+});
+
+test("journal: rejects a symlinked daily file without touching its target", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-journal-symlink-"));
+  const target = join(root, "outside.jsonl");
+  const file = join(root, "journal", "quotes", "2024", "08", "30.jsonl");
+  fs.writeFileSync(target, "sentinel\n", { mode: 0o644 });
+  fs.mkdirSync(dirname(file), { recursive: true });
+  fs.symlinkSync(target, file);
+  assert.throws(() => appendQuoteDecision(root, decision), /symbolic link/);
+  assert.equal(readFileSync(target, "utf8"), "sentinel\n");
+  assert.equal(statSync(target).mode & 0o777, 0o644);
 });
 
 test("journal: redaction needs a salt and delays hashes and research inputs until all legs final", () => {

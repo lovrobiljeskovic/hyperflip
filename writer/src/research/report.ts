@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { ValidationReport } from "./replay.js";
-import { atomicWrite, canonicalJson, sha256, verifyManifest } from "./store.js";
+import { atomicWrite, canonicalJson, containedPath, sha256, verifyManifest } from "./store.js";
 import type { CorrelationArtifact, DataManifest } from "./types.js";
 
 export interface ReportInput {
@@ -48,7 +48,8 @@ export function renderReport(input: ReportInput): string {
   const calibration = MODELS.flatMap((model) => validation.modelScores[model].overall.calibration.map((bucket) => [model, `${bucket.lower}-${bucket.upper}`, bucket.rows, number(bucket.meanProbability), number(bucket.observedRate)]));
   const stress = MODELS.flatMap((model) => Object.entries(validation.modelScores[model].byStressRegime).sort(([left], [right]) => left.localeCompare(right)).map(([bucket, score]) => [model, bucket, score.rows, score.eligibleRows, number(score.logLoss), score.gateEligible, score.exclusionReason ?? "none"]));
   const quarantines = candidate.quality.quarantinedUnderlyings.map((item) => [item.underlying, item.reason]);
-  const failures = [...input.failures].sort().map((failure) => ["operation", failure]);
+  const operational = [...input.failures].filter((item) => item.includes(" state:")).sort().map((item) => ["operation", item]);
+  const failures = [...input.failures].filter((item) => !item.includes(" state:")).sort().map((failure) => ["operation", failure]);
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Correlation beta evidence — ${escapeHtml(candidate.modelVersion)}</title><style>:root{color-scheme:dark;font:15px system-ui;background:#0d1117;color:#e6edf3}body{max-width:1200px;margin:auto;padding:2rem}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1rem}.card{border:1px solid #30363d;border-radius:8px;padding:1rem;overflow:auto}.label{color:#7ee787;font-size:.75rem;text-transform:uppercase;letter-spacing:.08em}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #30363d;padding:.4rem;text-align:left;white-space:nowrap}.warning{color:#ffa657}</style></head><body>
 <header><p class="label">Operator decision</p><h1>Correlation beta evidence</h1><p class="warning">Testnet P&amp;L is not evidence of production expected value.</p></header>
@@ -65,36 +66,38 @@ ${section("Model estimate", "Calibration buckets", table(["Model", "Bucket", "Sa
 ${section("Model estimate", "Stress buckets", table(["Model", "Bucket", "Rows", "Eligible sample", "Log loss", "Gate eligible", "Exclusion"], stress))}
 ${section("Observed fact", "Quote → mint → resolution funnel", `<p>quotes: ${input.funnel.quotes} · minted: ${input.funnel.minted} · resolved: ${input.funnel.resolved}</p><p>Public quote detail remains redacted until joined resolution.</p>`)}
 ${section("Observed fact", "Quarantines and failures", table(["Source", "Reason"], [...quarantines, ...failures]))}
+${section("Observed fact", "Operational evidence", table(["Operation", "State"], operational))}
 </main></body></html>\n`;
 }
 
-const filesBelow = (path: string): string[] => existsSync(path) ? readdirSync(path, { withFileTypes: true }).flatMap((entry) => entry.isDirectory() ? filesBelow(join(path, entry.name)) : [join(path, entry.name)]) : [];
+const filesBelow = (path: string): string[] => existsSync(path) ? readdirSync(path, { withFileTypes: true }).flatMap((entry) => {
+  if (entry.isSymbolicLink()) throw new Error(`report closure contains a symbolic link: ${join(path, entry.name)}`);
+  return entry.isDirectory() ? filesBelow(join(path, entry.name)) : [join(path, entry.name)];
+}) : [];
 const inside = (root: string, path: string): boolean => path === root || path.startsWith(`${root}${sep}`);
 
 function verified(root: string, candidatePath: string): { candidate: CorrelationArtifact; manifest: DataManifest; validation: ValidationReport; bytes: string } {
-  const path = resolve(candidatePath);
-  if (!inside(root, path)) throw new Error("report candidate path escapes root");
+  const path = containedPath(root, candidatePath);
   const bytes = readFileSync(path, "utf8");
   const candidate = JSON.parse(bytes) as CorrelationArtifact;
   if (!safeModelVersion(candidate.modelVersion)) throw new Error("report modelVersion is not a safe artifact filename");
   if (!SHA256.test(candidate.dataManifestSha256)) throw new Error("report candidate manifest hash is invalid");
-  const manifestPath = resolve(root, "manifests", `${candidate.dataManifestSha256}.json`);
-  if (!inside(root, manifestPath)) throw new Error("report manifest path escapes root");
+  const manifestPath = containedPath(root, join("manifests", `${candidate.dataManifestSha256}.json`));
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as DataManifest;
   if (sha256(canonicalJson(manifest)) !== candidate.dataManifestSha256) throw new Error("report manifest identity mismatch");
   verifyManifest(root, manifest);
   if (manifest.sourceRegistrySha256 !== candidate.sourceRegistrySha256) throw new Error("report source registry identity mismatch");
-  const validationPath = resolve(dirname(path), `${candidate.modelVersion}.validation.json`);
-  if (!inside(root, validationPath)) throw new Error("report validation path escapes root");
+  const validationPath = containedPath(root, resolve(dirname(path), `${candidate.modelVersion}.validation.json`));
   const validation = JSON.parse(readFileSync(validationPath, "utf8")) as ValidationReport;
   if (!safeModelVersion(validation.modelVersion)) throw new Error("report validation modelVersion is not a safe artifact filename");
   if (validation.modelVersion !== candidate.modelVersion || validation.candidateSha256 !== sha256(bytes) || validation.inputManifestSha256 !== candidate.dataManifestSha256) throw new Error("report validation identity mismatch");
-  const baseline = resolve(root, validation.baselineSnapshotPath);
-  if (!inside(root, baseline) || !existsSync(baseline) || sha256(readFileSync(baseline)) !== validation.baselineSha256) throw new Error("report baseline snapshot mismatch");
+  let baseline: string;
+  try { baseline = containedPath(root, validation.baselineSnapshotPath); } catch { throw new Error("report baseline snapshot mismatch"); }
+  if (sha256(readFileSync(baseline)) !== validation.baselineSha256) throw new Error("report baseline snapshot mismatch");
   return { candidate, manifest, validation, bytes };
 }
 
-function journalFunnel(root: string): ReportInput["funnel"] {
+export function journalFunnel(root: string): ReportInput["funnel"] {
   const parse = (directory: string): Record<string, unknown>[] => filesBelow(join(root, "journal", directory)).sort().flatMap((file) => {
     const text = readFileSync(file, "utf8").trim();
     return text ? text.split("\n").map((line) => JSON.parse(line) as Record<string, unknown>) : [];
@@ -102,8 +105,11 @@ function journalFunnel(root: string): ReportInput["funnel"] {
   const quotes = new Set(parse("quotes").map((row) => String(row.quoteId)));
   const events = parse("events");
   const orphaned = new Set(events.filter((row) => row.kind === "orphaned" && row.targetKind === "chain-log").map((row) => String(row.targetKey)));
-  const active = events.filter((row) => (row.kind === "minted" || row.kind === "resolved") && !orphaned.has(String(row.eventKey)));
-  return { quotes: quotes.size, minted: new Set(active.filter((row) => row.kind === "minted").map((row) => String(row.quoteId))).size, resolved: new Set(active.filter((row) => row.kind === "resolved").map((row) => String(row.quoteId))).size };
+  const active = events.filter((row) => (row.kind === "minted" || row.kind === "resolved") && !orphaned.has(`${String(row.eventKey)}:${String(row.blockHash).toLowerCase()}`));
+  const mints = active.filter((row) => row.kind === "minted" && quotes.has(String(row.quoteId)));
+  const mintedParlays = new Set(mints.map((row) => String(row.parlayId)));
+  const resolvedParlays = new Set(active.filter((row) => row.kind === "resolved" && mintedParlays.has(String(row.parlayId))).map((row) => String(row.parlayId)));
+  return { quotes: quotes.size, minted: new Set(mints.map((row) => `${String(row.quoteId)}:${String(row.parlayId)}`)).size, resolved: resolvedParlays.size };
 }
 
 function operationalFailures(root: string): string[] {
@@ -126,13 +132,18 @@ function operationalFailures(root: string): string[] {
   const states: string[] = [];
   const collectorFile = join(root, "state", "collector.json");
   if (existsSync(collectorFile)) {
-    const collector = JSON.parse(readFileSync(collectorFile, "utf8")) as { sources?: unknown };
+    const collector = JSON.parse(readFileSync(containedPath(root, collectorFile), "utf8")) as { sources?: unknown };
     if (collector.sources && typeof collector.sources === "object" && !Array.isArray(collector.sources)) states.push(`collector state: ${Object.keys(collector.sources).length} source checkpoints`);
   }
-  const calibratorFile = join(root, "state", "calibrator.json");
-  if (existsSync(calibratorFile)) {
-    const calibrator = JSON.parse(readFileSync(calibratorFile, "utf8")) as { modelVersion?: unknown; status?: unknown };
-    if (typeof calibrator.modelVersion === "string" && typeof calibrator.status === "string") states.push(`calibrator state: ${calibrator.modelVersion} — ${calibrator.status}`);
+  for (const [operation, file] of [["calibrator", "calibrator.json"], ["daily", "daily.json"], ["join", "join.json"], ["backup", "backup.json"]] as const) {
+    const path = join(root, "state", file);
+    if (!existsSync(path)) continue;
+    const state = JSON.parse(readFileSync(containedPath(root, path), "utf8")) as { status?: unknown; error?: unknown; details?: { modelVersion?: unknown } };
+    if (typeof state.status !== "string") continue;
+    const detail = operation === "calibrator" && typeof state.details?.modelVersion === "string"
+      ? state.details.modelVersion
+      : typeof state.error === "string" ? state.error : null;
+    states.push(`${operation} state: ${state.status}${detail ? ` — ${detail}` : ""}`);
   }
   return [...quarantines, ...requests, ...states];
 }
@@ -143,11 +154,10 @@ export function generateReport(rootInput: string, candidateInput: string): { pat
   const championPath = join(root, "artifacts", "champion.json");
   let champion: ReportInput["champion"] = null;
   if (existsSync(championPath)) {
-    const championBytes = readFileSync(championPath, "utf8");
+    const championBytes = readFileSync(containedPath(root, championPath), "utf8");
     const artifact = JSON.parse(championBytes) as CorrelationArtifact;
     if (!safeModelVersion(artifact.modelVersion)) throw new Error("report champion modelVersion is not a safe artifact filename");
-    const championCandidate = resolve(root, "artifacts", "candidates", `${artifact.modelVersion}.json`);
-    if (!inside(root, championCandidate)) throw new Error("report champion candidate path escapes root");
+    const championCandidate = containedPath(root, join("artifacts", "candidates", `${artifact.modelVersion}.json`));
     verified(root, championCandidate);
     if (sha256(championBytes) !== sha256(readFileSync(championCandidate))) throw new Error("report champion candidate mismatch");
     champion = { modelVersion: artifact.modelVersion, sha256: sha256(championBytes) };

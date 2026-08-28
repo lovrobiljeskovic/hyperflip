@@ -19,41 +19,48 @@ test("research backup exits successfully with an explicit disabled status when c
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("research daily stops at the first failed bounded command", () => {
+test("research daily derives immutable inputs from the collector pointer without manual window pins", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-daily-"));
   try {
     const result = cli("daily", { ...process.env, RESEARCH_ROOT: root, RESEARCH_MANIFEST_FILE: "", RESEARCH_AS_OF_MS: "", RESEARCH_LOOKBACK_MS: "" });
-    assert.equal(result.status, 2);
-    assert.match(result.stderr, /RESEARCH_MANIFEST_FILE.*RESEARCH_AS_OF_MS.*RESEARCH_LOOKBACK_MS/);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /current manifest pointer|manifests.*current/i);
+    assert.doesNotMatch(result.stderr, /RESEARCH_MANIFEST_FILE.*RESEARCH_AS_OF_MS.*RESEARCH_LOOKBACK_MS/);
     assert.doesNotMatch(result.stderr, /RESEARCH_DERIVED_MANIFEST_FILE/);
+    assert.equal(JSON.parse(readFileSync(join(root, "state", "daily.json"), "utf8")).status, "failed");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("research daily reports the candidate produced by the same derivation and calibration", () => {
-  const staleDerived = "/research/derived/stale.manifest.json";
-  const staleCandidate = "/research/artifacts/candidates/stale.json";
-  const freshDerived = "/research/derived/fresh.manifest.json";
-  const freshCandidate = "/research/artifacts/candidates/fresh.json";
-  const seen: { step: string; derived?: string; candidate?: string }[] = [];
+  const root = mkdtempSync(join(tmpdir(), "hype-daily-state-"));
+  const staleDerived = join(root, "derived/stale.manifest.json");
+  const staleCandidate = join(root, "artifacts/candidates/stale.json");
+  const freshManifest = join(root, "manifests/fresh.json");
+  const freshDerived = join(root, "derived/fresh.manifest.json");
+  const freshCandidate = join(root, "artifacts/candidates/fresh.json");
+  const seen: { step: string; manifest?: string; derived?: string; candidate?: string }[] = [];
   const outputs: Record<string, DailyResult> = {
-    derive: { status: 0, stdout: `${JSON.stringify({ manifestPath: freshDerived })}\n`, stderr: "" },
+    derive: { status: 0, stdout: `${JSON.stringify({ dataManifestPath: freshManifest, manifestPath: freshDerived })}\n`, stderr: "" },
     calibrate: { status: 0, stdout: `${JSON.stringify({ modelVersion: "fresh", candidatePath: freshCandidate })}\n`, stderr: "" },
     replay: { status: 0, stdout: `${JSON.stringify({ modelVersion: "fresh", decision: "Supported" })}\n`, stderr: "" },
     join: { status: 0, stdout: "{}\n", stderr: "" },
-    report: { status: 0, stdout: `${JSON.stringify({ path: "/research/reports/fresh.html" })}\n`, stderr: "" },
+    report: { status: 0, stdout: `${JSON.stringify({ path: join(root, "reports/fresh.html") })}\n`, stderr: "" },
   };
-  const result = runDaily({ RESEARCH_ROOT: "/research", RESEARCH_DERIVED_MANIFEST_FILE: staleDerived, RESEARCH_CANDIDATE_FILE: staleCandidate }, (step, env) => {
-    seen.push({ step, derived: env.RESEARCH_DERIVED_MANIFEST_FILE, candidate: env.RESEARCH_CANDIDATE_FILE });
-    return outputs[step];
-  });
-  assert.equal(result, 0);
-  assert.deepEqual(seen, [
-    { step: "derive", derived: staleDerived, candidate: staleCandidate },
-    { step: "calibrate", derived: freshDerived, candidate: staleCandidate },
-    { step: "replay", derived: freshDerived, candidate: freshCandidate },
-    { step: "join", derived: freshDerived, candidate: freshCandidate },
-    { step: "report", derived: freshDerived, candidate: freshCandidate },
-  ]);
+  try {
+    const result = runDaily({ RESEARCH_ROOT: root, RESEARCH_DERIVED_MANIFEST_FILE: staleDerived, RESEARCH_CANDIDATE_FILE: staleCandidate }, (step, env) => {
+      seen.push({ step, manifest: env.RESEARCH_MANIFEST_FILE, derived: env.RESEARCH_DERIVED_MANIFEST_FILE, candidate: env.RESEARCH_CANDIDATE_FILE });
+      return outputs[step];
+    }, () => 1_725_000_000_000);
+    assert.equal(result, 0);
+    assert.deepEqual(seen, [
+      { step: "derive", manifest: undefined, derived: staleDerived, candidate: staleCandidate },
+      { step: "calibrate", manifest: freshManifest, derived: freshDerived, candidate: staleCandidate },
+      { step: "replay", manifest: freshManifest, derived: freshDerived, candidate: freshCandidate },
+      { step: "join", manifest: freshManifest, derived: freshDerived, candidate: freshCandidate },
+      { step: "report", manifest: freshManifest, derived: freshDerived, candidate: freshCandidate },
+    ]);
+    assert.equal(JSON.parse(readFileSync(join(root, "state", "daily.json"), "utf8")).status, "succeeded");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("research check runs exactly one complete deterministic end-to-end fixture", () => {
@@ -106,4 +113,9 @@ test("research operations definitions are isolated, bounded, and scheduled indep
     assert.deepEqual(timer.Timer.Unit, [service]);
     assert.deepEqual(timer.Install.WantedBy, ["timers.target"]);
   }
+});
+
+test("deployment rsync never excludes the writer research implementation", () => {
+  const deploy = readFileSync(resolve(cwd, "..", "DEPLOY.md"), "utf8");
+  assert.doesNotMatch(deploy, /--exclude(?:=|\s+)['\"]?research(?:['\"]?|\/)(?:\s|\\|$)/);
 });

@@ -210,9 +210,18 @@ test("promotion CLI refuses automatic latest selection and requires an explicit 
   assert.match(result.stderr, /--candidate/);
 });
 
-test("research CLI import does not initialize live dotenv config", () => {
-  const result = spawnSync(process.execPath, ["--import", "tsx", "src/research/cli.ts", "promote", "--latest"], {
-    cwd: resolve(import.meta.dirname, ".."), encoding: "utf8", env: { RESEARCH_ROOT: "/tmp", CORRELATION_SOURCES_FILE: "/tmp/sources", MARKETS_FILE: "/tmp/markets" },
-  });
-  assert.doesNotMatch(result.stdout, /injected env|dotenv/i);
+test("research CLI never loads a working-directory dotenv file", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-research-dotenv-"));
+  const dotenv = join(root, ".env");
+  const { RESEARCH_ROOT: _, ...env } = process.env;
+  try {
+    writeFileSync(dotenv, `RESEARCH_ROOT=${root}\n`);
+    const result = spawnSync(process.execPath, ["--import", "tsx", "src/research/cli.ts", "backup"], {
+      cwd: resolve(import.meta.dirname, ".."), encoding: "utf8", env: { ...env, DOTENV_CONFIG_PATH: dotenv },
+    });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /RESEARCH_ROOT is required/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

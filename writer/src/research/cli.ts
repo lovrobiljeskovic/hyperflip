@@ -1,4 +1,3 @@
-import "dotenv/config";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
@@ -6,9 +5,9 @@ import { gunzipSync } from "node:zlib";
 import { createPublicClient, http, isAddress } from "viem";
 import { collectSources } from "./candles.js";
 import { calibrate } from "./calibration.js";
-import { runReplay } from "./replay.js";
+import { loadReplaySourceRegistry, runReplay } from "./replay.js";
 import { deriveReturns } from "./returns.js";
-import { sha256 } from "./store.js";
+import { containedPath, readCurrentManifest, RESEARCH_LOOKBACK_MS, sha256 } from "./store.js";
 import { parseSourceRegistry } from "./types.js";
 import type { ReturnRecord } from "./returns.js";
 import type { CorrelationArtifact } from "./types.js";
@@ -80,14 +79,16 @@ if (!commands.includes(command)) {
 } else if (command === "derive") {
   const root = process.env.RESEARCH_ROOT;
   const manifestFile = process.env.RESEARCH_MANIFEST_FILE;
-  const asOfMs = Number(process.env.RESEARCH_AS_OF_MS);
-  const lookbackMs = Number(process.env.RESEARCH_LOOKBACK_MS);
-  if (!root || !manifestFile || !Number.isSafeInteger(asOfMs) || !Number.isSafeInteger(lookbackMs) || lookbackMs < 0) {
-    console.error("RESEARCH_ROOT, RESEARCH_MANIFEST_FILE, RESEARCH_AS_OF_MS, and RESEARCH_LOOKBACK_MS are required");
+  if (!root) {
+    console.error("RESEARCH_ROOT is required");
     process.exitCode = 2;
   } else {
-    const output = deriveReturns(resolve(root), JSON.parse(readFileSync(resolve(manifestFile), "utf8")), { asOfMs, lookbackMs });
-    console.log(JSON.stringify(output));
+    const resolvedRoot = resolve(root);
+    const current = manifestFile
+      ? { manifestPath: containedPath(resolvedRoot, manifestFile), manifest: JSON.parse(readFileSync(containedPath(resolvedRoot, manifestFile), "utf8")) }
+      : readCurrentManifest(resolvedRoot);
+    const output = deriveReturns(resolvedRoot, current.manifest, { asOfMs: current.manifest.sourceRange.toMs, lookbackMs: RESEARCH_LOOKBACK_MS });
+    console.log(JSON.stringify({ ...output, dataManifestPath: current.manifestPath }));
   }
 } else if (command === "calibrate") {
   const root = process.env.RESEARCH_ROOT;
@@ -97,41 +98,40 @@ if (!commands.includes(command)) {
     console.error("RESEARCH_ROOT, RESEARCH_MANIFEST_FILE, and RESEARCH_DERIVED_MANIFEST_FILE are required");
     process.exitCode = 2;
   } else {
-    const artifact = calibrate({ root: resolve(root), manifest: JSON.parse(readFileSync(resolve(manifestFile), "utf8")), derivedManifestPath });
+    const resolvedRoot = resolve(root);
+    const artifact = calibrate({ root: resolvedRoot, manifest: JSON.parse(readFileSync(containedPath(resolvedRoot, manifestFile), "utf8")), derivedManifestPath: containedPath(resolvedRoot, derivedManifestPath) });
     console.log(JSON.stringify({ modelVersion: artifact.modelVersion, dataAsOf: artifact.dataAsOf, candidatePath: resolve(root, "artifacts", "candidates", `${artifact.modelVersion}.json`) }));
   }
 } else if (command === "replay") {
   const root = process.env.RESEARCH_ROOT;
   const candidateFile = process.env.RESEARCH_CANDIDATE_FILE;
   const derivedManifestFile = process.env.RESEARCH_DERIVED_MANIFEST_FILE;
-  const sourcesFile = process.env.CORRELATION_SOURCES_FILE;
   const baselineFile = process.env.CORRELATIONS_FILE;
   const seed = process.env.RESEARCH_REPLAY_SEED;
-  if (!root || !candidateFile || !derivedManifestFile || !sourcesFile || !baselineFile || !seed) {
-    console.error("RESEARCH_ROOT, RESEARCH_CANDIDATE_FILE, RESEARCH_DERIVED_MANIFEST_FILE, CORRELATION_SOURCES_FILE, CORRELATIONS_FILE, and RESEARCH_REPLAY_SEED are required");
+  if (!root || !candidateFile || !derivedManifestFile || !baselineFile || !seed) {
+    console.error("RESEARCH_ROOT, RESEARCH_CANDIDATE_FILE, RESEARCH_DERIVED_MANIFEST_FILE, CORRELATIONS_FILE, and RESEARCH_REPLAY_SEED are required");
     process.exitCode = 2;
   } else {
-    const candidateBytes = readFileSync(resolve(candidateFile), "utf8");
+    const resolvedRoot = resolve(root);
+    const candidateBytes = readFileSync(containedPath(resolvedRoot, candidateFile), "utf8");
     const candidate = JSON.parse(candidateBytes) as CorrelationArtifact;
-    const manifestPath = resolve(derivedManifestFile);
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { dataManifestSha256: string; sourceRegistrySha256: string; files: { path: string; bytes: number; sha256: string; rows: number; schemaVersion: number }[] };
+    const manifestPath = containedPath(resolvedRoot, derivedManifestFile);
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { dataManifestSha256: string; sourceRegistrySha256: string; files: { kind: "returns" | "exclusions"; path: string; bytes: number; sha256: string; rows: number; schemaVersion: number }[] };
     if (candidate.dataManifestSha256 !== manifest.dataManifestSha256) throw new Error("candidate and replay return manifest identities differ");
     const rows = manifest.files.flatMap((file) => {
-      const path = resolve(root, file.path);
-      if (path !== resolve(root) && !path.startsWith(`${resolve(root)}/`)) throw new Error("replay return path escapes root");
-      if (!existsSync(path) || file.schemaVersion !== 1 || statSync(path).size !== file.bytes) throw new Error(`replay return file mismatch: ${file.path}`);
+      const path = containedPath(resolvedRoot, file.path);
+      if (file.schemaVersion !== 1 || (file.kind !== "returns" && file.kind !== "exclusions") || statSync(path).size !== file.bytes) throw new Error(`replay return file mismatch: ${file.path}`);
       const bytes = readFileSync(path);
       if (sha256(bytes) !== file.sha256) throw new Error(`replay return file mismatch: ${file.path}`);
       const text = gunzipSync(bytes).toString("utf8").trim();
-      const parsed = text ? text.split("\n").map((line) => JSON.parse(line) as ReturnRecord) : [];
+      const parsed = text ? text.split("\n").map((line) => JSON.parse(line)) : [];
       if (parsed.length !== file.rows) throw new Error(`replay return file mismatch: ${file.path}`);
-      return parsed;
+      return file.kind === "returns" ? parsed as ReturnRecord[] : [];
     });
-    const sourceBytes = readFileSync(resolve(sourcesFile));
-    if (sha256(sourceBytes) !== manifest.sourceRegistrySha256 || manifest.sourceRegistrySha256 !== candidate.sourceRegistrySha256) throw new Error("replay source registry identity mismatch");
-    const sources = parseSourceRegistry(sourceBytes.toString("utf8")).sources;
+    if (manifest.sourceRegistrySha256 !== candidate.sourceRegistrySha256) throw new Error("replay source registry identity mismatch");
+    const sources = loadReplaySourceRegistry(resolvedRoot, manifest.sourceRegistrySha256);
     const report = runReplay({
-      root: resolve(root), candidate, candidateBytes, inputManifestSha256: manifest.dataManifestSha256,
+      root: resolvedRoot, candidate, candidateBytes, inputManifestSha256: manifest.dataManifestSha256,
       baselineFile: resolve(baselineFile), series: { rows, sources, manifestHash: manifest.dataManifestSha256 }, seed,
     });
     console.log(JSON.stringify({ modelVersion: report.modelVersion, decision: report.decision }));

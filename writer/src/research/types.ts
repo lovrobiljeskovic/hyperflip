@@ -311,6 +311,7 @@ function assertJoinedTimestamp(value: unknown, label: string): void {
 
 const CLUSTERS = new Set<SourceEntry["cluster"]>(["crypto", "equity", "commodity"]);
 const CALENDARS = new Set<SourceEntry["calendar"]>(["continuous", "session"]);
+const SAFE_FILENAME_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const LOCAL_TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -366,6 +367,7 @@ function parseSource(value: unknown): SourceEntry {
   exactKeys(source, "source", ["schemaVersion", "underlying", "sourceNetwork", "sourceCoin", "cluster", "calendar", "session", "eligible", "fallbackEligible"]);
   if (source.schemaVersion !== 1) fail("source.schemaVersion must be 1");
   const underlying = text(source.underlying, "source.underlying");
+  if (!SAFE_FILENAME_ID.test(underlying)) fail("source.underlying must be a safe filename ID");
   const sourceCoin = text(source.sourceCoin, "source.sourceCoin");
   if (source.sourceNetwork !== "mainnet") fail("source.sourceNetwork must be mainnet");
   if (!CLUSTERS.has(source.cluster as SourceEntry["cluster"])) fail("source.cluster is invalid");

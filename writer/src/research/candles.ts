@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { assertCandleRecord } from "./types.js";
-import { atomicWrite, atomicWriteNew, canonicalJson, durableAppend, readCandlePartition, sha256 } from "./store.js";
+import { atomicWrite, atomicWriteNew, canonicalJson, durableAppend, publishRollingManifest, readCandlePartition, sha256 } from "./store.js";
 import type { CandleRecord, SourceEntry, SourceRegistry } from "./types.js";
 
 const HOUR_MS = 3_600_000;
@@ -19,6 +19,8 @@ export interface CollectionSummary {
   accepted: number;
   conflicts: number;
   failures: { underlying: string; error: string }[];
+  manifestPath?: string;
+  manifestSha256?: string;
 }
 
 export interface CollectionDeps {
@@ -40,7 +42,13 @@ function validTimestamp(value: unknown, label: string): number {
   return value;
 }
 
-export function parseCandleSnapshot(source: SourceEntry, body: string, retrievedAtMs: number): CandleRecord[] {
+export class CandleBatchConflictError extends Error {
+  constructor(readonly conflicts: CandleRecord[]) {
+    super("candle snapshot contains conflicting duplicate timestamps");
+  }
+}
+
+export function parseCandleSnapshot(source: SourceEntry, body: string, retrievedAtMs: number, request?: { startTime: number; endTime: number }): CandleRecord[] {
   let value: unknown;
   try {
     value = JSON.parse(body);
@@ -48,7 +56,8 @@ export function parseCandleSnapshot(source: SourceEntry, body: string, retrieved
     throw new Error("candle snapshot must be valid JSON");
   }
   if (!Array.isArray(value)) throw new Error("candle snapshot must be an array");
-  return value.map((entry) => {
+  if (value.length > 5_000) throw new Error("candle snapshot must contain at most 5,000 rows");
+  const candles = value.map((entry) => {
     if (entry === null || typeof entry !== "object" || Array.isArray(entry)) throw new Error("candle snapshot row must be an object");
     const row = entry as Record<string, unknown>;
     const keys = ["t", "T", "s", "i", "o", "h", "l", "c", "v", "n"];
@@ -56,6 +65,9 @@ export function parseCandleSnapshot(source: SourceEntry, body: string, retrieved
     const openTimeMs = validTimestamp(row.t, "open time");
     const closeTimeMs = validTimestamp(row.T, "close time");
     if (closeTimeMs <= openTimeMs) throw new Error("candle snapshot has reverse time");
+    if (openTimeMs % HOUR_MS !== 0 || closeTimeMs - openTimeMs !== HOUR_MS - 1) throw new Error("candle snapshot row must cover exactly one hour");
+    if (request && (openTimeMs < request.startTime || closeTimeMs > request.endTime)) throw new Error("candle snapshot row is outside the request range");
+    if (closeTimeMs >= retrievedAtMs) throw new Error("candle snapshot row must be closed before retrieval");
     if (row.s !== source.sourceCoin || row.i !== "1h") throw new Error("candle snapshot source or interval mismatch");
     const open = validNumber(row.o, "open");
     const high = validNumber(row.h, "high");
@@ -68,6 +80,17 @@ export function parseCandleSnapshot(source: SourceEntry, body: string, retrieved
     assertCandleRecord(candle);
     return candle;
   });
+  const known = new Map<number, CandleRecord>();
+  for (const candle of candles) {
+    const prior = known.get(candle.openTimeMs);
+    if (prior) {
+      if (immutableObservation(prior) !== immutableObservation(candle)) throw new CandleBatchConflictError([candle]);
+      throw new Error("candle snapshot contains a duplicate timestamp");
+    }
+    known.set(candle.openTimeMs, candle);
+  }
+  for (let index = 1; index < candles.length; index++) if (candles[index].openTimeMs <= candles[index - 1].openTimeMs) throw new Error("candle snapshot must be strictly increasing");
+  return candles;
 }
 
 export function nextCandleRequest(source: SourceEntry, lastOpenTimeMs: number | null, nowMs: number): CandleRequest {
@@ -135,12 +158,17 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
         httpStatus = response.status;
         const body = await response.text();
         if (!response.ok) throw new Error(`info API ${response.status}: ${body}`);
-        candles = parseCandleSnapshot(source, body, retrievedAtMs);
+        candles = parseCandleSnapshot(source, body, retrievedAtMs, request);
         durableAppend(join(deps.root, "journal", "requests", `${dayPath(retrievedAtMs)}.jsonl`), canonicalJson({ schemaVersion: 1, sourceKey, startTime: request.startTime, endTime: nowMs, retrievedAtMs, httpStatus: response.status, error: null, returnedRows: candles.length }));
         break;
       } catch (error) {
         failure = error instanceof Error ? error.message : String(error);
         durableAppend(join(deps.root, "journal", "requests", `${dayPath(retrievedAtMs)}.jsonl`), canonicalJson({ schemaVersion: 1, sourceKey, startTime: request.startTime, endTime: nowMs, retrievedAtMs, httpStatus, error: failure, returnedRows: 0 }));
+        if (error instanceof CandleBatchConflictError) {
+          for (const candle of error.conflicts) durableAppend(join(deps.root, "quarantine", "candles", `${dayPath(nowMs)}.jsonl`), canonicalJson(candle));
+          summary.conflicts += error.conflicts.length;
+          break;
+        }
       }
     }
     if (!candles) {
@@ -190,5 +218,10 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
     state.sources[sourceKey] = lastDurable;
   }
   atomicWrite(join(deps.root, "state", "collector.json"), canonicalJson({ schemaVersion: 1, sourceRegistrySha256, sources: state.sources }));
+  try {
+    Object.assign(summary, publishRollingManifest(deps.root, sourceRegistrySha256));
+  } catch (error) {
+    summary.failures.push({ underlying: "manifest", error: error instanceof Error ? error.message : String(error) });
+  }
   return summary;
 }

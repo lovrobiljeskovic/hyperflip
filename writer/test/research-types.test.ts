@@ -48,6 +48,10 @@ test("source registry rejects unknown versions, duplicate source coins, and malf
     () => parseSourceRegistry(JSON.stringify({ schemaVersion: 1, sources: [{ ...btcSource, calendar: "session", session: { timeZone: "UTC", weekdays: [1], openLocal: "09:00", closeLocal: "09:00", closedDates: [] } }] })),
     /session/,
   );
+  assert.throws(
+    () => parseSourceRegistry(JSON.stringify({ schemaVersion: 1, sources: [{ ...btcSource, underlying: "../escape" }] })),
+    /underlying.*safe filename/i,
+  );
 });
 
 test("CandleRecord validation blocks unsafe millisecond timestamps before persistence", () => {

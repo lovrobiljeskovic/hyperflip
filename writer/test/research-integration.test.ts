@@ -294,12 +294,12 @@ test("correlation beta acceptance is deterministic, durable, joined, isolated, a
     assert.match(pipeline.stdout, /# pass 1\b/);
 
     const collector = await collectSources({ root: roots[1], registry: { schemaVersion: 1, sources: [source("BTC")] }, nowMs: NOW, sleep: async () => {}, fetch: async () => new Response("unavailable", { status: 503 }) });
-    assert.deepEqual(collector.failures.map(({ underlying }) => underlying), ["BTC"]);
+    assert.deepEqual(collector.failures.map(({ underlying }) => underlying), ["BTC", "manifest"]);
     const steps: string[] = [];
     const daily = runDaily({}, (step) => {
       steps.push(step);
       return step === "derive"
-        ? { status: 0, stdout: '{"manifestPath":"/tmp/fresh.manifest.json"}\n', stderr: "" }
+        ? { status: 0, stdout: '{"dataManifestPath":"/tmp/data.json","manifestPath":"/tmp/fresh.manifest.json"}\n', stderr: "" }
         : { status: 7, stdout: "", stderr: "calibrator failed" };
     });
     assert.equal(daily, 7);

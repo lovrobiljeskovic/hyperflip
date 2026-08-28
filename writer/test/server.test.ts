@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import type { Address, Hex } from "viem";
-import { handleQuote, validateQuoteRequest, newMetrics, startServer, type QuoteDeps } from "../src/server.js";
+import { currentModelStatus, handleQuote, validateQuoteRequest, newMetrics, startServer, type QuoteDeps } from "../src/server.js";
 import { ExposureBook } from "../src/exposure.js";
 import { RateLimiter } from "../src/waitlist.js";
 import { jointProbWad, parseCorrelations } from "../src/correlation.js";
@@ -292,6 +292,15 @@ test("correlation eligibility rejects stale, missing, ineligible, quarantined, a
   for (const model of cases) {
     assert.deepEqual(validateQuoteRequest(goodBody, cfg({ model }), 1_000_000), { ok: false, status: 400, reason: "correlation-unavailable" });
   }
+});
+
+test("model age and multi-asset eligibility advance at request and health time without a restart", () => {
+  const model = { ...MODEL, dataAsOf: new Date(0).toISOString(), ageMs: 0, multiAssetEnabled: true };
+  const request = body({ legs: [legOn(BTC_VAULT_A, true), legOn(NVDA_VAULT, true)] });
+  assert.equal(validateQuoteRequest(request, cfg({ model }), 7 * 86_400_000 - 1).ok, true);
+  assert.deepEqual(validateQuoteRequest(request, cfg({ model }), 7 * 86_400_000), { ok: false, status: 400, reason: "correlation-unavailable" });
+  assert.deepEqual(currentModelStatus(model, 1), { ageMs: 1, multiAssetEnabled: true });
+  assert.deepEqual(currentModelStatus(model, 7 * 86_400_000), { ageMs: 7 * 86_400_000, multiAssetEnabled: false });
 });
 
 test("correlation eligibility admits only explicit operator-approved fallback pairs", () => {

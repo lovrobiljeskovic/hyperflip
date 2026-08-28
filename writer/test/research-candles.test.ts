@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -40,9 +40,20 @@ test("candle snapshot maps exact Hyperliquid fields", () => {
 
 test("candle snapshot rejects invalid OHLC, non-finite values, and reverse time", () => {
   const row = JSON.parse(fixture("candle-snapshot.json"))[0];
-  assert.throws(() => parseCandleSnapshot(source, JSON.stringify([{ ...row, h: "99" }]), 1), /OHLC/);
-  assert.throws(() => parseCandleSnapshot(source, JSON.stringify([{ ...row, v: "Infinity" }]), 1), /finite/);
-  assert.throws(() => parseCandleSnapshot(source, JSON.stringify([{ ...row, T: row.t }]), 1), /time/);
+  assert.throws(() => parseCandleSnapshot(source, JSON.stringify([{ ...row, h: "99" }]), 12_000_000), /OHLC/);
+  assert.throws(() => parseCandleSnapshot(source, JSON.stringify([{ ...row, v: "Infinity" }]), 12_000_000), /finite/);
+  assert.throws(() => parseCandleSnapshot(source, JSON.stringify([{ ...row, T: row.t }]), 12_000_000), /time/);
+});
+
+test("candle snapshot rejects oversized, unordered, duplicate, non-hourly, out-of-range, and unclosed batches", () => {
+  const row = JSON.parse(fixture("candle-snapshot.json"))[0];
+  const later = { ...row, t: row.t + hour, T: row.T + hour };
+  assert.throws(() => parseCandleSnapshot(source, JSON.stringify(Array.from({ length: 5_001 }, (_, index) => ({ ...row, t: index * hour, T: (index + 1) * hour - 1 }))), 20_000_000_000), /5,000/);
+  assert.throws(() => parseCandleSnapshot(source, JSON.stringify([later, row]), 20_000_000), /strictly increasing/);
+  assert.throws(() => parseCandleSnapshot(source, JSON.stringify([row, row]), 20_000_000), /duplicate/);
+  assert.throws(() => parseCandleSnapshot(source, JSON.stringify([{ ...row, T: row.T - 1 }]), 20_000_000), /one hour/);
+  assert.throws(() => parseCandleSnapshot(source, JSON.stringify([row]), 20_000_000, { startTime: row.t + hour, endTime: row.T + hour }), /request range/);
+  assert.throws(() => parseCandleSnapshot(source, JSON.stringify([row]), row.T, { startTime: row.t, endTime: row.T }), /closed/);
 });
 
 test("candle request uses a 5,000-hour initial range and resumes after the durable bar", () => {
@@ -52,7 +63,7 @@ test("candle request uses a 5,000-hour initial range and resumes after the durab
 
 test("candle request recovers from a stale state file using sealed candles", async () => {
   const root = scratch();
-  const nowMs = 20_000_000_000;
+  const nowMs = 12_000_000;
   const registry = { schemaVersion: 1 as const, sources: [source] };
   const requests: { startTime: number }[] = [];
   try {
@@ -60,7 +71,7 @@ test("candle request recovers from a stale state file using sealed candles", asy
     writeFileSync(join(root, "state", "collector.json"), JSON.stringify({ schemaVersion: 1, sourceRegistrySha256: sha256(canonicalJson(registry)), sources: { "mainnet:BTC": 3_600_000 } }));
     await collectSources({ root, registry, nowMs, fetch: async (_url, init) => {
       requests.push(JSON.parse(init?.body as string).req);
-      return new Response(fixture("candle-snapshot.json"));
+      return new Response("[]");
     } });
     assert.equal(requests[0].startTime, 10_800_000);
   } finally {
@@ -70,13 +81,29 @@ test("candle request recovers from a stale state file using sealed candles", asy
 
 test("daily manifest retains the registry fact that produced its sealed shard", async () => {
   const root = scratch();
-  const nowMs = 20_000_000_000;
+  const nowMs = 12_000_000;
   const registryA = { schemaVersion: 1 as const, sources: [source] };
   const registryB = { schemaVersion: 1 as const, sources: [{ ...source, underlying: "BTC-RENAMED" }] };
   try {
     await collectSources({ root, registry: registryA, nowMs, fetch: async () => new Response(fixture("candle-snapshot.json")) });
-    await collectSources({ root, registry: registryB, nowMs: nowMs + 86_400_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
-    assert.equal(buildDailyManifest(root, "1970-08-20").sourceRegistrySha256, sha256(canonicalJson(registryA)));
+    await collectSources({ root, registry: registryB, nowMs: nowMs + 86_400_000, fetch: async () => new Response("[]") });
+    assert.equal(buildDailyManifest(root, "1970-01-01").sourceRegistrySha256, sha256(canonicalJson(registryA)));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("collector publishes a content-addressed rolling manifest and current mapping-epoch pointer", async () => {
+  const root = scratch();
+  const registry = { schemaVersion: 1 as const, sources: [source] };
+  try {
+    const summary = await collectSources({ root, registry, nowMs: 12_000_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
+    assert.ok(summary.manifestPath);
+    const pointer = JSON.parse(readFileSync(join(root, "manifests", "current.json"), "utf8"));
+    assert.equal(pointer.sourceRegistrySha256, sha256(canonicalJson(registry)));
+    assert.equal(pointer.lookbackMs, 180 * 86_400_000);
+    assert.equal(pointer.path, summary.manifestPath.slice(root.length + 1));
+    assert.equal(sha256(canonicalJson(JSON.parse(readFileSync(summary.manifestPath, "utf8")))), pointer.manifestSha256);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -103,14 +130,14 @@ test("collector uses every bounded retry delay and journals HTTP failures with t
   const delays: number[] = [];
   let attempts = 0;
   try {
-    const summary = await collectSources({ root, registry: { schemaVersion: 1, sources: [source] }, nowMs: 20_000_000_000, sleep: async (delay) => { delays.push(delay); }, fetch: async () => {
+    const summary = await collectSources({ root, registry: { schemaVersion: 1, sources: [source] }, nowMs: 12_000_000, sleep: async (delay) => { delays.push(delay); }, fetch: async () => {
       attempts++;
       return new Response("unavailable", { status: 503 });
     } });
     assert.equal(attempts, 3);
     assert.deepEqual(delays, [250, 1_000, 4_000]);
-    assert.equal(summary.failures.length, 1);
-    const journal = readFileSync(join(root, "journal", "requests", "1970", "08", "20.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(summary.failures.map((failure) => failure.underlying), ["BTC", "manifest"]);
+    const journal = readFileSync(join(root, "journal", "requests", "1970", "01", "01.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
     assert.deepEqual(journal.map((entry) => entry.httpStatus), [503, 503, 503]);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -121,7 +148,7 @@ test("a source failure preserves a sibling source's sealed shard", async () => {
   const root = scratch();
   const eth = { ...source, underlying: "ETH", sourceCoin: "ETH" };
   try {
-    const summary = await collectSources({ root, registry: { schemaVersion: 1, sources: [source, eth] }, nowMs: 20_000_000_000, sleep: async () => {}, fetch: async (_url, init) => JSON.parse(init?.body as string).req.coin === "BTC" ? new Response(fixture("candle-snapshot.json")) : new Response("bad", { status: 500 }) });
+    const summary = await collectSources({ root, registry: { schemaVersion: 1, sources: [source, eth] }, nowMs: 12_000_000, sleep: async () => {}, fetch: async (_url, init) => JSON.parse(init?.body as string).req.coin === "BTC" ? new Response(fixture("candle-snapshot.json")) : new Response("bad", { status: 500 }) });
     assert.equal(summary.accepted, 2);
     assert.deepEqual(summary.failures.map((failure) => failure.underlying), ["ETH"]);
     assert.equal(shardFiles(root).length, 1);
@@ -135,8 +162,8 @@ test("identical fixture collections in independent roots produce identical seale
   const secondRoot = scratch();
   const registry = { schemaVersion: 1 as const, sources: [source] };
   try {
-    await collectSources({ root: firstRoot, registry, nowMs: 20_000_000_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
-    await collectSources({ root: secondRoot, registry, nowMs: 20_000_000_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
+    await collectSources({ root: firstRoot, registry, nowMs: 12_000_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
+    await collectSources({ root: secondRoot, registry, nowMs: 12_000_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
     assert.equal(sha256(readFileSync(shardFiles(firstRoot)[0])), sha256(readFileSync(shardFiles(secondRoot)[0])));
   } finally {
     rmSync(firstRoot, { recursive: true, force: true });
@@ -156,9 +183,9 @@ test("collector CLI exits non-zero when every source fails", () => {
   }
 });
 
-test("candle snapshot collection is idempotent and records conflicts without replacing the accepted candle", async () => {
+test("candle snapshot collection is idempotent without replacing the accepted candle", async () => {
   const root = scratch();
-  const nowMs = 20_000_000_000;
+  const nowMs = 12_000_000;
   const registry = { schemaVersion: 1 as const, sources: [source] };
   const response = (body: string) => async () => new Response(body, { status: 200 });
   try {
@@ -166,15 +193,28 @@ test("candle snapshot collection is idempotent and records conflicts without rep
     const first = shardFiles(root);
     assert.equal(first.length, 1);
     const accepted = readCandlePartition(first[0]);
-    const firstHash = sha256(canonicalJson(buildDailyManifest(root, "1970-08-20")));
+    const firstHash = sha256(canonicalJson(buildDailyManifest(root, "1970-01-01")));
 
-    await collectSources({ root, registry, nowMs, fetch: response(fixture("candle-snapshot.json")) });
+    await collectSources({ root, registry, nowMs, fetch: response("[]") });
     assert.equal(shardFiles(root).length, 1);
-    assert.equal(sha256(canonicalJson(buildDailyManifest(root, "1970-08-20"))), firstHash);
-
-    await collectSources({ root, registry, nowMs, fetch: response(fixture("candle-conflict.json")) });
+    assert.equal(sha256(canonicalJson(buildDailyManifest(root, "1970-01-01"))), firstHash);
     assert.deepEqual(readCandlePartition(first[0]), accepted);
-    assert.match(readFileSync(join(root, "quarantine", "candles", "1970", "08", "20.jsonl"), "utf8"), /"high":"111"/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("same-response conflicting duplicates are quarantined before any shard or checkpoint is sealed", async () => {
+  const root = scratch();
+  const registry = { schemaVersion: 1 as const, sources: [source] };
+  const row = JSON.parse(fixture("candle-snapshot.json"))[0];
+  try {
+    const summary = await collectSources({ root, registry, nowMs: 12_000_000, sleep: async () => {}, fetch: async () => new Response(JSON.stringify([row, { ...row, h: "111" }])) });
+    assert.equal(summary.accepted, 0);
+    assert.equal(summary.conflicts, 1);
+    assert.deepEqual(summary.failures.map((failure) => failure.underlying), ["BTC", "manifest"]);
+    assert.equal(existsSync(join(root, "raw", "candles")), false);
+    assert.match(readFileSync(join(root, "quarantine", "candles", "1970", "01", "01.jsonl"), "utf8"), /"high":"111"/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
