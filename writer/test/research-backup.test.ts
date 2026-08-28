@@ -11,7 +11,6 @@ import type { CorrelationArtifact, DataManifest, SourceRegistry } from "../src/r
 
 const digest = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex");
 const hmac = (key: string | Buffer, value: string): Buffer => createHmac("sha256", key).update(value).digest();
-const awsEncode = (value: string): string => encodeURIComponent(value).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
 
 async function body(request: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -36,7 +35,8 @@ test("research backup signs, skips verified objects, and restores the immutable 
     const signedHeaders = match[4].split(";");
     const canonicalHeaders = signedHeaders.map((name) => `${name}:${String(request.headers[name]).trim().replace(/\s+/g, " ")}\n`).join("");
     const parsedUrl = new URL(request.url!, "http://fixture");
-    const canonicalQuery = [...parsedUrl.searchParams].map(([key, value]) => [awsEncode(key), awsEncode(value)]).sort(([leftKey, leftValue], [rightKey, rightValue]) => leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue)).map(([key, value]) => `${key}=${value}`).join("&");
+    assert.deepEqual([...parsedUrl.searchParams], [["z", "last"], ["a", "two"], ["a", "one"], ["bang", "!"], ["A", "z"], ["encoded/key", "*"], ["mix", "a"], ["mix", "A"], ["mix", "/"]]);
+    const canonicalQuery = "A=z&a=one&a=two&bang=%21&encoded%2Fkey=%2A&mix=%2F&mix=A&mix=a&z=last";
     const canonicalRequest = [request.method, parsedUrl.pathname, canonicalQuery, canonicalHeaders, match[4], request.headers["x-amz-content-sha256"]].join("\n");
     const scope = `${match[2]}/${match[3]}/s3/aws4_request`;
     const stringToSign = ["AWS4-HMAC-SHA256", request.headers["x-amz-date"], scope, digest(canonicalRequest)].join("\n");
@@ -45,7 +45,7 @@ test("research backup signs, skips verified objects, and restores the immutable 
     const key = decodeURIComponent(parsedUrl.pathname.replace(/^\/api%20root\/fixture-bucket\//, ""));
     if (key === "reports/fixture !'()*.html") {
       assert.equal(parsedUrl.pathname, "/api%20root/fixture-bucket/reports/fixture%20%21%27%28%29%2A.html");
-      assert.equal(canonicalQuery, "a=one&a=two&bang=%21&z=last");
+      assert.equal(canonicalQuery, "A=z&a=one&a=two&bang=%21&encoded%2Fkey=%2A&mix=%2F&mix=A&mix=a&z=last");
     }
     const attemptKey = `${request.method}:${key}`;
     const attempt = (attempts.get(attemptKey) ?? 0) + 1;
@@ -109,7 +109,7 @@ test("research backup signs, skips verified objects, and restores the immutable 
     mkdirSync(join(root, "quarantine"), { recursive: true });
     writeFileSync(join(root, "quarantine", "fixture.jsonl"), '{"reason":"fixture"}\n');
 
-    const config = { endpoint: `http://127.0.0.1:${address.port}/api%20root?z=last&a=two&a=one&bang=!`, region: "fixture-1", bucket: "fixture-bucket", accessKey, secret };
+    const config = { endpoint: `http://127.0.0.1:${address.port}/api%20root?z=last&a=two&a=one&bang=!&A=%7A&encoded%2Fkey=%2A&mix=a&mix=A&mix=%2F`, region: "fixture-1", bucket: "fixture-bucket", accessKey, secret };
     writeFileSync(validationPath, `${canonicalJson({ ...validation, modelVersion: "../escape" })}\n`);
     await assert.rejects(backupResearch(root, config), /safe artifact filename/);
     writeFileSync(validationPath, `${canonicalJson({ ...validation, modelVersion: 7 })}\n`);

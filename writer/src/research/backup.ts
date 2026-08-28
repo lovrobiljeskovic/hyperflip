@@ -71,7 +71,8 @@ function objectUrl(config: S3Config, path: string): URL {
 }
 
 function canonicalQuery(url: URL): string {
-  return [...url.searchParams].map(([key, value]) => [awsEncode(key), awsEncode(value)]).sort(([leftKey, leftValue], [rightKey, rightValue]) => leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue)).map(([key, value]) => `${key}=${value}`).join("&");
+  const compare = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
+  return [...url.searchParams].map(([key, value]) => [awsEncode(key), awsEncode(value)]).sort(([leftKey, leftValue], [rightKey, rightValue]) => compare(leftKey, rightKey) || compare(leftValue, rightValue)).map(([key, value]) => `${key}=${value}`).join("&");
 }
 
 function signature(config: S3Config, method: "HEAD" | "PUT", url: URL, checksum: string, now: Date): Record<string, string> {
