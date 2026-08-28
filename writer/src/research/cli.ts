@@ -59,9 +59,8 @@ if (process.argv[2] !== "collect" && process.argv[2] !== "derive" && process.arg
   const sourcesFile = process.env.CORRELATION_SOURCES_FILE;
   const baselineFile = process.env.CORRELATIONS_FILE;
   const seed = process.env.RESEARCH_REPLAY_SEED;
-  const draws = process.env.RESEARCH_REPLAY_DRAWS === undefined ? 20_000 : Number(process.env.RESEARCH_REPLAY_DRAWS);
-  if (!root || !candidateFile || !derivedManifestFile || !sourcesFile || !baselineFile || !seed || !Number.isSafeInteger(draws) || draws <= 0) {
-    console.error("RESEARCH_ROOT, RESEARCH_CANDIDATE_FILE, RESEARCH_DERIVED_MANIFEST_FILE, CORRELATION_SOURCES_FILE, CORRELATIONS_FILE, and RESEARCH_REPLAY_SEED are required; RESEARCH_REPLAY_DRAWS must be a positive integer when set");
+  if (!root || !candidateFile || !derivedManifestFile || !sourcesFile || !baselineFile || !seed) {
+    console.error("RESEARCH_ROOT, RESEARCH_CANDIDATE_FILE, RESEARCH_DERIVED_MANIFEST_FILE, CORRELATION_SOURCES_FILE, CORRELATIONS_FILE, and RESEARCH_REPLAY_SEED are required");
     process.exitCode = 2;
   } else {
     const candidateBytes = readFileSync(resolve(candidateFile), "utf8");
@@ -85,7 +84,7 @@ if (process.argv[2] !== "collect" && process.argv[2] !== "derive" && process.arg
     const sources = parseSourceRegistry(sourceBytes.toString("utf8")).sources;
     const report = runReplay({
       root: resolve(root), candidate, candidateBytes, inputManifestSha256: manifest.dataManifestSha256,
-      baselineFile: resolve(baselineFile), series: { rows, sources, manifestHash: manifest.dataManifestSha256 }, seed, draws,
+      baselineFile: resolve(baselineFile), series: { rows, sources, manifestHash: manifest.dataManifestSha256 }, seed,
     });
     console.log(JSON.stringify({ modelVersion: report.modelVersion, decision: report.decision }));
   }

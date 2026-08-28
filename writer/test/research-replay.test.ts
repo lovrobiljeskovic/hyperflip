@@ -10,6 +10,7 @@ import {
   filteredHistoricalSimulation,
   forecastAt,
   logLoss,
+  replayOrigins,
   runReplay,
   scoreForecasts,
   selectDegreesOfFreedom,
@@ -17,6 +18,7 @@ import {
   studentTCdf,
   studentTInv,
   syntheticEvents,
+  ticketStress,
   type ReplaySeries,
 } from "../src/research/replay.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
@@ -55,15 +57,15 @@ function dailySeries(days = 130): ReplaySeries {
   return { rows, sources, manifestHash: "a".repeat(64) };
 }
 
-function candidateFor(series: ReplaySeries, modelVersion = "fixture"): CorrelationArtifact {
-  const matrixOrder = series.sources.map((entry) => entry.underlying);
+function candidateFor(series: ReplaySeries, modelVersion = "fixture", signedPsdTarget?: number[][]): CorrelationArtifact {
+  const matrixOrder = series.sources.filter((entry) => entry.eligible).map((entry) => entry.underlying);
   const clusters: CorrelationArtifact["clusters"] = {};
   for (const entry of series.sources) (clusters[entry.cluster] ??= {})[entry.underlying] = { global: 0.1, cluster: 0.2, underlying: 0.3, underlyingBasis: "structural-underlying" };
   return {
     schemaVersion: 1, modelVersion, modelFamily: "hierarchical-gaussian-factor", createdAt: "2026-08-01T00:00:00.000Z", dataAsOf: "2026-07-31T00:00:00.000Z",
     dataManifestSha256: series.manifestHash, sourceRegistrySha256: "d".repeat(64),
     policy: { lookbackDays: 180, halfLifeDays: 45, diagnosticWindowsDays: [30, 90, 180], minHourly: 1000, minDaily: 90, minCoverage: 0.8, maxProjectionError: 0.10 },
-    quality: { matrixOrder, eligibleUnderlyings: matrixOrder, quarantinedUnderlyings: [], pairEligibility: [], lastUsableObservationMs: {}, pairDiagnostics: [], maxProjectionError: 0, highamProjectionDelta: 0, clippedNegativePairs: [], signedPsdTarget: matrixOrder.map((_, row) => matrixOrder.map((__, column) => row === column ? 1 : 0)), diagnosticMatrices: { "30": [], "90": [], "180": [] } },
+    quality: { matrixOrder, eligibleUnderlyings: matrixOrder, quarantinedUnderlyings: series.sources.filter((entry) => !entry.eligible).map((entry) => ({ underlying: entry.underlying, reason: "fixture-ineligible" })), pairEligibility: [], lastUsableObservationMs: {}, pairDiagnostics: [], maxProjectionError: 0, highamProjectionDelta: 0, clippedNegativePairs: [], signedPsdTarget: signedPsdTarget ?? matrixOrder.map((_, row) => matrixOrder.map((__, column) => row === column ? 1 : 0)), diagnosticMatrices: { "30": [], "90": [], "180": [] } },
     validation: { status: "pending" },
     clusters,
   };
@@ -90,6 +92,26 @@ test("future mutation cannot change an earlier forecast", () => {
   const selected = syntheticEvents(ORIGIN, series, future).map(({ outcome: _, ...ticket }) => ticket);
   const mutated = syntheticEvents(ORIGIN, series, future.map((row) => ({ ...row, value: row.value + 100 }))).map(({ outcome: _, ...ticket }) => ticket);
   assert.deepEqual(mutated, selected);
+});
+
+test("daily replay origins stay on an exact 24-hour UTC cadence", () => {
+  const complete = dailySeries();
+  const missingTimestamp = ORIGIN - 20 * DAY;
+  const series = { ...complete, rows: complete.rows.filter((row) => row.timestampMs !== missingTimestamp) };
+  const origins = replayOrigins(series);
+  assert.ok(origins.length > 2);
+  assert.ok(origins.every((originMs, index) => index === 0 || originMs - origins[index - 1] === DAY));
+});
+
+test("future outcomes require exact horizon-close alignment across every asset", () => {
+  const series = dailySeries();
+  const future = series.sources.flatMap((entry, asset) => [1, 2, 3, 4].map((days) => {
+    const timestampMs = ORIGIN + days * DAY + (asset === 0 ? 0 : 3_600_000);
+    return { schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval: "1d" as const, timestampMs, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: 0.01, sourceKeys: [] };
+  }));
+  const crossAsset = syntheticEvents(ORIGIN, series, future).filter((ticket) => ticket.stratum !== "same-underlying");
+  assert.ok(crossAsset.length > 0);
+  assert.ok(crossAsset.every((ticket) => ticket.outcome === null));
 });
 
 test("log loss and Brier score match hand calculations", () => {
@@ -149,6 +171,17 @@ test("synthetic grid caps every stratum, covers two-to-four legs, and excludes f
   });
 });
 
+test("same-underlying mixed-direction tickets are visible as bands", () => {
+  const series = { ...dailySeries(), manifestHash: "0".repeat(64) };
+  const future = series.sources.flatMap((entry) => [1, 2, 3, 4].map((days) => {
+    const timestampMs = ORIGIN + days * DAY;
+    return { schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval: "1d" as const, timestampMs, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: 0.01, sourceKeys: [] };
+  }));
+  const mixed = syntheticEvents(ORIGIN, series, future).filter((ticket) => ticket.stratum === "same-underlying" && new Set(ticket.legs.map((leg) => leg.direction)).size > 1);
+  assert.ok(mixed.length > 0);
+  for (const ticket of mixed) assert.equal(ticket.direction, "band");
+});
+
 test("filtered historical simulation is causal under a volatility shift and keeps non-zero mean", () => {
   const sources = [source("A", "equity", "session"), source("B", "commodity", "session")];
   const rows = sources.flatMap((entry, asset) => Array.from({ length: 140 }, (_, index) => {
@@ -177,6 +210,23 @@ test("filtered historical simulation is causal under a volatility shift and keep
   assert.ok(before.originSigma.every((sigma) => sigma > 0.02));
 });
 
+test("stress classification compares future path drawdown with training drawdowns", () => {
+  const sources = [source("A", "equity", "session"), source("B", "commodity", "session")];
+  const rows = sources.flatMap((entry) => Array.from({ length: 100 }, (_, index) => {
+    const timestampMs = ORIGIN - (100 - index) * DAY;
+    return { schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval: "1d" as const, timestampMs, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: index % 2 === 0 ? 0.01 : -0.01, sourceKeys: [] };
+  }));
+  const future = sources.flatMap((entry) => [0.2, -0.2].map((value, index) => {
+    const timestampMs = ORIGIN + (index + 1) * DAY;
+    return { schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval: "1d" as const, timestampMs, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value, sourceKeys: [] };
+  }));
+  const ticket = {
+    key: "stress-path", originMs: ORIGIN, horizonHours: 48, stratum: "cross-cluster" as const, direction: "all-up" as const,
+    legs: sources.map((entry) => ({ underlying: entry.underlying, cluster: entry.cluster, direction: "up" as const, quantile: 0.5, threshold: 0, marginalProbability: 0.5 })), outcome: 0 as const,
+  };
+  assert.equal(ticketStress(ticket, { rows, sources, manifestHash: "c".repeat(64) }, future).regime, "drawdown-stress");
+});
+
 test("block bootstrap is seeded and never splits a forecast origin", () => {
   const origins = Array.from({ length: 12 }, (_, index) => ({
     originMs: ORIGIN + index * DAY,
@@ -199,6 +249,23 @@ test("degree-of-freedom selection uses only its nested training slice", () => {
   assert.ok([4, 6, 8, 12, 20, 30].includes(selected));
 });
 
+test("hourly degree selection fits dependence before its validation tail", () => {
+  const values = Array.from({ length: 1_250 }, (_, index) => {
+    const a = Math.sin(index / 7) + 0.2 * Math.cos(index / 3);
+    const b = index < 1_000 ? 0.85 * a + 0.15 * Math.sin(index / 5) : -0.85 * a + 0.15 * Math.sin(index / 5);
+    return [a, b];
+  });
+  const selection = (interval: "1h" | "1d", clusters: [SourceEntry["cluster"], SourceEntry["cluster"]]): number => {
+    const sources = [source("A", clusters[0]), source("B", clusters[1])];
+    const rows = sources.flatMap((entry, asset) => values.map((row, index) => {
+      const timestampMs = ORIGIN - (1_250 - index) * DAY;
+      return { schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval, timestampMs, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: row[asset], sourceKeys: [] };
+    }));
+    return selectDegreesOfFreedom(rows, sources, "nested-hourly", ORIGIN);
+  };
+  assert.equal(selection("1h", ["crypto", "crypto"]), selection("1d", ["crypto", "equity"]));
+});
+
 test("band tickets stay visible but are excluded from statistical success", () => {
   const score = scoreForecasts([
     { p: 0.8, y: 1 as const, originMs: ORIGIN, direction: "all-up" },
@@ -216,7 +283,7 @@ test("replay snapshots the baseline and immutable reruns ignore later registry e
     const baselineFile = join(root, "correlations.json");
     writeFileSync(baselineFile, JSON.stringify(baselineFor(series)));
     const candidate = candidateFor(series);
-    const input = { root, candidate, inputManifestSha256: series.manifestHash, baselineFile, series, seed: "fixture", draws: 200 };
+    const input = { root, candidate, inputManifestSha256: series.manifestHash, baselineFile, series, seed: "fixture" };
     const first = runReplay(input);
     const bytes = readFileSync(join(root, "artifacts", "candidates", "fixture.validation.json"), "utf8");
     writeFileSync(baselineFile, JSON.stringify({ clusters: {} }));
@@ -225,8 +292,14 @@ test("replay snapshots the baseline and immutable reruns ignore later registry e
     const snapshot = readFileSync(join(root, first.baselineSnapshotPath));
     assert.equal(sha256(snapshot), first.baselineSha256);
     assert.equal(bytes, `${canonicalJson(first)}\n`);
-    assert.ok(Object.values(first.modelElapsedMs).every((elapsedMs) => elapsedMs > 0));
-    assert.ok(first.peakRssBytes > 0);
+    assert.deepEqual(first.resourcePolicy, { maxWallClockMs: 30_000, maxPeakRssBytes: 512 * 1024 * 1024 });
+    for (const score of Object.values(first.modelScores)) {
+      assert.deepEqual(Object.keys(score.byStressRegime).sort(), ["drawdown-stress", "high-volatility", "normal"]);
+      for (const bucket of Object.values(score.byStressRegime)) if (bucket.rows === 0) {
+        assert.equal(bucket.gateEligible, false);
+        assert.equal(bucket.exclusionReason, "insufficient-stress-sample");
+      }
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -239,12 +312,49 @@ test("failed dependence fit yields a serializable Rejected report", () => {
     const series = { ...complete, rows: complete.rows.filter((row) => row.underlying === "A") };
     const baselineFile = join(root, "correlations.json");
     writeFileSync(baselineFile, JSON.stringify(baselineFor(series)));
-    const report = runReplay({ root, candidate: candidateFor(series, "failed-fit"), inputManifestSha256: series.manifestHash, baselineFile, series, seed: "failed-fit", draws: 20 });
+    const report = runReplay({ root, candidate: candidateFor(series, "failed-fit"), inputManifestSha256: series.manifestHash, baselineFile, series, seed: "failed-fit" });
     assert.equal(report.decision, "Rejected");
     assert.ok(report.exclusions.some((entry) => entry.reason === "non-finite-probability"));
     assert.doesNotThrow(() => canonicalJson(report));
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runReplay signed t probabilities consume the candidate PSD matrix order", () => {
+  const roots = [mkdtempSync(join(tmpdir(), "hype-replay-positive-")), mkdtempSync(join(tmpdir(), "hype-replay-signed-"))];
+  try {
+    const series = dailySeries(95);
+    const signs = [1, -1, 1, -1];
+    const positive = signs.map((_, row) => signs.map((__, column) => row === column ? 1 : 0.7));
+    const signed = signs.map((left, row) => signs.map((right, column) => row === column ? 1 : 0.7 * left * right));
+    const scores = roots.map((root, index) => {
+      const baselineFile = join(root, "correlations.json");
+      writeFileSync(baselineFile, JSON.stringify(baselineFor(series)));
+      const candidate = candidateFor(series, `candidate-matrix-${index}`, index === 0 ? positive : signed);
+      return runReplay({ root, candidate, inputManifestSha256: series.manifestHash, baselineFile, series, seed: "candidate-matrix" }).modelScores["signed-t-copula"].overall.logLoss;
+    });
+    assert.notEqual(scores[0], scores[1]);
+  } finally {
+    for (const root of roots) rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("fresh runReplay artifacts are byte-identical and cover full replay determinism", () => {
+  const roots = [mkdtempSync(join(tmpdir(), "hype-replay-fresh-a-")), mkdtempSync(join(tmpdir(), "hype-replay-fresh-b-"))];
+  try {
+    const series = dailySeries(95);
+    const candidate = candidateFor(series, "fresh-determinism");
+    const bytes = roots.map((root) => {
+      const baselineFile = join(root, "correlations.json");
+      writeFileSync(baselineFile, JSON.stringify(baselineFor(series)));
+      const report = runReplay({ root, candidate, inputManifestSha256: series.manifestHash, baselineFile, series, seed: "fresh-determinism" });
+      assert.equal(report.deterministicRerunMatches, true);
+      return readFileSync(join(root, "artifacts", "candidates", "fresh-determinism.validation.json"), "utf8");
+    });
+    assert.equal(bytes[1], bytes[0]);
+  } finally {
+    for (const root of roots) rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -258,27 +368,42 @@ test("replay CLI requires explicit immutable inputs", () => {
   assert.match(result.stderr, /RESEARCH_ROOT, RESEARCH_CANDIDATE_FILE, RESEARCH_DERIVED_MANIFEST_FILE, CORRELATION_SOURCES_FILE, CORRELATIONS_FILE, and RESEARCH_REPLAY_SEED are required/);
 });
 
+test("replay fixes challenger simulation at exactly 20,000 draws", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-replay-draws-"));
+  try {
+    const complete = dailySeries();
+    const series = { ...complete, rows: [] };
+    const baselineFile = join(root, "correlations.json");
+    writeFileSync(baselineFile, JSON.stringify(baselineFor(series)));
+    assert.throws(() => runReplay({ root, candidate: candidateFor(series, "draw-override"), inputManifestSha256: series.manifestHash, baselineFile, series, seed: "draw-override", draws: 200 } as Parameters<typeof runReplay>[0]), /exactly 20,000 draws/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("representative 20-underlying replay fixture is deterministic within local resource bounds", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-replay-performance-"));
+  try {
   const specs = readFileSync(new URL("./fixtures/research/replay-series.jsonl", import.meta.url), "utf8").trim().split("\n").map((line) => JSON.parse(line) as { underlying: string; cluster: SourceEntry["cluster"]; calendar: SourceEntry["calendar"]; phase: number });
-  const sources = specs.map((entry) => source(entry.underlying, entry.cluster, entry.calendar));
-  const rows = specs.flatMap((entry) => Array.from({ length: 100 }, (_, index) => {
-    const timestampMs = ORIGIN - (100 - index) * DAY;
+  const sources = specs.map((entry, index) => ({ ...source(entry.underlying, entry.cluster, entry.calendar), eligible: index < 12 }));
+  const rows = specs.flatMap((entry) => Array.from({ length: 98 }, (_, index) => {
+    const timestampMs = ORIGIN + (index - 89) * DAY;
     return { schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval: "1d" as const, timestampMs, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: entry.phase / 10_000 + Math.sin((index + entry.phase) / 7) * 0.02, sourceKeys: [] };
   }));
-  const future = specs.flatMap((entry) => [1, 2, 3, 4].map((days) => {
-    const timestampMs = ORIGIN + days * DAY;
-    return { schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval: "1d" as const, timestampMs, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: entry.phase / 10_000 + 0.001 * days, sourceKeys: [] };
-  }));
   const series = { rows, sources, manifestHash: "e".repeat(64) };
-  const rssBefore = process.memoryUsage().rss;
+  const baselineFile = join(root, "correlations.json");
+  writeFileSync(baselineFile, JSON.stringify(baselineFor(series)));
   const started = performance.now();
-  const tickets = syntheticEvents(ORIGIN, series, future);
+  const report = runReplay({ root, candidate: candidateFor(series, "performance"), inputManifestSha256: series.manifestHash, baselineFile, series, seed: "performance" });
   const elapsedMs = performance.now() - started;
-  const rssGrowth = Math.max(0, process.memoryUsage().rss - rssBefore);
-  const summary = `${canonicalJson({ counts: Object.fromEntries(["same-underlying", "same-cluster", "cross-cluster"].map((stratum) => [stratum, tickets.filter((ticket) => ticket.stratum === stratum).length])), keys: tickets.map((ticket) => ticket.key) })}\n`;
-  const rerun = syntheticEvents(ORIGIN, series, future);
-  assert.equal(`${canonicalJson({ counts: Object.fromEntries(["same-underlying", "same-cluster", "cross-cluster"].map((stratum) => [stratum, rerun.filter((ticket) => ticket.stratum === stratum).length])), keys: rerun.map((ticket) => ticket.key) })}\n`, summary);
+  const rssBytes = process.memoryUsage().rss;
+  const summary = `${canonicalJson({ counts: Object.fromEntries(["same-underlying", "same-cluster", "cross-cluster"].map((stratum) => [stratum, Object.entries(report.ticketCounts).filter(([key]) => key.startsWith(`${stratum}:`)).reduce((sum, [, rows]) => sum + rows, 0)])), keys: report.selectedTicketKeys })}\n`;
+  assert.ok(report.modelScores["filtered-historical-simulation"].overall.eligibleRows > 0);
+  assert.ok(report.bootstrap.groups.length > 0);
   assert.equal(summary, readFileSync(new URL("./fixtures/research/replay-expected.json", import.meta.url), "utf8"));
   assert.ok(elapsedMs < 30_000, `fixture took ${elapsedMs}ms`);
-  assert.ok(rssGrowth < 512 * 1024 * 1024, `fixture grew RSS by ${rssGrowth} bytes`);
+  assert.ok(rssBytes < 512 * 1024 * 1024, `fixture used ${rssBytes} RSS bytes`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

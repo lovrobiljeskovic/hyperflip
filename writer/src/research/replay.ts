@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, hash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { jointProbWad, parseCorrelations, type CorrLeg, type CorrelationTable } from "../correlation.js";
@@ -15,6 +15,7 @@ const HORIZONS = [24, 48, 72, 96] as const;
 const QUANTILES = [0.25, 0.5, 0.75] as const;
 const DFS = [4, 6, 8, 12, 20, 30] as const;
 const MODELS = ["independence", "static-hierarchical-gaussian", "measured-hierarchical-gaussian", "signed-t-copula", "filtered-historical-simulation"] as const;
+const STRESS_REGIMES = ["drawdown-stress", "high-volatility", "normal"] as const;
 
 export type Direction = "up" | "down";
 export type TicketStratum = "same-underlying" | "same-cluster" | "cross-cluster";
@@ -40,7 +41,7 @@ export interface SyntheticTicket {
   originMs: number;
   horizonHours: number;
   stratum: TicketStratum;
-  direction: "all-up" | "alternating" | "all-down";
+  direction: "all-up" | "alternating" | "all-down" | "band";
   legs: SyntheticLeg[];
   outcome: 0 | 1 | null;
 }
@@ -94,7 +95,6 @@ export interface ReplayInput {
   baselineFile: string;
   series: ReplaySeries;
   seed: string;
-  draws?: number;
 }
 
 export interface ValidationReport {
@@ -117,8 +117,7 @@ export interface ValidationReport {
   exclusions: ReplayExclusion[];
   decision: "Supported" | "Inconclusive" | "Rejected";
   deterministicRerunMatches: boolean;
-  modelElapsedMs: Record<ModelName, number>;
-  peakRssBytes: number;
+  resourcePolicy: { maxWallClockMs: 30_000; maxPeakRssBytes: 536_870_912 };
   limitations: string[];
 }
 
@@ -143,8 +142,8 @@ interface ModelScore {
   byStressRegime: Record<string, ScoreSummary & { gateEligible: boolean; exclusionReason: "insufficient-stress-sample" | null }>;
 }
 
-type StressRegime = "drawdown-stress" | "high-volatility" | "normal";
-interface StressThreshold { originMs: number; ticketKey: string; upperVolatilityTercile: number; drawdownFifthPercentile: number; regime: StressRegime }
+export type StressRegime = "drawdown-stress" | "high-volatility" | "normal";
+export interface StressThreshold { originMs: number; ticketKey: string; upperVolatilityTercile: number; drawdownFifthPercentile: number; regime: StressRegime }
 interface ReplayExclusion { originMs: number | null; ticketKey: string | null; model: ModelName | null; reason: "structurally-unavailable" | "insufficient-sample" | "non-finite-probability" | "band-market"; stratum?: TicketStratum; legCount?: number }
 
 const clampProbability = (probability: number): number => Math.min(1 - 1e-6, Math.max(1e-6, probability));
@@ -360,15 +359,11 @@ function cumulativeSamples(rows: ReturnRecord[], underlying: string, interval: "
 
 function futureReturn(rows: ReturnRecord[], underlying: string, interval: "1h" | "1d", horizonHours: number, originMs: number): number | null {
   const size = interval === "1h" ? horizonHours : horizonHours / 24;
-  const block = rows.filter((row) => row.underlying === underlying && row.interval === interval && row.timestampMs > originMs).sort((left, right) => left.timestampMs - right.timestampMs).slice(0, size);
-  if (block.length !== size || (interval === "1h" && block.some((row, index) => index > 0 && row.timestampMs - block[index - 1].timestampMs !== HOUR))) return null;
-  return block.reduce((sum, row) => sum + row.value, 0);
-}
-
-function ticketDirection(directions: Direction[]): SyntheticTicket["direction"] {
-  if (directions.every((direction) => direction === "up")) return "all-up";
-  if (directions.every((direction) => direction === "down")) return "all-down";
-  return "alternating";
+  const step = interval === "1h" ? HOUR : DAY;
+  const byTimestamp = new Map(rows.filter((row) => row.underlying === underlying && row.interval === interval).map((row) => [row.timestampMs, row]));
+  const block = Array.from({ length: size }, (_, index) => byTimestamp.get(originMs + (index + 1) * step));
+  if (block.some((row) => row === undefined)) return null;
+  return (block as ReturnRecord[]).reduce((sum, row) => sum + row.value, 0);
 }
 
 function contradictory(legs: SyntheticLeg[]): boolean {
@@ -410,10 +405,23 @@ export function syntheticEvents(originMs: number, series: ReplaySeries, future: 
     if (!futures.has(key)) futures.set(key, futureReturn(future, underlying, interval, horizonHours, originMs));
     return futures.get(key)!;
   };
+  const hourlyUnderlyings = new Set(series.rows.filter((row) => row.interval === "1h").map((row) => row.underlying));
+  const intervalForAssets = (assets: SourceEntry[]): "1h" | "1d" => assets.every((source) => source.calendar === "continuous")
+    && new Set(assets.map((source) => source.cluster)).size === 1
+    && assets.every((source) => hourlyUnderlyings.has(source.underlying)) ? "1h" : "1d";
+  const quantileVectors = new Map<string, number[][]>();
+  const directionsBySize = new Map<number, Direction[][]>();
+  for (const size of [2, 3, 4]) {
+    quantileVectors.set(`same-underlying:${size}`, size <= 3 ? combinations([...QUANTILES], size) : []);
+    quantileVectors.set(`distinct:${size}`, tuples(QUANTILES, size));
+    directionsBySize.set(size, [Array.from({ length: size }, () => "up" as const), Array.from({ length: size }, (_, index) => index % 2 ? "down" as const : "up" as const), Array.from({ length: size }, () => "down" as const)]);
+  }
   for (const stratum of Object.keys(groups) as TicketStratum[]) {
-    const chosen: { ticketJson: string; ticket: SyntheticTicket }[] = [];
-    const compare = (left: { ticketJson: string; ticket: SyntheticTicket }, right: { ticketJson: string; ticket: SyntheticTicket }): number => left.ticket.key.localeCompare(right.ticket.key) || left.ticketJson.localeCompare(right.ticketJson);
-    const hashPrefix = createHash("sha256").update(`${series.manifestHash}${originMs}${stratum}`);
+    type PendingTicket = Omit<SyntheticTicket, "key" | "outcome"> & { interval: "1h" | "1d" };
+    const chosen: { ticketJson: string; key: string; ticket: PendingTicket }[] = [];
+    const compare = (left: { ticketJson: string; key: string }, right: { ticketJson: string; key: string }): number => left.key < right.key ? -1 : left.key > right.key ? 1 : left.ticketJson < right.ticketJson ? -1 : left.ticketJson > right.ticketJson ? 1 : 0;
+    const hashPrefix = `${series.manifestHash}${originMs}${stratum}`;
+    const stratumJson = JSON.stringify(stratum);
     const legJson = new WeakMap<SyntheticLeg, string>();
     const canonicalLeg = (leg: SyntheticLeg): string => {
       const existing = legJson.get(leg);
@@ -424,25 +432,26 @@ export function syntheticEvents(originMs: number, series: ReplaySeries, future: 
     };
     let worstIndex = 0;
     for (const assets of groups[stratum]) for (const horizonHours of HORIZONS) {
-      const interval = intervalFor(series, [...new Set(assets.map((source) => source.underlying))]);
-      const quantileTuples = stratum === "same-underlying"
-        ? combinations([...QUANTILES], assets.length)
-        : tuples(QUANTILES, assets.length);
-      const directionVectors: Direction[][] = [assets.map(() => "up"), assets.map((_, index) => index % 2 ? "down" : "up"), assets.map(() => "down")];
-      for (const quantiles of quantileTuples) for (const directions of directionVectors) {
+      const interval = intervalForAssets(assets);
+      const quantileTuples = quantileVectors.get(`${stratum === "same-underlying" ? "same-underlying" : "distinct"}:${assets.length}`)!;
+      const directionVectors = directionsBySize.get(assets.length)!;
+      for (const quantiles of quantileTuples) for (let directionIndex = 0; directionIndex < directionVectors.length; directionIndex++) {
+        const directions = directionVectors[directionIndex];
         const ticketLegs = assets.map((source, index) => cachedLeg(source, interval, horizonHours, quantiles[index], directions[index]));
         if (ticketLegs.some((leg) => leg === null)) continue;
-        const complete = (ticketLegs as SyntheticLeg[]).sort((left, right) => left.underlying.localeCompare(right.underlying) || left.quantile - right.quantile);
-        if (contradictory(complete)) continue;
-        const futureByUnderlying = new Map([...new Set(complete.map((leg) => leg.underlying))].map((underlying) => [underlying, cachedFuture(underlying, interval, horizonHours)]));
-        const known = [...futureByUnderlying.values()].every((value) => value !== null);
+        const complete = ticketLegs as SyntheticLeg[];
+        if (stratum === "same-underlying" && contradictory(complete)) continue;
+        const direction = directionIndex === 0 ? "all-up" as const : directionIndex === 2 ? "all-down" as const : stratum === "same-underlying" ? "band" as const : "alternating" as const;
         const ticket = {
-          originMs, horizonHours, stratum, direction: ticketDirection(complete.map((leg) => leg.direction)), legs: complete,
-          outcome: known && complete.every((leg) => leg.direction === "up" ? futureByUnderlying.get(leg.underlying)! > leg.threshold : futureByUnderlying.get(leg.underlying)! < leg.threshold) ? 1 as const : known ? 0 as const : null,
+          originMs, horizonHours, stratum, direction, legs: complete,
+          interval,
         };
-        const ticketJson = `{"direction":${JSON.stringify(ticket.direction)},"horizonHours":${horizonHours},"legs":[${complete.map(canonicalLeg).join(",")}],"originMs":${originMs},"stratum":${JSON.stringify(stratum)}}`;
-        const key = hashPrefix.copy().update(ticketJson).digest("hex");
-        const candidate = { ticketJson, ticket: { key, ...ticket } };
+        const serializedLegs = complete.length === 2 ? `${canonicalLeg(complete[0])},${canonicalLeg(complete[1])}`
+          : complete.length === 3 ? `${canonicalLeg(complete[0])},${canonicalLeg(complete[1])},${canonicalLeg(complete[2])}`
+            : `${canonicalLeg(complete[0])},${canonicalLeg(complete[1])},${canonicalLeg(complete[2])},${canonicalLeg(complete[3])}`;
+        const ticketJson = `{"direction":${JSON.stringify(direction)},"horizonHours":${horizonHours},"legs":[${serializedLegs}],"originMs":${originMs},"stratum":${stratumJson}}`;
+        const key = hash("sha256", hashPrefix + ticketJson, "hex");
+        const candidate = { ticketJson, key, ticket };
         if (chosen.length < 12) {
           chosen.push(candidate);
           if (chosen.length === 12) for (let index = 1; index < chosen.length; index++) if (compare(chosen[index], chosen[worstIndex]) > 0) worstIndex = index;
@@ -453,7 +462,13 @@ export function syntheticEvents(originMs: number, series: ReplaySeries, future: 
         }
       }
     }
-    output.push(...chosen.sort(compare).map((entry) => entry.ticket));
+    output.push(...chosen.sort(compare).map((entry): SyntheticTicket => {
+      const { interval, ...ticket } = entry.ticket;
+      const futureByUnderlying = new Map([...new Set(ticket.legs.map((leg) => leg.underlying))].map((underlying) => [underlying, cachedFuture(underlying, interval, ticket.horizonHours)]));
+      const known = [...futureByUnderlying.values()].every((value) => value !== null);
+      const outcome = known && ticket.legs.every((leg) => leg.direction === "up" ? futureByUnderlying.get(leg.underlying)! > leg.threshold : futureByUnderlying.get(leg.underlying)! < leg.threshold) ? 1 as const : known ? 0 as const : null;
+      return { key: entry.key, ...ticket, outcome };
+    }));
   }
   return output;
 }
@@ -517,7 +532,7 @@ export function filteredHistoricalSimulation(ticket: SyntheticTicket, series: Re
   return { available: true, probability: (hits + 1) / (blocks + 2), hits, blocks, originMean: originStats.map((stats) => stats!.mu), originSigma: originStats.map((stats) => stats!.sigma), reason: null };
 }
 
-function fittedMatrix(rows: ReturnRecord[], sources: SourceEntry[], originMs = Number.POSITIVE_INFINITY): { matrix: number[][]; values: number[][]; sources: SourceEntry[] } {
+function fittedMatrix(rows: ReturnRecord[], sources: SourceEntry[], originMs = Number.POSITIVE_INFINITY): { matrix: number[][]; values: number[][]; observationTimes: number[]; sources: SourceEntry[] } {
   const sorted = [...sources].sort((left, right) => left.underlying.localeCompare(right.underlying));
   const asOfMs = Number.isSafeInteger(originMs) ? originMs : Math.max(...rows.map((row) => row.timestampMs));
   const series: ReplaySeries = { rows, sources: sorted, manifestHash: "0".repeat(64) };
@@ -542,11 +557,10 @@ function fittedMatrix(rows: ReturnRecord[], sources: SourceEntry[], originMs = N
     const target = left.cluster === right.cluster ? targets.clusters[left.cluster] : targets.global;
     return estimate?.eligible ? shrinkPair(estimate, target) : target;
   }));
-  const daily = alignedRows(series, sorted.map((source) => source.underlying), "1d", asOfMs).map((row) => row.values);
-  const interval: "1h" | "1d" = daily.length >= 3 ? "1d" : "1h";
-  const values = interval === "1d" ? daily : alignedRows(series, sorted.map((source) => source.underlying), "1h", asOfMs).map((row) => row.values);
-  if (values.length < 3) throw new Error("dependence fit requires at least three complete rows");
-  return { matrix: nearestCorrelation(raw), values, sources: sorted };
+  const daily = alignedRows(series, sorted.map((source) => source.underlying), "1d", asOfMs);
+  const base = daily.length >= 3 ? daily : alignedRows(series, sorted.map((source) => source.underlying), "1h", asOfMs);
+  if (base.length < 3) throw new Error("dependence fit requires at least three complete rows");
+  return { matrix: nearestCorrelation(raw), values: base.map((row) => row.values), observationTimes: base.map((row) => row.timestampMs), sources: sorted };
 }
 
 function determinantFromCholesky(lower: number[][]): number {
@@ -580,7 +594,7 @@ export function selectDegreesOfFreedom(rows: ReturnRecord[], sources: SourceEntr
   const split = Math.max(3, Math.floor(fitted.values.length * 0.8));
   const fitValues = fitted.values.slice(0, split);
   const validation = fitted.values.slice(split);
-  const cutoff = [...new Set(causal.filter((row) => row.interval === "1d").map((row) => row.timestampMs))].sort((left, right) => left - right)[split - 1] ?? originMs;
+  const cutoff = fitted.observationTimes[split - 1];
   const matrix = fittedMatrix(causal.filter((row) => row.timestampMs <= cutoff), sources, cutoff).matrix;
   let selected: number = DFS[0];
   let best = Number.NEGATIVE_INFINITY;
@@ -645,30 +659,38 @@ function measuredTable(clusters: CorrelationArtifact["clusters"]): CorrelationTa
   };
 }
 
-function ticketStress(ticket: SyntheticTicket, series: ReplaySeries, future: ReturnRecord[]): StressThreshold {
+export function ticketStress(ticket: SyntheticTicket, series: ReplaySeries, future: ReturnRecord[]): StressThreshold {
   const underlyings = [...new Set(ticket.legs.map((leg) => leg.underlying))].sort();
   const interval = intervalFor(series, underlyings);
   const rows = alignedRows(series, underlyings, interval, ticket.originMs);
   const portfolio = rows.map((row) => mean(row.values));
-  const dailyPortfolio = interval === "1d" ? portfolio : Array.from({ length: Math.floor(portfolio.length / 24) }, (_, index) => portfolio.slice(index * 24, index * 24 + 24).reduce((sum, value) => sum + value, 0));
-  const volatilities = interval === "1d" ? portfolio.map(Math.abs) : Array.from({ length: Math.max(0, portfolio.length - 23) }, (_, index) => {
-    const window = portfolio.slice(index, index + 24);
+  const dailyPortfolio = (values: number[]): number[] => interval === "1d" ? values : Array.from({ length: Math.floor(values.length / 24) }, (_, index) => values.slice(index * 24, index * 24 + 24).reduce((sum, value) => sum + value, 0));
+  const volatilities = (values: number[]): number[] => interval === "1d" ? values.map(Math.abs) : Array.from({ length: Math.max(0, values.length - 23) }, (_, index) => {
+    const window = values.slice(index, index + 24);
     const average = mean(window);
     return Math.sqrt(window.reduce((sum, value) => sum + (value - average) ** 2, 0) / window.length) * Math.sqrt(24);
   });
-  const upperVolatilityTercile = percentile(volatilities, 2 / 3);
-  let cumulative = 0;
-  let peak = 0;
-  const drawdowns = dailyPortfolio.map((value) => {
-    cumulative += value;
-    peak = Math.max(peak, cumulative);
-    return cumulative - peak;
-  });
-  const drawdownFifthPercentile = percentile(drawdowns, 0.05);
-  const futureValues = underlyings.map((underlying) => futureReturn(future, underlying, interval, ticket.horizonHours, ticket.originMs) ?? 0);
-  const futurePortfolio = mean(futureValues);
-  const futureVolatility = Math.abs(futurePortfolio);
-  const regime: StressRegime = futurePortfolio <= drawdownFifthPercentile ? "drawdown-stress" : futureVolatility >= upperVolatilityTercile ? "high-volatility" : "normal";
+  const drawdowns = (values: number[]): number[] => {
+    let cumulative = 0;
+    let peak = 0;
+    return values.map((value) => {
+      cumulative += value;
+      peak = Math.max(peak, cumulative);
+      return cumulative - peak;
+    });
+  };
+  const trainingVolatilities = volatilities(portfolio);
+  const upperVolatilityTercile = percentile(trainingVolatilities, 2 / 3);
+  const trainingDrawdowns = drawdowns(dailyPortfolio(portfolio));
+  const drawdownFifthPercentile = percentile(trainingDrawdowns, 0.05);
+  const size = interval === "1h" ? ticket.horizonHours : ticket.horizonHours / 24;
+  const step = interval === "1h" ? HOUR : DAY;
+  const futureByUnderlying = underlyings.map((underlying) => new Map(future.filter((row) => row.underlying === underlying && row.interval === interval).map((row) => [row.timestampMs, row.value])));
+  const futurePortfolio = Array.from({ length: size }, (_, index) => mean(futureByUnderlying.map((values) => values.get(ticket.originMs + (index + 1) * step) ?? Number.NaN)));
+  const futureDrawdowns = drawdowns(dailyPortfolio(futurePortfolio));
+  const futureVolatilities = volatilities(futurePortfolio);
+  const regime: StressRegime = futureDrawdowns.some((value) => value <= drawdownFifthPercentile) ? "drawdown-stress"
+    : futureVolatilities.some((value) => value >= upperVolatilityTercile) ? "high-volatility" : "normal";
   return { originMs: ticket.originMs, ticketKey: ticket.key, upperVolatilityTercile, drawdownFifthPercentile, regime };
 }
 
@@ -677,7 +699,7 @@ function byDimension(rows: ForecastRow[], key: keyof Pick<ForecastRow, "window" 
 }
 
 function modelScore(rows: ForecastRow[]): ModelScore {
-  const stress = byDimension(rows, "stressRegime");
+  const stress = Object.fromEntries(STRESS_REGIMES.map((regime) => [regime, scoreForecasts(rows.filter((row) => row.stressRegime === regime))]));
   return {
     overall: scoreForecasts(rows),
     byWindow: byDimension(rows, "window"),
@@ -691,11 +713,15 @@ function modelScore(rows: ForecastRow[]): ModelScore {
 
 function ticketCountKey(ticket: SyntheticTicket): string { return `${ticket.stratum}:${ticket.legs.length}`; }
 
-function replayOrigins(series: ReplaySeries): number[] {
+export function replayOrigins(series: ReplaySeries): number[] {
   const daily = [...new Set(series.rows.filter((row) => row.interval === "1d").map((row) => row.timestampMs))].sort((left, right) => left - right);
-  if (daily.length >= 95) return daily.slice(89, -4);
+  if (daily.length >= 90) {
+    const origins: number[] = [];
+    for (let origin = daily[89]; origin <= daily.at(-1)! - 96 * HOUR; origin += DAY) origins.push(origin);
+    return origins;
+  }
   const hourly = [...new Set(series.rows.filter((row) => row.interval === "1h").map((row) => row.timestampMs))].sort((left, right) => left - right);
-  if (hourly.length < 1_096) return [];
+  if (hourly.length < 1_000) return [];
   const first = hourly[999];
   const last = hourly.at(-1)! - 96 * HOUR;
   const origins: number[] = [];
@@ -714,8 +740,22 @@ function readExisting(path: string, candidateSha256: string, inputManifestSha256
   return report;
 }
 
+interface ReplayComputation {
+  ticketCounts: Record<string, number>;
+  selectedTicketKeys: string[];
+  modelScores: Record<ModelName, ModelScore>;
+  bootstrap: Interval;
+  stressThresholds: StressThreshold[];
+  degreeOfFreedomSelections: { originMs: number; df: number }[];
+  exclusions: ReplayExclusion[];
+  matrixFailure: boolean;
+  nonFinite: boolean;
+  stressFailures: boolean;
+}
+
 export function runReplay(input: ReplayInput): ValidationReport {
   const root = resolve(input.root);
+  if ("draws" in input) throw new Error("replay uses exactly 20,000 draws");
   if (input.inputManifestSha256 !== input.candidate.dataManifestSha256 || input.series.manifestHash !== input.inputManifestSha256) throw new Error("replay immutable input identities differ");
   const candidateSha256 = sha256(input.candidateBytes ?? canonicalJson(input.candidate));
   const outputPath = validationPath(root, input.candidate.modelVersion);
@@ -728,22 +768,15 @@ export function runReplay(input: ReplayInput): ValidationReport {
     if (readFileSync(baselinePath, "utf8") !== baselineCanonical) throw new Error("baseline snapshot already exists with different bytes");
   } else if (!atomicWriteNew(baselinePath, baselineCanonical) && readFileSync(baselinePath, "utf8") !== baselineCanonical) throw new Error("baseline snapshot already exists with different bytes");
   const baseline = parseCorrelations(baselineCanonical);
-  let matrixFailure = false;
+  const compute = (): ReplayComputation => {
+  let matrixFailure = input.candidate.quality.matrixOrder.length !== input.candidate.quality.signedPsdTarget.length
+    || input.candidate.quality.matrixOrder.some((underlying) => !input.series.sources.some((source) => source.underlying === underlying));
   try { cholesky(input.candidate.quality.signedPsdTarget); } catch { matrixFailure = true; }
-  const draws = input.draws ?? 20_000;
+  const draws = 20_000;
   const origins = replayOrigins(input.series);
   const forecastRows: ForecastRow[] = [];
   const exclusions: ReplayExclusion[] = [];
-  const modelElapsedMs = Object.fromEntries(MODELS.map((model) => [model, 0])) as Record<ModelName, number>;
-  let peakRssBytes = process.memoryUsage().rss;
   let hadNonFinite = false;
-  const measured = <T>(model: ModelName, operation: () => T): T => {
-    const started = performance.now();
-    const result = operation();
-    modelElapsedMs[model] += Math.max(Number.EPSILON, performance.now() - started);
-    peakRssBytes = Math.max(peakRssBytes, process.memoryUsage().rss);
-    return result;
-  };
   const stressThresholds: StressThreshold[] = [];
   const degreeOfFreedomSelections: { originMs: number; df: number }[] = [];
   const selectedTicketKeys: string[] = [];
@@ -763,17 +796,16 @@ export function runReplay(input: ReplayInput): ValidationReport {
       fitted = fittedMatrix(training.rows, training.sources, originMs);
     } catch { matrixFailure = true; }
     degreeOfFreedomSelections.push({ originMs, df });
-    const sortedSources = [...training.sources].sort((left, right) => left.underlying.localeCompare(right.underlying));
-    const order = sortedSources.map((source) => source.underlying);
-    const generated = fitted ? measured("signed-t-copula", () => tDraws(fitted.matrix, df, draws, `${input.seed}:${originMs}:${df}`)) : [];
-    const measuredCorrelation = fitted ? measured("measured-hierarchical-gaussian", () => measuredTable(fitHierarchical(fitted.matrix, fitted.sources).loadings)) : null;
+    const order = input.candidate.quality.matrixOrder;
+    const generated = matrixFailure ? [] : tDraws(input.candidate.quality.signedPsdTarget, df, draws, `${input.seed}:${originMs}:${df}`);
+    const measuredCorrelation = fitted ? measuredTable(fitHierarchical(fitted.matrix, fitted.sources).loadings) : null;
     for (const ticket of tickets) {
       const stress = ticketStress(ticket, training, future);
       stressThresholds.push(stress);
-      const independence = measured("independence", () => clampProbability(ticket.legs.reduce((product, leg) => product * leg.marginalProbability, 1)));
-      const fhs = measured("filtered-historical-simulation", () => filteredHistoricalSimulation(ticket, training));
+      const independence = clampProbability(ticket.legs.reduce((product, leg) => product * leg.marginalProbability, 1));
+      const fhs = filteredHistoricalSimulation(ticket, training);
       if (!fhs.available) exclusions.push({ originMs, ticketKey: ticket.key, model: "filtered-historical-simulation", reason: "insufficient-sample" });
-      const tResult = generated.length ? measured("signed-t-copula", () => {
+      const tResult = generated.length ? (() => {
         const thresholds = ticket.legs.map((leg) => studentTInv(1 - Math.min(1 - 1e-12, Math.max(1e-12, leg.marginalProbability)), df));
         let hits = 0;
         for (const draw of generated) if (ticket.legs.every((leg, index) => {
@@ -781,11 +813,11 @@ export function runReplay(input: ReplayInput): ValidationReport {
           return leg.direction === "up" ? value > thresholds[index] : value < -thresholds[index];
         })) hits++;
         return (hits + 1) / (draws + 2);
-      }) : Number.NaN;
+      })() : Number.NaN;
       const probabilities: Record<ModelName, number | null> = {
         independence,
-        "static-hierarchical-gaussian": measured("static-hierarchical-gaussian", () => gaussianProbability(ticket, baseline)),
-        "measured-hierarchical-gaussian": measuredCorrelation ? measured("measured-hierarchical-gaussian", () => gaussianProbability(ticket, measuredCorrelation)) : Number.NaN,
+        "static-hierarchical-gaussian": gaussianProbability(ticket, baseline),
+        "measured-hierarchical-gaussian": measuredCorrelation ? gaussianProbability(ticket, measuredCorrelation) : Number.NaN,
         "signed-t-copula": tResult,
         "filtered-historical-simulation": fhs.probability,
       };
@@ -805,8 +837,8 @@ export function runReplay(input: ReplayInput): ValidationReport {
     }
   }
   const modelScores = Object.fromEntries(MODELS.map((model) => [model, modelScore(forecastRows.filter((row) => row.model === model))])) as Record<ModelName, ModelScore>;
-  const baselineRows = forecastRows.filter((row) => row.model === "static-hierarchical-gaussian");
-  const measuredRows = forecastRows.filter((row) => row.model === "measured-hierarchical-gaussian");
+  const baselineRows = forecastRows.filter((row) => row.model === "static-hierarchical-gaussian" && row.direction !== "band");
+  const measuredRows = forecastRows.filter((row) => row.model === "measured-hierarchical-gaussian" && row.direction !== "band");
   const bootstrapOrigins: BootstrapOrigin[] = origins.map((originMs) => ({
     originMs,
     baselineLosses: baselineRows.filter((row) => row.originMs === originMs).map((row) => logLoss([row])),
@@ -815,16 +847,19 @@ export function runReplay(input: ReplayInput): ValidationReport {
   const canBootstrap = bootstrapOrigins.length > 0 && bootstrapOrigins.at(-1)!.originMs - bootstrapOrigins[0].originMs >= 96 * HOUR;
   if (bootstrapOrigins.length && !canBootstrap) exclusions.push({ originMs: null, ticketKey: null, model: "measured-hierarchical-gaussian", reason: "insufficient-sample" });
   const bootstrap = canBootstrap ? blockBootstrap(bootstrapOrigins, 96, 2_000, input.seed) : { point: 0, lower: 0, upper: 0, groups: [], samples: 2_000, blockHours: 96 };
-  const deterministicRerunMatches = !canBootstrap || canonicalJson(blockBootstrap(bootstrapOrigins, 96, 2_000, input.seed)) === canonicalJson(bootstrap);
   const nonFinite = hadNonFinite || forecastRows.some((row) => !Number.isFinite(row.p)) || Object.values(modelScores).some((score) => !Number.isFinite(score.overall.logLoss) || !Number.isFinite(score.overall.brier));
   const stressFailures = Object.keys(modelScores["measured-hierarchical-gaussian"].byStressRegime).some((regime) => {
     const measuredStress = modelScores["measured-hierarchical-gaussian"].byStressRegime[regime];
     const baselineStress = modelScores["static-hierarchical-gaussian"].byStressRegime[regime];
     return measuredStress.gateEligible && baselineStress && (measuredStress.logLoss - baselineStress.logLoss) / baselineStress.logLoss > 0.05;
   });
-  const decision = bootstrap.lower > 0.01 || nonFinite || !deterministicRerunMatches || matrixFailure || input.candidate.quality.maxProjectionError > 0.10
+  return { ticketCounts, selectedTicketKeys, modelScores, bootstrap, stressThresholds, degreeOfFreedomSelections, exclusions, matrixFailure, nonFinite, stressFailures };
+  };
+  const first = compute();
+  const deterministicRerunMatches = canonicalJson(compute()) === canonicalJson(first);
+  const decision = first.bootstrap.lower > 0.01 || first.nonFinite || !deterministicRerunMatches || first.matrixFailure || input.candidate.quality.maxProjectionError > 0.10
     ? "Rejected"
-    : bootstrap.point < 0 && bootstrap.upper <= 0.01 && !stressFailures ? "Supported" : "Inconclusive";
+    : first.bootstrap.point < 0 && first.bootstrap.upper <= 0.01 && !first.stressFailures ? "Supported" : "Inconclusive";
   const report: ValidationReport = {
     schemaVersion: 1,
     modelVersion: input.candidate.modelVersion,
@@ -833,20 +868,19 @@ export function runReplay(input: ReplayInput): ValidationReport {
     baselineSha256,
     baselineSnapshotPath: relative(root, baselinePath),
     seed: input.seed,
-    drawCount: draws,
+    drawCount: 20_000,
     originStrideHours: 24,
     policy: { maxProjectionError: 0.10, bootstrapBlockHours: 96, bootstrapSamples: 2_000 },
-    ticketCounts,
-    selectedTicketKeys,
-    modelScores,
-    bootstrap,
-    stressThresholds,
-    degreeOfFreedomSelections,
-    exclusions,
+    ticketCounts: first.ticketCounts,
+    selectedTicketKeys: first.selectedTicketKeys,
+    modelScores: first.modelScores,
+    bootstrap: first.bootstrap,
+    stressThresholds: first.stressThresholds,
+    degreeOfFreedomSelections: first.degreeOfFreedomSelections,
+    exclusions: first.exclusions,
     decision,
     deterministicRerunMatches,
-    modelElapsedMs,
-    peakRssBytes,
+    resourcePolicy: { maxWallClockMs: 30_000, maxPeakRssBytes: 536_870_912 },
     limitations: ["testnet outcomes do not validate production price discovery", "signed t-copula and filtered historical simulation are report-only", "band markets are excluded from statistical success"],
   };
   const bytes = `${canonicalJson(report)}\n`;
