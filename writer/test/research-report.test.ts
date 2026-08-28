@@ -44,7 +44,7 @@ const input: ReportInput = {
   },
   champion: { modelVersion: "beta-1", sha256: "b".repeat(64) },
   funnel: { quotes: 4, minted: 3, resolved: 2 },
-  failures: ["collector timeout"],
+  failures: [],
 };
 
 test("research report renders deterministic escaped evidence with every required caveat", () => {
@@ -84,12 +84,30 @@ test("research report verifies every immutable reference before writing the dete
     writeFileSync(candidatePath, candidateBytes);
     writeFileSync(join(root, "artifacts", "candidates", "beta-1.validation.json"), `${canonicalJson(fixture.validation)}\n`);
     writeFileSync(join(root, "artifacts", "champion.json"), candidateBytes);
+    mkdirSync(join(root, "journal", "requests", "2026", "08"), { recursive: true });
+    writeFileSync(join(root, "journal", "requests", "2026", "08", "27.jsonl"), `${canonicalJson({ schemaVersion: 1, sourceKey: "mainnet:ETH", startTime: 1, endTime: 2, retrievedAtMs: 3, httpStatus: 503, error: "info API 503", returnedRows: 0 })}\n`);
+    mkdirSync(join(root, "state"), { recursive: true });
+    writeFileSync(join(root, "state", "collector.json"), canonicalJson({ schemaVersion: 1, sourceRegistrySha256: sourceHash, sources: { "mainnet:BTC": 1, "mainnet:ETH": 2 } }));
+    writeFileSync(join(root, "state", "calibrator.json"), canonicalJson({ schemaVersion: 1, modelVersion: "beta-1", dataManifestSha256: fixture.candidate.dataManifestSha256, status: "complete" }));
 
     const first = generateReport(root, candidatePath);
     const second = generateReport(root, candidatePath);
     assert.equal(first.path, join(root, "reports", "2026-08-27-beta-1.html"));
     assert.equal(readFileSync(first.path, "utf8"), first.bytes);
     assert.equal(second.bytes, first.bytes);
+    assert.match(first.bytes, /collector request mainnet:ETH: HTTP 503 — info API 503/);
+    assert.match(first.bytes, /collector state: 2 source checkpoints/);
+    assert.match(first.bytes, /calibrator state: beta-1 — complete/);
+
+    const unsafeCandidate = { ...fixture.candidate, modelVersion: "../../escape" };
+    writeFileSync(candidatePath, `${canonicalJson(unsafeCandidate)}\n`);
+    assert.throws(() => generateReport(root, candidatePath), /safe artifact filename/);
+    writeFileSync(candidatePath, `${canonicalJson({ ...fixture.candidate, modelVersion: 7 })}\n`);
+    assert.throws(() => generateReport(root, candidatePath), /safe artifact filename/);
+    writeFileSync(candidatePath, candidateBytes);
+    writeFileSync(join(root, "artifacts", "candidates", "beta-1.validation.json"), `${canonicalJson({ ...fixture.validation, modelVersion: "../escape" })}\n`);
+    assert.throws(() => generateReport(root, candidatePath), /safe artifact filename/);
+    writeFileSync(join(root, "artifacts", "candidates", "beta-1.validation.json"), `${canonicalJson(fixture.validation)}\n`);
 
     writeFileSync(join(root, fixture.validation.baselineSnapshotPath), "corrupt");
     assert.throws(() => generateReport(root, candidatePath), /baseline.*mismatch/i);

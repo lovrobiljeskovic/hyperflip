@@ -14,6 +14,9 @@ export interface ReportInput {
 }
 
 const MODELS = ["independence", "static-hierarchical-gaussian", "measured-hierarchical-gaussian", "signed-t-copula", "filtered-historical-simulation"] as const;
+const SAFE_MODEL_VERSION = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const SHA256 = /^[0-9a-f]{64}$/;
+const safeModelVersion = (value: unknown): value is string => typeof value === "string" && SAFE_MODEL_VERSION.test(value);
 type Label = "Observed fact" | "Model estimate" | "Operator decision";
 
 function escapeHtml(value: unknown): string {
@@ -73,13 +76,18 @@ function verified(root: string, candidatePath: string): { candidate: Correlation
   if (!inside(root, path)) throw new Error("report candidate path escapes root");
   const bytes = readFileSync(path, "utf8");
   const candidate = JSON.parse(bytes) as CorrelationArtifact;
-  const manifestPath = join(root, "manifests", `${candidate.dataManifestSha256}.json`);
+  if (!safeModelVersion(candidate.modelVersion)) throw new Error("report modelVersion is not a safe artifact filename");
+  if (!SHA256.test(candidate.dataManifestSha256)) throw new Error("report candidate manifest hash is invalid");
+  const manifestPath = resolve(root, "manifests", `${candidate.dataManifestSha256}.json`);
+  if (!inside(root, manifestPath)) throw new Error("report manifest path escapes root");
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as DataManifest;
   if (sha256(canonicalJson(manifest)) !== candidate.dataManifestSha256) throw new Error("report manifest identity mismatch");
   verifyManifest(root, manifest);
   if (manifest.sourceRegistrySha256 !== candidate.sourceRegistrySha256) throw new Error("report source registry identity mismatch");
-  const validationPath = join(dirname(path), `${candidate.modelVersion}.validation.json`);
+  const validationPath = resolve(dirname(path), `${candidate.modelVersion}.validation.json`);
+  if (!inside(root, validationPath)) throw new Error("report validation path escapes root");
   const validation = JSON.parse(readFileSync(validationPath, "utf8")) as ValidationReport;
+  if (!safeModelVersion(validation.modelVersion)) throw new Error("report validation modelVersion is not a safe artifact filename");
   if (validation.modelVersion !== candidate.modelVersion || validation.candidateSha256 !== sha256(bytes) || validation.inputManifestSha256 !== candidate.dataManifestSha256) throw new Error("report validation identity mismatch");
   const baseline = resolve(root, validation.baselineSnapshotPath);
   if (!inside(root, baseline) || !existsSync(baseline) || sha256(readFileSync(baseline)) !== validation.baselineSha256) throw new Error("report baseline snapshot mismatch");
@@ -99,13 +107,34 @@ function journalFunnel(root: string): ReportInput["funnel"] {
 }
 
 function operationalFailures(root: string): string[] {
-  return filesBelow(join(root, "quarantine")).sort().flatMap((file) => {
+  const quarantines = filesBelow(join(root, "quarantine")).sort().flatMap((file) => {
     const text = readFileSync(file, "utf8").trim();
     return text ? text.split("\n").map((line) => {
       const row = JSON.parse(line) as Record<string, unknown>;
       return String(row.reason ?? row.error ?? `quarantined ${row.underlying ?? relative(root, file)}`);
     }) : [];
   });
+  const requests = filesBelow(join(root, "journal", "requests")).sort().flatMap((file) => {
+    const text = readFileSync(file, "utf8").trim();
+    return text ? text.split("\n").flatMap((line) => {
+      const row = JSON.parse(line) as { sourceKey?: unknown; httpStatus?: unknown; error?: unknown };
+      if (row.error === null && typeof row.httpStatus === "number" && row.httpStatus < 400) return [];
+      const status = typeof row.httpStatus === "number" ? `HTTP ${row.httpStatus}` : "request failure";
+      return [`collector request ${String(row.sourceKey ?? "unknown")}: ${status}${typeof row.error === "string" ? ` — ${row.error}` : ""}`];
+    }) : [];
+  });
+  const states: string[] = [];
+  const collectorFile = join(root, "state", "collector.json");
+  if (existsSync(collectorFile)) {
+    const collector = JSON.parse(readFileSync(collectorFile, "utf8")) as { sources?: unknown };
+    if (collector.sources && typeof collector.sources === "object" && !Array.isArray(collector.sources)) states.push(`collector state: ${Object.keys(collector.sources).length} source checkpoints`);
+  }
+  const calibratorFile = join(root, "state", "calibrator.json");
+  if (existsSync(calibratorFile)) {
+    const calibrator = JSON.parse(readFileSync(calibratorFile, "utf8")) as { modelVersion?: unknown; status?: unknown };
+    if (typeof calibrator.modelVersion === "string" && typeof calibrator.status === "string") states.push(`calibrator state: ${calibrator.modelVersion} — ${calibrator.status}`);
+  }
+  return [...quarantines, ...requests, ...states];
 }
 
 export function generateReport(rootInput: string, candidateInput: string): { path: string; bytes: string } {
@@ -116,12 +145,18 @@ export function generateReport(rootInput: string, candidateInput: string): { pat
   if (existsSync(championPath)) {
     const championBytes = readFileSync(championPath, "utf8");
     const artifact = JSON.parse(championBytes) as CorrelationArtifact;
-    verified(root, join(root, "artifacts", "candidates", `${artifact.modelVersion}.json`));
-    if (sha256(championBytes) !== sha256(readFileSync(join(root, "artifacts", "candidates", `${artifact.modelVersion}.json`)))) throw new Error("report champion candidate mismatch");
+    if (!safeModelVersion(artifact.modelVersion)) throw new Error("report champion modelVersion is not a safe artifact filename");
+    const championCandidate = resolve(root, "artifacts", "candidates", `${artifact.modelVersion}.json`);
+    if (!inside(root, championCandidate)) throw new Error("report champion candidate path escapes root");
+    verified(root, championCandidate);
+    if (sha256(championBytes) !== sha256(readFileSync(championCandidate))) throw new Error("report champion candidate mismatch");
     champion = { modelVersion: artifact.modelVersion, sha256: sha256(championBytes) };
   }
   const bytes = renderReport({ manifest: current.manifest, candidate: current.candidate, validation: current.validation, champion, funnel: journalFunnel(root), failures: operationalFailures(root) });
-  const path = join(root, "reports", `${current.candidate.dataAsOf.slice(0, 10)}-${current.candidate.modelVersion}.html`);
+  const date = current.candidate.dataAsOf.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("report dataAsOf date is invalid");
+  const path = resolve(root, "reports", `${date}-${current.candidate.modelVersion}.html`);
+  if (!inside(root, path)) throw new Error("report output path escapes root");
   atomicWrite(path, bytes);
   return { path, bytes };
 }

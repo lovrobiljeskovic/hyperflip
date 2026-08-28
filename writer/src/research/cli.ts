@@ -17,6 +17,7 @@ import { promoteCandidate } from "./artifacts.js";
 import { joinEvents } from "./journal.js";
 import { backupResearch } from "./backup.js";
 import { generateReport } from "./report.js";
+import { runDaily } from "./daily.js";
 
 const command = process.argv[2];
 const commands = ["collect", "derive", "calibrate", "replay", "promote", "join", "report", "daily", "backup", "check"];
@@ -25,10 +26,12 @@ if (!commands.includes(command)) {
   console.error(`usage: npm run research -- ${commands.join("|")}`);
   process.exitCode = 2;
 } else if (command === "daily") {
-  for (const step of ["derive", "calibrate", "replay", "join", "report"]) {
-    const result = spawnSync(process.execPath, ["--import", "tsx", "src/research/cli.ts", step], { cwd: process.cwd(), env: process.env, stdio: "inherit" });
-    if (result.status !== 0) { process.exitCode = result.status ?? 1; break; }
-  }
+  process.exitCode = runDaily(process.env, (step, env) => {
+    const result = spawnSync(process.execPath, ["--import", "tsx", "src/research/cli.ts", step], { cwd: process.cwd(), env, encoding: "utf8" });
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  });
 } else if (command === "check") {
   const { NODE_TEST_CONTEXT: _, ...checkEnv } = process.env;
   const result = spawnSync(process.execPath, ["--import", "tsx", "--test", "--test-name-pattern=research end-to-end", "test/research-end-to-end.test.ts"], { cwd: process.cwd(), env: checkEnv, stdio: "inherit" });
@@ -95,7 +98,7 @@ if (!commands.includes(command)) {
     process.exitCode = 2;
   } else {
     const artifact = calibrate({ root: resolve(root), manifest: JSON.parse(readFileSync(resolve(manifestFile), "utf8")), derivedManifestPath });
-    console.log(JSON.stringify({ modelVersion: artifact.modelVersion, dataAsOf: artifact.dataAsOf }));
+    console.log(JSON.stringify({ modelVersion: artifact.modelVersion, dataAsOf: artifact.dataAsOf, candidatePath: resolve(root, "artifacts", "candidates", `${artifact.modelVersion}.json`) }));
   }
 } else if (command === "replay") {
   const root = process.env.RESEARCH_ROOT;
