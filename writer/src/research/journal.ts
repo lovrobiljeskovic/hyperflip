@@ -1,4 +1,4 @@
-import { chmodSync, closeSync, mkdirSync, openSync } from "node:fs";
+import { chmodSync, closeSync, fsyncSync, mkdirSync, openSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { canonicalJson, durableAppend } from "./store.js";
@@ -41,6 +41,12 @@ export function appendQuoteDecision(root: string, decision: QuoteDecision): void
   chmodSync(file, 0o600);
   durableAppend(file, canonicalJson(decision));
   chmodSync(file, 0o600);
+  const directory = openSync(dirname(file), "r");
+  try {
+    fsyncSync(directory);
+  } finally {
+    closeSync(directory);
+  }
 }
 
 export function redactQuoteDecision(

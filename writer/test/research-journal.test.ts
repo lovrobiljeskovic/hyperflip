@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { appendQuoteDecision, redactQuoteDecision } from "../src/research/journal.js";
 import { canonicalJson } from "../src/research/store.js";
 import type { QuoteDecision } from "../src/research/types.js";
+
+const fs: typeof import("node:fs") = createRequire(import.meta.url)("node:fs");
 
 const decision: QuoteDecision = {
   schemaVersion: 1, recordedAtMs: 1_725_000_000_000, quoteId: "0x01", quoteDigest: "0x02", chainId: 31337,
@@ -24,6 +27,29 @@ test("journal: durable append writes canonical daily JSONL with private modes", 
   assert.equal(readFileSync(file, "utf8"), `${canonicalJson(decision)}\n`);
   assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.equal(statSync(dirname(file)).mode & 0o777, 0o700);
+});
+
+test("journal: fsyncs the daily directory after appending a new file", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "hype-journal-fsync-"));
+  const opened = new Map<number, string>();
+  const fsynced: string[] = [];
+  const open = fs.openSync;
+  const fsync = fs.fsyncSync;
+  t.mock.method(fs, "openSync", ((path: Parameters<typeof fs.openSync>[0], flags: Parameters<typeof fs.openSync>[1], mode?: Parameters<typeof fs.openSync>[2]) => {
+    const fd = open(path, flags, mode);
+    opened.set(fd, String(path));
+    return fd;
+  }) as typeof fs.openSync);
+  t.mock.method(fs, "fsyncSync", ((fd: number) => {
+    const path = opened.get(fd);
+    if (path) fsynced.push(path);
+    fsync(fd);
+  }) as typeof fs.fsyncSync);
+  syncBuiltinESMExports();
+  const journal = await import(`../src/research/journal.js?daily-directory-fsync=${Date.now()}`);
+  journal.appendQuoteDecision(root, decision);
+  const file = join(root, "journal", "quotes", "2024", "08", "30.jsonl");
+  assert.ok(fsynced.includes(dirname(file)));
 });
 
 test("journal: redaction needs a salt and delays hashes and research inputs until all legs final", () => {
