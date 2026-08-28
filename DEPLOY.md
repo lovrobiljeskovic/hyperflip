@@ -41,6 +41,9 @@ free. Realistic usage here is a rounding error against that allowance.
 ```
 /opt/hype/
   .env                    # filtered secrets, mode 600, owned by hype
+  research/               # preserved research facts, artifacts, journals, state, reports
+  research.env            # public/read-only research inputs only, mode 600
+  research-backup.env     # least-privilege backup credentials only, mode 600
   keeper/                 # rsynced from repo keeper/
     settlement-cache.json # observed pre-prune settlement fractions — DO NOT LOSE
   writer/                 # rsynced from repo writer/
@@ -150,8 +153,8 @@ allows only 5 failed validations per hostname per hour.
 cd <repo root>
 forge build   # only if contracts changed
 
-rsync -az --delete --exclude node_modules --exclude .env --exclude settlement-cache.json keeper/ root@91.99.94.25:/opt/hype/keeper/
-rsync -az --delete --exclude node_modules --exclude .env --exclude waitlist.json writer/ root@91.99.94.25:/opt/hype/writer/
+rsync -az --delete --exclude node_modules --exclude .env --exclude research --exclude settlement-cache.json keeper/ root@91.99.94.25:/opt/hype/keeper/
+rsync -az --delete --exclude node_modules --exclude .env --exclude research --exclude waitlist.json writer/ root@91.99.94.25:/opt/hype/writer/
 # Registry is BOX-AUTHORITATIVE (rotate.timer rewrites it nightly) — pull, never push:
 rsync -az root@91.99.94.25:/opt/hype/registry/ registry/
 
@@ -179,7 +182,7 @@ root. After changing rotation code:
 
 ```bash
 rsync -az --delete --exclude node_modules --exclude .git --exclude cache --exclude out \
-  --exclude broadcast --exclude web --exclude '.env*' --exclude registry --exclude '*.html' \
+  --exclude broadcast --exclude web --exclude research --exclude '.env*' --exclude registry --exclude '*.html' \
   ./ root@91.99.94.25:/opt/hype/repo/
 ssh root@91.99.94.25 'cd /opt/hype/repo && node tools/rotate-markets.mjs --dry-run'  # sanity
 ssh root@91.99.94.25 'systemctl start rotate.service'                                # live run
@@ -199,6 +202,77 @@ curl https://writer.overround.xyz/health
 The keeper logs only on events, not on every poll, so silence in its journal is normal.
 `systemctl is-active` is the liveness check. On a healthy start it logs the vault config for each
 market followed by `keeper started { vaults: N, pollIntervalMs: 5000 }`.
+
+## Isolated correlation research operations
+
+Research data lives only below `/opt/hype/research`; writer/repo rsync destinations must never be
+changed to that directory. Before separately approving unit installation, create the private state
+directory without replacing existing research data:
+
+```bash
+ssh -o BatchMode=yes root@91.99.94.25 'install -d -o hype -g hype -m 0700 /opt/hype/research /opt/hype/research/state'
+```
+
+The immutable inputs are under `facts/source-registries/`, `facts/baselines/`, `raw/`, and
+`manifests/`. Derived returns, candidates, validation sidecars, promotion receipts, journals,
+operator state, and HTML evidence are under `derived/`, `artifacts/`, `journal/`, `state/`, and
+`reports/`. Never delete or replace this tree during a deploy. Verify it around rotation:
+
+```bash
+ssh -o BatchMode=yes root@91.99.94.25 'test -d /opt/hype/research && stat -c "%U:%G %a %n" /opt/hype/research /opt/hype/research/state && test -r /opt/hype/registry/correlation-sources.json'
+ssh -o BatchMode=yes root@91.99.94.25 'systemctl start rotate.service && test -d /opt/hype/research && test -r /opt/hype/registry/correlation-sources.json'
+```
+
+`tools/rotate-markets.mjs` reads and parses `correlation-sources.json` before calling
+`bigBlocks("on")`. The box-authoritative `markets.json` remains untouched by the separately
+approved, non-destructive mapping install:
+
+```bash
+scp -o BatchMode=yes registry/correlation-sources.json root@91.99.94.25:/opt/hype/registry/correlation-sources.json.new
+ssh -o BatchMode=yes root@91.99.94.25 'chown hype:hype /opt/hype/registry/correlation-sources.json.new && mv -f /opt/hype/registry/correlation-sources.json.new /opt/hype/registry/correlation-sources.json'
+```
+
+`/opt/hype/research.env` is owned by `hype:hype`, mode `0600`, and contains only these public or
+read-only inputs: `RESEARCH_ROOT`, `RESEARCH_INFO_API_URL`, `WRITER_RPC`,
+`PARLAY_VAULT_ADDRESS`, `PARLAY_DEPLOY_BLOCK`, `CORRELATION_SOURCES_FILE`,
+`CORRELATIONS_FILE`, `MARKETS_FILE`, `RESEARCH_MANIFEST_FILE`,
+`RESEARCH_DERIVED_MANIFEST_FILE`, and `RESEARCH_CANDIDATE_FILE`. It contains no signer, poker,
+invite, waitlist, deployer, or keeper secret. `/opt/hype/research-backup.env` is separate, mode
+`0600`, is never loaded by writer/keeper, and contains only `RESEARCH_BACKUP_ENDPOINT`,
+`RESEARCH_BACKUP_REGION`, `RESEARCH_BACKUP_BUCKET`, `RESEARCH_BACKUP_ACCESS_KEY`, and
+`RESEARCH_BACKUP_SECRET_KEY` for a least-privilege write/read bucket principal.
+
+The bounded units are `hype-research-collector.{service,timer}` (hourly),
+`hype-research-daily.{service,timer}` (01:15 UTC), and
+`hype-research-backup.{service,timer}` (03:30 UTC). Unit installation and enablement require a
+separate approval. After that approval, install non-interactively and verify on Ubuntu before
+enabling:
+
+```bash
+scp -o BatchMode=yes ops/systemd/hype-research-* root@91.99.94.25:/tmp/
+ssh -o BatchMode=yes root@91.99.94.25 'cp -f /tmp/hype-research-* /etc/systemd/system/ && systemd-analyze verify /etc/systemd/system/hype-research-* && systemctl daemon-reload && systemctl enable --now hype-research-collector.timer hype-research-daily.timer hype-research-backup.timer'
+```
+
+Daily processing derives, calibrates, replays, joins, and reports; it never promotes or restarts a
+service. Promotion is manual and explicit, and the same command rolls back by atomically promoting
+a previously verified candidate:
+
+```bash
+ssh -o BatchMode=yes root@91.99.94.25 'cd /opt/hype/writer && /usr/bin/npm run research -- promote --candidate artifacts/candidates/<model-version>.json'
+```
+
+The optional backup uploads the verified immutable closure to S3-compatible storage and records
+its last verified object hash in `state/backup.json`. Production acceptance requires the daily
+off-box backup to be configured and green; a missing configuration reports `disabled`, while a
+lock, HTTP, checksum, or total timeout fails the unit.
+
+Health checks:
+
+```bash
+ssh -o BatchMode=yes root@91.99.94.25 'systemctl list-timers --all hype-research-* --no-pager && systemctl status hype-research-collector.service hype-research-daily.service hype-research-backup.service --no-pager'
+ssh -o BatchMode=yes root@91.99.94.25 'journalctl -u hype-research-collector.service -u hype-research-daily.service -u hype-research-backup.service -n 100 --no-pager'
+ssh -o BatchMode=yes root@91.99.94.25 'test -s /opt/hype/research/state/backup.json && find /opt/hype/research/reports -type f -name "*.html" -print'
+```
 
 ## Recovering the settlement cache
 

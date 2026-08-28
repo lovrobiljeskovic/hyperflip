@@ -1,0 +1,10 @@
+[Unit]
+Description=collect hype research observations hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=hype-research-collector.service
+
+[Install]
+WantedBy=timers.target

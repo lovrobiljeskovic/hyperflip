@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
@@ -14,11 +15,51 @@ import type { CorrelationArtifact } from "./types.js";
 import { parseMarkets } from "../markets.js";
 import { promoteCandidate } from "./artifacts.js";
 import { joinEvents } from "./journal.js";
+import { backupResearch } from "./backup.js";
+import { generateReport } from "./report.js";
 
-if (process.argv[2] !== "collect" && process.argv[2] !== "derive" && process.argv[2] !== "calibrate" && process.argv[2] !== "replay" && process.argv[2] !== "promote" && process.argv[2] !== "join") {
-  console.error("usage: npm run research -- collect|derive|calibrate|replay|promote|join");
+const command = process.argv[2];
+const commands = ["collect", "derive", "calibrate", "replay", "promote", "join", "report", "daily", "backup", "check"];
+
+if (!commands.includes(command)) {
+  console.error(`usage: npm run research -- ${commands.join("|")}`);
   process.exitCode = 2;
-} else if (process.argv[2] === "collect") {
+} else if (command === "daily") {
+  for (const step of ["derive", "calibrate", "replay", "join", "report"]) {
+    const result = spawnSync(process.execPath, ["--import", "tsx", "src/research/cli.ts", step], { cwd: process.cwd(), env: process.env, stdio: "inherit" });
+    if (result.status !== 0) { process.exitCode = result.status ?? 1; break; }
+  }
+} else if (command === "check") {
+  const { NODE_TEST_CONTEXT: _, ...checkEnv } = process.env;
+  const result = spawnSync(process.execPath, ["--import", "tsx", "--test", "--test-name-pattern=research end-to-end", "test/research-end-to-end.test.ts"], { cwd: process.cwd(), env: checkEnv, stdio: "inherit" });
+  process.exitCode = result.status ?? 1;
+} else if (command === "report") {
+  const root = process.env.RESEARCH_ROOT;
+  const candidateFile = process.env.RESEARCH_CANDIDATE_FILE;
+  if (!root || !candidateFile) {
+    console.error("RESEARCH_ROOT and RESEARCH_CANDIDATE_FILE are required");
+    process.exitCode = 2;
+  } else {
+    const output = generateReport(resolve(root), resolve(candidateFile));
+    console.log(JSON.stringify({ path: output.path, sha256: sha256(output.bytes) }));
+  }
+} else if (command === "backup") {
+  const root = process.env.RESEARCH_ROOT;
+  if (!root) {
+    console.error("RESEARCH_ROOT is required");
+    process.exitCode = 2;
+  } else {
+    const config = {
+      endpoint: process.env.RESEARCH_BACKUP_ENDPOINT,
+      region: process.env.RESEARCH_BACKUP_REGION,
+      bucket: process.env.RESEARCH_BACKUP_BUCKET,
+      accessKey: process.env.RESEARCH_BACKUP_ACCESS_KEY,
+      secret: process.env.RESEARCH_BACKUP_SECRET_KEY,
+    };
+    if (Object.values(config).some((value) => !value)) console.log(JSON.stringify({ status: "disabled", reason: "backup configuration absent" }));
+    else console.log(JSON.stringify(await backupResearch(resolve(root), config as { endpoint: string; region: string; bucket: string; accessKey: string; secret: string })));
+  }
+} else if (command === "collect") {
   const root = process.env.RESEARCH_ROOT;
   const registryFile = process.env.CORRELATION_SOURCES_FILE;
   if (!root || !registryFile) {
@@ -33,7 +74,7 @@ if (process.argv[2] !== "collect" && process.argv[2] !== "derive" && process.arg
     console.log(JSON.stringify(summary));
     if (summary.failures.length) process.exitCode = 1;
   }
-} else if (process.argv[2] === "derive") {
+} else if (command === "derive") {
   const root = process.env.RESEARCH_ROOT;
   const manifestFile = process.env.RESEARCH_MANIFEST_FILE;
   const asOfMs = Number(process.env.RESEARCH_AS_OF_MS);
@@ -45,7 +86,7 @@ if (process.argv[2] !== "collect" && process.argv[2] !== "derive" && process.arg
     const output = deriveReturns(resolve(root), JSON.parse(readFileSync(resolve(manifestFile), "utf8")), { asOfMs, lookbackMs });
     console.log(JSON.stringify(output));
   }
-} else if (process.argv[2] === "calibrate") {
+} else if (command === "calibrate") {
   const root = process.env.RESEARCH_ROOT;
   const manifestFile = process.env.RESEARCH_MANIFEST_FILE;
   const derivedManifestPath = process.env.RESEARCH_DERIVED_MANIFEST_FILE;
@@ -56,7 +97,7 @@ if (process.argv[2] !== "collect" && process.argv[2] !== "derive" && process.arg
     const artifact = calibrate({ root: resolve(root), manifest: JSON.parse(readFileSync(resolve(manifestFile), "utf8")), derivedManifestPath });
     console.log(JSON.stringify({ modelVersion: artifact.modelVersion, dataAsOf: artifact.dataAsOf }));
   }
-} else if (process.argv[2] === "replay") {
+} else if (command === "replay") {
   const root = process.env.RESEARCH_ROOT;
   const candidateFile = process.env.RESEARCH_CANDIDATE_FILE;
   const derivedManifestFile = process.env.RESEARCH_DERIVED_MANIFEST_FILE;
@@ -92,7 +133,7 @@ if (process.argv[2] !== "collect" && process.argv[2] !== "derive" && process.arg
     });
     console.log(JSON.stringify({ modelVersion: report.modelVersion, decision: report.decision }));
   }
-} else if (process.argv[2] === "join") {
+} else if (command === "join") {
   const root = process.env.RESEARCH_ROOT;
   const rpc = process.env.WRITER_RPC;
   const vault = process.env.PARLAY_VAULT_ADDRESS;

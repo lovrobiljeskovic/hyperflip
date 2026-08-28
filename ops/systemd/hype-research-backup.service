@@ -1,0 +1,19 @@
+[Unit]
+Description=hype research off-box backup
+ConditionPathExists=/opt/hype/research-backup.env
+After=network-online.target
+After=hype-research-daily.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hype
+WorkingDirectory=/opt/hype/writer
+EnvironmentFile=/opt/hype/research.env
+EnvironmentFile=/opt/hype/research-backup.env
+ExecStart=/usr/bin/flock -w 7200 /opt/hype/research/state/job.lock /usr/bin/npm run research -- backup
+Nice=15
+IOSchedulingClass=idle
+CPUQuota=25%
+MemoryMax=512M
+TimeoutStartSec=4h

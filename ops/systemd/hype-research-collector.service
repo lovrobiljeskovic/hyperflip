@@ -1,0 +1,16 @@
+[Unit]
+Description=hype research hourly collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hype
+WorkingDirectory=/opt/hype/writer
+EnvironmentFile=/opt/hype/research.env
+ExecStart=/usr/bin/flock -w 300 /opt/hype/research/state/job.lock /usr/bin/npm run research -- collect
+Nice=10
+IOSchedulingClass=idle
+CPUQuota=25%
+MemoryMax=512M
+TimeoutStartSec=15m
