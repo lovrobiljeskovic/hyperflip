@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildTree, jointProbWad, pairCorrelation, parseCorrelations, type CorrLeg } from "../src/correlation.js";
+import { buildTree, jointProbWad, pairCorrelation, parseCorrelations, riskAdjustedJointProbWad, type CorrLeg } from "../src/correlation.js";
 import { jointProbability, normInv, TooComplexError } from "../src/copula.js";
 
 const WAD = 10n ** 18n;
@@ -95,6 +95,11 @@ test("correlated same-direction legs price above the independent product", () =>
   const legs = [leg(0.132, "equity", "NVDA"), leg(0.44, "equity", "SP500")];
   const joint = jointProbWad(legs, TABLE, 0);
   assert.ok(joint > wad(0.132 * 0.44), `${joint}`);
+});
+
+test("risk-adjusted joint probabilities preserve the existing golden integration", () => {
+  const legs = [leg(0.132, "equity", "NVDA"), leg(0.44, "equity", "SP500")];
+  assert.equal(riskAdjustedJointProbWad(legs, TABLE, 0.2), jointProbWad(legs, TABLE, 0.2));
 });
 
 test("anti-correlated legs price below the independent product", () => {
@@ -250,7 +255,13 @@ test("a ticket past the quadrature budget is refused, not integrated for seconds
     .concat(["NVDA", "SP500"].flatMap((u) => [leg(0.4, "equity", u), leg(0.35, "equity", u)]));
   assert.equal(legs.length, 8);
   const t0 = performance.now();
-  assert.throws(() => jointProbWad(legs, TABLE, 0.2), TooComplexError);
+  const cost = () => {
+    try { jointProbWad(legs, TABLE, 0.2); assert.fail("expected TooComplexError"); }
+    catch (error) { assert.ok(error instanceof TooComplexError); return error.cost; }
+  };
+  const first = cost();
+  assert.equal(cost(), first, "work estimates must be deterministic");
+  assert.ok(first > 4_000_000);
   assert.ok(performance.now() - t0 < 500, "the refusal must be cheap, not a full integration");
 });
 

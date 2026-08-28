@@ -6,7 +6,7 @@ import type { Address, Hex } from "viem";
 import { handleQuote, validateQuoteRequest, newMetrics, startServer, type QuoteDeps } from "../src/server.js";
 import { ExposureBook } from "../src/exposure.js";
 import { RateLimiter } from "../src/waitlist.js";
-import { parseCorrelations } from "../src/correlation.js";
+import { jointProbWad, parseCorrelations } from "../src/correlation.js";
 import { WAD } from "../src/pure.js";
 import type { WriterConfig } from "../src/config.js";
 
@@ -25,6 +25,13 @@ const SP500_VAULT = "0x8888888888888888888888888888888888888888" as const;
 const BAND_VAULT = "0x9999999999999999999999999999999999999999" as Address;
 
 const CORRELATIONS = parseCorrelations(readFileSync(new URL("../../registry/correlations.json", import.meta.url), "utf8"));
+const UNDERLYINGS = ["BTC", "ETH", "NVDA", "SP500", "GOLD"];
+const pair = (a: string, b: string) => [a, b].sort().join(":");
+const MODEL: WriterConfig["model"] = {
+  version: "fixture", dataAsOf: "2026-08-28T00:00:00.000Z", dataManifestSha256: "a".repeat(64), sourceRegistrySha256: "b".repeat(64),
+  ageMs: 0, multiAssetEnabled: true, eligibleUnderlyings: new Set(UNDERLYINGS), quarantinedUnderlyings: new Map(), fallbackEligible: new Set(),
+  pairEligibility: new Map(UNDERLYINGS.flatMap((left, index) => UNDERLYINGS.slice(index + 1).map((right) => [pair(left, right), { status: "direct" as const, reason: "fixture" }]))),
+};
 
 const FIXTURE_MARKETS = new Map(
   (
@@ -57,7 +64,7 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     infoApiUrl: "", port: 0, edgeBps: 0n, minPremiumBps: 100n, minLegs: 2,
     maxStake: 10_000_000n, perMarketCap: 1_000_000_000n, perClusterCap: 1_000_000_000n,
     perCodeReservedCap: 1_000_000_000n,
-    rhoBandPct: 0.2, correlations: CORRELATIONS, legEdgeBps: 0n, quoteTtlMs: 30_000,
+    rhoBandPct: 0.2, correlations: CORRELATIONS, model: MODEL, legEdgeBps: 0n, quoteTtlMs: 30_000,
     spotPxStaleMs: 60_000,
     minBookDepthWad: 0n,
     lockoutMs: 600_000, pokerIntervalMs: 15_000, deployBlock: 0n,
@@ -90,6 +97,7 @@ function deps(overrides: Partial<QuoteDeps> = {}): QuoteDeps {
     exposure: new ExposureBook((v) => c.markets.get(v)?.cluster),
     chainId: 31337,
     fetchLegPriceWad: async () => WAD / 2n,
+    bestEstimateJointProbWad: (legs) => Promise.resolve(jointProbWad(legs, c.correlations, 0)),
     readAllowance: async () => 1_000_000_000n,
     readSettled: async () => new Set(),
     sign: async () => "0xsig" as Hex,
@@ -116,6 +124,18 @@ test("happy path: returns signed quote, reserves exposure", async () => {
   assert.equal(j.sig, "0xsig");
   assert.equal(d.exposure.reservedGlobal(d.now()), 7_422_341n); // maxPayout - premium
   assert.equal(d.metrics.quoted, 1);
+});
+
+test("best-estimate worker failure returns pricing-unavailable before reservation or signing", async () => {
+  let signed = false;
+  const d = deps({
+    bestEstimateJointProbWad: async () => { throw new Error("worker down"); },
+    sign: async () => { signed = true; return "0xsig" as Hex; },
+  });
+  const r = await handleQuote(d, goodBody);
+  assert.deepEqual(r, { status: 503, json: { error: "pricing-unavailable" } });
+  assert.equal(signed, false);
+  assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
 });
 
 test("same-cluster same-direction legs now quote instead of 400", async () => {
@@ -255,6 +275,45 @@ test("validation: unknown vault, leg count, stake cap, lockout", () => {
   assert.equal((validateQuoteRequest(fat, c, 0) as { reason: string }).reason, "stake-too-big");
   // V2 expiryMs = 2_000_000, lockout 600_000 -> refuse from t = 1_400_000
   assert.equal((validateQuoteRequest(goodBody, c, 1_500_000) as { reason: string }).reason, "expiry-lockout");
+});
+
+test("correlation eligibility rejects stale, missing, ineligible, quarantined, and absent pairs through request validation", () => {
+  const cases: WriterConfig["model"][] = [
+    { ...MODEL, multiAssetEnabled: false },
+    { ...MODEL, eligibleUnderlyings: new Set(["BTC"]) },
+    { ...MODEL, quarantinedUnderlyings: new Map([["ETH", "stale"]]) },
+    { ...MODEL, pairEligibility: new Map() },
+    { ...MODEL, pairEligibility: new Map([[pair("BTC", "ETH"), { status: "fallback", reason: "fixture" }]]) },
+  ];
+  for (const model of cases) {
+    assert.deepEqual(validateQuoteRequest(goodBody, cfg({ model }), 1_000_000), { ok: false, status: 400, reason: "correlation-unavailable" });
+  }
+});
+
+test("correlation eligibility admits only explicit operator-approved fallback pairs", () => {
+  const model = {
+    ...MODEL,
+    fallbackEligible: new Set(["BTC", "ETH"]),
+    pairEligibility: new Map([[pair("BTC", "ETH"), { status: "fallback" as const, reason: "operator-reviewed" }]]),
+  };
+  assert.equal(validateQuoteRequest(goodBody, cfg({ model }), 1_000_000).ok, true);
+});
+
+test("correlation eligibility checks every pair in a multi-underlying ticket", () => {
+  const three = body({ legs: [legOn(BTC_VAULT_A, true), legOn(V2, true), legOn(NVDA_VAULT, true)] });
+  const pairEligibility = new Map(MODEL.pairEligibility);
+  pairEligibility.delete(pair("ETH", "NVDA"));
+  assert.deepEqual(validateQuoteRequest(three, cfg({ model: { ...MODEL, pairEligibility } }), 1_000_000), { ok: false, status: 400, reason: "correlation-unavailable" });
+});
+
+test("same-underlying tickets remain eligible when multi-asset correlation is disabled", () => {
+  const same = body({ legs: [legOn(BTC_VAULT_A, true), legOn(BTC_VAULT_B, false)] });
+  assert.equal(validateQuoteRequest(same, cfg({ model: { ...MODEL, multiAssetEnabled: false, eligibleUnderlyings: new Set() } }), 1_000_000).ok, true);
+});
+
+test("band markets remain unavailable in cross-underlying correlation tickets", () => {
+  const mixed = body({ legs: [legOn(BAND_VAULT, true), legOn(BTC_VAULT_A, true)] });
+  assert.deepEqual(validateQuoteRequest(mixed, cfg(), 1_000_000), { ok: false, status: 400, reason: "correlation-unavailable" });
 });
 
 test("settled leg: 409", async () => {

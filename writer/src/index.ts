@@ -3,6 +3,7 @@ import { createPublicClient, createWalletClient, erc20Abi, fallback, http, type 
 import { privateKeyToAccount } from "viem/accounts";
 import { parlayVaultAbi } from "./abi.js";
 import { loadConfig, syncedPerCodeReservedCap } from "./config.js";
+import { CorrelationWorker } from "./correlationWorker.js";
 import { ExposureBook } from "./exposure.js";
 import { fetchBestAskWad } from "./infoApi.js";
 import { buildPriceFreshness, makeLegPriceFetcher, readSpotPxWad } from "./spotPx.js";
@@ -20,6 +21,7 @@ const RECEIPT_TIMEOUT_MS = 60_000;
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
+  const correlationWorker = new CorrelationWorker();
   // Testnet RPCs rate-limit bursts (-32005, retryable in viem) and the poker's cold-start
   // rescan is one — deployBlock..head in 1000-block chunks, two getLogs each. Retry hard with a
   // long backoff instead of dying on the limiter, then fall through to the next endpoint.
@@ -103,6 +105,7 @@ async function main(): Promise<void> {
       const coin = leg.isYes ? market.coinYes : market.coinNo;
       return legPriceFetcher.fetch(coin);
     },
+    bestEstimateJointProbWad: (legs) => correlationWorker.bestEstimate(legs, cfg.correlations),
     readAllowance: () =>
       publicClient.readContract({
         address: usdcAddress,
@@ -216,7 +219,7 @@ async function main(): Promise<void> {
       perMarket,
     };
   });
-  console.log(JSON.stringify({ at: new Date().toISOString(), event: "writer-started", port: cfg.port, chainId }));
+  console.log(JSON.stringify({ at: new Date().toISOString(), event: "writer-started", port: cfg.port, chainId, modelVersion: cfg.model.version, dataAsOf: cfg.model.dataAsOf }));
 }
 
 main().catch((err) => {

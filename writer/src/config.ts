@@ -3,8 +3,10 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isAddress, type Address } from "viem";
-import { parseCorrelations, type CorrelationTable } from "./correlation.js";
+import type { CorrelationTable } from "./correlation.js";
 import { BPS, parseDecimalToUnits } from "./pure.js";
+import { parseCorrelationArtifact, type ArtifactModelMetadata } from "./research/artifacts.js";
+import { parseSourceRegistry } from "./research/types.js";
 
 // .env lives at the repo root, one level above writer/ — same pattern as keeper/config.ts.
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -81,9 +83,11 @@ export interface WriterConfig {
    * rho and quotes the house-favorable end, so the house is paid for the fact
    * that the loadings table is hand-set rather than measured. */
   rhoBandPct: number;
-  /** Factor loadings, loaded from CORRELATIONS_FILE. Writer-only — deliberately
+  /** Factor loadings, loaded from CORRELATION_ARTIFACT_FILE. Writer-only — deliberately
    * not part of markets.json, which GET /markets serves verbatim. */
   correlations: CorrelationTable;
+  /** Validated champion metadata and source/pair admission state. */
+  model: ArtifactModelMetadata;
   /** Extra edge (bps) per leg past the first. Base edge is flat in leg count,
    * so without this a long ticket earns the same margin as a short one while
    * carrying far more risk. Set to 0 to restore flat pricing. */
@@ -211,11 +215,11 @@ export function syncedPerCodeReservedCap(
   return envWasSet ? current : defaultPerCodeReservedCap(maxStake, chainMinPremiumBps);
 }
 
-export function loadConfig(): WriterConfig {
+export function loadConfig(nowMs = Date.now()): WriterConfig {
   const registryJson = readFileSync(path.resolve(here, "../..", requireEnv("MARKETS_FILE")), "utf8");
-  const correlations = parseCorrelations(
-    readFileSync(path.resolve(here, "../..", process.env.CORRELATIONS_FILE ?? "registry/correlations.json"), "utf8"),
-  );
+  const sources = parseSourceRegistry(readFileSync(path.resolve(here, "../..", process.env.CORRELATION_SOURCES_FILE ?? "registry/correlation-sources.json"), "utf8"));
+  const champion = parseCorrelationArtifact(readFileSync(path.resolve(here, "../..", requireEnv("CORRELATION_ARTIFACT_FILE")), "utf8"), nowMs, sources);
+  const { table: correlations, model } = champion;
   // Boot-time signal, not per-request noise: the shipped table's shrunk
   // clusters don't change quote to quote, so this fires once here rather than
   // from the pure parse function on every call.
@@ -283,6 +287,7 @@ export function loadConfig(): WriterConfig {
       : defaultPerCodeReservedCap(maxStake, minPremiumBps),
     rhoBandPct: Number(process.env.RHO_BAND_PCT ?? 0.2),
     correlations,
+    model,
     legEdgeBps: BigInt(process.env.LEG_EDGE_BPS ?? 300),
     quoteTtlMs: Number(process.env.QUOTE_TTL_MS ?? 30_000),
     spotPxStaleMs,

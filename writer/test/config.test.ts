@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   parseMarkets,
   parseInviteCodes,
@@ -125,6 +127,7 @@ test("loadConfig throws on a non-numeric SPOT_PX_STALE_MS", () => {
     "POKER_PRIVATE_KEY",
     "TESTNET_RPC",
     "SPOT_PX_STALE_MS",
+    "CORRELATION_ARTIFACT_FILE",
   ];
   const saved = new Map(keys.map((k) => [k, process.env[k]]));
   try {
@@ -139,6 +142,7 @@ test("loadConfig throws on a non-numeric SPOT_PX_STALE_MS", () => {
     process.env.POKER_PRIVATE_KEY = `0x${"22".repeat(32)}`;
     process.env.TESTNET_RPC = "http://localhost:1";
     process.env.SPOT_PX_STALE_MS = "not-a-number";
+    process.env.CORRELATION_ARTIFACT_FILE = "writer/test/fixtures/research/artifact-valid.json";
     assert.throws(() => loadConfig(), /SPOT_PX_STALE_MS/);
     // 0 = gate explicitly off (testnet: empty books never stamp freshness),
     // mapped to Infinity so isSpotPxStale never refuses.
@@ -150,6 +154,46 @@ test("loadConfig throws on a non-numeric SPOT_PX_STALE_MS", () => {
       else process.env[k] = v;
     }
   }
+});
+
+function withConfigEnv(artifactFile: string, run: () => void): void {
+  const values: Record<string, string> = {
+    MARKETS_FILE: "writer/test/fixtures/markets.json", MAX_STAKE: "1000000", PER_MARKET_CAP: "1000000", PER_CLUSTER_CAP: "1000000", INVITE_CODES: "test",
+    PARLAY_VAULT_ADDRESS: "0x1111111111111111111111111111111111111111", WRITER_ADDRESS: "0x2222222222222222222222222222222222222222",
+    QUOTE_SIGNER_PRIVATE_KEY: `0x${"11".repeat(32)}`, POKER_PRIVATE_KEY: `0x${"22".repeat(32)}`, TESTNET_RPC: "http://localhost:1",
+    CORRELATION_ARTIFACT_FILE: artifactFile, CORRELATION_SOURCES_FILE: "registry/correlation-sources.json",
+  };
+  const saved = new Map(Object.keys(values).map((key) => [key, process.env[key]]));
+  try { Object.assign(process.env, values); run(); }
+  finally { for (const [key, value] of saved) value === undefined ? delete process.env[key] : process.env[key] = value; }
+}
+
+test("loadConfig refuses a malformed champion artifact", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-config-artifact-"));
+  try {
+    const artifact = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-valid.json", import.meta.url), "utf8"));
+    artifact.schemaVersion = 2;
+    const file = join(root, "champion.json");
+    writeFileSync(file, JSON.stringify(artifact));
+    withConfigEnv(file, () => assert.throws(() => loadConfig(Date.parse("2026-08-28T18:00:00.000Z")), /schemaVersion/));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a champion age at seven days disables only multi-asset correlation", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-config-stale-"));
+  try {
+    const now = Date.parse("2026-08-28T18:00:00.000Z");
+    const artifact = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-valid.json", import.meta.url), "utf8"));
+    artifact.dataAsOf = new Date(now - 7 * 86_400_000).toISOString();
+    const file = join(root, "champion.json");
+    writeFileSync(file, JSON.stringify(artifact));
+    withConfigEnv(file, () => {
+      const config = loadConfig(now);
+      assert.equal(config.model.ageMs, 7 * 86_400_000);
+      assert.equal(config.model.multiAssetEnabled, false);
+      assert.ok(config.correlations.underlyings.BTC);
+    });
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("the shipped correlations file parses and covers a registry's clusters and underlyings", () => {

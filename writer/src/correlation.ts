@@ -284,7 +284,7 @@ function resolveSameMarket(legs: CorrLeg[]): CorrLeg[] | null {
  * routes through this function, and a value at or above 1 would make
  * scaleLoadings take the square root of a negative number, quietly producing
  * NaN loadings and a meaningless price. */
-export function jointProbWad(legs: CorrLeg[], table: CorrelationTable, bandPct: number): bigint {
+export function riskAdjustedJointProbWad(legs: CorrLeg[], table: CorrelationTable, bandPct: number): bigint {
   const resolved = resolveSameMarket(legs);
   if (resolved === null) return 0n;
   const band = Number.isFinite(bandPct) ? Math.min(Math.max(bandPct, 0), 0.99) : 0;
@@ -299,3 +299,6 @@ export function jointProbWad(legs: CorrLeg[], table: CorrelationTable, bandPct: 
   }
   return BigInt(Math.round(best * Number(WAD)));
 }
+
+/** Backwards-compatible name for the live, risk-adjusted price path. */
+export const jointProbWad = riskAdjustedJointProbWad;

@@ -10,9 +10,11 @@ import { sha256 } from "./store.js";
 import { parseSourceRegistry } from "./types.js";
 import type { ReturnRecord } from "./returns.js";
 import type { CorrelationArtifact } from "./types.js";
+import { parseMarkets } from "../config.js";
+import { promoteCandidate } from "./artifacts.js";
 
-if (process.argv[2] !== "collect" && process.argv[2] !== "derive" && process.argv[2] !== "calibrate" && process.argv[2] !== "replay") {
-  console.error("usage: npm run research -- collect|derive|calibrate|replay");
+if (process.argv[2] !== "collect" && process.argv[2] !== "derive" && process.argv[2] !== "calibrate" && process.argv[2] !== "replay" && process.argv[2] !== "promote") {
+  console.error("usage: npm run research -- collect|derive|calibrate|replay|promote --candidate <path>");
   process.exitCode = 2;
 } else if (process.argv[2] === "collect") {
   const root = process.env.RESEARCH_ROOT;
@@ -52,7 +54,7 @@ if (process.argv[2] !== "collect" && process.argv[2] !== "derive" && process.arg
     const artifact = calibrate({ root: resolve(root), manifest: JSON.parse(readFileSync(resolve(manifestFile), "utf8")), derivedManifestPath });
     console.log(JSON.stringify({ modelVersion: artifact.modelVersion, dataAsOf: artifact.dataAsOf }));
   }
-} else {
+} else if (process.argv[2] === "replay") {
   const root = process.env.RESEARCH_ROOT;
   const candidateFile = process.env.RESEARCH_CANDIDATE_FILE;
   const derivedManifestFile = process.env.RESEARCH_DERIVED_MANIFEST_FILE;
@@ -87,5 +89,21 @@ if (process.argv[2] !== "collect" && process.argv[2] !== "derive" && process.arg
       baselineFile: resolve(baselineFile), series: { rows, sources, manifestHash: manifest.dataManifestSha256 }, seed,
     });
     console.log(JSON.stringify({ modelVersion: report.modelVersion, decision: report.decision }));
+  }
+} else {
+  const root = process.env.RESEARCH_ROOT;
+  const sourcesFile = process.env.CORRELATION_SOURCES_FILE;
+  const marketsFile = process.env.MARKETS_FILE;
+  const args = process.argv.slice(3);
+  if (!root || !sourcesFile || !marketsFile || args.length !== 2 || args[0] !== "--candidate" || !args[1]) {
+    console.error("RESEARCH_ROOT, CORRELATION_SOURCES_FILE, MARKETS_FILE, and --candidate <path> are required");
+    process.exitCode = 2;
+  } else {
+    const resolvedRoot = resolve(root);
+    const candidate = resolve(resolvedRoot, args[1]);
+    const sources = parseSourceRegistry(readFileSync(resolve(sourcesFile), "utf8"));
+    const markets = parseMarkets(readFileSync(resolve(marketsFile), "utf8"));
+    const receipt = promoteCandidate(resolvedRoot, candidate, sources, markets, Date.now());
+    console.log(JSON.stringify({ modelVersion: receipt.modelVersion, dataAgeMs: receipt.dataAgeMs, manifestHash: receipt.dataManifestSha256, validationState: receipt.validationState, championHash: receipt.championSha256 }));
   }
 }

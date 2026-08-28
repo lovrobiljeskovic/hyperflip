@@ -2,7 +2,7 @@ import http from "node:http";
 import { isAddress, type Address, type Hex } from "viem";
 import type { WriterConfig } from "./config.js";
 import { TooComplexError } from "./copula.js";
-import { jointProbWad, type CorrLeg } from "./correlation.js";
+import { riskAdjustedJointProbWad, type CorrLeg } from "./correlation.js";
 import { ExposureBook } from "./exposure.js";
 import { dominatingLeg, edgeBreakdown, priceParlay, totalEdgeBps } from "./pricing.js";
 import type { ParlayQuote, QuoteLeg } from "./quotes.js";
@@ -27,6 +27,7 @@ export interface QuoteDeps {
   exposure: ExposureBook;
   chainId: number;
   fetchLegPriceWad(leg: QuoteLeg): Promise<bigint>;
+  bestEstimateJointProbWad(legs: CorrLeg[]): Promise<bigint>;
   readAllowance(): Promise<bigint>;
   /** Lowercase vault addresses of legs already settled. */
   readSettled(vaults: Address[]): Promise<Set<string>>;
@@ -50,6 +51,22 @@ export interface QuoteDeps {
 type Validated =
   | { ok: true; taker: Address; legs: QuoteLeg[]; stake: bigint; inviteCode: string }
   | { ok: false; status: number; reason: string };
+
+const pairKey = (left: string, right: string): string => left < right ? `${left}:${right}` : `${right}:${left}`;
+
+export function correlationEligibility(legs: QuoteLeg[], cfg: WriterConfig): string | null {
+  const markets = legs.map((leg) => cfg.markets.get(leg.vault.toLowerCase())!);
+  const underlyings = [...new Set(markets.map((market) => market.underlying))].sort();
+  if (underlyings.length <= 1) return null;
+  if (!cfg.model.multiAssetEnabled || markets.some((market) => market.direction === "band")) return "correlation-unavailable";
+  for (const underlying of underlyings) if (!cfg.model.eligibleUnderlyings.has(underlying) || cfg.model.quarantinedUnderlyings.has(underlying)) return "correlation-unavailable";
+  for (let left = 0; left < underlyings.length; left++) for (let right = left + 1; right < underlyings.length; right++) {
+    const entry = cfg.model.pairEligibility.get(pairKey(underlyings[left], underlyings[right]));
+    if (!entry || entry.status === "quarantined") return "correlation-unavailable";
+    if (entry.status === "fallback" && (!cfg.model.fallbackEligible.has(underlyings[left]) || !cfg.model.fallbackEligible.has(underlyings[right]))) return "correlation-unavailable";
+  }
+  return null;
+}
 
 export function validateQuoteRequest(
   body: unknown,
@@ -85,6 +102,8 @@ export function validateQuoteRequest(
     }
     legs.push({ vault: l.vault as Address, isYes: l.isYes });
   }
+  const correlationReason = correlationEligibility(legs, cfg);
+  if (correlationReason) return { ok: false, status: 400, reason: correlationReason };
   let stake: bigint;
   try {
     stake = BigInt(b.stake as string);
@@ -168,7 +187,7 @@ export async function handleQuote(
   });
   let joint: bigint;
   try {
-    joint = jointProbWad(corrLegs, cfg.correlations, cfg.rhoBandPct);
+    joint = riskAdjustedJointProbWad(corrLegs, cfg.correlations, cfg.rhoBandPct);
   } catch (e) {
     // The writer is single-threaded, so a ticket whose factor tree costs
     // seconds to integrate would stall every other request and the poker with
@@ -176,6 +195,17 @@ export async function handleQuote(
     if (!(e instanceof TooComplexError)) throw e;
     reject(metrics, "ticket-too-complex");
     return { status: 400, json: { error: "ticket-too-complex" } };
+  }
+  let bestEstimate: bigint;
+  try {
+    bestEstimate = await deps.bestEstimateJointProbWad(corrLegs);
+  } catch (error) {
+    if (error instanceof TooComplexError) {
+      reject(metrics, "ticket-too-complex");
+      return { status: 400, json: { error: "ticket-too-complex" } };
+    }
+    reject(metrics, "pricing-unavailable");
+    return { status: 503, json: { error: "pricing-unavailable" } };
   }
 
   const edge = edgeBreakdown(v.legs.length, cfg.edgeBps, cfg.legEdgeBps);
@@ -251,6 +281,7 @@ export async function handleQuote(
       breakdown: {
         legPricesWad: pricesWad.map((p) => p.toString()),
         jointProbWad: joint.toString(),
+        bestEstimateJointProbWad: bestEstimate.toString(),
         edgeBps: edge.baseBps.toString(),
         legBps: edge.legBps.toString(),
       },
