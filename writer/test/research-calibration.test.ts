@@ -8,6 +8,7 @@ import { gzipSync } from "node:zlib";
 import { calibrate, fitHierarchical, type CalibrationInput } from "../src/research/calibration.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
 import type { CandleRecord, DataManifest, SourceEntry, SourceRegistry } from "../src/research/types.js";
+import type { ReturnRecord } from "../src/research/returns.js";
 
 const source = (underlying: string, cluster: SourceEntry["cluster"]): SourceEntry => ({
   schemaVersion: 1, underlying, sourceNetwork: "mainnet", sourceCoin: underlying, cluster,
@@ -31,11 +32,20 @@ test("hierarchical fit is non-negative and preserves the explained-variance ceil
   assert.ok(fit.implied.flat().every((value) => value >= 0));
 });
 
+test("hierarchical fit jointly caps global and cluster explained variance", () => {
+  const fit = fitHierarchical([
+    [1, 1, 0.5],
+    [1, 1, 0.5],
+    [0.5, 0.5, 1],
+  ], [source("A", "crypto"), source("B", "crypto"), source("C", "equity")]);
+  for (const loading of Object.values(fit.loadings.crypto)) assert.ok(loading.global ** 2 + loading.cluster ** 2 <= 0.99 + 1e-12);
+});
+
 const AS_OF_MS = Date.parse("2026-08-28T12:00:00.000Z");
 const HOUR = 3_600_000;
 const fixtureReturns = readFileSync(new URL("./fixtures/research/returns-small.jsonl", import.meta.url), "utf8");
 
-function calibrationRoot(): { root: string; input: CalibrationInput } {
+function calibrationRoot(options: { staleParticipatingUnderlying?: string; constantUnderlying?: string } = {}): { root: string; input: CalibrationInput } {
   const root = mkdtempSync(join(tmpdir(), "hype-research-calibration-"));
   const sources: SourceRegistry = {
     schemaVersion: 1,
@@ -44,7 +54,8 @@ function calibrationRoot(): { root: string; input: CalibrationInput } {
   const registryBytes = canonicalJson(sources);
   const registryHash = sha256(registryBytes);
   const latest = AS_OF_MS - 6 * HOUR;
-  const candles: CandleRecord[] = sources.sources.flatMap((entry) => [latest - HOUR, latest].map((openTimeMs, index) => ({
+  const candleTimes = options.staleParticipatingUnderlying ? [latest - 2 * HOUR, latest - HOUR, latest] : [latest - HOUR, latest];
+  const candles: CandleRecord[] = sources.sources.flatMap((entry) => candleTimes.map((openTimeMs, index) => ({
     schemaVersion: 1, source: "hyperliquid-info", sourceNetwork: "mainnet", underlying: entry.underlying,
     sourceCoin: entry.sourceCoin, interval: "1h", openTimeMs, closeTimeMs: openTimeMs + HOUR - 1,
     open: String(100 + index), high: String(100 + index), low: String(100 + index),
@@ -61,16 +72,24 @@ function calibrationRoot(): { root: string; input: CalibrationInput } {
     schemaVersion: 1,
     createdAt: "2026-08-28T12:00:00.000Z",
     sourceRegistrySha256: registryHash,
-    sourceRange: { fromMs: latest - HOUR, toMs: latest + HOUR - 1 },
+    sourceRange: { fromMs: candleTimes[0], toMs: latest + HOUR - 1 },
     underlyings: Object.fromEntries(sources.sources.map((entry) => [entry.underlying, {
-      rows: 2, firstUsableObservationMs: latest - HOUR, lastUsableObservationMs: latest, missingIntervals: [],
+      rows: candleTimes.length, firstUsableObservationMs: candleTimes[0], lastUsableObservationMs: latest, missingIntervals: [],
     }])),
     files: [
       { path: `facts/source-registries/${registryHash}.json`, bytes: Buffer.byteLength(registryBytes), sha256: registryHash, rows: 1, schemaVersion: 1 },
       { path: rawPath, bytes: rawBytes.length, sha256: sha256(rawBytes), rows: candles.length, schemaVersion: 1 },
     ],
   };
-  const derivedBytes = gzipSync(fixtureReturns);
+  const derivedText = options.staleParticipatingUnderlying || options.constantUnderlying
+    ? `${fixtureReturns.trim().split("\n").map((line) => {
+      const row = JSON.parse(line) as ReturnRecord;
+      if (row.underlying === options.staleParticipatingUnderlying) row.sourceKeys = [`mainnet:${row.underlying}:1h:${latest - 2 * HOUR}`];
+      if (row.underlying === options.constantUnderlying) row.value = 0;
+      return canonicalJson(row);
+    }).join("\n")}\n`
+    : fixtureReturns;
+  const derivedBytes = gzipSync(derivedText);
   const derivedPath = "derived/returns/2026/08/28/fixture.jsonl.gz";
   writeFileSync(join(root, derivedPath), derivedBytes);
   const derivedManifest = {
@@ -115,6 +134,31 @@ test("calibration rejects a derived return whose immutable manifest closure chan
     const derived = JSON.parse(readFileSync(fixture.input.derivedManifestPath, "utf8")) as { files: { path: string }[] };
     writeFileSync(join(fixture.root, derived.files[0].path), "changed");
     assert.throws(() => calibrate(fixture.input), /derived manifest file mismatch/);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("freshness ignores a late raw candle absent from participating return source keys", () => {
+  const fixture = calibrationRoot({ staleParticipatingUnderlying: "A" });
+  try {
+    const artifact = calibrate(fixture.input);
+    assert.deepEqual(artifact.quality.quarantinedUnderlyings.find((entry) => entry.underlying === "A"), { underlying: "A", reason: "trailing-source-stale" });
+    assert.ok(artifact.quality.pairEligibility.filter((entry) => entry.pair.includes("A")).every((entry) => entry.status === "quarantined" && entry.reason === "trailing-source-stale"));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("a constant synchronized pair takes the pair-local fallback instead of aborting calibration", () => {
+  const fixture = calibrationRoot({ constantUnderlying: "B" });
+  try {
+    const artifact = calibrate(fixture.input);
+    assert.deepEqual(artifact.quality.pairEligibility, [
+      { pair: ["A", "B"], status: "fallback", reason: "operator-reviewed-structured-fallback" },
+      { pair: ["A", "C"], status: "direct", reason: "quality-gates-passed" },
+      { pair: ["B", "C"], status: "fallback", reason: "operator-reviewed-structured-fallback" },
+    ]);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

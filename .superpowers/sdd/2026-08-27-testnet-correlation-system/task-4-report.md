@@ -85,3 +85,80 @@ Output: `tsc --noEmit` exited 0; 193 tests passed / 0 failed.
 ## Concerns
 
 - None.
+
+## Fix Round 1
+
+### Changes
+
+- Coordinate descent now rejects every candidate for which the fitted global and cluster loading squares exceed `0.99` together.
+- Schedule-aware freshness now sees only usable raw candles referenced by participating derived-return `sourceKeys`, matching `dataAsOf` and last-observation provenance.
+- A zero-variance synchronized pair now remains pair-local and follows its configured fallback/quarantine decision instead of aborting calibration.
+
+### Covering Tests and TDD Evidence
+
+Covering file: `writer/test/research-calibration.test.ts`.
+
+Initial RED command:
+
+```sh
+cd writer && ./node_modules/.bin/tsx --test --test-name-pattern='jointly caps|freshness ignores|constant synchronized' test/research-calibration.test.ts
+```
+
+Output: 0 passing / 3 failing. The joint-loading assertion exceeded `0.99`; the source with a non-participating late raw candle was not quarantined; and the constant-series fixture was incorrectly admitted as direct. Tightening the fixture to an exact zero series produced the intended numerical-failure RED:
+
+```sh
+cd writer && ./node_modules/.bin/tsx --test --test-name-pattern='constant synchronized' test/research-calibration.test.ts
+```
+
+Output: 0 passing / 1 failing with `weighted correlation requires non-constant series` escaping calibration.
+
+Focused GREEN command:
+
+```sh
+cd writer && ./node_modules/.bin/tsx --test --test-name-pattern='jointly caps|freshness ignores|constant synchronized' test/research-calibration.test.ts
+```
+
+Output: 3 passing / 0 failing.
+
+All Task 4 focused tests:
+
+```sh
+cd writer && ./node_modules/.bin/tsx --test test/research-matrix.test.ts test/research-calibration.test.ts
+```
+
+Output: 11 passing / 0 failing.
+
+Required research verification:
+
+```sh
+cd writer && npm run research:check -- --test-name-pattern='matrix|calibrat|candidate'
+```
+
+Output: 41 passing / 0 failing.
+
+Typecheck:
+
+```sh
+cd writer && npm run typecheck
+```
+
+Output: `tsc --noEmit` exited 0.
+
+Full writer verification:
+
+```sh
+cd writer && npm run check
+```
+
+Output: typecheck exited 0; 196 tests passed / 0 failed.
+
+### Self-Review
+
+- The loading constraint is evaluated before every coarse and refinement candidate; the zero/current candidate remains available, so no new convergence hole is introduced.
+- Freshness, `dataAsOf`, and `lastUsableObservationMs` now share the same participating immutable provenance.
+- Only the named non-constant-series numerical condition is converted into pair-local missing estimation; malformed input errors still propagate.
+- The default deterministic fixture still matches `expected-candidate.json` byte-for-byte.
+
+### Concerns
+
+- None.

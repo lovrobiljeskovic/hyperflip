@@ -61,6 +61,7 @@ function fit(target: number[][], sources: SourceEntry[], admitted?: Set<string>)
         let best = prior;
         let bestObjective = Number.POSITIVE_INFINITY;
         for (const candidate of candidates(name)) {
+          if (name === "global" ? clusterNames.some((cluster) => candidate ** 2 + values[cluster] ** 2 > 0.99) : candidate ** 2 + values.global ** 2 > 0.99) continue;
           values[name] = candidate;
           const score = objective();
           if (score < bestObjective - 1e-15 || (Math.abs(score - bestObjective) <= 1e-15 && candidate < best)) {
@@ -218,7 +219,7 @@ export function calibrate(input: CalibrationInput): CorrelationArtifact {
   const sourceReason = new Map<string, string | null>();
   for (const source of sources) {
     if (!source.eligible) sourceReason.set(source.underlying, "ineligible-source");
-    else if (!trailingFresh(source, (usable.get(source.underlying) ?? []).map((candle) => candle.openTimeMs), derived.manifest.window.asOfMs)) sourceReason.set(source.underlying, "trailing-source-stale");
+    else if (!trailingFresh(source, (usable.get(source.underlying) ?? []).filter((candle) => contributing.has(candleKey(candle))).map((candle) => candle.openTimeMs), derived.manifest.window.asOfMs)) sourceReason.set(source.underlying, "trailing-source-stale");
     else sourceReason.set(source.underlying, null);
   }
 
@@ -231,8 +232,12 @@ export function calibrate(input: CalibrationInput): CorrelationArtifact {
     const sample = alignReturns(derived.rows, a, b, derived.manifest.window);
     aligned.set(key, sample);
     if (sample.rows.length >= 2) {
-      const estimate = weightedCorrelation(sample.rows, 45, derived.manifest.window.asOfMs);
-      directEstimates.push({ pair: [a.underlying, b.underlying], ...estimate, eligible: sample.eligible && sourceReason.get(a.underlying) === null && sourceReason.get(b.underlying) === null });
+      try {
+        const estimate = weightedCorrelation(sample.rows, 45, derived.manifest.window.asOfMs);
+        directEstimates.push({ pair: [a.underlying, b.underlying], ...estimate, eligible: sample.eligible && sourceReason.get(a.underlying) === null && sourceReason.get(b.underlying) === null });
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== "weighted correlation requires non-constant series") throw error;
+      }
     }
   }
   const targets = structuredTargets(directEstimates, sources);
