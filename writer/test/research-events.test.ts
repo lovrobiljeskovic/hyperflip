@@ -73,12 +73,16 @@ test("event resume: checkpoints an inclusive 1,001-block scan before a later RPC
   const root = mkdtempSync(join(tmpdir(), "hype-event-resume-"));
   const chain = new FakeChain();
   addMint(chain, 1n, "0x01", 1n);
+  chain.logs.resolved.push({ blockNumber: 2n, blockHash: hash(2n), transactionHash: tx(2), logIndex: 1, args: { id: 1n, status: 2n } });
   appendQuoteDecision(root, quote("0x01"));
   chain.failFrom = 1000n;
 
   await assert.rejects(joinEvents(root, deps(chain)), /simulated RPC failure/);
   assert.deepEqual(chain.requests.filter((request) => request.event === "ParlayMinted").map(({ from, to }) => [from, to]), [[0n, 999n], [1000n, 1001n]]);
-  assert.deepEqual(JSON.parse(readFileSync(join(root, "state", "event-joiner.json"), "utf8")), { schemaVersion: 1, nextBlock: "1000", pending: [] });
+  assert.deepEqual(JSON.parse(readFileSync(join(root, "state", "event-joiner.json"), "utf8")), {
+    schemaVersion: 1, nextBlock: "1000",
+    pending: [{ quoteId: "0x01", parlayId: "1", vault: "0x1111111111111111111111111111111111111111", isYes: true }],
+  });
 
   chain.failFrom = null;
   chain.requests.length = 0;

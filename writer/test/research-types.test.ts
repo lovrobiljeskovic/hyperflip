@@ -4,11 +4,12 @@ import { readFileSync } from "node:fs";
 import {
   assertCandleRecord,
   assertDataManifest,
+  assertJoinedEventRecord,
   assertQuoteDecision,
   parseSourceRegistry,
   sourceFor,
 } from "../src/research/types.js";
-import type { CandleRecord, DataManifest } from "../src/research/types.js";
+import type { CandleRecord, DataManifest, JoinedEventRecord } from "../src/research/types.js";
 
 const fixture = (name: string) => new URL(`./fixtures/research/${name}`, import.meta.url);
 
@@ -90,4 +91,24 @@ test("QuoteDecision validation blocks raw signature hashes before persistence", 
     }),
     /signatureHash must be a lowercase 64-character hex hash/,
   );
+});
+
+test("JoinedEventRecord validation requires the exact persisted union wire shapes", () => {
+  const chain: JoinedEventRecord = {
+    schemaVersion: 1, kind: "minted", eventKey: "0xtx:0", blockNumber: "1", blockHash: "0xblock", transactionHash: "0xtx", logIndex: 0,
+    quoteId: "0xquote", parlayId: "1", taker: "0xtaker", premium: "1", maxPayout: "4", status: "open",
+    legs: [{ vault: "0xvault", isYes: true, settled: false, settleFractionWad: null, result: "pending" }], recordedAtMs: 0,
+  };
+  const observation: JoinedEventRecord = {
+    schemaVersion: 1, kind: "leg-finalized", observationKey: "1:0xvault:1:0xblock", observedBlockNumber: "1", observedBlockHash: "0xblock",
+    quoteId: "0xquote", parlayId: "1", vault: "0xvault", settleFractionWad: "1000000000000000000", result: "win", recordedAtMs: 0,
+  };
+  const correction: JoinedEventRecord = {
+    schemaVersion: 1, kind: "orphaned", targetKind: "chain-log", targetKey: "0xtx:0", detectedAtBlockNumber: "2", canonicalBlockHash: "0xnew", recordedAtMs: 0,
+  };
+  assert.doesNotThrow(() => [chain, observation, correction].forEach(assertJoinedEventRecord));
+  assert.throws(() => assertJoinedEventRecord({ ...chain, kind: "unknown" } as unknown as JoinedEventRecord), /kind/);
+  const { eventKey: _, ...withoutEventKey } = chain;
+  assert.throws(() => assertJoinedEventRecord(withoutEventKey as JoinedEventRecord), /eventKey/);
+  assert.throws(() => assertJoinedEventRecord({ ...observation, extra: true } as unknown as JoinedEventRecord), /unknown field/);
 });

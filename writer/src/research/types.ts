@@ -248,7 +248,65 @@ export function assertQuoteDecision(record: QuoteDecision): void {
 }
 
 export function assertJoinedEventRecord(record: JoinedEventRecord): void {
-  assertSafeIntegerTimestamp(record.recordedAtMs, "recordedAtMs");
+  const value = record as unknown;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("joined event record must be an object");
+  const object = value as Record<string, unknown>;
+  if (object.schemaVersion !== 1) throw new Error("joined event record schemaVersion must be 1");
+  const kind = object.kind;
+  if (kind === "minted" || kind === "resolved") {
+    assertJoinedExactKeys(object, ["schemaVersion", "kind", "eventKey", "blockNumber", "blockHash", "transactionHash", "logIndex", "quoteId", "parlayId", "taker", "premium", "maxPayout", "status", "legs", "recordedAtMs"]);
+    assertJoinedString(object.eventKey, "eventKey");
+    assertJoinedString(object.blockNumber, "blockNumber");
+    assertJoinedString(object.blockHash, "blockHash");
+    assertJoinedString(object.transactionHash, "transactionHash");
+    if (!Number.isInteger(object.logIndex)) throw new Error("logIndex must be an integer");
+    assertJoinedString(object.quoteId, "quoteId");
+    assertJoinedString(object.parlayId, "parlayId");
+    assertJoinedStringOrNull(object.taker, "taker");
+    assertJoinedStringOrNull(object.premium, "premium");
+    assertJoinedStringOrNull(object.maxPayout, "maxPayout");
+    if (object.status !== null && object.status !== "open" && object.status !== "won" && object.status !== "dead" && object.status !== "void") throw new Error("status is invalid");
+    if (!Array.isArray(object.legs)) throw new Error("legs must be an array");
+    object.legs.forEach((leg) => {
+      if (leg === null || typeof leg !== "object" || Array.isArray(leg)) throw new Error("leg must be an object");
+      const legObject = leg as Record<string, unknown>;
+      assertJoinedExactKeys(legObject, ["vault", "isYes", "settled", "settleFractionWad", "result"]);
+      assertJoinedString(legObject.vault, "legs.vault");
+      if (typeof legObject.isYes !== "boolean") throw new Error("legs.isYes must be a boolean");
+      if (typeof legObject.settled !== "boolean") throw new Error("legs.settled must be a boolean");
+      assertJoinedStringOrNull(legObject.settleFractionWad, "legs.settleFractionWad");
+      if (legObject.result !== "win" && legObject.result !== "loss" && legObject.result !== "void" && legObject.result !== "pending") throw new Error("legs.result is invalid");
+    });
+  } else if (kind === "leg-finalized") {
+    assertJoinedExactKeys(object, ["schemaVersion", "kind", "observationKey", "observedBlockNumber", "observedBlockHash", "quoteId", "parlayId", "vault", "settleFractionWad", "result", "recordedAtMs"]);
+    for (const key of ["observationKey", "observedBlockNumber", "observedBlockHash", "quoteId", "parlayId", "vault", "settleFractionWad"]) assertJoinedString(object[key], key);
+    if (object.result !== "win" && object.result !== "loss" && object.result !== "void") throw new Error("result is invalid");
+  } else if (kind === "orphaned") {
+    assertJoinedExactKeys(object, ["schemaVersion", "kind", "targetKind", "targetKey", "detectedAtBlockNumber", "canonicalBlockHash", "recordedAtMs"]);
+    if (object.targetKind !== "chain-log" && object.targetKind !== "state-observation") throw new Error("targetKind is invalid");
+    for (const key of ["targetKey", "detectedAtBlockNumber", "canonicalBlockHash"]) assertJoinedString(object[key], key);
+  } else {
+    throw new Error("joined event record kind is invalid");
+  }
+  assertJoinedTimestamp(object.recordedAtMs, "recordedAtMs");
+}
+
+function assertJoinedExactKeys(value: Record<string, unknown>, keys: string[]): void {
+  for (const key of keys) if (!(key in value)) throw new Error(`joined event record missing ${key}`);
+  for (const key of Object.keys(value)) if (!keys.includes(key)) throw new Error(`joined event record has unknown field ${key}`);
+}
+
+function assertJoinedString(value: unknown, label: string): void {
+  if (typeof value !== "string") throw new Error(`${label} must be a string`);
+}
+
+function assertJoinedStringOrNull(value: unknown, label: string): void {
+  if (value !== null && typeof value !== "string") throw new Error(`${label} must be a string or null`);
+}
+
+function assertJoinedTimestamp(value: unknown, label: string): void {
+  if (typeof value !== "number") throw new Error(`${label} must be a number`);
+  assertSafeIntegerTimestamp(value, label);
 }
 
 const CLUSTERS = new Set<SourceEntry["cluster"]>(["crypto", "equity", "commodity"]);

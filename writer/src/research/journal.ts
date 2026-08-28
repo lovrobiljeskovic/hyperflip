@@ -297,6 +297,7 @@ export async function joinEvents(root: string, deps: JoinDeps): Promise<JoinSumm
   let appended = await verifyOverlap(root, deps.client, from, confirmed, now);
   let scannedTo: bigint | null = null;
   const records = readJsonl<JoinedEventRecord>(root, "journal/events");
+  const quoteIds = new Set(readJsonl<QuoteDecision>(root, "journal/quotes").map((quote) => quote.quoteId));
   for (const range of blockRanges(from, confirmed, CHUNK_SIZE)) {
     const events = await scanEventChunk(deps.client, deps.vault, range.from, range.to);
     for (const event of events) {
@@ -333,10 +334,9 @@ export async function joinEvents(root: string, deps: JoinDeps): Promise<JoinSumm
       }
     }
     scannedTo = range.to;
-    writeState(root, { ...state, nextBlock: (range.to + 1n).toString() });
+    writeState(root, { schemaVersion: 1, nextBlock: (range.to + 1n).toString(), pending: pendingAndResolutions(records, quoteIds).pending });
   }
 
-  const quoteIds = new Set(readJsonl<QuoteDecision>(root, "journal/quotes").map((quote) => quote.quoteId));
   let joined = pendingAndResolutions(records, quoteIds);
   for (const leg of joined.pending) {
     const fraction = await deps.client.readContract({ address: leg.vault as Address, abi: outcomeVaultAbi, functionName: "settleFractionWad", blockNumber: confirmed }) as bigint;
