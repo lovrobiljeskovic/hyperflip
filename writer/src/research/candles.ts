@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { assertCandleRecord } from "./types.js";
-import { atomicWrite, canonicalJson, durableAppend, readCandlePartition, sha256 } from "./store.js";
+import { atomicWrite, atomicWriteNew, canonicalJson, durableAppend, readCandlePartition, sha256 } from "./store.js";
 import type { CandleRecord, SourceEntry, SourceRegistry } from "./types.js";
 
 const HOUR_MS = 3_600_000;
@@ -128,8 +128,11 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
     let failure = "request failed";
     for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt++) {
       const retrievedAtMs = nowMs;
+      await sleep(RETRY_DELAYS_MS[attempt]);
+      let httpStatus: number | null = null;
       try {
         const response = await requestFetch(apiUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "candleSnapshot", req: { coin: source.sourceCoin, interval: "1h", startTime: request.startTime, endTime: nowMs } }), signal: AbortSignal.timeout(10_000) });
+        httpStatus = response.status;
         const body = await response.text();
         if (!response.ok) throw new Error(`info API ${response.status}: ${body}`);
         candles = parseCandleSnapshot(source, body, retrievedAtMs);
@@ -137,8 +140,7 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
         break;
       } catch (error) {
         failure = error instanceof Error ? error.message : String(error);
-        durableAppend(join(deps.root, "journal", "requests", `${dayPath(retrievedAtMs)}.jsonl`), canonicalJson({ schemaVersion: 1, sourceKey, startTime: request.startTime, endTime: nowMs, retrievedAtMs, httpStatus: null, error: failure, returnedRows: 0 }));
-        if (attempt + 1 < RETRY_DELAYS_MS.length) await sleep(RETRY_DELAYS_MS[attempt]);
+        durableAppend(join(deps.root, "journal", "requests", `${dayPath(retrievedAtMs)}.jsonl`), canonicalJson({ schemaVersion: 1, sourceKey, startTime: request.startTime, endTime: nowMs, retrievedAtMs, httpStatus, error: failure, returnedRows: 0 }));
       }
     }
     if (!candles) {
@@ -157,14 +159,33 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
       }
       if (!prior) {
         accepted.push(candle);
-        known.set(key, candle);
-        summary.accepted++;
+      } else {
+        lastDurable = Math.max(lastDurable, candle.openTimeMs);
       }
-      lastDurable = Math.max(lastDurable, candle.openTimeMs);
     }
     if (accepted.length) {
       const shard = join(deps.root, "raw", "candles", dayPath(nowMs), source.underlying, `${request.startTime}-${request.endTime}-${nowMs}.jsonl.gz`);
-      atomicWrite(shard, gzipSync(`${accepted.map(canonicalJson).join("\n")}\n`));
+      const provenance = `${shard}.provenance.json`;
+      const provenanceBytes = canonicalJson({ schemaVersion: 1, sourceRegistrySha256 });
+      const provenanceMatches = existsSync(provenance) ? readFileSync(provenance, "utf8") === provenanceBytes : atomicWriteNew(provenance, provenanceBytes);
+      if (!provenanceMatches) {
+        for (const candle of accepted) durableAppend(join(deps.root, "quarantine", "candles", `${dayPath(nowMs)}.jsonl`), canonicalJson(candle));
+        summary.conflicts += accepted.length;
+      } else {
+        const shardBytes = gzipSync(`${accepted.map(canonicalJson).join("\n")}\n`);
+        if (atomicWriteNew(shard, shardBytes)) {
+          summary.accepted += accepted.length;
+          for (const candle of accepted) {
+            known.set(candleKey(candle), candle);
+            lastDurable = Math.max(lastDurable, candle.openTimeMs);
+          }
+        } else if (!readFileSync(shard).equals(shardBytes)) {
+          for (const candle of accepted) durableAppend(join(deps.root, "quarantine", "candles", `${dayPath(nowMs)}.jsonl`), canonicalJson(candle));
+          summary.conflicts += accepted.length;
+        } else {
+          for (const candle of readCandlePartition(shard)) lastDurable = Math.max(lastDurable, candle.openTimeMs);
+        }
+      }
     }
     state.sources[sourceKey] = lastDurable;
   }

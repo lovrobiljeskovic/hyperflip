@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { collectSources, nextCandleRequest, parseCandleSnapshot } from "../src/research/candles.js";
 import { buildDailyManifest, readCandlePartition, sha256, canonicalJson } from "../src/research/store.js";
@@ -27,7 +28,7 @@ function scratch(): string {
 function shardFiles(root: string): string[] {
   const raw = join(root, "raw", "candles");
   const visit = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => entry.isDirectory() ? visit(join(dir, entry.name)) : [join(dir, entry.name)]);
-  return visit(raw);
+  return visit(raw).filter((file) => file.endsWith(".jsonl.gz"));
 }
 
 test("candle snapshot maps exact Hyperliquid fields", () => {
@@ -62,6 +63,94 @@ test("candle request recovers from a stale state file using sealed candles", asy
       return new Response(fixture("candle-snapshot.json"));
     } });
     assert.equal(requests[0].startTime, 10_800_000);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("daily manifest retains the registry fact that produced its sealed shard", async () => {
+  const root = scratch();
+  const nowMs = 20_000_000_000;
+  const registryA = { schemaVersion: 1 as const, sources: [source] };
+  const registryB = { schemaVersion: 1 as const, sources: [{ ...source, underlying: "BTC-RENAMED" }] };
+  try {
+    await collectSources({ root, registry: registryA, nowMs, fetch: async () => new Response(fixture("candle-snapshot.json")) });
+    await collectSources({ root, registry: registryB, nowMs: nowMs + 86_400_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
+    assert.equal(buildDailyManifest(root, "1970-08-20").sourceRegistrySha256, sha256(canonicalJson(registryA)));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("session calendars report missing expected open hours", async () => {
+  const root = scratch();
+  const sessionSource: SourceEntry = { ...source, underlying: "NYSE", sourceCoin: "NYSE", calendar: "session", session: { timeZone: "UTC", weekdays: [1], openLocal: "09:00", closeLocal: "12:00", closedDates: [] } };
+  const nowMs = Date.UTC(1970, 0, 5, 13);
+  const snapshot = JSON.stringify([
+    { t: Date.UTC(1970, 0, 5, 9), T: Date.UTC(1970, 0, 5, 10) - 1, s: "NYSE", i: "1h", o: "1", h: "1", l: "1", c: "1", v: "1", n: 1 },
+    { t: Date.UTC(1970, 0, 5, 11), T: Date.UTC(1970, 0, 5, 12) - 1, s: "NYSE", i: "1h", o: "1", h: "1", l: "1", c: "1", v: "1", n: 1 },
+  ]);
+  try {
+    await collectSources({ root, registry: { schemaVersion: 1, sources: [sessionSource] }, nowMs, fetch: async () => new Response(snapshot) });
+    assert.deepEqual(buildDailyManifest(root, "1970-01-05").underlyings.NYSE.missingIntervals, [Date.UTC(1970, 0, 5, 10)]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("collector uses every bounded retry delay and journals HTTP failures with their status", async () => {
+  const root = scratch();
+  const delays: number[] = [];
+  let attempts = 0;
+  try {
+    const summary = await collectSources({ root, registry: { schemaVersion: 1, sources: [source] }, nowMs: 20_000_000_000, sleep: async (delay) => { delays.push(delay); }, fetch: async () => {
+      attempts++;
+      return new Response("unavailable", { status: 503 });
+    } });
+    assert.equal(attempts, 3);
+    assert.deepEqual(delays, [250, 1_000, 4_000]);
+    assert.equal(summary.failures.length, 1);
+    const journal = readFileSync(join(root, "journal", "requests", "1970", "08", "20.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(journal.map((entry) => entry.httpStatus), [503, 503, 503]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a source failure preserves a sibling source's sealed shard", async () => {
+  const root = scratch();
+  const eth = { ...source, underlying: "ETH", sourceCoin: "ETH" };
+  try {
+    const summary = await collectSources({ root, registry: { schemaVersion: 1, sources: [source, eth] }, nowMs: 20_000_000_000, sleep: async () => {}, fetch: async (_url, init) => JSON.parse(init?.body as string).req.coin === "BTC" ? new Response(fixture("candle-snapshot.json")) : new Response("bad", { status: 500 }) });
+    assert.equal(summary.accepted, 2);
+    assert.deepEqual(summary.failures.map((failure) => failure.underlying), ["ETH"]);
+    assert.equal(shardFiles(root).length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("identical fixture collections in independent roots produce identical sealed shards", async () => {
+  const firstRoot = scratch();
+  const secondRoot = scratch();
+  const registry = { schemaVersion: 1 as const, sources: [source] };
+  try {
+    await collectSources({ root: firstRoot, registry, nowMs: 20_000_000_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
+    await collectSources({ root: secondRoot, registry, nowMs: 20_000_000_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
+    assert.equal(sha256(readFileSync(shardFiles(firstRoot)[0])), sha256(readFileSync(shardFiles(secondRoot)[0])));
+  } finally {
+    rmSync(firstRoot, { recursive: true, force: true });
+    rmSync(secondRoot, { recursive: true, force: true });
+  }
+});
+
+test("collector CLI exits non-zero when every source fails", () => {
+  const root = scratch();
+  const sources = join(root, "sources.json");
+  try {
+    writeFileSync(sources, JSON.stringify({ schemaVersion: 1, sources: [source] }));
+    const result = spawnSync(process.execPath, ["--import", "tsx", "src/research/cli.ts", "collect"], { cwd: resolve(import.meta.dirname, ".."), env: { ...process.env, RESEARCH_ROOT: root, CORRELATION_SOURCES_FILE: sources, RESEARCH_INFO_API_URL: "http://127.0.0.1:1" }, encoding: "utf8" });
+    assert.equal(result.status, 1, result.stderr);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

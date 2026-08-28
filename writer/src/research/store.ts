@@ -1,6 +1,6 @@
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { assertCandleRecord, assertDataManifest } from "./types.js";
 import type { CandleRecord, DataManifest, SourceRegistry } from "./types.js";
@@ -61,6 +61,29 @@ export function atomicWrite(file: string, bytes: string | Uint8Array, hooks?: { 
   }
 }
 
+export function atomicWriteNew(file: string, bytes: string | Uint8Array): boolean {
+  mkdirSync(dirname(file), { recursive: true });
+  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    durableWrite(temporary, bytes, "wx");
+    try {
+      linkSync(temporary, file);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw error;
+    }
+    const directory = openSync(dirname(file), "r");
+    try {
+      fsyncSync(directory);
+    } finally {
+      closeSync(directory);
+    }
+    return true;
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+
 export function readCandlePartition(file: string): CandleRecord[] {
   const rows = gunzipSync(readFileSync(file)).toString("utf8").trim();
   if (!rows) return [];
@@ -85,22 +108,39 @@ function dateParts(day: string): [string, string, string] {
   return parts as [string, string, string];
 }
 
-function sourceRegistry(root: string): { registry: SourceRegistry; hash: string; path: string } {
+function sourceRegistry(root: string, rawFiles: string[]): { registry: SourceRegistry; hash: string; path: string } {
+  const provenanceHashes = [...new Set(rawFiles.map((file) => {
+    const provenance = JSON.parse(readFileSync(`${file}.provenance.json`, "utf8")) as { schemaVersion?: unknown; sourceRegistrySha256?: unknown };
+    if (provenance.schemaVersion !== 1 || typeof provenance.sourceRegistrySha256 !== "string") throw new Error("candle shard provenance is invalid");
+    return provenance.sourceRegistrySha256;
+  }))];
+  if (provenanceHashes.length > 1) throw new Error("daily shards use multiple source registries");
   const stateFile = join(root, "state", "collector.json");
   if (!existsSync(stateFile)) throw new Error("collector state is missing");
   const state = JSON.parse(readFileSync(stateFile, "utf8")) as { sourceRegistrySha256?: unknown };
-  if (typeof state.sourceRegistrySha256 !== "string") throw new Error("collector state has no source registry hash");
-  const path = join(root, "facts", "source-registries", `${state.sourceRegistrySha256}.json`);
+  const hash = provenanceHashes[0] ?? state.sourceRegistrySha256;
+  if (typeof hash !== "string") throw new Error("collector state has no source registry hash");
+  const path = join(root, "facts", "source-registries", `${hash}.json`);
   const bytes = readFileSync(path, "utf8");
-  if (sha256(bytes) !== state.sourceRegistrySha256) throw new Error("source registry fact hash mismatch");
-  return { registry: JSON.parse(bytes) as SourceRegistry, hash: state.sourceRegistrySha256, path };
+  if (sha256(bytes) !== hash) throw new Error("source registry fact hash mismatch");
+  return { registry: JSON.parse(bytes) as SourceRegistry, hash, path };
+}
+
+function isExpectedSessionHour(timestampMs: number, source: SourceRegistry["sources"][number]): boolean {
+  if (source.calendar === "continuous") return true;
+  const session = source.session!;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: session.timeZone, weekday: "short", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(timestampMs)).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(parts.weekday);
+  const date = `${parts.year}-${parts.month}-${parts.day}`;
+  const localTime = `${parts.hour}:${parts.minute}`;
+  return session.weekdays.includes(weekday) && !session.closedDates.includes(date) && localTime >= session.openLocal && localTime < session.closeLocal;
 }
 
 export function buildDailyManifest(root: string, day: string): DataManifest {
   const [year, month, date] = dateParts(day);
-  const fact = sourceRegistry(root);
   const rawRoot = join(root, "raw", "candles", year, month, date);
   const rawFiles = filesBelow(rawRoot).filter((file) => file.endsWith(".jsonl.gz"));
+  const fact = sourceRegistry(root, rawFiles);
   const records = rawFiles.flatMap(readCandlePartition);
   const byUnderlying = new Map<string, CandleRecord[]>();
   for (const record of records) byUnderlying.set(record.underlying, [...(byUnderlying.get(record.underlying) ?? []), record]);
@@ -108,10 +148,8 @@ export function buildDailyManifest(root: string, day: string): DataManifest {
   for (const source of fact.registry.sources) {
     const candles = [...(byUnderlying.get(source.underlying) ?? [])].sort((a, b) => a.openTimeMs - b.openTimeMs);
     const missingIntervals: number[] = [];
-    if (source.calendar === "continuous") {
-      for (let time = candles[0]?.openTimeMs ?? 0; candles.length && time <= candles[candles.length - 1].openTimeMs; time += 3_600_000) {
-        if (!candles.some((candle) => candle.openTimeMs === time)) missingIntervals.push(time);
-      }
+    for (let time = candles[0]?.openTimeMs ?? 0; candles.length && time <= candles[candles.length - 1].openTimeMs; time += 3_600_000) {
+      if (isExpectedSessionHour(time, source) && !candles.some((candle) => candle.openTimeMs === time)) missingIntervals.push(time);
     }
     underlyings[source.underlying] = {
       rows: candles.length,
@@ -120,7 +158,7 @@ export function buildDailyManifest(root: string, day: string): DataManifest {
       missingIntervals,
     };
   }
-  const files = [fact.path, ...rawFiles].map((file) => ({
+  const files = [fact.path, ...rawFiles.flatMap((file) => [file, `${file}.provenance.json`])].map((file) => ({
     path: relative(root, file), bytes: statSync(file).size, sha256: sha256(readFileSync(file)), rows: file.endsWith(".jsonl.gz") ? readCandlePartition(file).length : 1, schemaVersion: 1 as const,
   })).sort((a, b) => a.path.localeCompare(b.path));
   const timestamps = records.map((record) => record.retrievedAtMs);
@@ -138,10 +176,15 @@ export function buildDailyManifest(root: string, day: string): DataManifest {
 
 export function verifyManifest(root: string, manifest: DataManifest): void {
   assertDataManifest(manifest);
+  const resolvedRoot = resolve(root);
   for (const file of manifest.files) {
-    if (file.path.startsWith("../") || file.path.startsWith("/")) throw new Error("manifest file path escapes root");
-    const path = join(root, file.path);
-    if (!existsSync(path) || statSync(path).size !== file.bytes || sha256(readFileSync(path)) !== file.sha256) throw new Error(`manifest file mismatch: ${file.path}`);
+    const path = resolve(resolvedRoot, file.path);
+    if (path !== resolvedRoot && !path.startsWith(`${resolvedRoot}/`)) throw new Error("manifest file path escapes root");
+    if (!existsSync(path)) throw new Error(`manifest file mismatch: ${file.path}`);
+    const rows = file.path.endsWith(".jsonl.gz") ? readCandlePartition(path).length : 1;
+    if (statSync(path).size !== file.bytes || sha256(readFileSync(path)) !== file.sha256 || rows !== file.rows || file.schemaVersion !== 1) throw new Error(`manifest file mismatch: ${file.path}`);
   }
-  if (!manifest.files.some((file) => file.path === `facts/source-registries/${manifest.sourceRegistrySha256}.json`)) throw new Error("manifest omits source registry fact");
+  const fact = manifest.files.find((file) => file.path === `facts/source-registries/${manifest.sourceRegistrySha256}.json`);
+  if (!fact) throw new Error("manifest omits source registry fact");
+  if (fact.sha256 !== manifest.sourceRegistrySha256) throw new Error("source registry fact hash mismatch");
 }
