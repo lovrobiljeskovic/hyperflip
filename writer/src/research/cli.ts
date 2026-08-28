@@ -2,6 +2,7 @@ import "dotenv/config";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
+import { createPublicClient, http, isAddress } from "viem";
 import { collectSources } from "./candles.js";
 import { calibrate } from "./calibration.js";
 import { runReplay } from "./replay.js";
@@ -12,9 +13,10 @@ import type { ReturnRecord } from "./returns.js";
 import type { CorrelationArtifact } from "./types.js";
 import { parseMarkets } from "../markets.js";
 import { promoteCandidate } from "./artifacts.js";
+import { joinEvents } from "./journal.js";
 
-if (process.argv[2] !== "collect" && process.argv[2] !== "derive" && process.argv[2] !== "calibrate" && process.argv[2] !== "replay" && process.argv[2] !== "promote") {
-  console.error("usage: npm run research -- collect|derive|calibrate|replay|promote --candidate <path>");
+if (process.argv[2] !== "collect" && process.argv[2] !== "derive" && process.argv[2] !== "calibrate" && process.argv[2] !== "replay" && process.argv[2] !== "promote" && process.argv[2] !== "join") {
+  console.error("usage: npm run research -- collect|derive|calibrate|replay|promote|join");
   process.exitCode = 2;
 } else if (process.argv[2] === "collect") {
   const root = process.env.RESEARCH_ROOT;
@@ -89,6 +91,25 @@ if (process.argv[2] !== "collect" && process.argv[2] !== "derive" && process.arg
       baselineFile: resolve(baselineFile), series: { rows, sources, manifestHash: manifest.dataManifestSha256 }, seed,
     });
     console.log(JSON.stringify({ modelVersion: report.modelVersion, decision: report.decision }));
+  }
+} else if (process.argv[2] === "join") {
+  const root = process.env.RESEARCH_ROOT;
+  const rpc = process.env.WRITER_RPC;
+  const vault = process.env.PARLAY_VAULT_ADDRESS;
+  const deployBlock = process.env.PARLAY_DEPLOY_BLOCK;
+  if (!root || !rpc || !vault || !isAddress(vault) || !deployBlock || !/^\d+$/.test(deployBlock)) {
+    console.error("RESEARCH_ROOT, WRITER_RPC, PARLAY_VAULT_ADDRESS, and PARLAY_DEPLOY_BLOCK are required");
+    process.exitCode = 2;
+  } else {
+    try {
+      const summary = await joinEvents(resolve(root), {
+        client: createPublicClient({ transport: http(rpc) }), vault, deployBlock: BigInt(deployBlock),
+      });
+      console.log(JSON.stringify(summary));
+    } catch (error) {
+      console.error(String(error));
+      process.exitCode = 1;
+    }
   }
 } else {
   const root = process.env.RESEARCH_ROOT;
