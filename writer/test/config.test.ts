@@ -151,7 +151,7 @@ function withConfigEnv(artifactFile: string, run: () => void, overrides: Record<
     MARKETS_FILE: "writer/test/fixtures/markets.json", MAX_STAKE: "1000000", PER_MARKET_CAP: "1000000", PER_CLUSTER_CAP: "1000000", INVITE_CODES: "test",
     PARLAY_VAULT_ADDRESS: "0x1111111111111111111111111111111111111111", WRITER_ADDRESS: "0x2222222222222222222222222222222222222222",
     QUOTE_SIGNER_PRIVATE_KEY: `0x${"11".repeat(32)}`, POKER_PRIVATE_KEY: `0x${"22".repeat(32)}`, TESTNET_RPC: "http://localhost:1",
-    CORRELATION_ARTIFACT_FILE: artifactFile, CORRELATION_SOURCES_FILE: "registry/correlation-sources.json",
+    CORRELATION_ARTIFACT_FILE: artifactFile, CORRELATION_SOURCES_FILE: "registry/correlation-sources.json", RESEARCH_ROOT: "research-data",
     ...overrides,
   };
   const saved = new Map(Object.keys(values).map((key) => [key, process.env[key]]));

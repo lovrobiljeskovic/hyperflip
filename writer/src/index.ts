@@ -6,6 +6,7 @@ import { loadConfig, syncedPerCodeReservedCap } from "./config.js";
 import { CorrelationWorker } from "./correlationWorker.js";
 import { ExposureBook } from "./exposure.js";
 import { fetchBestAskWad } from "./infoApi.js";
+import { appendQuoteDecision, initializeQuoteJournal } from "./research/journal.js";
 import { buildPriceFreshness, makeLegPriceFetcher, readSpotPxWad } from "./spotPx.js";
 import { Poker } from "./poker.js";
 import { isStalled, stallThresholdMs } from "./pure.js";
@@ -21,6 +22,7 @@ const RECEIPT_TIMEOUT_MS = 60_000;
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
+  initializeQuoteJournal(cfg.researchRoot);
   const correlationWorker = new CorrelationWorker();
   // Testnet RPCs rate-limit bursts (-32005, retryable in viem) and the poker's cold-start
   // rescan is one — deployBlock..head in 1000-block chunks, two getLogs each. Retry hard with a
@@ -78,6 +80,7 @@ async function main(): Promise<void> {
   // holding a truly abandoned reservation much longer than that.
   const exposure = new ExposureBook((v) => cfg.markets.get(v)?.cluster, cfg.pokerIntervalMs * 2);
   const metrics = newMetrics();
+  let lastQuoteJournalAppendMs: number | null = null;
   // Best ask first: executable and conservative — the house never sells below the book.
   // Empty book or info-API failure falls back to the 0x808 spotPx precompile, the only
   // mid source that exists for outcome coins (allMids carries none, verified 2026-08-25).
@@ -100,10 +103,14 @@ async function main(): Promise<void> {
     metrics,
     now: () => Date.now(),
     randomId: () => `0x${crypto.randomBytes(32).toString("hex")}` as Hex,
-    fetchLegPriceWad: async (leg: QuoteLeg) => {
+    fetchLegPrice: async (leg: QuoteLeg) => {
       const market = cfg.markets.get(leg.vault.toLowerCase())!; // validated upstream
       const coin = leg.isYes ? market.coinYes : market.coinNo;
       return legPriceFetcher.fetch(coin);
+    },
+    recordQuote: async (decision) => {
+      appendQuoteDecision(cfg.researchRoot, decision);
+      lastQuoteJournalAppendMs = Date.now();
     },
     bestEstimateJointProbWad: (legs) => correlationWorker.bestEstimate(legs, cfg.correlations),
     readAllowance: () =>
@@ -212,6 +219,8 @@ async function main(): Promise<void> {
     const priceFreshnessMs = buildPriceFreshness(cfg.markets.values(), (coin) => legPriceFetcher.ageMs(coin));
     return {
       ok: true,
+      quoteJournalLastAppendMs: lastQuoteJournalAppendMs,
+      model: { version: cfg.model.version, dataAsOf: cfg.model.dataAsOf, dataManifestSha256: cfg.model.dataManifestSha256, sourceRegistrySha256: cfg.model.sourceRegistrySha256 },
       openParlays: poker.openCount(),
       priceFreshnessMs,
       perMarketCap: cfg.perMarketCap.toString(),

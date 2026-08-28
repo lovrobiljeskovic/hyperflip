@@ -51,6 +51,23 @@ test("bestAskWad ignores a spoofed 1-lot top and volume-weights across the depth
   assert.equal(bestAskWad(book, DEPTH_10), 698_000_000_000_000_000n);
 });
 
+test("price metadata: a depth-covering book preserves cumulative depth, VWAP, source, and observation time", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => new Response(JSON.stringify({
+    levels: [[], [{ px: "0.50", sz: "1", n: 1 }, { px: "0.70", sz: "99", n: 1 }]],
+  }), { status: 200 }));
+  assert.deepEqual(
+    await fetchBestAskWad("https://info.example/info", "#137340", DEPTH_10, () => 123),
+    {
+      priceWad: 698_000_000_000_000_000n,
+      source: "l2Book",
+      observedAtMs: 123,
+      depthWad: 100_000_000_000_000_000_000n,
+      vwapWad: 698_000_000_000_000_000n,
+      freshnessMs: null,
+    },
+  );
+});
+
 test("bestAskWad returns null when the book never reaches minDepthWad — too thin, same signal as empty", () => {
   const book = {
     levels: [

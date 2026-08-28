@@ -1,11 +1,13 @@
 import http from "node:http";
-import { isAddress, type Address, type Hex } from "viem";
+import { isAddress, keccak256, type Address, type Hex } from "viem";
 import type { WriterConfig } from "./config.js";
 import { TooComplexError } from "./copula.js";
 import { riskAdjustedJointProbWad, type CorrLeg } from "./correlation.js";
 import { ExposureBook } from "./exposure.js";
 import { dominatingLeg, edgeBreakdown, priceParlay, totalEdgeBps } from "./pricing.js";
-import type { ParlayQuote, QuoteLeg } from "./quotes.js";
+import { quoteDigest, type ParlayQuote, type QuoteLeg } from "./quotes.js";
+import type { LegPriceObservation } from "./infoApi.js";
+import type { QuoteDecision } from "./research/types.js";
 import { isValidEmail, type RateLimiter, type Waitlist } from "./waitlist.js";
 
 export interface Metrics {
@@ -26,12 +28,13 @@ export interface QuoteDeps {
   cfg: WriterConfig;
   exposure: ExposureBook;
   chainId: number;
-  fetchLegPriceWad(leg: QuoteLeg): Promise<bigint>;
+  fetchLegPrice(leg: QuoteLeg): Promise<LegPriceObservation>;
   bestEstimateJointProbWad(legs: CorrLeg[]): Promise<bigint>;
   readAllowance(): Promise<bigint>;
   /** Lowercase vault addresses of legs already settled. */
   readSettled(vaults: Address[]): Promise<Set<string>>;
   sign(q: ParlayQuote): Promise<Hex>;
+  recordQuote(decision: QuoteDecision): Promise<void>;
   now(): number;
   randomId(): Hex;
   metrics: Metrics;
@@ -143,7 +146,7 @@ export async function handleQuote(
   const vaults = [...new Set(v.legs.map((l) => l.vault.toLowerCase()))].map((addr) => addr as Address);
 
   let settled: Set<string>;
-  let pricesWad: bigint[];
+  let priceObservations: LegPriceObservation[];
   let allowance: bigint;
   try {
     settled = await deps.readSettled(vaults);
@@ -157,7 +160,7 @@ export async function handleQuote(
     return { status: 409, json: { error: "leg-settled", vault: settledLeg.vault } };
   }
   try {
-    pricesWad = await Promise.all(v.legs.map((l) => deps.fetchLegPriceWad(l)));
+    priceObservations = await Promise.all(v.legs.map((l) => deps.fetchLegPrice(l)));
   } catch {
     reject(metrics, "stale-book");
     return { status: 503, json: { error: "stale-book" } };
@@ -179,7 +182,7 @@ export async function handleQuote(
     return {
       vault: l.vault,
       isYes: l.isYes,
-      probWad: pricesWad[i],
+      probWad: priceObservations[i].priceWad,
       cluster: m.cluster,
       underlying: m.underlying,
       bullish: m.direction === "band" ? null : (m.direction === "up") === l.isYes,
@@ -218,7 +221,7 @@ export async function handleQuote(
   // A ticket that pays no more than one of its own legs traded alone on Core is
   // strictly worse than that trade; `vault` names the leg worth keeping so the
   // UI can say which legs to drop. See dominatingLeg.
-  const dom = dominatingLeg(pricesWad, v.stake, priced.maxPayout);
+  const dom = dominatingLeg(priceObservations.map((price) => price.priceWad), v.stake, priced.maxPayout);
   if (dom !== -1) {
     reject(metrics, "dominated");
     return { status: 400, json: { error: "dominated", vault: v.legs[dom].vault } };
@@ -262,6 +265,42 @@ export async function handleQuote(
     reject(metrics, "sign-failed");
     return { status: 503, json: { error: "sign-failed" } };
   }
+  const decision: QuoteDecision = {
+    schemaVersion: 1,
+    recordedAtMs: deps.now(),
+    quoteId,
+    quoteDigest: quoteDigest(deps.chainId, cfg.parlayVault, quote),
+    chainId: deps.chainId,
+    parlayVault: cfg.parlayVault,
+    taker: quote.taker,
+    legs: v.legs.map((leg) => {
+      const market = cfg.markets.get(leg.vault.toLowerCase())!;
+      return { vault: leg.vault, isYes: leg.isYes, underlying: market.underlying, cluster: market.cluster, direction: market.direction, outcomeCoin: leg.isYes ? market.coinYes : market.coinNo };
+    }),
+    bookInputs: priceObservations.map((price) => ({
+      priceWad: price.priceWad.toString(), source: price.source, observedAtMs: price.observedAtMs,
+      depthWad: price.depthWad?.toString() ?? null, vwapWad: price.vwapWad?.toString() ?? null, freshnessMs: price.freshnessMs,
+    })),
+    modelVersion: cfg.model.version,
+    dataAsOf: cfg.model.dataAsOf,
+    dataManifestSha256: cfg.model.dataManifestSha256,
+    sourceRegistrySha256: cfg.model.sourceRegistrySha256,
+    bestEstimateJointProbWad: bestEstimate.toString(),
+    riskAdjustedJointProbWad: joint.toString(),
+    rhoBandPct: cfg.rhoBandPct,
+    edge: { baseBps: edge.baseBps.toString(), legBps: edge.legBps.toString(), totalBps: totalEdgeBps(edge).toString() },
+    premium: quote.premium.toString(),
+    maxPayout: quote.maxPayout.toString(),
+    deadline: quote.deadline.toString(),
+    signatureHash: keccak256(sig).slice(2),
+  };
+  try {
+    await deps.recordQuote(decision);
+  } catch {
+    exposure.release(quoteId);
+    reject(metrics, "journal-failed");
+    return { status: 503, json: { error: "journal-failed" } };
+  }
   metrics.quoted++;
   return {
     status: 200,
@@ -279,7 +318,7 @@ export async function handleQuote(
       // the multiplier was built: per-leg book price, the correlated joint
       // probability, then each edge component. Same order as quote.legs.
       breakdown: {
-        legPricesWad: pricesWad.map((p) => p.toString()),
+        legPricesWad: priceObservations.map((price) => price.priceWad.toString()),
         jointProbWad: joint.toString(),
         bestEstimateJointProbWad: bestEstimate.toString(),
         edgeBps: edge.baseBps.toString(),

@@ -1,5 +1,14 @@
 import { parseDecimalToUnits } from "./pure.js";
 
+export interface LegPriceObservation {
+  priceWad: bigint;
+  source: "l2Book" | "spotPx";
+  observedAtMs: number;
+  depthWad: bigint | null;
+  vwapWad: bigint | null;
+  freshnessMs: number | null;
+}
+
 interface L2Level {
   px: string;
   sz: string;
@@ -25,6 +34,10 @@ interface L2Level {
  *
  * minDepthWad = 0 restores pre-P0-3 behavior (price off the first level alone). */
 export function bestAskWad(book: unknown, minDepthWad: bigint): bigint | null {
+  return bestAsk(book, minDepthWad)?.priceWad ?? null;
+}
+
+function bestAsk(book: unknown, minDepthWad: bigint): Pick<LegPriceObservation, "priceWad" | "depthWad" | "vwapWad"> | null {
   const levels = (book as { levels?: L2Level[][] })?.levels;
   const asks = levels?.[1];
   if (!asks || asks.length === 0) return null;
@@ -38,7 +51,7 @@ export function bestAskWad(book: unknown, minDepthWad: bigint): bigint | null {
     cumNotionalWad += pxWad * szWad;
     if (cumSzWad > 0n && cumSzWad >= minDepthWad) {
       const vwapWad = cumNotionalWad / cumSzWad;
-      return vwapWad > bestPxWad ? vwapWad : bestPxWad;
+      return { priceWad: vwapWad > bestPxWad ? vwapWad : bestPxWad, depthWad: cumSzWad, vwapWad };
     }
   }
   return null; // depth never covered — too thin to trust, same signal as an empty book
@@ -53,7 +66,12 @@ export function bestAskWad(book: unknown, minDepthWad: bigint): bigint | null {
  * back to the 0x808 spotPx precompile instead. The timeout mirrors the keeper's
  * hard-learned rule (0x232a strand): a stalled fetch must fail the quote, not
  * hang the request. */
-export async function fetchBestAskWad(infoApiUrl: string, coin: string, minDepthWad: bigint): Promise<bigint | null> {
+export async function fetchBestAskWad(
+  infoApiUrl: string,
+  coin: string,
+  minDepthWad: bigint,
+  now: () => number = Date.now,
+): Promise<LegPriceObservation | null> {
   const res = await fetch(infoApiUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -61,5 +79,6 @@ export async function fetchBestAskWad(infoApiUrl: string, coin: string, minDepth
     signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) throw new Error(`info API ${res.status}: ${await res.text()}`);
-  return bestAskWad(await res.json(), minDepthWad);
+  const ask = bestAsk(await res.json(), minDepthWad);
+  return ask && { ...ask, source: "l2Book", observedAtMs: now(), freshnessMs: null };
 }

@@ -1,4 +1,5 @@
 import { decodeAbiParameters, encodeAbiParameters, type PublicClient } from "viem";
+import type { LegPriceObservation } from "./infoApi.js";
 
 /** L1Read.sol SPOT_PX_PRECOMPILE_ADDRESS — accepts the encoded outcome asset id
  * 100000000 + coin id (= 10*outcome + side) since the 2026-08 testnet update. */
@@ -38,7 +39,7 @@ export function isSpotPxStale(lastFreshMs: number | undefined, now: number, stal
  * spotPx past the staleness window — the caller (server.ts) turns that into the
  * existing `stale-book` 503, same as an empty book with no spotPx source at all. */
 export function makeLegPriceFetcher(opts: {
-  fetchBook: (coin: string) => Promise<bigint | null>;
+  fetchBook: (coin: string) => Promise<LegPriceObservation | null>;
   readSpotPx: (coin: string) => Promise<bigint>;
   staleMs: number;
   now: () => number;
@@ -46,8 +47,8 @@ export function makeLegPriceFetcher(opts: {
 }) {
   const lastFreshMs = new Map<string, number>();
   return {
-    async fetch(coin: string): Promise<bigint> {
-      let ask: bigint | null = null;
+    async fetch(coin: string): Promise<LegPriceObservation> {
+      let ask: LegPriceObservation | null = null;
       try {
         ask = await opts.fetchBook(coin);
         if (ask !== null) lastFreshMs.set(coin, opts.now());
@@ -58,7 +59,16 @@ export function makeLegPriceFetcher(opts: {
       if (isSpotPxStale(lastFreshMs.get(coin), opts.now(), opts.staleMs)) {
         throw new Error(`spotPx stale for coin ${coin}`);
       }
-      return opts.readSpotPx(coin);
+      const observedAtMs = opts.now();
+      const lastFresh = lastFreshMs.get(coin);
+      return {
+        priceWad: await opts.readSpotPx(coin),
+        source: "spotPx",
+        observedAtMs,
+        depthWad: null,
+        vwapWad: null,
+        freshnessMs: lastFresh === undefined ? null : observedAtMs - lastFresh,
+      };
     },
     /** ms since this coin was last confirmed live, or null if never confirmed. */
     ageMs(coin: string): number | null {

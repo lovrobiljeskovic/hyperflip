@@ -24,6 +24,7 @@ export interface WriterConfig {
   quoteSignerKey: `0x${string}`;
   pokerKey: `0x${string}`;
   infoApiUrl: string;
+  researchRoot: string;
   port: number;
   edgeBps: bigint;
   minPremiumBps: bigint;
@@ -217,6 +218,7 @@ export function loadConfig(nowMs = Date.now()): WriterConfig {
     quoteSignerKey: requireKey("QUOTE_SIGNER_PRIVATE_KEY"),
     pokerKey: requireKey("POKER_PRIVATE_KEY"),
     infoApiUrl: process.env.INFO_API_URL ?? "https://api.hyperliquid-testnet.xyz/info",
+    researchRoot: path.resolve(here, "../..", requireEnv("RESEARCH_ROOT")),
     port: Number(process.env.WRITER_PORT ?? 8787),
     edgeBps: BigInt(process.env.EDGE_BPS ?? 500),
     minPremiumBps,

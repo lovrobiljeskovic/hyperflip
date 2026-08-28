@@ -9,6 +9,7 @@ import { RateLimiter } from "../src/waitlist.js";
 import { jointProbWad, parseCorrelations } from "../src/correlation.js";
 import { WAD } from "../src/pure.js";
 import type { WriterConfig } from "../src/config.js";
+import { quoteDigest } from "../src/quotes.js";
 
 const V1 = "0x1111111111111111111111111111111111111111" as Address;
 const V2 = "0x2222222222222222222222222222222222222222" as Address;
@@ -61,7 +62,7 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     rpcUrl: "", parlayVault: V1, writerAddress: TAKER,
     quoteSignerKey: `0x${"11".repeat(32)}` as `0x${string}`,
     pokerKey: `0x${"22".repeat(32)}` as `0x${string}`,
-    infoApiUrl: "", port: 0, edgeBps: 0n, minPremiumBps: 100n, minLegs: 2,
+    infoApiUrl: "", researchRoot: "/tmp", port: 0, edgeBps: 0n, minPremiumBps: 100n, minLegs: 2,
     maxStake: 10_000_000n, perMarketCap: 1_000_000_000n, perClusterCap: 1_000_000_000n,
     perCodeReservedCap: 1_000_000_000n,
     rhoBandPct: 0.2, correlations: CORRELATIONS, model: MODEL, legEdgeBps: 0n, quoteTtlMs: 30_000,
@@ -96,7 +97,8 @@ function deps(overrides: Partial<QuoteDeps> = {}): QuoteDeps {
     cfg: c,
     exposure: new ExposureBook((v) => c.markets.get(v)?.cluster),
     chainId: 31337,
-    fetchLegPriceWad: async () => WAD / 2n,
+    fetchLegPrice: async () => ({ priceWad: WAD / 2n, source: "l2Book", observedAtMs: 1_000_000, depthWad: WAD, vwapWad: WAD / 2n, freshnessMs: null }),
+    recordQuote: async () => {},
     bestEstimateJointProbWad: (legs) => Promise.resolve(jointProbWad(legs, c.correlations, 0)),
     readAllowance: async () => 1_000_000_000n,
     readSettled: async () => new Set(),
@@ -169,9 +171,11 @@ test("correlated legs pay less than the same legs priced independently", async (
 // and edge then pushes the payout below NVDA alone on Core — a ticket with
 // strictly fewer ways to win AND a lower payout. Must be refused, not signed.
 test("a quote dominated by one leg's Core fair payout is refused", async () => {
-  const skewedPrices = async (l: { vault: Address }) =>
-    l.vault.toLowerCase() === NVDA_VAULT.toLowerCase() ? (WAD * 1318n) / 10000n : (WAD * 4405n) / 10000n;
-  const d = deps({ cfg: cfg({ edgeBps: 500n, legEdgeBps: 300n }), fetchLegPriceWad: skewedPrices });
+  const skewedPrices = async (l: { vault: Address }) => ({
+    priceWad: l.vault.toLowerCase() === NVDA_VAULT.toLowerCase() ? (WAD * 1318n) / 10000n : (WAD * 4405n) / 10000n,
+    source: "l2Book" as const, observedAtMs: 1_000_000, depthWad: WAD, vwapWad: WAD / 2n, freshnessMs: null,
+  });
+  const d = deps({ cfg: cfg({ edgeBps: 500n, legEdgeBps: 300n }), fetchLegPrice: skewedPrices });
   const r = await handleQuote(d, body({ legs: [legOn(NVDA_VAULT, true), legOn(SP500_VAULT, true)] }));
   assert.equal(r.status, 400);
   assert.deepEqual(r.json, { error: "dominated", vault: NVDA_VAULT });
@@ -323,7 +327,7 @@ test("settled leg: 409", async () => {
 });
 
 test("book fetch failure: 503, nothing reserved", async () => {
-  const d = deps({ fetchLegPriceWad: async () => { throw new Error("down"); } });
+  const d = deps({ fetchLegPrice: async () => { throw new Error("down"); } });
   const r = await handleQuote(d, goodBody);
   assert.equal(r.status, 503);
   assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
@@ -378,6 +382,49 @@ test("sign failure: 503, reservation released, metrics counted", async () => {
   assert.equal(r.status, 503);
   assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
   assert.equal(d.metrics.rejected["sign-failed"], 1);
+});
+
+test("journal failure: 503 releases reservation and never returns a signature", async () => {
+  const d = deps({
+    recordQuote: async () => { throw new Error("disk full"); },
+  } as Partial<QuoteDeps>);
+  const r = await handleQuote(d, goodBody);
+  assert.deepEqual(r, { status: 503, json: { error: "journal-failed" } });
+  assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
+  assert.equal(d.metrics.quoted, 0);
+  assert.equal(d.metrics.rejected["journal-failed"], 1);
+  assert.equal(JSON.stringify(r.json).includes("0xsig"), false);
+});
+
+test("journal: records the returned quote identity and economics before returning", async () => {
+  let recorded: unknown;
+  const d = deps({
+    recordQuote: async (decision: unknown) => { recorded = decision; },
+  } as Partial<QuoteDeps>);
+  const r = await handleQuote(d, goodBody);
+  assert.equal(r.status, 200);
+  const response = r.json as { quote: { quoteId: Hex; premium: string; maxPayout: string; deadline: string; legs: { vault: Address; isYes: boolean }[] } };
+  assert.deepEqual(recorded && {
+    quoteId: (recorded as { quoteId: string }).quoteId,
+    premium: (recorded as { premium: string }).premium,
+    maxPayout: (recorded as { maxPayout: string }).maxPayout,
+  }, {
+    quoteId: response.quote.quoteId,
+    premium: response.quote.premium,
+    maxPayout: response.quote.maxPayout,
+  });
+  assert.equal(typeof (recorded as { quoteDigest?: unknown }).quoteDigest, "string");
+  assert.equal(
+    (recorded as { quoteDigest: string }).quoteDigest,
+    quoteDigest(d.chainId, d.cfg.parlayVault, {
+      taker: TAKER,
+      legs: response.quote.legs,
+      premium: BigInt(response.quote.premium),
+      maxPayout: BigInt(response.quote.maxPayout),
+      deadline: BigInt(response.quote.deadline),
+      quoteId: response.quote.quoteId,
+    }),
+  );
 });
 
 test("HTTP smoke: /quote, /health, /metrics, bad-json, unknown route", async () => {

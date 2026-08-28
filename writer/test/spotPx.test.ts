@@ -5,6 +5,8 @@ import { buildPriceFreshness, isSpotPxStale, makeLegPriceFetcher, readSpotPxWad,
 import { bestAskWad } from "../src/infoApi.js";
 import { parseDecimalToUnits } from "../src/pure.js";
 
+const bookPrice = (priceWad: bigint) => ({ priceWad, source: "l2Book" as const, observedAtMs: 0, depthWad: 1n, vwapWad: priceWad, freshnessMs: null });
+
 /** Fake viem client: records the call, returns a canned uint64 px encoding. */
 function fakeClient(raw: bigint) {
   const calls: { to?: string; data?: `0x${string}` }[] = [];
@@ -58,15 +60,35 @@ test("makeLegPriceFetcher: book-empty + spotPx-fresh (recent book fetch for this
   let now = 1_000_000;
   const fetcher = makeLegPriceFetcher({
     // First call has a book price (stamps freshness), second call (30s later) has none.
-    fetchBook: async () => (now === 1_000_000 ? 5n : null),
+    fetchBook: async () => (now === 1_000_000 ? bookPrice(5n) : null),
     readSpotPx: async () => 7n,
     staleMs: 60_000,
     now: () => now,
   });
-  assert.equal(await fetcher.fetch("+1"), 5n); // stamps lastFreshMs for "+1"
+  assert.equal((await fetcher.fetch("+1")).priceWad, 5n); // stamps lastFreshMs for "+1"
   now = 1_030_000; // 30s later, still inside the 60s window
-  assert.equal(await fetcher.fetch("+1"), 7n); // book empty, falls back to spotPx
+  assert.equal((await fetcher.fetch("+1")).priceWad, 7n); // book empty, falls back to spotPx
   assert.equal(fetcher.ageMs("+1"), 30_000);
+});
+
+test("price metadata: spotPx fallback retains its per-coin freshness age without fabricated book depth", async () => {
+  let now = 1_000_000;
+  const fetcher = makeLegPriceFetcher({
+    fetchBook: async () => (now === 1_000_000 ? bookPrice(5n) : null),
+    readSpotPx: async () => 7n,
+    staleMs: 60_000,
+    now: () => now,
+  });
+  await fetcher.fetch("+1");
+  now = 1_030_000;
+  assert.deepEqual(await fetcher.fetch("+1"), {
+    priceWad: 7n,
+    source: "spotPx",
+    observedAtMs: 1_030_000,
+    depthWad: null,
+    vwapWad: null,
+    freshnessMs: 30_000,
+  });
 });
 
 test("makeLegPriceFetcher: a book fetch throwing does not stamp freshness and does not itself reject the leg", async () => {
@@ -91,7 +113,7 @@ test("makeLegPriceFetcher: freshness is tracked per coin, not globally", async (
     fetchBook: async (coin) => {
       if (coin === "+1" && !bookedOnce.has(coin)) {
         bookedOnce.add(coin);
-        return 5n;
+        return bookPrice(5n);
       }
       return null;
     },
@@ -99,17 +121,17 @@ test("makeLegPriceFetcher: freshness is tracked per coin, not globally", async (
     staleMs: 60_000,
     now: () => now,
   });
-  assert.equal(await fetcher.fetch("+1"), 5n); // "+1" confirmed live
+  assert.equal((await fetcher.fetch("+1")).priceWad, 5n); // "+1" confirmed live
   now = 1_010_000;
   // "+2" has never had a book price, so its spotPx fallback is refused even
   // though "+1" (a different coin on the same market) is fresh.
   await assert.rejects(() => fetcher.fetch("+2"), /stale/);
-  assert.equal(await fetcher.fetch("+1"), 7n); // book now empty, falls back to still-fresh spotPx
+  assert.equal((await fetcher.fetch("+1")).priceWad, 7n); // book now empty, falls back to still-fresh spotPx
 });
 
 test("buildPriceFreshness: /health per-coin age — fresh coin is a number, unconfirmed coin is null", async () => {
   const fetcher = makeLegPriceFetcher({
-    fetchBook: async (coin) => (coin === "+1" ? 5n : null), // "+1" always books; "+2" never does
+    fetchBook: async (coin) => (coin === "+1" ? bookPrice(5n) : null), // "+1" always books; "+2" never does
     readSpotPx: async () => 7n,
     staleMs: 60_000,
     now: () => 1_000_000,
@@ -130,7 +152,10 @@ test("makeLegPriceFetcher: a too-thin book falls back to spotPx and does not sta
   const minDepthWad = parseDecimalToUnits("50", 18);
   const thinBook = { levels: [[], [{ px: "0.05", sz: "1", n: 1 }]] }; // 1-lot spoof, short of depth
   const fetcher = makeLegPriceFetcher({
-    fetchBook: async () => bestAskWad(thinBook, minDepthWad),
+    fetchBook: async () => {
+      const priceWad = bestAskWad(thinBook, minDepthWad);
+      return priceWad === null ? null : bookPrice(priceWad);
+    },
     readSpotPx: async () => 999n,
     staleMs: 60_000,
     now: () => 1_000_000,
@@ -147,15 +172,18 @@ test("makeLegPriceFetcher: a depth-covering ask stamps freshness; a later too-th
   let now = 1_000_000;
   let book = fatBook;
   const fetcher = makeLegPriceFetcher({
-    fetchBook: async () => bestAskWad(book, minDepthWad),
+    fetchBook: async () => {
+      const priceWad = bestAskWad(book, minDepthWad);
+      return priceWad === null ? null : bookPrice(priceWad);
+    },
     readSpotPx: async () => 999n,
     staleMs: 60_000,
     now: () => now,
   });
-  assert.equal(await fetcher.fetch("+1"), 600_000_000_000_000_000n); // depth-covering ask prices normally, stamps fresh
+  assert.equal((await fetcher.fetch("+1")).priceWad, 600_000_000_000_000_000n); // depth-covering ask prices normally, stamps fresh
   now = 1_030_000; // 30s later, still inside the 60s staleness window
   book = thinBook; // book goes thin — spoofed top only
-  assert.equal(await fetcher.fetch("+1"), 999n); // treated as empty -> spotPx (still fresh from the earlier real ask)
+  assert.equal((await fetcher.fetch("+1")).priceWad, 999n); // treated as empty -> spotPx (still fresh from the earlier real ask)
   assert.equal(fetcher.ageMs("+1"), 30_000); // age dates to the last depth-covering ask, not the thin read
 });
 
@@ -171,5 +199,12 @@ test("staleMs=Infinity disables the gate: never-stamped coin still prices off sp
     staleMs: Infinity,
     now: () => 1_000_000,
   });
-  assert.equal(await f.fetch("#1"), 123n);
+  assert.deepEqual(await f.fetch("#1"), {
+    priceWad: 123n,
+    source: "spotPx",
+    observedAtMs: 1_000_000,
+    depthWad: null,
+    vwapWad: null,
+    freshnessMs: null,
+  });
 });
