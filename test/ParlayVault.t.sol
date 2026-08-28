@@ -335,7 +335,7 @@ contract ParlayVaultTest is BaseTest {
 
     function test_resolveVoidFractionalLeg() public {
         uint256 id = mintDefault();
-        settleLeg(vault, 1e18);   // YES leg hit
+        settleLeg(vault, 1e18); // YES leg hit
         settleLeg(vaultB, 0.5e18); // NO leg ambiguous
         uint256 userBefore = quote.balanceOf(user);
         uint256 houseBefore = quote.balanceOf(house);
@@ -360,7 +360,7 @@ contract ParlayVaultTest is BaseTest {
     /// Lost beats fractional: one leg lost + one leg ambiguous = Dead, no refund.
     function test_resolveOrderLostBeatsFractional() public {
         uint256 id = mintDefault();
-        settleLeg(vault, 0);       // YES leg lost
+        settleLeg(vault, 0); // YES leg lost
         settleLeg(vaultB, 0.5e18); // NO leg ambiguous
         uint256 userBefore = quote.balanceOf(user);
         plv.resolveParlay(id);
@@ -382,7 +382,7 @@ contract ParlayVaultTest is BaseTest {
 
     function winLegs() internal {
         settleLeg(vault, 1e18); // YES hit
-        settleLeg(vaultB, 0);   // NO hit
+        settleLeg(vaultB, 0); // NO hit
     }
 
     function test_resolveWonHoldsFunds() public {
