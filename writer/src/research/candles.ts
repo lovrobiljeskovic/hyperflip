@@ -1,8 +1,7 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import { gzipSync } from "node:zlib";
+import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
 import { assertCandleRecord } from "./types.js";
-import { atomicWrite, atomicWriteNew, canonicalJson, durableAppend, publishRollingManifest, readCandlePartition, sha256 } from "./store.js";
+import { canonicalJson, publishRollingManifest, readCandlePartition, sha256 } from "./store.js";
 import type { CandleRecord, SourceEntry, SourceRegistry } from "./types.js";
 
 const HOUR_MS = 3_600_000;
@@ -110,25 +109,20 @@ function immutableObservation(candle: CandleRecord): string {
   return canonicalJson({ openTimeMs, closeTimeMs, open, high, low, close, volume, tradeCount });
 }
 
-function existingCandles(root: string, source: SourceEntry): Map<string, CandleRecord> {
-  const raw = join(root, "raw", "candles");
-  const walk = (dir: string): string[] => {
-    if (!existsSync(dir)) return [];
-    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => entry.isDirectory() ? walk(join(dir, entry.name)) : [join(dir, entry.name)]);
-  };
-  const records = walk(raw).filter((file) => file.endsWith(".jsonl.gz")).flatMap(readCandlePartition).filter((candle) => candle.sourceNetwork === source.sourceNetwork && candle.sourceCoin === source.sourceCoin && candle.interval === "1h");
+function existingCandles(storage: ResearchPersistence, source: SourceEntry): Map<string, CandleRecord> {
+  const records = storage.list("raw/candles").filter((file) => file.endsWith(".jsonl.gz")).flatMap((file) => readCandlePartition(storage, file)).filter((candle) => candle.sourceNetwork === source.sourceNetwork && candle.sourceCoin === source.sourceCoin && candle.interval === "1h");
   return new Map(records.map((candle) => [candleKey(candle), candle]));
 }
 
-function loadState(root: string): { sourceRegistrySha256?: string; sources: Record<string, number> } {
-  const file = join(root, "state", "collector.json");
-  if (!existsSync(file)) return { sources: {} };
-  const state = JSON.parse(readFileSync(file, "utf8")) as { sourceRegistrySha256?: string; sources?: unknown };
+function loadState(storage: ResearchPersistence): { sourceRegistrySha256?: string; sources: Record<string, number> } {
+  if (!storage.exists("state/collector.json")) return { sources: {} };
+  const state = JSON.parse(storage.readText("state/collector.json")) as { sourceRegistrySha256?: string; sources?: unknown };
   if (state.sources === null || typeof state.sources !== "object" || Array.isArray(state.sources)) throw new Error("collector state is invalid");
   return { sourceRegistrySha256: state.sourceRegistrySha256, sources: state.sources as Record<string, number> };
 }
 
 export async function collectSources(deps: CollectionDeps): Promise<CollectionSummary> {
+  const storage = openResearchPersistence(deps.root);
   const nowMs = deps.nowMs ?? Date.now();
   if (!Number.isSafeInteger(nowMs)) throw new Error("nowMs must be a safe integer timestamp");
   const apiUrl = deps.apiUrl ?? "https://api.hyperliquid.xyz/info";
@@ -136,14 +130,14 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
   const sleep = deps.sleep ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
   const registryBytes = canonicalJson(deps.registry);
   const sourceRegistrySha256 = sha256(registryBytes);
-  const fact = join(deps.root, "facts", "source-registries", `${sourceRegistrySha256}.json`);
-  if (existsSync(fact) && readFileSync(fact, "utf8") !== registryBytes) throw new Error("immutable source registry fact differs");
-  if (!existsSync(fact)) atomicWrite(fact, registryBytes);
-  const state = loadState(deps.root);
+  const fact = `facts/source-registries/${sourceRegistrySha256}.json`;
+  if (storage.exists(fact) && storage.readText(fact) !== registryBytes) throw new Error("immutable source registry fact differs");
+  if (!storage.exists(fact)) storage.writeAtomic(fact, registryBytes);
+  const state = loadState(storage);
   const summary: CollectionSummary = { accepted: 0, conflicts: 0, failures: [] };
   for (const source of deps.registry.sources) {
     const sourceKey = `${source.sourceNetwork}:${source.sourceCoin}`;
-    const known = existingCandles(deps.root, source);
+    const known = existingCandles(storage, source);
     const durableLastOpenTimeMs = Math.max(state.sources[sourceKey] ?? -1, ...[...known.values()].map((candle) => candle.openTimeMs));
     const request = nextCandleRequest(source, durableLastOpenTimeMs < 0 ? null : durableLastOpenTimeMs, nowMs);
     if (request.startTime > request.endTime) continue;
@@ -159,13 +153,13 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
         const body = await response.text();
         if (!response.ok) throw new Error(`info API ${response.status}: ${body}`);
         candles = parseCandleSnapshot(source, body, retrievedAtMs, request);
-        durableAppend(join(deps.root, "journal", "requests", `${dayPath(retrievedAtMs)}.jsonl`), canonicalJson({ schemaVersion: 1, sourceKey, startTime: request.startTime, endTime: nowMs, retrievedAtMs, httpStatus: response.status, error: null, returnedRows: candles.length }));
+        storage.append(`journal/requests/${dayPath(retrievedAtMs)}.jsonl`, canonicalJson({ schemaVersion: 1, sourceKey, startTime: request.startTime, endTime: nowMs, retrievedAtMs, httpStatus: response.status, error: null, returnedRows: candles.length }));
         break;
       } catch (error) {
         failure = error instanceof Error ? error.message : String(error);
-        durableAppend(join(deps.root, "journal", "requests", `${dayPath(retrievedAtMs)}.jsonl`), canonicalJson({ schemaVersion: 1, sourceKey, startTime: request.startTime, endTime: nowMs, retrievedAtMs, httpStatus, error: failure, returnedRows: 0 }));
+        storage.append(`journal/requests/${dayPath(retrievedAtMs)}.jsonl`, canonicalJson({ schemaVersion: 1, sourceKey, startTime: request.startTime, endTime: nowMs, retrievedAtMs, httpStatus, error: failure, returnedRows: 0 }));
         if (error instanceof CandleBatchConflictError) {
-          for (const candle of error.conflicts) durableAppend(join(deps.root, "quarantine", "candles", `${dayPath(nowMs)}.jsonl`), canonicalJson(candle));
+          for (const candle of error.conflicts) storage.append(`quarantine/candles/${dayPath(nowMs)}.jsonl`, canonicalJson(candle));
           summary.conflicts += error.conflicts.length;
           break;
         }
@@ -181,7 +175,7 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
       const key = candleKey(candle);
       const prior = known.get(key);
       if (prior && immutableObservation(prior) !== immutableObservation(candle)) {
-        durableAppend(join(deps.root, "quarantine", "candles", `${dayPath(nowMs)}.jsonl`), canonicalJson(candle));
+        storage.append(`quarantine/candles/${dayPath(nowMs)}.jsonl`, canonicalJson(candle));
         summary.conflicts++;
         continue;
       }
@@ -192,34 +186,34 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
       }
     }
     if (accepted.length) {
-      const shard = join(deps.root, "raw", "candles", dayPath(nowMs), source.underlying, `${request.startTime}-${request.endTime}-${nowMs}.jsonl.gz`);
+      const shard = `raw/candles/${dayPath(nowMs)}/${source.underlying}/${request.startTime}-${request.endTime}-${nowMs}.jsonl.gz`;
       const provenance = `${shard}.provenance.json`;
       const provenanceBytes = canonicalJson({ schemaVersion: 1, sourceRegistrySha256 });
-      const provenanceMatches = existsSync(provenance) ? readFileSync(provenance, "utf8") === provenanceBytes : atomicWriteNew(provenance, provenanceBytes);
+      const provenanceMatches = storage.exists(provenance) ? storage.readText(provenance) === provenanceBytes : storage.writeNew(provenance, provenanceBytes);
       if (!provenanceMatches) {
-        for (const candle of accepted) durableAppend(join(deps.root, "quarantine", "candles", `${dayPath(nowMs)}.jsonl`), canonicalJson(candle));
+        for (const candle of accepted) storage.append(`quarantine/candles/${dayPath(nowMs)}.jsonl`, canonicalJson(candle));
         summary.conflicts += accepted.length;
       } else {
         const shardBytes = gzipSync(`${accepted.map(canonicalJson).join("\n")}\n`);
-        if (atomicWriteNew(shard, shardBytes)) {
+        if (storage.writeNew(shard, shardBytes)) {
           summary.accepted += accepted.length;
           for (const candle of accepted) {
             known.set(candleKey(candle), candle);
             lastDurable = Math.max(lastDurable, candle.openTimeMs);
           }
-        } else if (!readFileSync(shard).equals(shardBytes)) {
-          for (const candle of accepted) durableAppend(join(deps.root, "quarantine", "candles", `${dayPath(nowMs)}.jsonl`), canonicalJson(candle));
+        } else if (!storage.read(shard).equals(shardBytes)) {
+          for (const candle of accepted) storage.append(`quarantine/candles/${dayPath(nowMs)}.jsonl`, canonicalJson(candle));
           summary.conflicts += accepted.length;
         } else {
-          for (const candle of readCandlePartition(shard)) lastDurable = Math.max(lastDurable, candle.openTimeMs);
+          for (const candle of readCandlePartition(storage, shard)) lastDurable = Math.max(lastDurable, candle.openTimeMs);
         }
       }
     }
     state.sources[sourceKey] = lastDurable;
   }
-  atomicWrite(join(deps.root, "state", "collector.json"), canonicalJson({ schemaVersion: 1, sourceRegistrySha256, sources: state.sources }));
+  storage.writeAtomic("state/collector.json", canonicalJson({ schemaVersion: 1, sourceRegistrySha256, sources: state.sources }));
   try {
-    Object.assign(summary, publishRollingManifest(deps.root, sourceRegistrySha256));
+    Object.assign(summary, publishRollingManifest(deps.root, sourceRegistrySha256, storage));
   } catch (error) {
     summary.failures.push({ underlying: "manifest", error: error instanceof Error ? error.message : String(error) });
   }

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { createPublicClient, http, isAddress } from "viem";
@@ -7,7 +7,8 @@ import { collectSources } from "./candles.js";
 import { calibrate } from "./calibration.js";
 import { loadReplaySourceRegistry, runReplay } from "./replay.js";
 import { deriveReturns } from "./returns.js";
-import { containedPath, readCurrentManifest, RESEARCH_LOOKBACK_MS, sha256 } from "./store.js";
+import { openResearchPersistence } from "./persistence.js";
+import { readCurrentManifest, researchRelativePath, RESEARCH_LOOKBACK_MS, sha256 } from "./store.js";
 import { parseSourceRegistry } from "./types.js";
 import type { ReturnRecord } from "./returns.js";
 import type { CorrelationArtifact } from "./types.js";
@@ -84,10 +85,11 @@ if (!commands.includes(command)) {
     process.exitCode = 2;
   } else {
     const resolvedRoot = resolve(root);
+    const storage = openResearchPersistence(resolvedRoot);
     const current = manifestFile
-      ? { manifestPath: containedPath(resolvedRoot, manifestFile), manifest: JSON.parse(readFileSync(containedPath(resolvedRoot, manifestFile), "utf8")) }
-      : readCurrentManifest(resolvedRoot);
-    const output = deriveReturns(resolvedRoot, current.manifest, { asOfMs: current.manifest.sourceRange.toMs, lookbackMs: RESEARCH_LOOKBACK_MS });
+      ? (() => { const path = researchRelativePath(resolvedRoot, manifestFile); return { manifestPath: resolve(resolvedRoot, path), manifest: JSON.parse(storage.readText(path)) }; })()
+      : readCurrentManifest(resolvedRoot, storage);
+    const output = deriveReturns(resolvedRoot, current.manifest, { asOfMs: current.manifest.sourceRange.toMs, lookbackMs: RESEARCH_LOOKBACK_MS }, storage);
     console.log(JSON.stringify({ ...output, dataManifestPath: current.manifestPath }));
   }
 } else if (command === "calibrate") {
@@ -99,7 +101,8 @@ if (!commands.includes(command)) {
     process.exitCode = 2;
   } else {
     const resolvedRoot = resolve(root);
-    const artifact = calibrate({ root: resolvedRoot, manifest: JSON.parse(readFileSync(containedPath(resolvedRoot, manifestFile), "utf8")), derivedManifestPath: containedPath(resolvedRoot, derivedManifestPath) });
+    const storage = openResearchPersistence(resolvedRoot);
+    const artifact = calibrate({ root: resolvedRoot, manifest: JSON.parse(storage.readText(researchRelativePath(resolvedRoot, manifestFile))), derivedManifestPath: researchRelativePath(resolvedRoot, derivedManifestPath), storage });
     console.log(JSON.stringify({ modelVersion: artifact.modelVersion, dataAsOf: artifact.dataAsOf, candidatePath: resolve(root, "artifacts", "candidates", `${artifact.modelVersion}.json`) }));
   }
 } else if (command === "replay") {
@@ -113,15 +116,16 @@ if (!commands.includes(command)) {
     process.exitCode = 2;
   } else {
     const resolvedRoot = resolve(root);
-    const candidateBytes = readFileSync(containedPath(resolvedRoot, candidateFile), "utf8");
+    const storage = openResearchPersistence(resolvedRoot);
+    const candidateBytes = storage.readText(researchRelativePath(resolvedRoot, candidateFile));
     const candidate = JSON.parse(candidateBytes) as CorrelationArtifact;
-    const manifestPath = containedPath(resolvedRoot, derivedManifestFile);
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { dataManifestSha256: string; sourceRegistrySha256: string; files: { kind: "returns" | "exclusions"; path: string; bytes: number; sha256: string; rows: number; schemaVersion: number }[] };
+    const manifestPath = researchRelativePath(resolvedRoot, derivedManifestFile);
+    const manifest = JSON.parse(storage.readText(manifestPath)) as { dataManifestSha256: string; sourceRegistrySha256: string; files: { kind: "returns" | "exclusions"; path: string; bytes: number; sha256: string; rows: number; schemaVersion: number }[] };
     if (candidate.dataManifestSha256 !== manifest.dataManifestSha256) throw new Error("candidate and replay return manifest identities differ");
     const rows = manifest.files.flatMap((file) => {
-      const path = containedPath(resolvedRoot, file.path);
-      if (file.schemaVersion !== 1 || (file.kind !== "returns" && file.kind !== "exclusions") || statSync(path).size !== file.bytes) throw new Error(`replay return file mismatch: ${file.path}`);
-      const bytes = readFileSync(path);
+      const path = researchRelativePath(resolvedRoot, file.path);
+      const bytes = storage.read(path);
+      if (file.schemaVersion !== 1 || (file.kind !== "returns" && file.kind !== "exclusions") || bytes.length !== file.bytes) throw new Error(`replay return file mismatch: ${file.path}`);
       if (sha256(bytes) !== file.sha256) throw new Error(`replay return file mismatch: ${file.path}`);
       const text = gunzipSync(bytes).toString("utf8").trim();
       const parsed = text ? text.split("\n").map((line) => JSON.parse(line)) : [];
@@ -129,10 +133,10 @@ if (!commands.includes(command)) {
       return file.kind === "returns" ? parsed as ReturnRecord[] : [];
     });
     if (manifest.sourceRegistrySha256 !== candidate.sourceRegistrySha256) throw new Error("replay source registry identity mismatch");
-    const sources = loadReplaySourceRegistry(resolvedRoot, manifest.sourceRegistrySha256);
+    const sources = loadReplaySourceRegistry(resolvedRoot, manifest.sourceRegistrySha256, storage);
     const report = runReplay({
       root: resolvedRoot, candidate, candidateBytes, inputManifestSha256: manifest.dataManifestSha256,
-      baselineFile: resolve(baselineFile), series: { rows, sources, manifestHash: manifest.dataManifestSha256 }, seed,
+      baselineFile: resolve(baselineFile), series: { rows, sources, manifestHash: manifest.dataManifestSha256 }, seed, storage,
     });
     console.log(JSON.stringify({ modelVersion: report.modelVersion, decision: report.decision }));
   }

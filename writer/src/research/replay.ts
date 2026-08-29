@@ -1,11 +1,12 @@
 import { createHash, hash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { jointProbWad, parseCorrelations, type CorrLeg, type CorrelationTable } from "../correlation.js";
 import { calibrationPairSample, fitHierarchical, type CalibrationAlignmentCache } from "./calibration.js";
 import { cholesky, nearestCorrelation, shrinkPair, structuredTargets, weightedCorrelation, type PairEstimate } from "./matrix.js";
 import { trailingFresh, type ReturnRecord } from "./returns.js";
-import { atomicWriteNew, canonicalJson, readSourceRegistryFact, sha256 } from "./store.js";
+import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
+import { canonicalJson, readSourceRegistryFact, sha256 } from "./store.js";
 import type { CorrelationArtifact, SourceEntry } from "./types.js";
 
 const DAY = 86_400_000;
@@ -20,8 +21,8 @@ const SAFE_MODEL_VERSION = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const observationTime = (row: ReturnRecord): number => row.observationCloseTimeMs ?? row.timestampMs;
 const pairName = (left: string, right: string): string => left < right ? `${left}:${right}` : `${right}:${left}`;
 
-export function loadReplaySourceRegistry(root: string, sourceRegistrySha256: string): SourceEntry[] {
-  return readSourceRegistryFact(root, sourceRegistrySha256).registry.sources;
+export function loadReplaySourceRegistry(root: string, sourceRegistrySha256: string, storage = openResearchPersistence(root)): SourceEntry[] {
+  return readSourceRegistryFact(root, sourceRegistrySha256, storage).registry.sources;
 }
 
 export type Direction = "up" | "down";
@@ -102,6 +103,7 @@ export interface ReplayInput {
   baselineFile: string;
   series: ReplaySeries;
   seed: string;
+  storage?: ResearchPersistence;
 }
 
 export interface ValidationReport {
@@ -807,13 +809,13 @@ export function replayOrigins(series: ReplaySeries): number[] {
   return origins;
 }
 
-function validationPath(root: string, modelVersion: string): string { return join(resolve(root), "artifacts", "candidates", `${modelVersion}.validation.json`); }
+function validationPath(modelVersion: string): string { return `artifacts/candidates/${modelVersion}.validation.json`; }
 
-function readExisting(path: string, candidateSha256: string, inputManifestSha256: string, root: string): ValidationReport | null {
-  if (!existsSync(path)) return null;
-  const report = JSON.parse(readFileSync(path, "utf8")) as ValidationReport;
+function readExisting(storage: ResearchPersistence, path: string, candidateSha256: string, inputManifestSha256: string): ValidationReport | null {
+  if (!storage.exists(path)) return null;
+  const report = JSON.parse(storage.readText(path)) as ValidationReport;
   if (report.candidateSha256 !== candidateSha256 || report.inputManifestSha256 !== inputManifestSha256) throw new Error("validation already exists for different immutable inputs");
-  const snapshot = readFileSync(join(root, report.baselineSnapshotPath));
+  const snapshot = storage.read(report.baselineSnapshotPath);
   if (sha256(snapshot) !== report.baselineSha256) throw new Error("baseline snapshot hash mismatch");
   return report;
 }
@@ -833,19 +835,20 @@ interface ReplayComputation {
 
 export function runReplay(input: ReplayInput): ValidationReport {
   const root = resolve(input.root);
+  const storage = input.storage ?? openResearchPersistence(root);
   if ("draws" in input) throw new Error("replay uses exactly 20,000 draws");
   if (!SAFE_MODEL_VERSION.test(input.candidate.modelVersion)) throw new Error("replay modelVersion is not a safe artifact filename");
   if (input.inputManifestSha256 !== input.candidate.dataManifestSha256 || input.series.manifestHash !== input.inputManifestSha256) throw new Error("replay immutable input identities differ");
   const candidateSha256 = sha256(input.candidateBytes ?? canonicalJson(input.candidate));
-  const outputPath = validationPath(root, input.candidate.modelVersion);
-  const existing = readExisting(outputPath, candidateSha256, input.inputManifestSha256, root);
+  const outputPath = validationPath(input.candidate.modelVersion);
+  const existing = readExisting(storage, outputPath, candidateSha256, input.inputManifestSha256);
   if (existing) return existing;
   const baselineCanonical = canonicalJson(JSON.parse(readFileSync(resolve(input.baselineFile), "utf8")));
   const baselineSha256 = sha256(baselineCanonical);
-  const baselinePath = join(root, "facts", "baselines", `${baselineSha256}.json`);
-  if (existsSync(baselinePath)) {
-    if (readFileSync(baselinePath, "utf8") !== baselineCanonical) throw new Error("baseline snapshot already exists with different bytes");
-  } else if (!atomicWriteNew(baselinePath, baselineCanonical) && readFileSync(baselinePath, "utf8") !== baselineCanonical) throw new Error("baseline snapshot already exists with different bytes");
+  const baselinePath = `facts/baselines/${baselineSha256}.json`;
+  if (storage.exists(baselinePath)) {
+    if (storage.readText(baselinePath) !== baselineCanonical) throw new Error("baseline snapshot already exists with different bytes");
+  } else if (!storage.writeNew(baselinePath, baselineCanonical) && storage.readText(baselinePath) !== baselineCanonical) throw new Error("baseline snapshot already exists with different bytes");
   const baseline = parseCorrelations(baselineCanonical);
   const compute = (): ReplayComputation => {
   let matrixFailure = input.candidate.quality.matrixOrder.length !== input.candidate.quality.signedPsdTarget.length
@@ -962,7 +965,7 @@ export function runReplay(input: ReplayInput): ValidationReport {
     candidateSha256,
     inputManifestSha256: input.inputManifestSha256,
     baselineSha256,
-    baselineSnapshotPath: relative(root, baselinePath),
+    baselineSnapshotPath: baselinePath,
     seed: input.seed,
     drawCount: 20_000,
     originStrideHours: 24,
@@ -980,6 +983,6 @@ export function runReplay(input: ReplayInput): ValidationReport {
     limitations: ["testnet outcomes do not validate production price discovery", "signed t-copula and filtered historical simulation are report-only", "band markets are excluded from statistical success"],
   };
   const bytes = `${canonicalJson(report)}\n`;
-  if (!atomicWriteNew(outputPath, bytes) && readFileSync(outputPath, "utf8") !== bytes) throw new Error("validation already exists with different bytes");
+  if (!storage.writeNew(outputPath, bytes) && storage.readText(outputPath) !== bytes) throw new Error("validation already exists with different bytes");
   return report;
 }

@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { openResearchPersistence } from "./persistence.js";
 import { operationError, writeOperationState } from "./store.js";
 
 export interface DailyResult { status: number | null; stdout: string; stderr: string }
@@ -12,11 +13,12 @@ function output(result: DailyResult): Record<string, unknown> {
 
 export function runDaily(env: NodeJS.ProcessEnv, run: (step: DailyStep, env: NodeJS.ProcessEnv) => DailyResult, now: () => number = Date.now): number {
   const root = env.RESEARCH_ROOT ? resolve(env.RESEARCH_ROOT) : null;
+  const storage = root ? openResearchPersistence(root) : null;
   const started = now();
   const persist = (status: "running" | "succeeded" | "failed", error: string | null, step: DailyStep | null): void => {
     if (!root) return;
     const at = now();
-    writeOperationState(root, "daily.json", { schemaVersion: 1, operation: "daily", status, startedAt: new Date(started).toISOString(), endedAt: status === "running" ? null : new Date(at).toISOString(), error, details: { step } });
+    writeOperationState(root, "daily.json", { schemaVersion: 1, operation: "daily", status, startedAt: new Date(started).toISOString(), endedAt: status === "running" ? null : new Date(at).toISOString(), error, details: { step } }, storage!);
   };
   persist("running", null, null);
   let current = { ...env };

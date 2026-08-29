@@ -1,7 +1,7 @@
-import { closeSync, constants, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { gunzipSync } from "node:zlib";
+import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
 import { assertCandleRecord, assertDataManifest, parseSourceRegistry } from "./types.js";
 import type { CandleRecord, DataManifest, SourceRegistry } from "./types.js";
 
@@ -35,8 +35,8 @@ export interface OperationState {
   details: Record<string, string | number | boolean | null>;
 }
 
-export function writeOperationState(root: string, file: string, state: OperationState): void {
-  atomicWrite(join(resolve(root), "state", file), `${canonicalJson(state)}\n`);
+export function writeOperationState(root: string, file: string, state: OperationState, storage = openResearchPersistence(root)): void {
+  storage.writeAtomic(`state/${file}`, `${canonicalJson(state)}\n`);
 }
 
 export function operationError(error: unknown): string {
@@ -44,86 +44,21 @@ export function operationError(error: unknown): string {
   return message.replace(/https?:\/\/\S+/gi, "[redacted-url]").slice(0, 1_000);
 }
 
-function fsyncDirectory(path: string): void {
-  const directory = openSync(path, "r");
-  try {
-    fsyncSync(directory);
-  } finally {
-    closeSync(directory);
-  }
-}
-
-export function durableMkdir(path: string, mode?: number): void {
-  const missing: string[] = [];
-  let cursor = resolve(path);
-  while (!existsSync(cursor)) {
-    missing.unshift(cursor);
-    const parent = dirname(cursor);
-    if (parent === cursor) break;
-    cursor = parent;
-  }
-  if (existsSync(cursor) && lstatSync(cursor).isSymbolicLink()) throw new Error(`durable directory is a symbolic link: ${cursor}`);
-  for (const directory of missing) {
-    mkdirSync(directory, mode === undefined ? undefined : { mode });
-    fsyncDirectory(dirname(directory));
-  }
-}
-
-function durableWrite(file: string, bytes: string | Uint8Array, flags: "a" | "wx" = "a"): void {
-  durableMkdir(dirname(file));
-  if (existsSync(file) && lstatSync(file).isSymbolicLink()) throw new Error(`durable file is a symbolic link: ${file}`);
-  const openFlags = flags === "a"
-    ? constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_NOFOLLOW
-    : constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW;
-  const fd = openSync(file, openFlags, 0o600);
-  try {
-    let offset = 0;
-    const data = typeof bytes === "string" ? Buffer.from(bytes) : bytes;
-    while (offset < data.length) offset += writeSync(fd, data, offset, data.length - offset);
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-}
-
+// Compatibility exports for callers that persist one already-resolved file.
 export function durableAppend(file: string, line: string): void {
-  durableWrite(file, `${line.replace(/\n+$/, "")}\n`);
+  openResearchPersistence(dirname(resolve(file))).append(basename(file), line);
 }
 
 export function atomicWrite(file: string, bytes: string | Uint8Array, hooks?: { beforeRename?: () => void }): void {
-  durableMkdir(dirname(file));
-  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    durableWrite(temporary, bytes, "wx");
-    hooks?.beforeRename?.();
-    renameSync(temporary, file);
-    fsyncDirectory(dirname(file));
-  } catch (error) {
-    rmSync(temporary, { force: true });
-    throw error;
-  }
+  openResearchPersistence(dirname(resolve(file)), { beforeLeafOpen: hooks?.beforeRename }).writeAtomic(basename(file), Buffer.from(bytes));
 }
 
 export function atomicWriteNew(file: string, bytes: string | Uint8Array): boolean {
-  durableMkdir(dirname(file));
-  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    durableWrite(temporary, bytes, "wx");
-    try {
-      linkSync(temporary, file);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
-      throw error;
-    }
-    fsyncDirectory(dirname(file));
-    return true;
-  } finally {
-    rmSync(temporary, { force: true });
-  }
+  return openResearchPersistence(dirname(resolve(file))).writeNew(basename(file), Buffer.from(bytes));
 }
 
-export function readCandlePartition(file: string): CandleRecord[] {
-  const rows = gunzipSync(readFileSync(file)).toString("utf8").trim();
+function parseCandleBytes(bytes: Buffer): CandleRecord[] {
+  const rows = gunzipSync(bytes).toString("utf8").trim();
   if (!rows) return [];
   return rows.split("\n").map((line) => {
     const record = JSON.parse(line) as CandleRecord;
@@ -132,36 +67,35 @@ export function readCandlePartition(file: string): CandleRecord[] {
   });
 }
 
-function filesBelow(root: string): string[] {
-  if (!existsSync(root)) return [];
-  return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(root, entry.name);
-    if (entry.isSymbolicLink()) throw new Error(`research closure contains a symbolic link: ${path}`);
-    return entry.isDirectory() ? filesBelow(path) : [path];
-  });
+export function readCandlePartition(file: string): CandleRecord[];
+export function readCandlePartition(storage: ResearchPersistence, relativePath: string): CandleRecord[];
+export function readCandlePartition(fileOrStorage: string | ResearchPersistence, relativePath?: string): CandleRecord[] {
+  if (typeof fileOrStorage === "string") {
+    const file = resolve(fileOrStorage);
+    return parseCandleBytes(openResearchPersistence(dirname(file)).read(basename(file)));
+  }
+  return parseCandleBytes(fileOrStorage.read(relativePath!));
 }
 
 const bytewise = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
 const HOUR = 3_600_000;
 export const RESEARCH_LOOKBACK_MS = 180 * 86_400_000;
 
-export function containedPath(rootInput: string, pathInput: string): string {
+export function researchRelativePath(rootInput: string, pathInput: string): string {
+  if (!isAbsolute(pathInput) && (!pathInput || pathInput.startsWith("/") || pathInput.endsWith("/") || pathInput.includes("//") || pathInput.includes("\\") || pathInput.includes("\0") || pathInput.split("/").some((part) => part === "." || part === ".."))) throw new Error("research path escapes root");
   const root = resolve(rootInput);
   const path = resolve(root, pathInput);
-  if (path !== root && !path.startsWith(`${root}${sep}`)) throw new Error("research path escapes root");
-  let cursor = path;
-  while (cursor !== root) {
-    if (existsSync(cursor) && lstatSync(cursor).isSymbolicLink()) throw new Error(`research path is a symbolic link: ${relative(root, cursor)}`);
-    const parent = dirname(cursor);
-    if (parent === cursor) break;
-    cursor = parent;
-  }
-  if (lstatSync(root).isSymbolicLink()) throw new Error("research root is a symbolic link");
-  if (!existsSync(path)) throw new Error(`research path is missing: ${relative(root, path)}`);
-  const realRoot = realpathSync(root);
-  const realPath = realpathSync(path);
-  if (realPath !== realRoot && !realPath.startsWith(`${realRoot}${sep}`)) throw new Error("research path escapes real root");
-  return path;
+  const result = relative(root, path);
+  if (!result || result === ".." || result.startsWith(`..${sep}`)) throw new Error("research path escapes root");
+  return result.split(sep).join("/");
+}
+
+export function containedPath(rootInput: string, pathInput: string): string {
+  const root = resolve(rootInput);
+  const path = researchRelativePath(root, pathInput);
+  const storage = openResearchPersistence(root);
+  if (!storage.exists(path)) throw new Error(`research path is missing: ${path}`);
+  return resolve(root, path);
 }
 
 function dateParts(day: string): [string, string, string] {
@@ -170,27 +104,26 @@ function dateParts(day: string): [string, string, string] {
   return parts as [string, string, string];
 }
 
-export function readSourceRegistryFact(root: string, hash: string): { registry: SourceRegistry; hash: string; path: string } {
+export function readSourceRegistryFact(root: string, hash: string, storage = openResearchPersistence(root)): { registry: SourceRegistry; hash: string; path: string } {
   if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error("source registry fact hash is invalid");
-  const path = containedPath(root, join("facts", "source-registries", `${hash}.json`));
-  const bytes = readFileSync(path, "utf8");
+  const relativePath = `facts/source-registries/${hash}.json`;
+  const bytes = storage.readText(relativePath);
   if (sha256(bytes) !== hash) throw new Error("source registry fact hash mismatch");
-  return { registry: parseSourceRegistry(bytes), hash, path };
+  return { registry: parseSourceRegistry(bytes), hash, path: resolve(root, relativePath) };
 }
 
-function sourceRegistry(root: string, rawFiles: string[]): { registry: SourceRegistry; hash: string; path: string } {
+function sourceRegistry(root: string, rawFiles: string[], storage: ResearchPersistence): { registry: SourceRegistry; hash: string; path: string } {
   const provenanceHashes = [...new Set(rawFiles.map((file) => {
-    const provenance = JSON.parse(readFileSync(`${file}.provenance.json`, "utf8")) as { schemaVersion?: unknown; sourceRegistrySha256?: unknown };
+    const provenance = JSON.parse(storage.readText(`${file}.provenance.json`)) as { schemaVersion?: unknown; sourceRegistrySha256?: unknown };
     if (provenance.schemaVersion !== 1 || typeof provenance.sourceRegistrySha256 !== "string") throw new Error("candle shard provenance is invalid");
     return provenance.sourceRegistrySha256;
   }))];
   if (provenanceHashes.length > 1) throw new Error("daily shards use multiple source registries");
-  const stateFile = join(root, "state", "collector.json");
-  if (!existsSync(stateFile)) throw new Error("collector state is missing");
-  const state = JSON.parse(readFileSync(stateFile, "utf8")) as { sourceRegistrySha256?: unknown };
+  if (!storage.exists("state/collector.json")) throw new Error("collector state is missing");
+  const state = JSON.parse(storage.readText("state/collector.json")) as { sourceRegistrySha256?: unknown };
   const hash = provenanceHashes[0] ?? state.sourceRegistrySha256;
   if (typeof hash !== "string") throw new Error("collector state has no source registry hash");
-  return readSourceRegistryFact(root, hash);
+  return readSourceRegistryFact(root, hash, storage);
 }
 
 function isExpectedSessionHour(timestampMs: number, source: SourceRegistry["sources"][number]): boolean {
@@ -203,12 +136,11 @@ function isExpectedSessionHour(timestampMs: number, source: SourceRegistry["sour
   return session.weekdays.includes(weekday) && !session.closedDates.includes(date) && localTime >= session.openLocal && localTime < session.closeLocal;
 }
 
-export function buildDailyManifest(root: string, day: string): DataManifest {
+export function buildDailyManifest(root: string, day: string, storage = openResearchPersistence(root)): DataManifest {
   const [year, month, date] = dateParts(day);
-  const rawRoot = join(root, "raw", "candles", year, month, date);
-  const rawFiles = filesBelow(rawRoot).filter((file) => file.endsWith(".jsonl.gz"));
-  const fact = sourceRegistry(root, rawFiles);
-  const records = rawFiles.flatMap(readCandlePartition);
+  const rawFiles = storage.list(`raw/candles/${year}/${month}/${date}`).filter((file) => file.endsWith(".jsonl.gz"));
+  const fact = sourceRegistry(root, rawFiles, storage);
+  const records = rawFiles.flatMap((file) => readCandlePartition(storage, file));
   const byUnderlying = new Map<string, CandleRecord[]>();
   for (const record of records) byUnderlying.set(record.underlying, [...(byUnderlying.get(record.underlying) ?? []), record]);
   const underlyings: DataManifest["underlyings"] = {};
@@ -225,9 +157,11 @@ export function buildDailyManifest(root: string, day: string): DataManifest {
       missingIntervals,
     };
   }
-  const files = [fact.path, ...rawFiles.flatMap((file) => [file, `${file}.provenance.json`])].map((file) => ({
-    path: relative(root, file), bytes: statSync(file).size, sha256: sha256(readFileSync(file)), rows: file.endsWith(".jsonl.gz") ? readCandlePartition(file).length : 1, schemaVersion: 1 as const,
-  })).sort((a, b) => bytewise(a.path, b.path));
+  const factPath = `facts/source-registries/${fact.hash}.json`;
+  const files = [factPath, ...rawFiles.flatMap((file) => [file, `${file}.provenance.json`])].map((path) => {
+    const bytes = storage.read(path);
+    return { path, bytes: bytes.length, sha256: sha256(bytes), rows: path.endsWith(".jsonl.gz") ? parseCandleBytes(bytes).length : 1, schemaVersion: 1 as const };
+  }).sort((a, b) => bytewise(a.path, b.path));
   const timestamps = records.map((record) => record.retrievedAtMs);
   const manifest: DataManifest = {
     schemaVersion: 1,
@@ -241,18 +175,18 @@ export function buildDailyManifest(root: string, day: string): DataManifest {
   return manifest;
 }
 
-export function buildRollingManifest(root: string, sourceRegistrySha256: string): DataManifest {
-  const fact = readSourceRegistryFact(root, sourceRegistrySha256);
-  const rawFiles = filesBelow(join(root, "raw", "candles")).filter((file) => file.endsWith(".jsonl.gz") && (() => {
-    const provenance = JSON.parse(readFileSync(`${file}.provenance.json`, "utf8")) as { schemaVersion?: unknown; sourceRegistrySha256?: unknown };
+export function buildRollingManifest(root: string, sourceRegistrySha256: string, storage = openResearchPersistence(root)): DataManifest {
+  const fact = readSourceRegistryFact(root, sourceRegistrySha256, storage);
+  const rawFiles = storage.list("raw/candles").filter((file) => file.endsWith(".jsonl.gz") && (() => {
+    const provenance = JSON.parse(storage.readText(`${file}.provenance.json`)) as { schemaVersion?: unknown; sourceRegistrySha256?: unknown };
     return provenance.schemaVersion === 1 && provenance.sourceRegistrySha256 === sourceRegistrySha256;
   })());
-  const all = rawFiles.flatMap(readCandlePartition);
+  const all = rawFiles.flatMap((file) => readCandlePartition(storage, file));
   if (!all.length) throw new Error("rolling manifest requires at least one closed candle");
   const toMs = Math.max(...all.map((record) => record.closeTimeMs));
   const fromMs = Math.max(0, toMs - RESEARCH_LOOKBACK_MS);
-  const selectedFiles = rawFiles.filter((file) => readCandlePartition(file).some((record) => record.closeTimeMs >= fromMs && record.closeTimeMs <= toMs));
-  const records = selectedFiles.flatMap(readCandlePartition).filter((record) => record.closeTimeMs >= fromMs && record.closeTimeMs <= toMs);
+  const selectedFiles = rawFiles.filter((file) => readCandlePartition(storage, file).some((record) => record.closeTimeMs >= fromMs && record.closeTimeMs <= toMs));
+  const records = selectedFiles.flatMap((file) => readCandlePartition(storage, file)).filter((record) => record.closeTimeMs >= fromMs && record.closeTimeMs <= toMs);
   const underlyings: DataManifest["underlyings"] = {};
   for (const source of fact.registry.sources) {
     const candles = records.filter((record) => record.underlying === source.underlying).sort((a, b) => a.openTimeMs - b.openTimeMs);
@@ -268,9 +202,11 @@ export function buildRollingManifest(root: string, sourceRegistrySha256: string)
       missingIntervals,
     };
   }
-  const files = [fact.path, ...selectedFiles.flatMap((file) => [file, `${file}.provenance.json`])].map((file) => ({
-    path: relative(root, file), bytes: statSync(file).size, sha256: sha256(readFileSync(file)), rows: file.endsWith(".jsonl.gz") ? readCandlePartition(file).length : 1, schemaVersion: 1 as const,
-  })).sort((a, b) => bytewise(a.path, b.path));
+  const factPath = `facts/source-registries/${fact.hash}.json`;
+  const files = [factPath, ...selectedFiles.flatMap((file) => [file, `${file}.provenance.json`])].map((path) => {
+    const bytes = storage.read(path);
+    return { path, bytes: bytes.length, sha256: sha256(bytes), rows: path.endsWith(".jsonl.gz") ? parseCandleBytes(bytes).length : 1, schemaVersion: 1 as const };
+  }).sort((a, b) => bytewise(a.path, b.path));
   const manifest: DataManifest = {
     schemaVersion: 1,
     createdAt: new Date(Math.max(...records.map((record) => record.retrievedAtMs))).toISOString(),
@@ -283,50 +219,56 @@ export function buildRollingManifest(root: string, sourceRegistrySha256: string)
   return manifest;
 }
 
-export function publishRollingManifest(root: string, sourceRegistrySha256: string): { manifestPath: string; manifestSha256: string } {
-  const manifest = buildRollingManifest(root, sourceRegistrySha256);
+export function publishRollingManifest(root: string, sourceRegistrySha256: string, storage = openResearchPersistence(root)): { manifestPath: string; manifestSha256: string } {
+  const manifest = buildRollingManifest(root, sourceRegistrySha256, storage);
   const bytes = canonicalJson(manifest);
   const manifestSha256 = sha256(bytes);
-  const manifestPath = join(root, "manifests", `${manifestSha256}.json`);
-  if (!atomicWriteNew(manifestPath, bytes) && readFileSync(manifestPath, "utf8") !== bytes) throw new Error("immutable manifest already exists with different bytes");
-  atomicWrite(join(root, "manifests", "current.json"), canonicalJson({
+  const relativePath = `manifests/${manifestSha256}.json`;
+  if (!storage.writeNew(relativePath, bytes) && storage.readText(relativePath) !== bytes) throw new Error("immutable manifest already exists with different bytes");
+  storage.writeAtomic("manifests/current.json", canonicalJson({
     schemaVersion: 1,
     manifestSha256,
-    path: relative(root, manifestPath),
+    path: relativePath,
     sourceRegistrySha256,
     asOfMs: manifest.sourceRange.toMs,
     lookbackMs: RESEARCH_LOOKBACK_MS,
   }));
-  return { manifestPath, manifestSha256 };
+  return { manifestPath: resolve(root, relativePath), manifestSha256 };
 }
 
-export function readCurrentManifest(root: string): { manifest: DataManifest; manifestPath: string; manifestSha256: string } {
-  const pointerPath = containedPath(root, join("manifests", "current.json"));
-  const pointer = JSON.parse(readFileSync(pointerPath, "utf8")) as {
+export function readCurrentManifest(root: string, storage = openResearchPersistence(root)): { manifest: DataManifest; manifestPath: string; manifestSha256: string } {
+  let raw: string;
+  try { raw = storage.readText("manifests/current.json"); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("current manifest pointer is missing: manifests/current.json");
+    throw error;
+  }
+  const pointer = JSON.parse(raw) as {
     schemaVersion?: unknown; manifestSha256?: unknown; path?: unknown; sourceRegistrySha256?: unknown; asOfMs?: unknown; lookbackMs?: unknown;
   };
   if (pointer.schemaVersion !== 1 || typeof pointer.manifestSha256 !== "string" || typeof pointer.path !== "string" || typeof pointer.sourceRegistrySha256 !== "string") throw new Error("current manifest pointer is invalid");
-  const manifestPath = containedPath(root, pointer.path);
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as DataManifest;
+  let manifestPath: string;
+  try { manifestPath = researchRelativePath(root, pointer.path); } catch { throw new Error("current manifest pointer is invalid"); }
+  const manifest = JSON.parse(storage.readText(manifestPath)) as DataManifest;
   if (sha256(canonicalJson(manifest)) !== pointer.manifestSha256) throw new Error("current manifest pointer hash mismatch");
   if (manifest.sourceRegistrySha256 !== pointer.sourceRegistrySha256 || manifest.sourceRange.toMs !== pointer.asOfMs || pointer.lookbackMs !== RESEARCH_LOOKBACK_MS || manifest.sourceRange.fromMs !== Math.max(0, manifest.sourceRange.toMs - RESEARCH_LOOKBACK_MS)) throw new Error("current manifest pointer closure mismatch");
-  verifyManifest(root, manifest);
-  return { manifest, manifestPath, manifestSha256: pointer.manifestSha256 };
+  verifyManifest(root, manifest, storage);
+  return { manifest, manifestPath: resolve(root, manifestPath), manifestSha256: pointer.manifestSha256 };
 }
 
-export function verifyManifest(root: string, manifest: DataManifest): void {
+export function verifyManifest(root: string, manifest: DataManifest, storage = openResearchPersistence(root)): void {
   assertDataManifest(manifest);
   for (const file of manifest.files) {
-    let path: string;
+    let bytes: Buffer;
     try {
-      path = containedPath(root, file.path);
+      const path = researchRelativePath(root, file.path);
+      bytes = storage.read(path);
     } catch (error) {
       if (error instanceof Error && /symbolic link/.test(error.message)) throw error;
-      if (error instanceof Error && /path is missing/.test(error.message)) throw new Error(`manifest file mismatch: ${file.path}`);
+      if (error instanceof Error && ((error as NodeJS.ErrnoException).code === "ENOENT" || /missing/.test(error.message))) throw new Error(`manifest file mismatch: ${file.path}`);
       throw new Error(`manifest file path escapes root: ${file.path}`);
     }
-    const rows = file.path.endsWith(".jsonl.gz") ? readCandlePartition(path).length : 1;
-    if (statSync(path).size !== file.bytes || sha256(readFileSync(path)) !== file.sha256 || rows !== file.rows || file.schemaVersion !== 1) throw new Error(`manifest file mismatch: ${file.path}`);
+    const rows = file.path.endsWith(".jsonl.gz") ? parseCandleBytes(bytes).length : 1;
+    if (bytes.length !== file.bytes || sha256(bytes) !== file.sha256 || rows !== file.rows || file.schemaVersion !== 1) throw new Error(`manifest file mismatch: ${file.path}`);
   }
   const fact = manifest.files.find((file) => file.path === `facts/source-registries/${manifest.sourceRegistrySha256}.json`);
   if (!fact) throw new Error("manifest omits source registry fact");

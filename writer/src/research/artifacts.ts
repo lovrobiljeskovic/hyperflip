@@ -1,10 +1,10 @@
-import { closeSync, existsSync, fsyncSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeSync } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import type { MarketInfo } from "../markets.js";
 import { parseCorrelations, type CorrelationTable } from "../correlation.js";
 import type { ValidationReport } from "./replay.js";
 import { trailingFresh } from "./returns.js";
-import { atomicWrite, canonicalJson, sha256, verifyManifest } from "./store.js";
+import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
+import { canonicalJson, researchRelativePath, sha256, verifyManifest } from "./store.js";
 import type { CorrelationArtifact, DataManifest, SourceRegistry } from "./types.js";
 
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -227,88 +227,57 @@ export function validateArtifact(raw: string, context: Context, nowMs: number): 
   return result;
 }
 
-function inside(root: string, path: string): boolean { return path === root || path.startsWith(`${root}/`); }
-
-function manifestFor(root: string, expectedHash: string): { manifest: DataManifest; path: string } {
-  const named = join(root, "manifests", `${expectedHash}.json`);
-  const candidates: string[] = [];
-  const walk = (directory: string): void => {
-    if (!existsSync(directory)) return;
-    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0)) {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) walk(path);
-      else if (entry.name.endsWith(".json")) candidates.push(path);
-    }
-  };
-  if (existsSync(named)) candidates.push(named); else walk(root);
+function manifestFor(storage: ResearchPersistence, expectedHash: string): { manifest: DataManifest; path: string } {
+  const named = `manifests/${expectedHash}.json`;
+  const candidates = storage.exists(named)
+    ? [named]
+    : ["manifest.json", ...["manifests", "facts", "raw", "derived", "artifacts", "journal", "reports", "state", "quarantine"].flatMap((directory) => storage.list(directory))].filter((path) => path.endsWith(".json") && storage.exists(path)).sort();
   for (const path of candidates) try {
-    const manifest = JSON.parse(readFileSync(path, "utf8")) as DataManifest;
+    const manifest = JSON.parse(storage.readText(path)) as DataManifest;
     if (sha256(canonicalJson(manifest)) === expectedHash) return { manifest, path };
   } catch { /* another JSON artifact */ }
   return fail(`referenced manifest ${expectedHash} not found`);
 }
 
-function durableTemporary(file: string, bytes: string): void {
-  const fd = openSync(file, "wx");
-  try {
-    const data = Buffer.from(bytes);
-    let offset = 0;
-    while (offset < data.length) offset += writeSync(fd, data, offset, data.length - offset);
-    fsyncSync(fd);
-  } finally { closeSync(fd); }
-}
-
 export function promoteCandidate(rootInput: string, candidatePath: string, sources: SourceRegistry, markets: Map<string, MarketInfo>, nowMs: number, hooks?: { beforeRename?: () => void }): PromotionReceipt {
   const root = resolve(rootInput);
-  const candidate = resolve(root, candidatePath);
-  if (!inside(root, candidate)) fail("candidate path escapes research root");
-  const raw = readFileSync(candidate, "utf8");
+  const storage = openResearchPersistence(root);
+  let candidate: string;
+  try { candidate = researchRelativePath(root, candidatePath); } catch { return fail("candidate path escapes research root"); }
+  const raw = storage.readText(candidate);
   const preliminary = parseCorrelationArtifact(raw, nowMs, sources);
-  if (basename(candidate) !== `${preliminary.artifact.modelVersion}.json`) fail("candidate filename does not match modelVersion");
-  const manifestFact = manifestFor(root, preliminary.artifact.dataManifestSha256);
-  verifyManifest(root, manifestFact.manifest);
-  const sourceSnapshot = join(root, "facts", "source-registries", `${preliminary.artifact.sourceRegistrySha256}.json`);
-  if (sha256(readFileSync(sourceSnapshot)) !== preliminary.artifact.sourceRegistrySha256) fail("source registry snapshot hash mismatch");
-  const validationPath = join(dirname(candidate), `${preliminary.artifact.modelVersion}.validation.json`);
-  const validationBytes = readFileSync(validationPath, "utf8");
+  if (candidate.split("/").at(-1) !== `${preliminary.artifact.modelVersion}.json`) fail("candidate filename does not match modelVersion");
+  const manifestFact = manifestFor(storage, preliminary.artifact.dataManifestSha256);
+  verifyManifest(root, manifestFact.manifest, storage);
+  const sourceSnapshot = `facts/source-registries/${preliminary.artifact.sourceRegistrySha256}.json`;
+  if (sha256(storage.read(sourceSnapshot)) !== preliminary.artifact.sourceRegistrySha256) fail("source registry snapshot hash mismatch");
+  const candidateDirectory = candidate.includes("/") ? `${candidate.slice(0, candidate.lastIndexOf("/"))}/` : "";
+  const validationPath = `${candidateDirectory}${preliminary.artifact.modelVersion}.validation.json`;
+  const validationBytes = storage.readText(validationPath);
   const validation = JSON.parse(validationBytes) as ValidationReport;
   const validated = validateArtifact(raw, { manifest: manifestFact.manifest, sources, markets, validation }, nowMs);
-  const baseline = resolve(root, validation.baselineSnapshotPath);
-  if (!inside(root, baseline) || sha256(readFileSync(baseline)) !== validation.baselineSha256) fail("baseline snapshot hash mismatch");
+  let baseline: string;
+  try { baseline = researchRelativePath(root, validation.baselineSnapshotPath); } catch { return fail("baseline snapshot hash mismatch"); }
+  if (sha256(storage.read(baseline)) !== validation.baselineSha256) fail("baseline snapshot hash mismatch");
   const candidateSha256 = sha256(raw);
   const validationSha256 = sha256(validationBytes);
-  const artifacts = join(root, "artifacts");
-  const verificationPath = join(artifacts, "candidates", `${validated.artifact.modelVersion}.verification.json`);
+  const verificationPath = `artifacts/candidates/${validated.artifact.modelVersion}.verification.json`;
   const verification = {
     schemaVersion: 1, modelVersion: validated.artifact.modelVersion, candidateSha256, dataManifestSha256: validated.artifact.dataManifestSha256,
     sourceRegistrySha256: validated.artifact.sourceRegistrySha256, baselineSha256: validation.baselineSha256, validationSha256,
-    candidatePath: relative(root, candidate), manifestPath: relative(root, manifestFact.path), validationPath: relative(root, validationPath), baselineSnapshotPath: validation.baselineSnapshotPath,
+    candidatePath: candidate, manifestPath: manifestFact.path, validationPath, baselineSnapshotPath: validation.baselineSnapshotPath,
   };
-  atomicWrite(verificationPath, `${canonicalJson(verification)}\n`);
-  const receiptPath = join(artifacts, "promotions", `${validated.artifact.modelVersion}.${nowMs}.json`);
+  storage.writeAtomic(verificationPath, `${canonicalJson(verification)}\n`);
+  const receiptPath = `artifacts/promotions/${validated.artifact.modelVersion}.${nowMs}.json`;
   const receipt: PromotionReceipt = {
     schemaVersion: 1, modelVersion: validated.artifact.modelVersion, promotedAt: new Date(nowMs).toISOString(), dataAgeMs: nowMs - Date.parse(validated.artifact.dataAsOf),
     candidateSha256, championSha256: candidateSha256, dataManifestSha256: validated.artifact.dataManifestSha256, sourceRegistrySha256: validated.artifact.sourceRegistrySha256,
     baselineSha256: validation.baselineSha256, validationSha256, validationState: validation.decision as "Supported" | "Inconclusive",
-    candidatePath: relative(root, candidate), manifestPath: relative(root, manifestFact.path), validationPath: relative(root, validationPath),
-    verificationPath: relative(root, verificationPath), receiptPath: relative(root, receiptPath),
+    candidatePath: candidate, manifestPath: manifestFact.path, validationPath,
+    verificationPath, receiptPath,
   };
-  atomicWrite(receiptPath, `${canonicalJson(receipt)}\n`);
-  const champion = join(artifacts, "champion.json");
-  const temporary = `${champion}.tmp`;
-  try {
-    durableTemporary(temporary, raw);
-    hooks?.beforeRename?.();
-    renameSync(temporary, champion);
-  } catch (error) {
-    rmSync(temporary, { force: true });
-    throw error;
-  }
-  try {
-    const directory = openSync(artifacts, "r");
-    try { fsyncSync(directory); } finally { closeSync(directory); }
-  } catch (error) {
-    console.warn(JSON.stringify({ event: "champion-directory-fsync-warning", error: (error as Error).message }));
-  }
+  storage.writeAtomic(receiptPath, `${canonicalJson(receipt)}\n`);
+  hooks?.beforeRename?.();
+  storage.writeAtomic("artifacts/champion.json", raw);
   return receipt;
 }

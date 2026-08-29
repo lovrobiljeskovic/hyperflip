@@ -1,7 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
-import { canonicalJson, containedPath, operationError, readCurrentManifest, sha256, verifyManifest, writeOperationState } from "./store.js";
+import { resolve } from "node:path";
+import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
+import { canonicalJson, operationError, readCurrentManifest, researchRelativePath, sha256, verifyManifest, writeOperationState } from "./store.js";
 import type { DataManifest } from "./types.js";
 
 export interface S3Config { endpoint: string; region: string; bucket: string; accessKey: string; secret: string }
@@ -12,64 +12,63 @@ const EMPTY_HASH = createHash("sha256").update("").digest("hex");
 const SAFE_MODEL_VERSION = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const safeModelVersion = (value: unknown): value is string => typeof value === "string" && SAFE_MODEL_VERSION.test(value);
-const filesBelow = (path: string, check: () => void): string[] => {
-  check();
-  return existsSync(path) ? readdirSync(path, { withFileTypes: true }).flatMap((entry) => {
-    if (entry.isSymbolicLink()) throw new Error(`backup closure contains a symbolic link: ${join(path, entry.name)}`);
-    return entry.isDirectory() ? filesBelow(join(path, entry.name), check) : (check(), [join(path, entry.name)]);
-  }) : [];
-};
 const bytewise = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
 const hmac = (key: string | Buffer, value: string): Buffer => createHmac("sha256", key).update(value).digest();
 const awsEncode = (value: string): string => encodeURIComponent(value).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
 
-function closure(root: string, check: () => void): string[] {
+function closure(root: string, storage: ResearchPersistence, check: () => void): string[] {
   const selected = new Set<string>();
   const add = (path: string): void => {
     check();
     let resolved: string;
-    try { resolved = containedPath(root, path); } catch (error) {
+    try {
+      resolved = researchRelativePath(root, path);
+      if (!storage.exists(resolved)) throw new Error("missing");
+    } catch (error) {
       if (error instanceof Error && /symbolic link/.test(error.message)) throw error;
       throw new Error(`backup reference mismatch: ${path}`);
     }
     selected.add(resolved);
   };
-  for (const directory of ["artifacts", "journal", "quarantine", "reports", "state"]) for (const file of filesBelow(join(root, directory), check)) selected.add(file);
-  const manifests = filesBelow(join(root, "manifests"), check).filter((path) => path.endsWith(".json"));
-  const current = manifests.find((path) => path.endsWith(`${sep}current.json`));
+  for (const directory of ["artifacts", "journal", "quarantine", "reports", "state"]) {
+    check();
+    for (const file of storage.list(directory)) { check(); selected.add(file); }
+  }
+  const manifests = storage.list("manifests").filter((path) => path.endsWith(".json"));
+  const current = manifests.find((path) => path === "manifests/current.json");
   if (current) {
-    readCurrentManifest(root);
+    readCurrentManifest(root, storage);
     selected.add(current);
   }
   for (const file of manifests.filter((path) => /[0-9a-f]{64}\.json$/.test(path))) {
     check();
-    const manifest = JSON.parse(readFileSync(file, "utf8")) as DataManifest;
-    const expected = file.slice(file.lastIndexOf(sep) + 1, -5);
-    if (sha256(canonicalJson(manifest)) !== expected) throw new Error(`manifest identity mismatch: ${relative(root, file)}`);
-    verifyManifest(root, manifest);
-    add(relative(root, file));
+    const manifest = JSON.parse(storage.readText(file)) as DataManifest;
+    const expected = file.slice(file.lastIndexOf("/") + 1, -5);
+    if (sha256(canonicalJson(manifest)) !== expected) throw new Error(`manifest identity mismatch: ${file}`);
+    verifyManifest(root, manifest, storage);
+    add(file);
     for (const entry of manifest.files) add(entry.path);
   }
-  for (const file of filesBelow(join(root, "artifacts", "candidates"), check).filter((path) => path.endsWith(".validation.json"))) {
+  for (const file of storage.list("artifacts/candidates").filter((path) => path.endsWith(".validation.json"))) {
     check();
-    const validation = JSON.parse(readFileSync(file, "utf8")) as { modelVersion: string; candidateSha256: string; inputManifestSha256: string; baselineSha256: string; baselineSnapshotPath: string };
-    if (!safeModelVersion(validation.modelVersion)) throw new Error(`validation modelVersion is not a safe artifact filename: ${relative(root, file)}`);
-    if (!SHA256.test(validation.candidateSha256) || !SHA256.test(validation.inputManifestSha256) || !SHA256.test(validation.baselineSha256)) throw new Error(`validation hash is invalid: ${relative(root, file)}`);
-    const candidate = containedPath(root, join("artifacts", "candidates", `${validation.modelVersion}.json`));
-    const candidateBytes = readFileSync(candidate);
-    if (sha256(candidateBytes) !== validation.candidateSha256) throw new Error(`validation candidate mismatch: ${relative(root, file)}`);
+    const validation = JSON.parse(storage.readText(file)) as { modelVersion: string; candidateSha256: string; inputManifestSha256: string; baselineSha256: string; baselineSnapshotPath: string };
+    if (!safeModelVersion(validation.modelVersion)) throw new Error(`validation modelVersion is not a safe artifact filename: ${file}`);
+    if (!SHA256.test(validation.candidateSha256) || !SHA256.test(validation.inputManifestSha256) || !SHA256.test(validation.baselineSha256)) throw new Error(`validation hash is invalid: ${file}`);
+    const candidate = `artifacts/candidates/${validation.modelVersion}.json`;
+    const candidateBytes = storage.read(candidate);
+    if (sha256(candidateBytes) !== validation.candidateSha256) throw new Error(`validation candidate mismatch: ${file}`);
     const artifact = JSON.parse(candidateBytes.toString("utf8")) as { modelVersion?: unknown; dataManifestSha256?: unknown; sourceRegistrySha256?: unknown };
-    if (!safeModelVersion(artifact.modelVersion) || artifact.modelVersion !== validation.modelVersion) throw new Error(`validation candidate modelVersion is not a safe artifact filename: ${relative(root, file)}`);
-    if (artifact.dataManifestSha256 !== validation.inputManifestSha256) throw new Error(`validation candidate manifest mismatch: ${relative(root, file)}`);
-    const manifest = containedPath(root, join("manifests", `${validation.inputManifestSha256}.json`));
-    if (!existsSync(manifest)) throw new Error(`validation manifest missing: ${validation.inputManifestSha256}`);
-    const manifestValue = JSON.parse(readFileSync(manifest, "utf8")) as DataManifest;
-    if (artifact.sourceRegistrySha256 !== manifestValue.sourceRegistrySha256) throw new Error(`validation candidate source registry mismatch: ${relative(root, file)}`);
-    const baseline = containedPath(root, validation.baselineSnapshotPath);
-    if (sha256(readFileSync(baseline)) !== validation.baselineSha256) throw new Error(`validation baseline mismatch: ${relative(root, file)}`);
-    add(relative(root, candidate)); add(relative(root, manifest)); add(validation.baselineSnapshotPath); add(relative(root, file));
+    if (!safeModelVersion(artifact.modelVersion) || artifact.modelVersion !== validation.modelVersion) throw new Error(`validation candidate modelVersion is not a safe artifact filename: ${file}`);
+    if (artifact.dataManifestSha256 !== validation.inputManifestSha256) throw new Error(`validation candidate manifest mismatch: ${file}`);
+    const manifest = `manifests/${validation.inputManifestSha256}.json`;
+    if (!storage.exists(manifest)) throw new Error(`validation manifest missing: ${validation.inputManifestSha256}`);
+    const manifestValue = JSON.parse(storage.readText(manifest)) as DataManifest;
+    if (artifact.sourceRegistrySha256 !== manifestValue.sourceRegistrySha256) throw new Error(`validation candidate source registry mismatch: ${file}`);
+    const baseline = researchRelativePath(root, validation.baselineSnapshotPath);
+    if (sha256(storage.read(baseline)) !== validation.baselineSha256) throw new Error(`validation baseline mismatch: ${file}`);
+    add(candidate); add(manifest); add(baseline); add(file);
   }
-  return [...selected].sort((left, right) => bytewise(relative(root, left), relative(root, right)));
+  return [...selected].sort(bytewise);
 }
 
 function objectUrl(config: S3Config, path: string): URL {
@@ -115,16 +114,16 @@ async function request(config: S3Config, method: "HEAD" | "PUT", path: string, c
   throw new Error(`backup request failed after 3 attempts: ${last instanceof Error ? last.message : String(last)}`);
 }
 
-async function backupResearchImpl(root: string, config: S3Config, deps: Required<BackupDeps>, started: number): Promise<BackupSummary> {
+async function backupResearchImpl(root: string, storage: ResearchPersistence, config: S3Config, deps: Required<BackupDeps>, started: number): Promise<BackupSummary> {
   const deadline = started + 7_200_000;
   const check = (): void => { if (deps.now() > deadline) throw new Error("backup total timeout"); };
-  const files = closure(root, check);
+  const files = closure(root, storage, check);
   let uploaded = 0;
   let skipped = 0;
   let lastVerifiedObjectHash: string | null = null;
   for (const file of files) {
-    const path = relative(root, file).split(sep).join("/");
-    const bytes = readFileSync(file);
+    const path = file;
+    const bytes = storage.read(file);
     const checksum = sha256(bytes);
     const existing = await request(config, "HEAD", path, checksum, undefined, deadline, deps);
     if (existing.ok && existing.headers.get("x-amz-meta-sha256") === checksum) skipped++;
@@ -144,15 +143,16 @@ async function backupResearchImpl(root: string, config: S3Config, deps: Required
 
 export async function backupResearch(rootInput: string, config: S3Config, inputDeps: BackupDeps = {}): Promise<BackupSummary> {
   const root = resolve(rootInput);
+  const storage = openResearchPersistence(root);
   const deps: Required<BackupDeps> = { now: inputDeps.now ?? Date.now, fetch: inputDeps.fetch ?? fetch };
   const started = deps.now();
   const state = (status: "running" | "succeeded" | "failed", error: string | null, details: Record<string, string | number | boolean | null> = {}): void => {
     const at = status === "running" ? started : deps.now();
-    writeOperationState(root, "backup.json", { schemaVersion: 1, operation: "backup", status, startedAt: new Date(started).toISOString(), endedAt: status === "running" ? null : new Date(at).toISOString(), error, details });
+    writeOperationState(root, "backup.json", { schemaVersion: 1, operation: "backup", status, startedAt: new Date(started).toISOString(), endedAt: status === "running" ? null : new Date(at).toISOString(), error, details }, storage);
   };
   state("running", null);
   try {
-    const summary = await backupResearchImpl(root, config, deps, started);
+    const summary = await backupResearchImpl(root, storage, config, deps, started);
     state("succeeded", null, { uploaded: summary.uploaded, skipped: summary.skipped, verified: summary.verified, lastVerifiedObjectHash: summary.lastVerifiedObjectHash });
     return summary;
   } catch (error) {

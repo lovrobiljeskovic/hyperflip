@@ -1,11 +1,10 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
+import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
 import { expectedIntervals, HOUR, quality, sessionDates, trailingFresh, TRANSFORMATION_VERSION, classifyCandle } from "./returns.js";
 import type { QualityMode, ReturnRecord, Window } from "./returns.js";
 import { nearestCorrelationResult, shrinkLambda, structuredTargets, weightedCorrelation } from "./matrix.js";
 import type { PairEstimate } from "./matrix.js";
-import { atomicWriteNew, canonicalJson, containedPath, operationError, readCandlePartition, readSourceRegistryFact, sha256, verifyManifest, writeOperationState } from "./store.js";
+import { canonicalJson, operationError, readCandlePartition, readSourceRegistryFact, researchRelativePath, sha256, verifyManifest, writeOperationState } from "./store.js";
 import { assertExclusionRecord } from "./types.js";
 import type { CandleRecord, CorrelationArtifact, DataManifest, ExclusionRecord, SourceEntry } from "./types.js";
 
@@ -17,6 +16,7 @@ export interface CalibrationInput {
   manifest: DataManifest;
   derivedManifestPath: string;
   now?: () => number;
+  storage?: ResearchPersistence;
 }
 
 export interface FactorFit {
@@ -121,10 +121,9 @@ export interface CalibrationAlignmentCache {
 
 const pairName = (left: string, right: string): string => left < right ? `${left}:${right}` : `${right}:${left}`;
 const candleKey = (candle: CandleRecord): string => `${candle.sourceNetwork}:${candle.sourceCoin}:${candle.interval}:${candle.openTimeMs}`;
-function verifiedReturns(input: CalibrationInput): { manifest: DerivedManifest; rows: ReturnRecord[] } {
-  const root = resolve(input.root);
-  const manifestPath = containedPath(root, input.derivedManifestPath);
-  const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as Partial<DerivedManifest>;
+function verifiedReturns(input: CalibrationInput, storage: ResearchPersistence): { manifest: DerivedManifest; rows: ReturnRecord[] } {
+  const manifestPath = researchRelativePath(input.root, input.derivedManifestPath);
+  const parsed = JSON.parse(storage.readText(manifestPath)) as Partial<DerivedManifest>;
   const dataManifestSha256 = sha256(canonicalJson(input.manifest));
   if (parsed.schemaVersion !== 1 || parsed.transformationVersion !== TRANSFORMATION_VERSION || parsed.dataManifestSha256 !== dataManifestSha256 || parsed.sourceRegistrySha256 !== input.manifest.sourceRegistrySha256) throw new Error("derived manifest identity mismatch");
   const window = parsed.window;
@@ -132,9 +131,11 @@ function verifiedReturns(input: CalibrationInput): { manifest: DerivedManifest; 
   if (!Array.isArray(parsed.files) || !parsed.files.length) throw new Error("derived manifest has no files");
   const rows: ReturnRecord[] = [];
   for (const file of parsed.files) {
-    const path = containedPath(root, file.path);
-    if (file.schemaVersion !== 1 || !file.path.endsWith(".jsonl.gz") || !existsSync(path) || statSync(path).size !== file.bytes || sha256(readFileSync(path)) !== file.sha256) throw new Error(`derived manifest file mismatch: ${file.path}`);
-    const text = gunzipSync(readFileSync(path)).toString("utf8").trim();
+    const path = researchRelativePath(input.root, file.path);
+    if (file.schemaVersion !== 1 || !file.path.endsWith(".jsonl.gz") || !storage.exists(path)) throw new Error(`derived manifest file mismatch: ${file.path}`);
+    const bytes = storage.read(path);
+    if (bytes.length !== file.bytes || sha256(bytes) !== file.sha256) throw new Error(`derived manifest file mismatch: ${file.path}`);
+    const text = gunzipSync(bytes).toString("utf8").trim();
     const fileRows = text ? text.split("\n").map((line) => JSON.parse(line) as ReturnRecord | ExclusionRecord) : [];
     if (fileRows.length !== file.rows) throw new Error(`derived manifest file mismatch: ${file.path}`);
     if (file.kind === "exclusions") {
@@ -221,14 +222,13 @@ function usableCandles(candles: CandleRecord[], source: SourceEntry, window: Win
   return own.filter((candle, index) => candle.openTimeMs >= fromMs && candle.openTimeMs <= window.asOfMs && Number.isFinite(Number(candle.close)) && Number(candle.close) > 0 && classifyCandle(candle, source, own[index - 1]) === "active");
 }
 
-function calibrateImpl(input: CalibrationInput): CorrelationArtifact {
-  verifyManifest(input.root, input.manifest);
-  const root = resolve(input.root);
+function calibrateImpl(input: CalibrationInput, storage: ResearchPersistence): CorrelationArtifact {
+  verifyManifest(input.root, input.manifest, storage);
   const dataManifestSha256 = sha256(canonicalJson(input.manifest));
-  const sources = readSourceRegistryFact(root, input.manifest.sourceRegistrySha256).registry.sources.sort((a, b) => lexical(a.underlying, b.underlying));
-  const derived = verifiedReturns(input);
+  const sources = readSourceRegistryFact(input.root, input.manifest.sourceRegistrySha256, storage).registry.sources.sort((a, b) => lexical(a.underlying, b.underlying));
+  const derived = verifiedReturns(input, storage);
   if (derived.rows.some((row) => !sources.some((source) => source.underlying === row.underlying))) throw new Error("derived return references unknown source");
-  const candles = input.manifest.files.filter((file) => file.path.endsWith(".jsonl.gz")).flatMap((file) => readCandlePartition(join(root, file.path)));
+  const candles = input.manifest.files.filter((file) => file.path.endsWith(".jsonl.gz")).flatMap((file) => readCandlePartition(storage, file.path));
   const contributing = new Set(derived.rows.flatMap((row) => row.sourceKeys));
   const usable = new Map(sources.map((source) => [source.underlying, usableCandles(candles, source, derived.manifest.window)]));
   const contributingCandles = [...usable.values()].flat().filter((candle) => contributing.has(candleKey(candle)));
@@ -342,23 +342,24 @@ function calibrateImpl(input: CalibrationInput): CorrelationArtifact {
     validation: { status: "pending" }, clusters,
   };
   const bytes = `${canonicalJson(artifact)}\n`;
-  const candidate = join(root, "artifacts", "candidates", `${modelVersion}.json`);
-  if (existsSync(candidate)) {
-    if (readFileSync(candidate, "utf8") !== bytes) throw new Error("candidate already exists with different bytes");
-  } else if (!atomicWriteNew(candidate, bytes) && readFileSync(candidate, "utf8") !== bytes) throw new Error("candidate already exists with different bytes");
+  const candidate = `artifacts/candidates/${modelVersion}.json`;
+  if (storage.exists(candidate)) {
+    if (storage.readText(candidate) !== bytes) throw new Error("candidate already exists with different bytes");
+  } else if (!storage.writeNew(candidate, bytes) && storage.readText(candidate) !== bytes) throw new Error("candidate already exists with different bytes");
   return artifact;
 }
 
 export function calibrate(input: CalibrationInput): CorrelationArtifact {
+  const storage = input.storage ?? openResearchPersistence(input.root);
   const now = input.now ?? Date.now;
   const started = now();
   const persist = (status: "running" | "succeeded" | "failed", error: string | null, details: Record<string, string | number | boolean | null> = {}): void => {
     const at = status === "running" ? started : now();
-    writeOperationState(input.root, "calibrator.json", { schemaVersion: 1, operation: "calibrator", status, startedAt: new Date(started).toISOString(), endedAt: status === "running" ? null : new Date(at).toISOString(), error, details });
+    writeOperationState(input.root, "calibrator.json", { schemaVersion: 1, operation: "calibrator", status, startedAt: new Date(started).toISOString(), endedAt: status === "running" ? null : new Date(at).toISOString(), error, details }, storage);
   };
   persist("running", null);
   try {
-    const artifact = calibrateImpl(input);
+    const artifact = calibrateImpl(input, storage);
     persist("succeeded", null, { modelVersion: artifact.modelVersion, dataManifestSha256: artifact.dataManifestSha256 });
     return artifact;
   } catch (error) {

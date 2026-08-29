@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { resolve } from "node:path";
 import { gzipSync } from "node:zlib";
-import { atomicWriteNew, canonicalJson, readCandlePartition, sha256, verifyManifest } from "./store.js";
+import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
+import { canonicalJson, readCandlePartition, sha256, verifyManifest } from "./store.js";
 import { parseSourceRegistry } from "./types.js";
 import type { CandleRecord, DataManifest, ExclusionRecord, SourceEntry } from "./types.js";
 
@@ -227,20 +227,19 @@ export function alignPair(a: CandleRecord[], b: CandleRecord[], sourceA: SourceE
 
 export interface DerivedOutput { path: string; exclusionPath: string; manifestPath: string; rows: number; exclusions: number }
 
-function writeImmutable(file: string, bytes: string | Uint8Array, label: string): void {
+function writeImmutable(storage: ResearchPersistence, file: string, bytes: string | Uint8Array, label: string): void {
   const expected = Buffer.from(bytes);
-  if (existsSync(file)) {
-    if (!readFileSync(file).equals(expected)) throw new Error(`${label} already exists with different bytes`);
+  if (storage.exists(file)) {
+    if (!storage.read(file).equals(expected)) throw new Error(`${label} already exists with different bytes`);
     return;
   }
-  if (!atomicWriteNew(file, expected) && !readFileSync(file).equals(expected)) throw new Error(`${label} already exists with different bytes`);
+  if (!storage.writeNew(file, expected) && !storage.read(file).equals(expected)) throw new Error(`${label} already exists with different bytes`);
 }
 
-export function deriveReturns(root: string, manifest: DataManifest, window: Window): DerivedOutput {
-  verifyManifest(root, manifest);
-  const registryFile = join(root, "facts", "source-registries", `${manifest.sourceRegistrySha256}.json`);
-  const registry = parseSourceRegistry(readFileSync(registryFile, "utf8"));
-  const candles = manifest.files.filter((file) => file.path.endsWith(".jsonl.gz")).flatMap((file) => readCandlePartition(join(root, file.path)));
+export function deriveReturns(root: string, manifest: DataManifest, window: Window, storage = openResearchPersistence(root)): DerivedOutput {
+  verifyManifest(root, manifest, storage);
+  const registry = parseSourceRegistry(storage.readText(`facts/source-registries/${manifest.sourceRegistrySha256}.json`));
+  const candles = manifest.files.filter((file) => file.path.endsWith(".jsonl.gz")).flatMap((file) => readCandlePartition(storage, file.path));
   const derived = registry.sources.flatMap((source) => {
     const own = candles.filter((candle) => candle.underlying === source.underlying && candle.sourceNetwork === source.sourceNetwork && candle.sourceCoin === source.sourceCoin && candle.interval === "1h");
     return [hourlySeries(own, source, window), dailySeries(own, source, window)];
@@ -250,20 +249,20 @@ export function deriveReturns(root: string, manifest: DataManifest, window: Wind
   const exclusions = derived.flatMap((series) => series.exclusions).sort((a, b) => lexical(canonicalJson(a), canonicalJson(b)));
   const identity = sha256(canonicalJson({ dataManifestSha256: sha256(canonicalJson(manifest)), transformationVersion: TRANSFORMATION_VERSION, window }));
   const day = new Date(window.asOfMs).toISOString().slice(0, 10).replace(/-/g, "/");
-  const path = join(root, "derived", "returns", day, `${identity}.jsonl.gz`);
+  const path = `derived/returns/${day}/${identity}.jsonl.gz`;
   const bytes = gzipSync(`${records.map(canonicalJson).join("\n")}${records.length ? "\n" : ""}`);
-  writeImmutable(path, bytes, "immutable derived returns");
-  const exclusionPath = join(root, "derived", "exclusions", day, `${identity}.jsonl.gz`);
+  writeImmutable(storage, path, bytes, "immutable derived returns");
+  const exclusionPath = `derived/exclusions/${day}/${identity}.jsonl.gz`;
   const exclusionBytes = gzipSync(`${exclusions.map(canonicalJson).join("\n")}${exclusions.length ? "\n" : ""}`);
-  writeImmutable(exclusionPath, exclusionBytes, "immutable derived exclusions");
+  writeImmutable(storage, exclusionPath, exclusionBytes, "immutable derived exclusions");
   const manifestPath = `${path}.manifest.json`;
   const derivedManifest = canonicalJson({
     schemaVersion: 1, transformationVersion: TRANSFORMATION_VERSION, dataManifestSha256: sha256(canonicalJson(manifest)), sourceRegistrySha256: manifest.sourceRegistrySha256, window,
     files: [
-      { kind: "returns", path: path.slice(root.length + 1), bytes: statSync(path).size, sha256: sha256(readFileSync(path)), rows: records.length, schemaVersion: 1 },
-      { kind: "exclusions", path: exclusionPath.slice(root.length + 1), bytes: statSync(exclusionPath).size, sha256: sha256(readFileSync(exclusionPath)), rows: exclusions.length, schemaVersion: 1 },
+      { kind: "returns", path, bytes: bytes.length, sha256: sha256(bytes), rows: records.length, schemaVersion: 1 },
+      { kind: "exclusions", path: exclusionPath, bytes: exclusionBytes.length, sha256: sha256(exclusionBytes), rows: exclusions.length, schemaVersion: 1 },
     ],
   });
-  writeImmutable(manifestPath, derivedManifest, "immutable derived manifest");
-  return { path, exclusionPath, manifestPath, rows: records.length, exclusions: exclusions.length };
+  writeImmutable(storage, manifestPath, derivedManifest, "immutable derived manifest");
+  return { path: resolve(root, path), exclusionPath: resolve(root, exclusionPath), manifestPath: resolve(root, manifestPath), rows: records.length, exclusions: exclusions.length };
 }
