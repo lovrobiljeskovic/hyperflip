@@ -52,6 +52,24 @@ test("testnet profile rejects a registry on another network", () => {
   assert.throws(() => loadResearchNetworkProfile(file), /source registry network must be testnet/);
 });
 
+test("testnet profile requires the reviewed bootstrap correlation label", () => {
+  const valid = copyProfile();
+  const correlations = join(valid, "..", "correlations.json");
+  writeFileSync(correlations, JSON.stringify({ ...JSON.parse(readFileSync(correlations, "utf8")), fallbackReason: "operator-reviewed-testnet-bootstrap" }));
+  assert.doesNotThrow(() => loadResearchNetworkProfile(valid));
+
+  const missing = copyProfile();
+  const missingCorrelations = join(missing, "..", "correlations.json");
+  const { fallbackReason: _ignored, ...withoutFallbackReason } = JSON.parse(readFileSync(missingCorrelations, "utf8"));
+  writeFileSync(missingCorrelations, JSON.stringify(withoutFallbackReason));
+  assert.throws(() => loadResearchNetworkProfile(missing), /fallbackReason must be operator-reviewed-testnet-bootstrap/);
+
+  const wrong = copyProfile();
+  const wrongCorrelations = join(wrong, "..", "correlations.json");
+  writeFileSync(wrongCorrelations, JSON.stringify({ ...JSON.parse(readFileSync(wrongCorrelations, "utf8")), fallbackReason: "unreviewed" }));
+  assert.throws(() => loadResearchNetworkProfile(wrong), /fallbackReason must be operator-reviewed-testnet-bootstrap/);
+});
+
 test("testnet profile rejects escaping registry paths", () => {
   const file = copyProfile({ marketRegistryFile: "../markets.json" });
   assert.throws(() => loadResearchNetworkProfile(file), /relative filename/);

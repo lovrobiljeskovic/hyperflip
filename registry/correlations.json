@@ -1,5 +1,6 @@
 {
   "network": "testnet",
+  "fallbackReason": "operator-reviewed-testnet-bootstrap",
   "_comment": "Hand-set factor loadings for parlay correlation pricing, grouped by correlation cluster. Pairwise correlation = global_a*global_b, plus cluster_a*cluster_b when the legs share a cluster, plus underlying_a*underlying_b when they share an underlying. Squares must sum to at most 0.99. The fallback for an underlying missing from this file is COMPUTED per cluster, not written here. Writer-only; not served to the frontend.",
   "clusters": {
     "crypto": {

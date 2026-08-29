@@ -119,7 +119,10 @@ export function loadResearchNetworkProfile(profileFile: string): LoadedResearchN
   const correlationRaw = readRegistry(profileFile, profile.baselineCorrelationFile);
   registryNetwork(sourceRaw, "source registry", profile.network);
   registryNetwork(marketRaw, "market registry", profile.network);
-  registryNetwork(correlationRaw, "correlation registry", profile.network);
+  const correlationRegistry = registryNetwork(correlationRaw, "correlation registry", profile.network);
+  if (correlationRegistry.fallbackReason !== "operator-reviewed-testnet-bootstrap") {
+    throw new Error("correlation registry fallbackReason must be operator-reviewed-testnet-bootstrap");
+  }
   const sources = parseSourceRegistry(sourceRaw);
   parseMarkets(marketRaw);
   parseCorrelations(correlationRaw);
