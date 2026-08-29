@@ -71,7 +71,7 @@ test("DataManifest validation blocks noncanonical SHA-256 hashes before persiste
 test("QuoteDecision validation blocks raw signature hashes before persistence", () => {
   assert.throws(
     () => assertQuoteDecision({
-      schemaVersion: 2,
+      schemaVersion: 3,
       network: "testnet",
       profileSha256: "a".repeat(64),
       marketRegistrySha256: "a".repeat(64),

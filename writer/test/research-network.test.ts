@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { loadResearchNetworkProfile } from "../src/research/network.js";
+import { dirname, join } from "node:path";
+import { bindResearchRootIdentity, loadResearchNetworkProfile, researchRootIdentity } from "../src/research/network.js";
+import { openResearchPersistence } from "../src/research/persistence.js";
 import { parseCorrelations } from "../src/correlation.js";
 
 const registry = new URL("../../registry/", import.meta.url);
@@ -29,6 +30,41 @@ test("loads the checked-in testnet profile with canonical registry identities", 
   const pretty = copyProfile();
   writeFileSync(pretty, `\n${readFileSync(pretty, "utf8").replace(/,/g, ",\n  ")}\n`);
   assert.equal(loadResearchNetworkProfile(pretty).profileSha256, loaded.profileSha256);
+});
+
+test("research root marker binds every loaded registry identity", () => {
+  const profileFile = copyProfile();
+  const root = dirname(profileFile);
+  try {
+    const first = loadResearchNetworkProfile(profileFile);
+    const storage = openResearchPersistence(root);
+    bindResearchRootIdentity(storage, first);
+    assert.deepEqual(JSON.parse(readFileSync(join(root, "network-profile.json"), "utf8")), researchRootIdentity(first));
+
+    const correlations = join(root, "correlations.json");
+    const changed = JSON.parse(readFileSync(correlations, "utf8"));
+    changed.clusters.crypto.BTC.global = 0.2;
+    writeFileSync(correlations, JSON.stringify(changed));
+    const second = loadResearchNetworkProfile(profileFile);
+    assert.equal(second.profileSha256, first.profileSha256);
+    assert.notEqual(second.baselineCorrelationSha256, first.baselineCorrelationSha256);
+    assert.throws(() => bindResearchRootIdentity(storage, second), /research root network\/profile marker mismatch/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("research root refuses unmarked data-bearing storage", () => {
+  const profileFile = copyProfile();
+  const profileRoot = dirname(profileFile);
+  const root = mkdtempSync(join(tmpdir(), "research-unmarked-root-"));
+  try {
+    mkdirSync(join(root, "facts"));
+    writeFileSync(join(root, "facts", "existing.json"), "{}\n");
+    assert.throws(() => bindResearchRootIdentity(openResearchPersistence(root), loadResearchNetworkProfile(profileFile)), /research root network\/profile marker is missing/);
+    assert.equal(openResearchPersistence(root).exists("network-profile.json"), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(profileRoot, { recursive: true, force: true });
+  }
 });
 
 test("every fallback-eligible testnet source has explicit baseline loadings", () => {

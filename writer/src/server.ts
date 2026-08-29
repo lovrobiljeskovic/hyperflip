@@ -2,7 +2,7 @@ import http from "node:http";
 import { isAddress, keccak256, type Address, type Hex } from "viem";
 import type { WriterConfig } from "./config.js";
 import { TooComplexError } from "./copula.js";
-import { riskAdjustedJointProbWad, type CorrLeg } from "./correlation.js";
+import { nominalPairCorrelation, riskAdjustedJointProbWad, type CorrLeg } from "./correlation.js";
 import { ExposureBook } from "./exposure.js";
 import { dominatingLeg, edgeBreakdown, priceParlay, totalEdgeBps } from "./pricing.js";
 import { quoteDigest, type ParlayQuote, type QuoteLeg } from "./quotes.js";
@@ -272,7 +272,7 @@ export async function handleQuote(
     return { status: 503, json: { error: "sign-failed" } };
   }
   const decision: QuoteDecision = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     network: cfg.model.network,
     profileSha256: cfg.model.profileSha256,
     marketRegistrySha256: cfg.model.marketRegistrySha256,
@@ -284,7 +284,12 @@ export async function handleQuote(
     validationState: cfg.model.validationState,
     pairDecisions: [...new Set(corrLegs.map((leg) => leg.underlying))].sort().flatMap((left, index, underlyings) => underlyings.slice(index + 1).map((right) => {
       const evidence = cfg.model.pairEligibility.get(pairKey(left, right))!;
-      return { pair: [left, right] as [string, string], ...evidence };
+      const leftLeg = corrLegs.find((leg) => leg.underlying === left)!;
+      const rightLeg = corrLegs.find((leg) => leg.underlying === right)!;
+      return {
+        pair: [left, right] as [string, string], status: evidence.status, reason: evidence.reason,
+        correlation: nominalPairCorrelation(leftLeg, rightLeg, cfg.correlations), evidenceCorrelation: evidence.correlation,
+      };
     })),
     recordedAtMs: deps.now(),
     quoteId,

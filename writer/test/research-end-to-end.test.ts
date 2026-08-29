@@ -7,9 +7,9 @@ import { calibrate } from "../src/research/calibration.js";
 import { collectSources } from "../src/research/candles.js";
 import { generateReport } from "../src/research/report.js";
 import { runReplay } from "../src/research/replay.js";
-import { deriveReturns, type ReturnRecord } from "../src/research/returns.js";
+import { deriveReturns } from "../src/research/returns.js";
 import { loadResearchNetworkProfile } from "../src/research/network.js";
-import { canonicalJson, readCurrentManifest, readDerivedDataset } from "../src/research/store.js";
+import { canonicalJson, readCurrentManifest } from "../src/research/store.js";
 import type { SourceEntry, SourceRegistry } from "../src/research/types.js";
 
 const AS_OF = Date.parse("2026-08-28T12:00:00.000Z");
@@ -49,9 +49,7 @@ async function fixtureFlow(root: string): Promise<{ candidate: Buffer; validatio
   const derived = deriveReturns(root, manifest, { asOfMs: manifest.sourceRange.toMs, lookbackMs: 180 * DAY });
   const candidate = calibrate({ root, manifest, derivedManifestPath: derived.manifestPath, profile: loadedProfile, now: () => AS_OF });
   const candidatePath = join(root, "artifacts", "candidates", `${candidate.modelVersion}.json`);
-  const dataset = readDerivedDataset(root, derived.manifestPath);
-  const rows: ReturnRecord[] = dataset.returns;
-  runReplay({ root, profile: loadedProfile, candidate, candidateBytes: readFileSync(candidatePath, "utf8"), inputManifestSha256: manifestHash, series: { network: "testnet", rows, exclusions: dataset.exclusions, sources: sources.sources, manifestHash }, seed: "end-to-end" });
+  runReplay({ root, profile: loadedProfile, candidate, candidateBytes: readFileSync(candidatePath, "utf8"), inputManifestSha256: manifestHash, derivedManifestPath: derived.manifestPath, seed: "end-to-end" });
   const report = generateReport(root, candidatePath, derived.manifestPath);
   return {
     candidate: readFileSync(candidatePath),

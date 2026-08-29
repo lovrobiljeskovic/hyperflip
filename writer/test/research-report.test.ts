@@ -36,7 +36,9 @@ const input: ReportInput = {
     }, validation: { status: "pending" as const }, clusters: {},
   },
   validation: {
-    schemaVersion: 2 as const, network: "testnet" as const, profileSha256: "b".repeat(64), modelVersion: "beta-1", candidateSha256: "d".repeat(64), inputManifestSha256: "a".repeat(64), sourceRegistrySha256: "c".repeat(64), marketRegistrySha256: "d".repeat(64), deploymentRegistrySha256: "e".repeat(64), baselineCorrelationSha256: "f".repeat(64), baselineSha256: "f".repeat(64), baselineSnapshotPath: "facts/baselines/f.json",
+    schemaVersion: 3 as const, network: "testnet" as const, profileSha256: "b".repeat(64), modelVersion: "beta-1", candidateSha256: "d".repeat(64), inputManifestSha256: "a".repeat(64),
+    derivedManifestPath: "derived/returns-v2/fixture.manifest.json", derivedManifestSha256: "1".repeat(64), returnsSha256: "2".repeat(64), exclusionsSha256: "3".repeat(64), derivationWindow: { asOfMs: 2, lookbackMs: 1 },
+    sourceRegistrySha256: "c".repeat(64), marketRegistrySha256: "d".repeat(64), deploymentRegistrySha256: "e".repeat(64), baselineCorrelationSha256: "f".repeat(64), baselineSha256: "f".repeat(64), baselineSnapshotPath: "facts/baselines/f.json",
     seed: "fixture", drawCount: 20_000, originStrideHours: 24 as const, policy: { maxProjectionError: 0.10 as const, bootstrapBlockHours: 96 as const, bootstrapSamples: 2_000 as const },
     ticketCounts: {}, selectedTicketKeys: [], modelScores: {
       independence: score, "static-hierarchical-gaussian": score, "measured-hierarchical-gaussian": score, "signed-t-copula": score, "filtered-historical-simulation": score,
@@ -113,11 +115,17 @@ test("research report verifies every immutable reference before writing the dete
     mkdirSync(join(root, "derived", "returns-v2", "exclusions", "2026", "08", "27"), { recursive: true });
     writeFileSync(join(root, returnsPath), returnBytes);
     writeFileSync(join(root, exclusionsPath), exclusionBytes);
-    const derivedManifestPath = join(root, `${returnsPath}.manifest.json`);
-    writeFileSync(derivedManifestPath, canonicalJson({
+    const derivedManifestRelative = `${returnsPath}.manifest.json`;
+    const derivedManifestPath = join(root, derivedManifestRelative);
+    const derivedManifestBytes = canonicalJson({
       schemaVersion: 2, network: "testnet", transformationVersion: "returns-v2", dataManifestSha256: fixture.candidate.dataManifestSha256, sourceRegistrySha256: sourceHash,
       window: { asOfMs: 2, lookbackMs: 1 }, returns: { path: returnsPath, sha256: sha256(returnBytes), rows: 0 }, exclusions: { path: exclusionsPath, sha256: sha256(exclusionBytes), rows: fixture.exclusions.length },
-    }));
+    });
+    writeFileSync(derivedManifestPath, derivedManifestBytes);
+    Object.assign(fixture.validation, {
+      derivedManifestPath: derivedManifestRelative, derivedManifestSha256: sha256(derivedManifestBytes),
+      returnsSha256: sha256(returnBytes), exclusionsSha256: sha256(exclusionBytes), derivationWindow: { asOfMs: 2, lookbackMs: 1 },
+    });
     mkdirSync(join(root, "facts", "baselines"), { recursive: true });
     writeFileSync(join(root, fixture.validation.baselineSnapshotPath), baselineBytes);
     mkdirSync(join(root, "artifacts", "candidates"), { recursive: true });

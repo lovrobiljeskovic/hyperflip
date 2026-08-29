@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { admitPair, calibrate, calibrationPairSample, fitHierarchical, type CalibrationInput } from "../src/research/calibration.js";
-import type { LoadedResearchNetworkProfile } from "../src/research/network.js";
+import { researchRootIdentity, type LoadedResearchNetworkProfile } from "../src/research/network.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
 import type { CandleRecord, DataManifest, SourceEntry, SourceRegistry } from "../src/research/types.js";
 import type { ReturnRecord } from "../src/research/returns.js";
@@ -165,7 +165,7 @@ function calibrationRoot(options: { staleParticipatingUnderlying?: string; const
   writeFileSync(join(root, "markets.json"), profile.marketRegistryRaw);
   writeFileSync(join(root, "deployment.json"), canonicalJson(profile.deployment));
   writeFileSync(join(root, "correlations.json"), profile.baselineCorrelationRaw);
-  writeFileSync(join(root, "network-profile.json"), `${canonicalJson({ schemaVersion: 1, network: "testnet", profileSha256: profile.profileSha256 })}\n`);
+  writeFileSync(join(root, "network-profile.json"), `${canonicalJson(researchRootIdentity(profile))}\n`);
   return { root, input: { root, manifest, derivedManifestPath, profile }, profileFile };
 }
 

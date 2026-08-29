@@ -5,7 +5,7 @@ import { isAddress, type Address } from "viem";
 import { parseCorrelations, type CorrelationTable } from "./correlation.js";
 import { parseMarkets, type MarketInfo } from "./markets.js";
 import { BPS, parseDecimalToUnits } from "./pure.js";
-import { assertValidationArtifactIdentity, parseCorrelationArtifact, type ArtifactModelMetadata } from "./research/artifacts.js";
+import { assertValidationArtifactIdentity, assertValidationDerivedIdentity, parseCorrelationArtifact, type ArtifactModelMetadata } from "./research/artifacts.js";
 import { bindResearchRootIdentity, loadResearchNetworkProfile, type LoadedResearchNetworkProfile } from "./research/network.js";
 import { openResearchPersistence, type ResearchPersistence } from "./research/persistence.js";
 import { sha256 } from "./research/store.js";
@@ -214,6 +214,7 @@ export function loadConfig(nowMs = Date.now()): WriterConfig {
     const validationBytes = storage.readText(`artifacts/candidates/${champion.artifact.modelVersion}.validation.json`);
     const validation = JSON.parse(validationBytes) as ValidationReport;
     assertValidationArtifactIdentity(championRaw, champion.artifact, validation, researchProfile);
+    assertValidationDerivedIdentity(researchRoot, storage, champion.artifact, validation, researchProfile);
     if (validation.decision !== "Supported") throw new Error("artifact: writer requires Supported validation");
     ({ table: correlations, model } = champion);
     model.validationSha256 = sha256(validationBytes);
@@ -221,7 +222,7 @@ export function loadConfig(nowMs = Date.now()): WriterConfig {
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     const profileIdentityFailure = (error as NodeJS.ErrnoException).code === "ENOENT"
-      || /network|profile identity|registry hash mismatch|validation.*mismatch|requires Supported validation/.test(reason);
+      || /network|profile identity|registry hash mismatch|validation.*mismatch|derived manifest|requires Supported validation/.test(reason);
     if (!profileIdentityFailure) throw error;
     correlations = parseCorrelations(researchProfile.baselineCorrelationRaw);
     model = {
@@ -285,7 +286,7 @@ export function loadConfig(nowMs = Date.now()): WriterConfig {
     // WRITER_RPC lets the writer run on a higher-throughput endpoint while the keeper
     // keeps the official one for the precompile.
     rpcUrl: process.env.WRITER_RPC ?? requireEnv("TESTNET_RPC"),
-    parlayVault: requireAddress("PARLAY_VAULT_ADDRESS"),
+    parlayVault: researchProfile.deployment.parlayVault,
     writerAddress: requireAddress("WRITER_ADDRESS"),
     quoteSignerKey: requireKey("QUOTE_SIGNER_PRIVATE_KEY"),
     pokerKey: requireKey("POKER_PRIVATE_KEY"),
@@ -314,7 +315,7 @@ export function loadConfig(nowMs = Date.now()): WriterConfig {
     minBookDepthWad: parseDecimalToUnits(process.env.MIN_BOOK_DEPTH ?? "50", 18),
     lockoutMs: Number(process.env.LOCKOUT_MS ?? 600_000),
     pokerIntervalMs: Number(process.env.POKER_INTERVAL_MS ?? 15_000),
-    deployBlock: BigInt(process.env.PARLAY_DEPLOY_BLOCK ?? 0),
+    deployBlock: BigInt(researchProfile.deployment.parlayDeployBlock),
     markets,
     registryJson,
     inviteCodes: parseInviteCodes(requireEnv("INVITE_CODES")),

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import type { Address } from "viem";
 import { appendQuoteDecision, initializeQuoteJournal, joinEvents, type JoinDeps } from "../src/research/journal.js";
@@ -63,12 +63,12 @@ function tx(id: number): `0x${string}` { return `0x${id.toString(16).padStart(64
 
 function quote(quoteId: string): QuoteDecision {
   return {
-    schemaVersion: 2, network: "testnet", profileSha256: PROFILE.profileSha256, marketRegistrySha256: PROFILE.marketRegistrySha256,
+    schemaVersion: 3, network: "testnet", profileSha256: PROFILE.profileSha256, marketRegistrySha256: PROFILE.marketRegistrySha256,
     deploymentRegistrySha256: PROFILE.deploymentRegistrySha256, baselineCorrelationSha256: PROFILE.baselineCorrelationSha256,
     artifactKind: "champion", artifactSha256: "d".repeat(64), validationSha256: "e".repeat(64), validationState: "Supported", pairDecisions: [],
     recordedAtMs: 1_725_000_000_000, quoteId, quoteDigest: "0x02", chainId: 998,
     parlayVault: VAULT, taker: TAKER, legs: [], bookInputs: [], modelVersion: "fixture", dataAsOf: "2024-08-09T00:00:00.000Z",
-    dataManifestSha256: "a".repeat(64), sourceRegistrySha256: "b".repeat(64), bestEstimateJointProbWad: "1", riskAdjustedJointProbWad: "1", rhoBandPct: 0,
+    dataManifestSha256: "a".repeat(64), sourceRegistrySha256: PROFILE.sourceRegistrySha256, bestEstimateJointProbWad: "1", riskAdjustedJointProbWad: "1", rhoBandPct: 0,
     edge: { baseBps: "0", legBps: "0", totalBps: "0" }, premium: "1", maxPayout: "4", deadline: "1", signatureHash: "c".repeat(64),
   };
 }
@@ -125,6 +125,29 @@ test("event join: preserves confirmed canonical records when rerun", async () =>
   const first = readFileSync(file, "utf8");
   await joinEvents(root, deps(chain));
   assert.equal(readFileSync(file, "utf8"), first);
+});
+
+test("event join rejects persisted wrong network, profile, and deployment identities before record use", async () => {
+  for (const kind of ["network", "profile", "deployment"] as const) {
+    const root = mkdtempSync(join(tmpdir(), `hype-event-wrong-${kind}-`));
+    const chain = new FakeChain();
+    try {
+      initializeQuoteJournal(root, PROFILE);
+      const record = {
+        schemaVersion: 2, network: "testnet", profileSha256: PROFILE.profileSha256, deploymentRegistrySha256: PROFILE.deploymentRegistrySha256,
+        kind: "orphaned", targetKind: "chain-log", targetKey: `${tx(1)}:0:${hash(1n)}`,
+        detectedAtBlockNumber: "2", canonicalBlockHash: hash(2n), recordedAtMs: 1_725_000_000_000,
+      };
+      if (kind === "network") record.network = "mainnet";
+      if (kind === "profile") record.profileSha256 = "0".repeat(64);
+      if (kind === "deployment") record.deploymentRegistrySha256 = "0".repeat(64);
+      const file = join(root, "journal", "events", "2024", "08", "30.jsonl");
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, `${canonicalJson(record)}\n`);
+      await assert.rejects(joinEvents(root, deps(chain)), /network\/profile marker mismatch|deployment identity mismatch/);
+      assert.deepEqual(chain.requests, []);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
 });
 
 test("orphaning one physical chain log permits the same transaction/log identity to be canonically re-included", async () => {

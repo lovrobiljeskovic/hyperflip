@@ -246,14 +246,14 @@ test("collector ignores an ahead checkpoint and resumes from its sealed shard", 
   }
 });
 
-test("daily manifest retains the registry fact that produced its sealed shard", async () => {
+test("research root rejects source-registry rotation and retains the fact that produced its sealed shard", async () => {
   const root = scratch();
   const nowMs = 12_000_000;
   const registryA = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
   const registryB = { schemaVersion: 2 as const, network: "testnet" as const, sources: [{ ...source, underlying: "BTC-RENAMED" }] };
   try {
     await collectSources({ root, profile: loadedProfile(root, registryA), nowMs, fetch: async () => new Response(fixture("candle-snapshot.json")) });
-    await collectSources({ root, profile: loadedProfile(root, registryB), nowMs: nowMs + 86_400_000, fetch: async () => new Response("[]") });
+    await assert.rejects(collectSources({ root, profile: loadedProfile(root, registryB), nowMs: nowMs + 86_400_000, fetch: async () => new Response("[]") }), /research root network\/profile marker mismatch/);
     assert.equal(buildDailyManifest(root, "1970-01-01").sourceRegistrySha256, sha256(canonicalJson(registryA)));
   } finally {
     rmSync(root, { recursive: true, force: true });

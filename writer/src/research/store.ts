@@ -96,9 +96,10 @@ function derivedPartition(root: string, storage: ResearchPersistence, entry: { p
   });
 }
 
-export function readDerivedDataset(root: string, manifestInput: string, storage = openResearchPersistence(root)): { manifest: DerivedManifestV2; returns: ReturnRecord[]; exclusions: ExclusionRecord[] } {
+export function readDerivedDataset(root: string, manifestInput: string, storage = openResearchPersistence(root)): { manifestPath: string; manifestSha256: string; manifest: DerivedManifestV2; returns: ReturnRecord[]; exclusions: ExclusionRecord[] } {
   const path = researchRelativePath(root, manifestInput);
-  const parsed = JSON.parse(storage.readText(path)) as Record<string, unknown>;
+  const manifestBytes = storage.read(path);
+  const parsed = JSON.parse(manifestBytes.toString("utf8")) as Record<string, unknown>;
   const keys = ["schemaVersion", "network", "transformationVersion", "dataManifestSha256", "sourceRegistrySha256", "window", "returns", "exclusions"];
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed) || Object.keys(parsed).some((key) => !keys.includes(key)) || parsed.schemaVersion !== 2 || parsed.transformationVersion !== "returns-v2") throw new Error("derived manifest must be schema 2 returns-v2");
   if (parsed.network !== "testnet" && parsed.network !== "mainnet") throw new Error("derived manifest network is invalid");
@@ -111,7 +112,7 @@ export function readDerivedDataset(root: string, manifestInput: string, storage 
   const manifest = parsed as unknown as DerivedManifestV2;
   const returns = derivedPartition(root, storage, manifest.returns, "returns", manifest.network) as ReturnRecord[];
   const exclusions = derivedPartition(root, storage, manifest.exclusions, "exclusions", manifest.network) as ExclusionRecord[];
-  return { manifest, returns, exclusions };
+  return { manifestPath: path, manifestSha256: sha256(manifestBytes), manifest, returns, exclusions };
 }
 
 const bytewise = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;

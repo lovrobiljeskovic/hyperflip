@@ -153,6 +153,9 @@ export function generateReport(rootInput: string, candidateInput: string, derive
   const current = verified(root, candidateInput, storage);
   const derived = readDerivedDataset(root, derivedManifestInput, storage);
   if (derived.manifest.dataManifestSha256 !== current.candidate.dataManifestSha256 || derived.manifest.sourceRegistrySha256 !== current.candidate.sourceRegistrySha256) throw new Error("report derived manifest identity mismatch");
+  if (current.validation.schemaVersion !== 3 || current.validation.derivedManifestPath !== derived.manifestPath || current.validation.derivedManifestSha256 !== derived.manifestSha256
+    || current.validation.returnsSha256 !== derived.manifest.returns.sha256 || current.validation.exclusionsSha256 !== derived.manifest.exclusions.sha256
+    || canonicalJson(current.validation.derivationWindow) !== canonicalJson(derived.manifest.window)) throw new Error("report validation derived manifest identity mismatch");
   if (readSourceRegistryFact(root, derived.manifest.sourceRegistrySha256, storage).registry.network !== derived.manifest.network) throw new Error("report derived manifest network mismatch");
   const championPath = "artifacts/champion.json";
   let champion: ReportInput["champion"] = null;

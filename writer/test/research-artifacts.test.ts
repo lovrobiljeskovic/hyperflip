@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { gzipSync } from "node:zlib";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -8,8 +9,8 @@ import type { MarketInfo } from "../src/config.js";
 import { promoteCandidate, validateArtifact } from "../src/research/artifacts.js";
 import type { ValidationReport } from "../src/research/replay.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
-import type { CorrelationArtifact, DataManifest, SourceEntry, SourceRegistry } from "../src/research/types.js";
-import type { LoadedResearchNetworkProfile } from "../src/research/network.js";
+import type { CorrelationArtifact, DataManifest, DerivedManifestV2, SourceEntry, SourceRegistry } from "../src/research/types.js";
+import { researchRootIdentity, type LoadedResearchNetworkProfile } from "../src/research/network.js";
 
 const NOW = Date.parse("2026-08-28T18:00:00.000Z");
 const VALID = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-valid.json", import.meta.url), "utf8")) as CorrelationArtifact;
@@ -23,7 +24,7 @@ const source = (underlying: string, fallbackEligible = false): SourceEntry => ({
 
 function setup(artifactInput: CorrelationArtifact = VALID, fallbackEligible = false): {
   root: string; artifact: CorrelationArtifact; raw: string; candidate: string; manifest: DataManifest;
-  sources: SourceRegistry; markets: Map<string, MarketInfo>; profile: LoadedResearchNetworkProfile; validation: ValidationReport;
+  sources: SourceRegistry; markets: Map<string, MarketInfo>; profile: LoadedResearchNetworkProfile; validation: ValidationReport; derivedManifestPath: string;
 } {
   const root = mkdtempSync(join(tmpdir(), "hype-artifact-"));
   const sources: SourceRegistry = { schemaVersion: 2, network: "testnet", sources: [source("BTC", fallbackEligible), source("ETH", fallbackEligible)] };
@@ -48,7 +49,7 @@ function setup(artifactInput: CorrelationArtifact = VALID, fallbackEligible = fa
     marketRegistryRaw, marketRegistrySha256: sha256(marketRegistryRaw), deployment, deploymentRegistrySha256: sha256(canonicalJson(deployment)),
     baselineCorrelationRaw, baselineCorrelationSha256: sha256(baselineCorrelationRaw),
   };
-  writeFileSync(join(root, "network-profile.json"), `${canonicalJson({ schemaVersion: 1, network: "testnet", profileSha256: profile.profileSha256 })}\n`);
+  writeFileSync(join(root, "network-profile.json"), `${canonicalJson(researchRootIdentity(profile))}\n`);
   artifact.network = "testnet";
   artifact.profileSha256 = profile.profileSha256;
   artifact.marketRegistrySha256 = profile.marketRegistrySha256;
@@ -73,8 +74,27 @@ function setup(artifactInput: CorrelationArtifact = VALID, fallbackEligible = fa
   const baselineSha256 = sha256(baseline);
   mkdirSync(join(root, "facts", "baselines"), { recursive: true });
   writeFileSync(join(root, "facts", "baselines", `${baselineSha256}.json`), baseline);
+  const returnsBytes = gzipSync("");
+  const exclusionsBytes = gzipSync("");
+  const returnsPath = "derived/returns-v2/returns/fixture.jsonl.gz";
+  const exclusionsPath = "derived/returns-v2/exclusions/fixture.jsonl.gz";
+  mkdirSync(join(root, "derived", "returns-v2", "returns"), { recursive: true });
+  mkdirSync(join(root, "derived", "returns-v2", "exclusions"), { recursive: true });
+  writeFileSync(join(root, returnsPath), returnsBytes);
+  writeFileSync(join(root, exclusionsPath), exclusionsBytes);
+  const derivedManifest: DerivedManifestV2 = {
+    schemaVersion: 2, network: "testnet", transformationVersion: "returns-v2",
+    dataManifestSha256: artifact.dataManifestSha256, sourceRegistrySha256: artifact.sourceRegistrySha256,
+    window: { asOfMs: Date.parse(artifact.dataAsOf), lookbackMs: 180 * 86_400_000 },
+    returns: { path: returnsPath, sha256: sha256(returnsBytes), rows: 0 },
+    exclusions: { path: exclusionsPath, sha256: sha256(exclusionsBytes), rows: 0 },
+  };
+  const derivedManifestPath = "derived/returns-v2/fixture.manifest.json";
+  const derivedManifestBytes = canonicalJson(derivedManifest);
+  writeFileSync(join(root, derivedManifestPath), derivedManifestBytes);
   const validation = {
-    schemaVersion: 2, network: profile.profile.network, profileSha256: profile.profileSha256, modelVersion: artifact.modelVersion, candidateSha256: sha256(raw), inputManifestSha256: artifact.dataManifestSha256,
+    schemaVersion: 3, network: profile.profile.network, profileSha256: profile.profileSha256, modelVersion: artifact.modelVersion, candidateSha256: sha256(raw), inputManifestSha256: artifact.dataManifestSha256,
+    derivedManifestPath, derivedManifestSha256: sha256(derivedManifestBytes), returnsSha256: derivedManifest.returns.sha256, exclusionsSha256: derivedManifest.exclusions.sha256, derivationWindow: derivedManifest.window,
     sourceRegistrySha256: artifact.sourceRegistrySha256, marketRegistrySha256: artifact.marketRegistrySha256,
     deploymentRegistrySha256: artifact.deploymentRegistrySha256, baselineCorrelationSha256: artifact.baselineCorrelationSha256,
     baselineSha256, baselineSnapshotPath: `facts/baselines/${baselineSha256}.json`, seed: "fixture", drawCount: 20_000, originStrideHours: 24 as const,
@@ -84,7 +104,7 @@ function setup(artifactInput: CorrelationArtifact = VALID, fallbackEligible = fa
   } satisfies ValidationReport;
   writeFileSync(join(root, "artifacts", "candidates", `${artifact.modelVersion}.validation.json`), `${canonicalJson(validation)}\n`);
   const markets = new Map<string, MarketInfo>([[VAULT, { vault: VAULT, coinYes: "+1", coinNo: "+2", underlying: "BTC", cluster: "crypto", direction: "up", title: "BTC", category: "crypto" }]]);
-  return { root, artifact, raw, candidate, manifest, sources, markets, profile, validation };
+  return { root, artifact, raw, candidate, manifest, sources, markets, profile, validation, derivedManifestPath };
 }
 
 function validate(fixture: ReturnType<typeof setup>, artifact = fixture.artifact, validation = fixture.validation): void {
@@ -146,12 +166,29 @@ test("artifact validation rejects manifest, source, market, and validation ident
 test("promotion requires Supported validation and the root profile marker", () => {
   const fixture = setup();
   try {
-    writeFileSync(join(fixture.root, "network-profile.json"), `${canonicalJson({ schemaVersion: 1, network: "mainnet", profileSha256: "0".repeat(64) })}\n`);
+    writeFileSync(join(fixture.root, "network-profile.json"), `${canonicalJson({ ...researchRootIdentity(fixture.profile), network: "mainnet", profileSha256: "0".repeat(64) })}\n`);
     assert.throws(() => promoteCandidate(fixture.root, fixture.candidate, fixture.profile, fixture.markets, NOW), /research root network\/profile marker mismatch/);
-    writeFileSync(join(fixture.root, "network-profile.json"), `${canonicalJson({ schemaVersion: 1, network: "testnet", profileSha256: fixture.profile.profileSha256 })}\n`);
+    writeFileSync(join(fixture.root, "network-profile.json"), `${canonicalJson(researchRootIdentity(fixture.profile))}\n`);
     writeFileSync(join(fixture.root, "artifacts", "candidates", `${fixture.artifact.modelVersion}.validation.json`), `${canonicalJson({ ...fixture.validation, decision: "Inconclusive" })}\n`);
     assert.throws(() => promoteCandidate(fixture.root, fixture.candidate, fixture.profile, fixture.markets, NOW), /Supported validation/);
   } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test("promotion rejects mutated derived returns, exclusions, and derivation window", () => {
+  for (const kind of ["returns", "exclusions", "window"] as const) {
+    const fixture = setup();
+    try {
+      const manifestFile = join(fixture.root, fixture.derivedManifestPath);
+      const manifest = JSON.parse(readFileSync(manifestFile, "utf8")) as DerivedManifestV2;
+      if (kind === "window") {
+        manifest.window.lookbackMs += 1;
+        writeFileSync(manifestFile, canonicalJson(manifest));
+      } else {
+        writeFileSync(join(fixture.root, manifest[kind].path), gzipSync(`${canonicalJson({ mutated: true })}\n`));
+      }
+      assert.throws(() => promoteCandidate(fixture.root, fixture.candidate, fixture.profile, fixture.markets, NOW), /derived manifest/);
+    } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+  }
 });
 
 test("artifact validation requires exact eligible entries and every canonical pair once", () => {
@@ -268,6 +305,7 @@ test("promotion rejects fallback values and eligibility reasons that differ from
         const baselineCorrelationRaw = canonicalJson(baseline);
         profile = { ...profile, baselineCorrelationRaw, baselineCorrelationSha256: sha256(baselineCorrelationRaw) };
         artifact.baselineCorrelationSha256 = profile.baselineCorrelationSha256;
+        writeFileSync(join(fixture.root, "network-profile.json"), `${canonicalJson(researchRootIdentity(profile))}\n`);
       }
       const raw = `${canonicalJson(artifact)}\n`;
       writeFileSync(fixture.candidate, raw);

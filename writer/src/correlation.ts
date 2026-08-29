@@ -140,6 +140,15 @@ function loadingsFor(leg: CorrLeg, table: CorrelationTable): Loadings {
   );
 }
 
+/** Nominal pair correlation implied by the same loaded factors used by live
+ * pricing before the uncertainty band is applied. */
+export function nominalPairCorrelation(left: CorrLeg, right: CorrLeg, table: CorrelationTable): number {
+  const zero = { global: 0, cluster: 0, underlying: 0 };
+  const a = left.bullish === null ? zero : loadingsFor(left, table);
+  const b = right.bullish === null ? zero : loadingsFor(right, table);
+  return pairCorrelation(a, b, left.cluster === right.cluster, left.underlying === right.underlying);
+}
+
 /** Multiplying each loading by sqrt(scale) multiplies every pairwise
  * correlation by exactly scale, since each correlation term is a product of
  * two loadings. Clamped so explained variance stays under MAX_EXPLAINED. */

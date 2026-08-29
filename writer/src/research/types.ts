@@ -201,7 +201,7 @@ export interface CorrelationArtifact {
 }
 
 export interface QuoteDecision {
-  schemaVersion: 2;
+  schemaVersion: 3;
   network: ResearchNetwork;
   profileSha256: string;
   marketRegistrySha256: string;
@@ -211,7 +211,7 @@ export interface QuoteDecision {
   artifactSha256: string;
   validationSha256: string | null;
   validationState: "Supported" | "Unavailable";
-  pairDecisions: { pair: [string, string]; status: "direct" | "fallback" | "quarantined"; reason: string; correlation: number | null }[];
+  pairDecisions: { pair: [string, string]; status: "direct" | "fallback" | "quarantined"; reason: string; correlation: number; evidenceCorrelation: number | null }[];
   recordedAtMs: number;
   quoteId: string;
   quoteDigest: string;
@@ -364,7 +364,7 @@ export function assertCorrelationArtifact(record: CorrelationArtifact): void {
 }
 
 export function assertQuoteDecision(record: QuoteDecision): void {
-  if (record.schemaVersion !== 2) throw new Error("quote decision schemaVersion must be 2");
+  if (record.schemaVersion !== 3) throw new Error("quote decision schemaVersion must be 3");
   assertResearchNetworkEnabled(record.network);
   assertSafeIntegerTimestamp(record.recordedAtMs, "recordedAtMs");
   for (const input of record.bookInputs) assertSafeIntegerTimestamp(input.observedAtMs, "bookInputs.observedAtMs");
@@ -389,7 +389,8 @@ export function assertQuoteDecision(record: QuoteDecision): void {
   for (const pair of record.pairDecisions) {
     if (!Array.isArray(pair.pair) || pair.pair.length !== 2 || pair.pair[0] >= pair.pair[1]) throw new Error("pairDecisions must use canonical pairs");
     if (pair.status !== "direct" && pair.status !== "fallback" && pair.status !== "quarantined") throw new Error("pairDecisions status is invalid");
-    if (!pair.reason || (pair.status === "quarantined" ? pair.correlation !== null : typeof pair.correlation !== "number" || !Number.isFinite(pair.correlation))) throw new Error("pairDecisions evidence is invalid");
+    if (!pair.reason || typeof pair.correlation !== "number" || !Number.isFinite(pair.correlation)
+      || (pair.status === "quarantined" ? pair.evidenceCorrelation !== null : typeof pair.evidenceCorrelation !== "number" || !Number.isFinite(pair.evidenceCorrelation))) throw new Error("pairDecisions evidence is invalid");
     recordedPairs.push(pair.pair.join(":"));
   }
   if (JSON.stringify(recordedPairs.sort()) !== JSON.stringify(expectedPairs)) throw new Error("pairDecisions must record every quoted underlying pair exactly once");

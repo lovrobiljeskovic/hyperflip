@@ -5,7 +5,7 @@ import { calibrationPairSample, fitHierarchical, type CalibrationAlignmentCache 
 import { cholesky, nearestCorrelation, shrinkPair, structuredTargets, weightedCorrelation, type PairEstimate } from "./matrix.js";
 import { returnModeFor, trailingFresh, type ReturnMode, type ReturnRecord } from "./returns.js";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
-import { canonicalJson, readSourceRegistryFact, sha256 } from "./store.js";
+import { canonicalJson, readDerivedDataset, readSourceRegistryFact, sha256 } from "./store.js";
 import { assertExclusionRecord, parseReturnRecord } from "./types.js";
 import type { CorrelationArtifact, ExclusionRecord, ResearchNetwork, SourceEntry } from "./types.js";
 import { assertLoadedResearchNetworkProfile, bindResearchRootIdentity, type LoadedResearchNetworkProfile } from "./network.js";
@@ -113,19 +113,24 @@ export interface ReplayInput {
   candidate: CorrelationArtifact;
   candidateBytes?: string;
   inputManifestSha256: string;
+  derivedManifestPath: string;
   profile: LoadedResearchNetworkProfile;
-  series: ReplaySeries;
   seed: string;
   storage?: ResearchPersistence;
 }
 
 export interface ValidationReport {
-  schemaVersion: 2;
+  schemaVersion: 3;
   network: ResearchNetwork;
   profileSha256: string;
   modelVersion: string;
   candidateSha256: string;
   inputManifestSha256: string;
+  derivedManifestPath: string;
+  derivedManifestSha256: string;
+  returnsSha256: string;
+  exclusionsSha256: string;
+  derivationWindow: { asOfMs: number; lookbackMs: number };
   sourceRegistrySha256: string;
   marketRegistrySha256: string;
   deploymentRegistrySha256: string;
@@ -823,10 +828,18 @@ export function replayOrigins(series: ReplaySeries): number[] {
 
 function validationPath(modelVersion: string): string { return `artifacts/candidates/${modelVersion}.validation.json`; }
 
-function readExisting(storage: ResearchPersistence, path: string, candidateSha256: string, inputManifestSha256: string, profile: LoadedResearchNetworkProfile): ValidationReport | null {
+interface ReplayDerivedIdentity {
+  derivedManifestPath: string;
+  derivedManifestSha256: string;
+  returnsSha256: string;
+  exclusionsSha256: string;
+  derivationWindow: { asOfMs: number; lookbackMs: number };
+}
+
+function readExisting(storage: ResearchPersistence, path: string, candidateSha256: string, inputManifestSha256: string, profile: LoadedResearchNetworkProfile, derived: ReplayDerivedIdentity): ValidationReport | null {
   if (!storage.exists(path)) return null;
   const report = JSON.parse(storage.readText(path)) as ValidationReport;
-  if (report.schemaVersion !== 2 || report.network !== profile.profile.network || report.profileSha256 !== profile.profileSha256 || report.candidateSha256 !== candidateSha256 || report.inputManifestSha256 !== inputManifestSha256 || report.sourceRegistrySha256 !== profile.sourceRegistrySha256 || report.marketRegistrySha256 !== profile.marketRegistrySha256 || report.deploymentRegistrySha256 !== profile.deploymentRegistrySha256 || report.baselineCorrelationSha256 !== profile.baselineCorrelationSha256 || report.baselineSha256 !== profile.baselineCorrelationSha256 || report.baselineSnapshotPath !== `facts/baselines/${profile.baselineCorrelationSha256}.json`) throw new Error("validation already exists for different immutable inputs");
+  if (report.schemaVersion !== 3 || report.network !== profile.profile.network || report.profileSha256 !== profile.profileSha256 || report.candidateSha256 !== candidateSha256 || report.inputManifestSha256 !== inputManifestSha256 || report.sourceRegistrySha256 !== profile.sourceRegistrySha256 || report.marketRegistrySha256 !== profile.marketRegistrySha256 || report.deploymentRegistrySha256 !== profile.deploymentRegistrySha256 || report.baselineCorrelationSha256 !== profile.baselineCorrelationSha256 || report.baselineSha256 !== profile.baselineCorrelationSha256 || report.baselineSnapshotPath !== `facts/baselines/${profile.baselineCorrelationSha256}.json` || report.derivedManifestPath !== derived.derivedManifestPath || report.derivedManifestSha256 !== derived.derivedManifestSha256 || report.returnsSha256 !== derived.returnsSha256 || report.exclusionsSha256 !== derived.exclusionsSha256 || canonicalJson(report.derivationWindow) !== canonicalJson(derived.derivationWindow)) throw new Error("validation already exists for different immutable inputs");
   const snapshot = storage.read(report.baselineSnapshotPath);
   if (sha256(snapshot) !== report.baselineSha256) throw new Error("baseline snapshot hash mismatch");
   return report;
@@ -849,22 +862,34 @@ export function runReplay(input: ReplayInput): ValidationReport {
   const root = resolve(input.root);
   const storage = input.storage ?? openResearchPersistence(root);
   assertLoadedResearchNetworkProfile(input.profile);
-  assertReplayProfileIdentity(input.profile, input.candidate, input.series.network);
   bindResearchRootIdentity(storage, input.profile);
   if ("draws" in input) throw new Error("replay uses exactly 20,000 draws");
   if (!SAFE_MODEL_VERSION.test(input.candidate.modelVersion)) throw new Error("replay modelVersion is not a safe artifact filename");
-  if (input.inputManifestSha256 !== input.candidate.dataManifestSha256 || input.series.manifestHash !== input.inputManifestSha256) throw new Error("replay immutable input identities differ");
-  const networks = new Set(input.series.sources.map((source) => source.sourceNetwork));
-  if (networks.size !== 1 || !networks.has(input.series.network)) throw new Error("replay network identity mismatch");
-  if (canonicalJson({ schemaVersion: 2, network: input.series.network, sources: input.series.sources }) !== canonicalJson(input.profile.sources)) throw new Error("replay source registry identity mismatch");
-  for (const row of input.series.rows) parseReturnRecord(row, input.series.network);
-  for (const exclusion of input.series.exclusions) {
+  const dataset = readDerivedDataset(root, input.derivedManifestPath, storage);
+  const manifest = dataset.manifest;
+  assertReplayProfileIdentity(input.profile, input.candidate, manifest.network);
+  if (input.inputManifestSha256 !== input.candidate.dataManifestSha256 || manifest.dataManifestSha256 !== input.inputManifestSha256) throw new Error("replay immutable input identities differ");
+  if (manifest.sourceRegistrySha256 !== input.profile.sourceRegistrySha256) throw new Error("replay source registry identity mismatch");
+  const sources = loadReplaySourceRegistry(root, manifest.sourceRegistrySha256, storage);
+  const series: ReplaySeries = { network: manifest.network, rows: dataset.returns, exclusions: dataset.exclusions, sources, manifestHash: manifest.dataManifestSha256 };
+  const derivedIdentity: ReplayDerivedIdentity = {
+    derivedManifestPath: dataset.manifestPath,
+    derivedManifestSha256: dataset.manifestSha256,
+    returnsSha256: manifest.returns.sha256,
+    exclusionsSha256: manifest.exclusions.sha256,
+    derivationWindow: { ...manifest.window },
+  };
+  const networks = new Set(series.sources.map((source) => source.sourceNetwork));
+  if (networks.size !== 1 || !networks.has(series.network)) throw new Error("replay network identity mismatch");
+  if (canonicalJson({ schemaVersion: 2, network: series.network, sources: series.sources }) !== canonicalJson(input.profile.sources)) throw new Error("replay source registry identity mismatch");
+  for (const row of series.rows) parseReturnRecord(row, series.network);
+  for (const exclusion of series.exclusions) {
     assertExclusionRecord(exclusion);
-    if (exclusion.stage !== "returns" || exclusion.sourceKeys.some((key) => !key.startsWith(`${input.series.network}:`))) throw new Error("replay exclusion network mismatch");
+    if (exclusion.stage !== "returns" || exclusion.sourceKeys.some((key) => !key.startsWith(`${series.network}:`))) throw new Error("replay exclusion network mismatch");
   }
   const candidateSha256 = sha256(input.candidateBytes ?? canonicalJson(input.candidate));
   const outputPath = validationPath(input.candidate.modelVersion);
-  const existing = readExisting(storage, outputPath, candidateSha256, input.inputManifestSha256, input.profile);
+  const existing = readExisting(storage, outputPath, candidateSha256, input.inputManifestSha256, input.profile, derivedIdentity);
   if (existing) return existing;
   const baselineCanonical = input.profile.baselineCorrelationRaw;
   const baselineSha256 = sha256(baselineCanonical);
@@ -876,10 +901,10 @@ export function runReplay(input: ReplayInput): ValidationReport {
   const baseline = parseCorrelations(baselineCanonical);
   const compute = (): ReplayComputation => {
   let matrixFailure = input.candidate.quality.matrixOrder.length !== input.candidate.quality.signedPsdTarget.length
-    || input.candidate.quality.matrixOrder.some((underlying) => !input.series.sources.some((source) => source.underlying === underlying));
+    || input.candidate.quality.matrixOrder.some((underlying) => !series.sources.some((source) => source.underlying === underlying));
   try { cholesky(input.candidate.quality.signedPsdTarget); } catch { matrixFailure = true; }
   const draws = 20_000;
-  const origins = replayOrigins(input.series);
+  const origins = replayOrigins(series);
   const forecastRows: ForecastRow[] = [];
   const exclusions: ReplayExclusion[] = [];
   let hadNonFinite = false;
@@ -892,18 +917,18 @@ export function runReplay(input: ReplayInput): ValidationReport {
     let df: number = DFS[0];
     let fitted: ReplayDependenceFit | null = null;
     try {
-      fitted = fitReplayDependence(input.series.rows, input.series.sources, input.candidate, originMs, fittedByOrigin);
-      if (fitted.admittedPairs.size) df = selectDegreesOfFreedom(input.series.rows, input.series.sources, `${input.seed}:${originMs}`, originMs, input.candidate, fittedByOrigin);
+      fitted = fitReplayDependence(series.rows, series.sources, input.candidate, originMs, fittedByOrigin);
+      if (fitted.admittedPairs.size) df = selectDegreesOfFreedom(series.rows, series.sources, `${input.seed}:${originMs}`, originMs, input.candidate, fittedByOrigin);
     } catch {
       matrixFailure = true;
       exclusions.push({ originMs, ticketKey: null, model: "measured-hierarchical-gaussian", reason: "non-finite-probability" });
     }
     const training = {
-      ...input.series,
+      ...series,
       sources: fitted?.sources ?? [],
-      rows: input.series.rows.filter((row) => observationTime(row) <= originMs && row.timestampMs >= originMs - 180 * DAY),
+      rows: series.rows.filter((row) => observationTime(row) <= originMs && row.timestampMs >= originMs - 180 * DAY),
     };
-    const future = input.series.rows.filter((row) => observationTime(row) > originMs);
+    const future = series.rows.filter((row) => observationTime(row) > originMs);
     const selected = syntheticEvents(originMs, training, future, fitted?.admittedPairs ?? new Set());
     const tickets = selected.filter((ticket) => ticket.outcome !== null);
     exclusions.push({ originMs, ticketKey: null, model: null, reason: "structurally-unavailable", stratum: "same-underlying", legCount: 4 });
@@ -984,12 +1009,13 @@ export function runReplay(input: ReplayInput): ValidationReport {
     ? "Rejected"
     : first.bootstrap.point < 0 && first.bootstrap.upper <= 0.01 && !first.stressFailures ? "Supported" : "Inconclusive";
   const report: ValidationReport = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     network: input.profile.profile.network,
     profileSha256: input.profile.profileSha256,
     modelVersion: input.candidate.modelVersion,
     candidateSha256,
     inputManifestSha256: input.inputManifestSha256,
+    ...derivedIdentity,
     sourceRegistrySha256: input.profile.sourceRegistrySha256,
     marketRegistrySha256: input.profile.marketRegistrySha256,
     deploymentRegistrySha256: input.profile.deploymentRegistrySha256,

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { gzipSync } from "node:zlib";
 import {
   parseMarkets,
   parseInviteCodes,
@@ -15,7 +16,7 @@ import {
   applyWriterProfileIdentity,
 } from "../src/config.js";
 import { parseCorrelations } from "../src/correlation.js";
-import { loadResearchNetworkProfile } from "../src/research/network.js";
+import { loadResearchNetworkProfile, researchRootIdentity } from "../src/research/network.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
 
 const VAULT = "0x1111111111111111111111111111111111111111";
@@ -32,7 +33,7 @@ test("writer reports configured deployment mismatches precisely", () => {
   assert.equal(profileDeploymentMismatchReason(TESTNET_PROFILE, TESTNET_PROFILE.deployment.parlayVault, 61_906_227n), null);
 });
 
-function writeLiveConfigFixture(root: string): { artifactFile: string; validationFile: string; profileFile: string; sourcesFile: string; marketsFile: string; artifact: Record<string, any> } {
+function writeLiveConfigFixture(root: string): { artifactFile: string; validationFile: string; profileFile: string; sourcesFile: string; marketsFile: string; derivedReturnsFile: string; artifact: Record<string, any> } {
   const sources = {
     schemaVersion: 2,
     network: "testnet",
@@ -57,20 +58,38 @@ function writeLiveConfigFixture(root: string): { artifactFile: string; validatio
     marketRegistrySha256: profile.marketRegistrySha256, deploymentRegistrySha256: profile.deploymentRegistrySha256,
     baselineCorrelationSha256: profile.baselineCorrelationSha256,
   });
-  writeFileSync(join(root, "network-profile.json"), `${canonicalJson({ schemaVersion: 1, network: "testnet", profileSha256: profile.profileSha256 })}\n`);
+  writeFileSync(join(root, "network-profile.json"), `${canonicalJson(researchRootIdentity(profile))}\n`);
   const artifactFile = join(root, "artifacts", "champion.json");
   const validationFile = join(root, "artifacts", "candidates", `${artifact.modelVersion}.validation.json`);
   const raw = JSON.stringify(artifact);
   mkdirSync(join(root, "artifacts", "candidates"), { recursive: true });
   writeFileSync(artifactFile, raw);
+  const returnsBytes = gzipSync("");
+  const exclusionsBytes = gzipSync("");
+  const returnsPath = "derived/returns-v2/returns/fixture.jsonl.gz";
+  const exclusionsPath = "derived/returns-v2/exclusions/fixture.jsonl.gz";
+  mkdirSync(join(root, "derived", "returns-v2", "returns"), { recursive: true });
+  mkdirSync(join(root, "derived", "returns-v2", "exclusions"), { recursive: true });
+  const derivedReturnsFile = join(root, returnsPath);
+  writeFileSync(derivedReturnsFile, returnsBytes);
+  writeFileSync(join(root, exclusionsPath), exclusionsBytes);
+  const derivedManifestPath = "derived/returns-v2/fixture.manifest.json";
+  const derivationWindow = { asOfMs: Date.parse(artifact.dataAsOf), lookbackMs: 180 * 86_400_000 };
+  const derivedManifest = canonicalJson({
+    schemaVersion: 2, network: "testnet", transformationVersion: "returns-v2", dataManifestSha256: artifact.dataManifestSha256,
+    sourceRegistrySha256: profile.sourceRegistrySha256, window: derivationWindow,
+    returns: { path: returnsPath, sha256: sha256(returnsBytes), rows: 0 }, exclusions: { path: exclusionsPath, sha256: sha256(exclusionsBytes), rows: 0 },
+  });
+  writeFileSync(join(root, derivedManifestPath), derivedManifest);
   writeFileSync(validationFile, `${canonicalJson({
-    schemaVersion: 2, network: "testnet", profileSha256: profile.profileSha256, modelVersion: artifact.modelVersion,
+    schemaVersion: 3, network: "testnet", profileSha256: profile.profileSha256, modelVersion: artifact.modelVersion,
     candidateSha256: sha256(raw), inputManifestSha256: artifact.dataManifestSha256, sourceRegistrySha256: profile.sourceRegistrySha256,
+    derivedManifestPath, derivedManifestSha256: sha256(derivedManifest), returnsSha256: sha256(returnsBytes), exclusionsSha256: sha256(exclusionsBytes), derivationWindow,
     marketRegistrySha256: profile.marketRegistrySha256, deploymentRegistrySha256: profile.deploymentRegistrySha256,
     baselineCorrelationSha256: profile.baselineCorrelationSha256, baselineSha256: profile.baselineCorrelationSha256,
     baselineSnapshotPath: `facts/baselines/${profile.baselineCorrelationSha256}.json`, decision: "Supported", deterministicRerunMatches: true,
   })}\n`);
-  return { artifactFile, validationFile, profileFile, sourcesFile, marketsFile, artifact };
+  return { artifactFile, validationFile, profileFile, sourcesFile, marketsFile, derivedReturnsFile, artifact };
 }
 
 test("parseMarkets parses JSON array and keys by lowercase vault", () => {
@@ -189,7 +208,7 @@ function withConfigEnv(artifactFile: string, run: () => void, overrides: Record<
   const fixtureRoot = resolve(artifactFile, "../..");
   const values: Record<string, string> = {
     MAX_STAKE: "1000000", PER_MARKET_CAP: "1000000", PER_CLUSTER_CAP: "1000000", INVITE_CODES: "test",
-    PARLAY_VAULT_ADDRESS: "0x1111111111111111111111111111111111111111", WRITER_ADDRESS: "0x2222222222222222222222222222222222222222",
+    WRITER_ADDRESS: "0x2222222222222222222222222222222222222222",
     QUOTE_SIGNER_PRIVATE_KEY: `0x${"11".repeat(32)}`, POKER_PRIVATE_KEY: `0x${"22".repeat(32)}`, TESTNET_RPC: "http://localhost:1",
     RESEARCH_NETWORK_PROFILE_FILE: join(fixtureRoot, "profile.json"), RESEARCH_ROOT: fixtureRoot,
     ...overrides,
@@ -198,6 +217,18 @@ function withConfigEnv(artifactFile: string, run: () => void, overrides: Record<
   try { Object.assign(process.env, values); run(); }
   finally { for (const [key, value] of saved) value === undefined ? delete process.env[key] : process.env[key] = value; }
 }
+
+test("loadConfig sources the public vault and deploy block only from the selected profile", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-config-profile-deployment-"));
+  try {
+    const fixture = writeLiveConfigFixture(root);
+    withConfigEnv(fixture.artifactFile, () => {
+      const config = loadConfig(CONFIG_NOW);
+      assert.equal(config.parlayVault, VAULT);
+      assert.equal(config.deployBlock, 1n);
+    }, { PARLAY_VAULT_ADDRESS: "0x9999999999999999999999999999999999999999", PARLAY_DEPLOY_BLOCK: "999" });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test("loadConfig refuses a malformed champion artifact", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-config-artifact-"));
@@ -240,6 +271,20 @@ test("loadConfig degrades a champion from a different profile without disabling 
       assert.match(config.model.identityFailureReason!, /source registry hash mismatch/);
       assert.equal(config.correlations.underlyings.BTC.global, 0.1);
       assert.equal(applyWriterProfileIdentity(config, 998), config.model.identityFailureReason);
+    });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("loadConfig fails closed for multi-asset pricing when validated derived bytes change", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-config-derived-hash-"));
+  try {
+    const fixture = writeLiveConfigFixture(root);
+    writeFileSync(fixture.derivedReturnsFile, gzipSync(`${canonicalJson({ mutated: true })}\n`));
+    withConfigEnv(fixture.artifactFile, () => {
+      const config = loadConfig(CONFIG_NOW);
+      assert.equal(config.model.multiAssetEnabled, false);
+      assert.match(config.model.identityFailureReason!, /derived manifest.*returns hash mismatch/);
+      assert.ok(config.correlations.underlyings.BTC, "profile baseline remains available for same-underlying quotes");
     });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

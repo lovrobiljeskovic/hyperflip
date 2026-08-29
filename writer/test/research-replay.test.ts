@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { gzipSync } from "node:zlib";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -25,8 +26,8 @@ import {
   type ReplaySeries,
 } from "../src/research/replay.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
-import type { CorrelationArtifact, SourceEntry } from "../src/research/types.js";
-import type { LoadedResearchNetworkProfile } from "../src/research/network.js";
+import type { CorrelationArtifact, DerivedManifestV2, SourceEntry } from "../src/research/types.js";
+import { researchRootIdentity, type LoadedResearchNetworkProfile } from "../src/research/network.js";
 
 const DAY = 86_400_000;
 const ORIGIN = Date.parse("2026-08-01T00:00:00.000Z");
@@ -100,10 +101,32 @@ function replayProfile(series: ReplaySeries): LoadedResearchNetworkProfile {
 
 function replayInput(root: string, candidate: CorrelationArtifact, series: ReplaySeries, seed: string, extra: Record<string, unknown> = {}) {
   const profile = replayProfile(series);
+  const marker = join(root, "network-profile.json");
+  if (!existsSync(marker)) writeFileSync(marker, `${canonicalJson(researchRootIdentity(profile))}\n`);
+  mkdirSync(join(root, "facts", "source-registries"), { recursive: true });
+  writeFileSync(join(root, "facts", "source-registries", `${profile.sourceRegistrySha256}.json`), canonicalJson(profile.sources));
+  const returnsPath = "derived/returns-v2/returns/fixture.jsonl.gz";
+  const exclusionsPath = "derived/returns-v2/exclusions/fixture.jsonl.gz";
+  const returnsBytes = gzipSync(series.rows.map((row) => canonicalJson(row)).join("\n") + (series.rows.length ? "\n" : ""));
+  const exclusionBytes = gzipSync(series.exclusions.map((row) => canonicalJson(row)).join("\n") + (series.exclusions.length ? "\n" : ""));
+  mkdirSync(join(root, "derived", "returns-v2", "returns"), { recursive: true });
+  mkdirSync(join(root, "derived", "returns-v2", "exclusions"), { recursive: true });
+  writeFileSync(join(root, returnsPath), returnsBytes);
+  writeFileSync(join(root, exclusionsPath), exclusionBytes);
+  const derivedManifest: DerivedManifestV2 = {
+    schemaVersion: 2, network: series.network, transformationVersion: "returns-v2",
+    dataManifestSha256: series.manifestHash, sourceRegistrySha256: profile.sourceRegistrySha256,
+    window: { asOfMs: ORIGIN, lookbackMs: 180 * DAY },
+    returns: { path: returnsPath, sha256: sha256(returnsBytes), rows: series.rows.length },
+    exclusions: { path: exclusionsPath, sha256: sha256(exclusionBytes), rows: series.exclusions.length },
+  };
+  const derivedManifestPath = "derived/returns-v2/fixture.manifest.json";
+  writeFileSync(join(root, derivedManifestPath), canonicalJson(derivedManifest));
   return {
     root,
     candidate: { ...candidate, network: profile.profile.network, profileSha256: profile.profileSha256, sourceRegistrySha256: profile.sourceRegistrySha256, marketRegistrySha256: profile.marketRegistrySha256, deploymentRegistrySha256: profile.deploymentRegistrySha256, baselineCorrelationSha256: profile.baselineCorrelationSha256 },
     inputManifestSha256: series.manifestHash,
+    derivedManifestPath,
     profile,
     series,
     seed,
@@ -400,6 +423,13 @@ test("replay snapshots the baseline and immutable reruns ignore later registry e
     const candidate = candidateFor(series);
     const input = replayInput(root, candidate, series, "fixture");
     const first = runReplay(input);
+    const derivedManifestBytes = readFileSync(join(root, input.derivedManifestPath));
+    const derivedManifest = JSON.parse(derivedManifestBytes.toString("utf8")) as DerivedManifestV2;
+    assert.equal(first.derivedManifestPath, input.derivedManifestPath);
+    assert.equal(first.derivedManifestSha256, sha256(derivedManifestBytes));
+    assert.equal(first.returnsSha256, derivedManifest.returns.sha256);
+    assert.equal(first.exclusionsSha256, derivedManifest.exclusions.sha256);
+    assert.deepEqual(first.derivationWindow, derivedManifest.window);
     const bytes = readFileSync(join(root, "artifacts", "candidates", "fixture.validation.json"), "utf8");
     writeFileSync(baselineFile, JSON.stringify({ clusters: {} }));
     assert.deepEqual(runReplay(input), first);
@@ -417,6 +447,26 @@ test("replay snapshots the baseline and immutable reruns ignore later registry e
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("validation reuse rejects mutated derived returns, exclusions, and window identities", () => {
+  for (const kind of ["returns", "exclusions", "window"] as const) {
+    const root = mkdtempSync(join(tmpdir(), `hype-replay-derived-${kind}-`));
+    try {
+      const series = dailySeries(95);
+      const input = replayInput(root, candidateFor(series, `derived-${kind}`), series, `derived-${kind}`);
+      runReplay(input);
+      const manifestFile = join(root, input.derivedManifestPath);
+      const manifest = JSON.parse(readFileSync(manifestFile, "utf8")) as DerivedManifestV2;
+      if (kind === "window") {
+        manifest.window.asOfMs += 1;
+        writeFileSync(manifestFile, canonicalJson(manifest));
+      } else {
+        writeFileSync(join(root, manifest[kind].path), gzipSync(`${canonicalJson({ mutated: true })}\n`));
+      }
+      assert.throws(() => runReplay(input), /derived manifest|different immutable inputs/);
+    } finally { rmSync(root, { recursive: true, force: true }); }
   }
 });
 
@@ -519,6 +569,7 @@ test("replay fixes challenger simulation at exactly 20,000 draws", () => {
 
 test("representative 20-underlying replay fixture is deterministic within local resource bounds", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-replay-performance-"));
+  const branchRoot = mkdtempSync(join(tmpdir(), "hype-replay-performance-branches-"));
   try {
   const specs = readFileSync(new URL("./fixtures/research/replay-series.jsonl", import.meta.url), "utf8").trim().split("\n").map((line) => JSON.parse(line) as { underlying: string; cluster: SourceEntry["cluster"]; calendar: SourceEntry["calendar"]; phase: number });
   const sources = specs.map((entry) => source(entry.underlying, entry.cluster, entry.calendar));
@@ -538,9 +589,9 @@ test("representative 20-underlying replay fixture is deterministic within local 
     return { schemaVersion: 2 as const, transformationVersion: "returns-v2" as const, network: "testnet" as const, underlying: entry.underlying, interval: "daily" as const, timestampMs, observationCloseTimeMs: timestampMs + DAY - 1, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: entry.phase / 10_000 + Math.sin((index + entry.phase) / 7) * 0.02, sourceKeys: [] };
   }));
   const branchSeries = { network: "testnet" as const, rows: branchRows, exclusions: [], sources: branchSources, manifestHash: "f".repeat(64) };
-  const branchBaselineFile = join(root, "branch-correlations.json");
+  const branchBaselineFile = join(branchRoot, "branch-correlations.json");
   writeFileSync(branchBaselineFile, JSON.stringify(baselineFor(branchSeries)));
-  const branchReport = runReplay(replayInput(root, candidateFor(branchSeries, "performance-branches"), branchSeries, "performance-branches"));
+  const branchReport = runReplay(replayInput(branchRoot, candidateFor(branchSeries, "performance-branches"), branchSeries, "performance-branches"));
   const elapsedMs = performance.now() - started;
   const rssBytes = process.memoryUsage().rss;
   const summary = `${canonicalJson({ counts: Object.fromEntries(["same-underlying", "same-cluster", "cross-cluster"].map((stratum) => [stratum, Object.entries(report.ticketCounts).filter(([key]) => key.startsWith(`${stratum}:`)).reduce((sum, [, rows]) => sum + rows, 0)])), keys: report.selectedTicketKeys })}\n`;
@@ -551,5 +602,6 @@ test("representative 20-underlying replay fixture is deterministic within local 
   assert.ok(rssBytes < 512 * 1024 * 1024, `fixture used ${rssBytes} RSS bytes`);
   } finally {
     rmSync(root, { recursive: true, force: true });
+    rmSync(branchRoot, { recursive: true, force: true });
   }
 });

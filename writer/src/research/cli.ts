@@ -3,10 +3,10 @@ import { resolve } from "node:path";
 import { createPublicClient, http } from "viem";
 import { collectSources } from "./candles.js";
 import { calibrate } from "./calibration.js";
-import { loadReplaySourceRegistry, runReplay } from "./replay.js";
+import { runReplay } from "./replay.js";
 import { deriveReturns } from "./returns.js";
 import { openResearchPersistence } from "./persistence.js";
-import { readCurrentManifest, readDerivedDataset, researchRelativePath, RESEARCH_LOOKBACK_MS, sha256 } from "./store.js";
+import { readCurrentManifest, researchRelativePath, RESEARCH_LOOKBACK_MS, sha256 } from "./store.js";
 import type { CorrelationArtifact } from "./types.js";
 import { parseMarkets } from "../markets.js";
 import { promoteCandidate } from "./artifacts.js";
@@ -129,15 +129,9 @@ if (!commands.includes(command)) {
     const storage = boundStorage(resolvedRoot);
     const candidateBytes = storage.readText(researchRelativePath(resolvedRoot, candidateFile));
     const candidate = JSON.parse(candidateBytes) as CorrelationArtifact;
-    const derived = readDerivedDataset(resolvedRoot, derivedManifestFile, storage);
-    const manifest = derived.manifest;
-    if (candidate.dataManifestSha256 !== manifest.dataManifestSha256) throw new Error("candidate and replay return manifest identities differ");
-    if (manifest.sourceRegistrySha256 !== candidate.sourceRegistrySha256) throw new Error("replay source registry identity mismatch");
-    const sources = loadReplaySourceRegistry(resolvedRoot, manifest.sourceRegistrySha256, storage);
-    if (sources.some((source) => source.sourceNetwork !== manifest.network)) throw new Error("replay network identity mismatch");
     const report = runReplay({
-      root: resolvedRoot, candidate, candidateBytes, inputManifestSha256: manifest.dataManifestSha256,
-      profile: profile(), series: { network: manifest.network, rows: derived.returns, exclusions: derived.exclusions, sources, manifestHash: manifest.dataManifestSha256 }, seed, storage,
+      root: resolvedRoot, candidate, candidateBytes, inputManifestSha256: candidate.dataManifestSha256,
+      derivedManifestPath: researchRelativePath(resolvedRoot, derivedManifestFile), profile: profile(), seed, storage,
     });
     console.log(JSON.stringify({ modelVersion: report.modelVersion, decision: report.decision }));
   }

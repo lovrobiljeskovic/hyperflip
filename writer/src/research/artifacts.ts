@@ -4,7 +4,7 @@ import { pairCorrelation, parseCorrelations, type CorrelationTable } from "../co
 import type { ValidationReport } from "./replay.js";
 import { trailingFresh } from "./returns.js";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
-import { canonicalJson, researchRelativePath, sha256, verifyManifest } from "./store.js";
+import { canonicalJson, readDerivedDataset, researchRelativePath, sha256, verifyManifest } from "./store.js";
 import type { CorrelationArtifact, DataManifest, SourceRegistry } from "./types.js";
 import { assertLoadedResearchNetworkProfile, bindResearchRootIdentity, type LoadedResearchNetworkProfile } from "./network.js";
 
@@ -302,7 +302,7 @@ export function validateArtifact(raw: string, context: Context, nowMs: number): 
 }
 
 export function assertValidationArtifactIdentity(raw: string, artifact: CorrelationArtifact, report: ValidationReport, profile: LoadedResearchNetworkProfile): void {
-  if (report.schemaVersion !== 2) fail("validation schemaVersion must be 2");
+  if (report.schemaVersion !== 3) fail("validation schemaVersion must be 3");
   if (report.network !== profile.profile.network || report.network !== artifact.network) fail("validation network mismatch");
   if (report.profileSha256 !== profile.profileSha256 || report.profileSha256 !== artifact.profileSha256) fail("validation profile mismatch");
   if (report.modelVersion !== artifact.modelVersion || report.inputManifestSha256 !== artifact.dataManifestSha256) fail("validation identity mismatch");
@@ -312,6 +312,26 @@ export function assertValidationArtifactIdentity(raw: string, artifact: Correlat
   if (report.deploymentRegistrySha256 !== profile.deploymentRegistrySha256 || report.deploymentRegistrySha256 !== artifact.deploymentRegistrySha256) fail("validation deployment registry mismatch");
   if (report.baselineCorrelationSha256 !== profile.baselineCorrelationSha256 || report.baselineCorrelationSha256 !== artifact.baselineCorrelationSha256 || report.baselineSha256 !== profile.baselineCorrelationSha256) fail("validation baseline correlation mismatch");
   if (report.baselineSnapshotPath !== `facts/baselines/${profile.baselineCorrelationSha256}.json`) fail("validation baseline snapshot path mismatch");
+  hash(report.derivedManifestSha256, "validation derivedManifestSha256");
+  hash(report.returnsSha256, "validation returnsSha256");
+  hash(report.exclusionsSha256, "validation exclusionsSha256");
+  if (!report.derivedManifestPath) fail("validation derivedManifestPath is missing");
+  if (!Number.isSafeInteger(report.derivationWindow?.asOfMs) || !Number.isSafeInteger(report.derivationWindow?.lookbackMs) || report.derivationWindow.lookbackMs < 0) fail("validation derivationWindow is invalid");
+}
+
+export function assertValidationDerivedIdentity(root: string, storage: ResearchPersistence, artifact: CorrelationArtifact, report: ValidationReport, profile: LoadedResearchNetworkProfile): void {
+  let derived: ReturnType<typeof readDerivedDataset>;
+  try { derived = readDerivedDataset(root, report.derivedManifestPath, storage); }
+  catch (error) { return fail(`validation derived manifest mismatch: ${error instanceof Error ? error.message : String(error)}`); }
+  if (derived.manifestSha256 !== report.derivedManifestSha256
+    || derived.manifest.returns.sha256 !== report.returnsSha256
+    || derived.manifest.exclusions.sha256 !== report.exclusionsSha256
+    || canonicalJson(derived.manifest.window) !== canonicalJson(report.derivationWindow)
+    || derived.manifest.dataManifestSha256 !== artifact.dataManifestSha256
+    || derived.manifest.sourceRegistrySha256 !== profile.sourceRegistrySha256
+    || derived.manifest.network !== profile.profile.network) {
+    fail("validation derived manifest identity mismatch");
+  }
 }
 
 function manifestFor(storage: ResearchPersistence, expectedHash: string): { manifest: DataManifest; path: string } {
@@ -347,6 +367,7 @@ export function promoteCandidate(rootInput: string, candidatePath: string, profi
   const validation = JSON.parse(validationBytes) as ValidationReport;
   const validated = validateArtifact(raw, { manifest: manifestFact.manifest, sources, markets, profile, validation }, nowMs);
   if (validation.decision !== "Supported") fail("promotion requires Supported validation");
+  assertValidationDerivedIdentity(root, storage, validated.artifact, validation, profile);
   let baseline: string;
   try { baseline = researchRelativePath(root, validation.baselineSnapshotPath); } catch { return fail("baseline snapshot hash mismatch"); }
   if (sha256(storage.read(baseline)) !== validation.baselineSha256) fail("baseline snapshot hash mismatch");

@@ -233,8 +233,8 @@ ssh -o BatchMode=yes root@91.99.94.25 'chown hype:hype /opt/hype/registry/correl
 ```
 
 `/opt/hype/research.env` is owned by `hype:hype`, mode `0600`, and contains only these public or
-read-only inputs: `RESEARCH_ROOT`, `RESEARCH_NETWORK_PROFILE_FILE`, `WRITER_RPC`,
-`PARLAY_VAULT_ADDRESS`, `PARLAY_DEPLOY_BLOCK`, and `RESEARCH_REPLAY_SEED`. The selected profile
+read-only inputs: `RESEARCH_ROOT`, `RESEARCH_NETWORK_PROFILE_FILE`, `WRITER_RPC`, and
+`RESEARCH_REPLAY_SEED`. The selected profile
 is the sole source of the Info URL plus source, market, deployment, and baseline registries. Collection publishes the
 mapping-epoch-specific rolling closure through `manifests/current.json`; daily derives its fixed
 180-day window and as-of from that pointer, then passes the derived manifest and candidate paths

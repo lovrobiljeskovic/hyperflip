@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { appendQuoteDecision, initializeQuoteJournal, redactQuoteDecision } from "../src/research/journal.js";
 import { assertJoinedEventRecord } from "../src/research/types.js";
-import { loadResearchNetworkProfile } from "../src/research/network.js";
+import { loadResearchNetworkProfile, researchRootIdentity } from "../src/research/network.js";
 import { canonicalJson } from "../src/research/store.js";
 import type { QuoteDecision } from "../src/research/types.js";
 
@@ -14,14 +14,14 @@ const fs: typeof import("node:fs") = createRequire(import.meta.url)("node:fs");
 const profile = loadResearchNetworkProfile(new URL("../../registry/research-network.testnet.json", import.meta.url).pathname);
 
 const decision: QuoteDecision = {
-  schemaVersion: 2, network: "testnet", profileSha256: profile.profileSha256, deploymentRegistrySha256: profile.deploymentRegistrySha256,
+  schemaVersion: 3, network: "testnet", profileSha256: profile.profileSha256, deploymentRegistrySha256: profile.deploymentRegistrySha256,
   marketRegistrySha256: profile.marketRegistrySha256, baselineCorrelationSha256: profile.baselineCorrelationSha256,
   artifactKind: "champion", artifactSha256: "d".repeat(64), validationSha256: "e".repeat(64), validationState: "Supported",
   pairDecisions: [], recordedAtMs: 1_725_000_000_000, quoteId: "0x01", quoteDigest: "0x02", chainId: 31337,
   parlayVault: "0x1111111111111111111111111111111111111111", taker: "0x2222222222222222222222222222222222222222",
   legs: [{ vault: "0x3333333333333333333333333333333333333333", isYes: true, underlying: "BTC", cluster: "crypto", direction: "up", outcomeCoin: "+1" }],
   bookInputs: [{ priceWad: "500000000000000000", source: "l2Book", observedAtMs: 1_725_000_000_000, depthWad: "50000000000000000000", vwapWad: "500000000000000000", freshnessMs: null }],
-  modelVersion: "fixture", dataAsOf: "2024-08-09T00:00:00.000Z", dataManifestSha256: "a".repeat(64), sourceRegistrySha256: "b".repeat(64),
+  modelVersion: "fixture", dataAsOf: "2024-08-09T00:00:00.000Z", dataManifestSha256: "a".repeat(64), sourceRegistrySha256: profile.sourceRegistrySha256,
   bestEstimateJointProbWad: "250000000000000000", riskAdjustedJointProbWad: "240000000000000000", rhoBandPct: 0.2,
   edge: { baseBps: "500", legBps: "300", totalBps: "800" }, premium: "1000000", maxPayout: "4000000", deadline: "1725000030", signatureHash: "c".repeat(64),
 };
@@ -90,7 +90,7 @@ test("journal: rejects a symlinked daily file without touching its target", () =
 test("journal: creates one immutable root marker and rejects quote/event network mismatch", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-journal-profile-"));
   const storage = initializeQuoteJournal(root, profile);
-  assert.deepEqual(JSON.parse(readFileSync(join(root, "network-profile.json"), "utf8")), { schemaVersion: 1, network: "testnet", profileSha256: profile.profileSha256 });
+  assert.deepEqual(JSON.parse(readFileSync(join(root, "network-profile.json"), "utf8")), researchRootIdentity(profile));
   assert.throws(() => appendQuoteDecision(storage, { ...decision, network: "mainnet" }), /quote decision network mismatch/);
   assert.throws(() => assertJoinedEventRecord({
     schemaVersion: 2, network: "mainnet", profileSha256: profile.profileSha256, deploymentRegistrySha256: profile.deploymentRegistrySha256,

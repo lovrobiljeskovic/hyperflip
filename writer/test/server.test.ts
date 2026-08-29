@@ -430,6 +430,10 @@ test("journal: records the returned quote identity and economics before returnin
   });
   assert.equal(typeof (recorded as { quoteDigest?: unknown }).quoteDigest, "string");
   const decision = recorded as QuoteDecision;
+  const btc = CORRELATIONS.underlyings.BTC;
+  const eth = CORRELATIONS.underlyings.ETH;
+  const nominalPricingCorrelation = btc.global * eth.global + btc.cluster * eth.cluster;
+  assert.notEqual(nominalPricingCorrelation, 0.1, "fixture must distinguish fitted pricing correlation from evidence correlation");
   assert.deepEqual({
     artifactKind: decision.artifactKind,
     artifactSha256: decision.artifactSha256,
@@ -441,7 +445,7 @@ test("journal: records the returned quote identity and economics before returnin
     artifactSha256: MODEL.artifactSha256,
     validationSha256: MODEL.validationSha256,
     validationState: "Supported",
-    pairDecisions: [{ pair: ["BTC", "ETH"], status: "direct", reason: "fixture", correlation: 0.1 }],
+    pairDecisions: [{ pair: ["BTC", "ETH"], status: "direct", reason: "fixture", correlation: nominalPricingCorrelation, evidenceCorrelation: 0.1 }],
   });
   assert.equal(
     (recorded as { quoteDigest: string }).quoteDigest,
