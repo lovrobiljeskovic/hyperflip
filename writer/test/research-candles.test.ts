@@ -154,6 +154,29 @@ test("collector journals observed boundary extras when a retained row is malform
   }
 });
 
+test("collector journals boundary extras for only the retry that observed them", async () => {
+  const root = scratch();
+  const nowMs = 12_000_000;
+  const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
+  const row = JSON.parse(fixture("candle-snapshot.json"))[0];
+  let attempt = 0;
+  try {
+    const profile = loadedProfile(root, registry);
+    await collectSources({ root, profile, nowMs, sleep: async () => {}, fetch: async (_url, init) => {
+      if (attempt++ > 0) return new Response("unavailable", { status: 503 });
+      const request = JSON.parse(String(init?.body)).req;
+      return new Response(JSON.stringify([
+        { ...row, t: request.startTime - hour, T: request.startTime - 1 },
+        { ...row, t: request.startTime, T: request.endTime, h: "99" },
+      ]));
+    } });
+    const journal = readFileSync(join(root, "journal", "requests", "1970", "01", "01.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(journal.map((entry) => [entry.httpStatus, entry.ignoredBefore, entry.ignoredAfter]), [[200, 1, 0], [503, 0, 0], [503, 0, 0]]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("collector skips sources excluded from measurement", async () => {
   const root = scratch();
   let calls = 0;

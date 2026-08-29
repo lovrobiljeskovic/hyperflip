@@ -218,6 +218,8 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
     let ignoredAfter = 0;
     let failure = "request failed";
     for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt++) {
+      ignoredBefore = 0;
+      ignoredAfter = 0;
       const retrievedAtMs = nowMs;
       await sleep(RETRY_DELAYS_MS[attempt]);
       let httpStatus: number | null = null;
