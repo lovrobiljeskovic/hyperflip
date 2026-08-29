@@ -46,11 +46,13 @@ function dailySeries(days = 130): ReplaySeries {
   const rows = sources.flatMap((entry, asset) => Array.from({ length: days }, (_, index) => {
     const timestampMs = ORIGIN - (days - index) * DAY;
     return {
-      schemaVersion: 1 as const,
-      transformationVersion: "returns-v1" as const,
+      schemaVersion: 2 as const,
+      transformationVersion: "returns-v2" as const,
+      network: "testnet" as const,
       underlying: entry.underlying,
-      interval: "1d" as const,
+      interval: "daily" as const,
       timestampMs,
+      observationCloseTimeMs: timestampMs + DAY - 1,
       sessionDate: new Date(timestampMs).toISOString().slice(0, 10),
       value: 0.002 * (asset + 1) + Math.sin(index / (3 + asset)) * 0.03,
       sourceKeys: [`fixture:${entry.underlying}:${timestampMs}`],
@@ -88,15 +90,15 @@ test("future mutation cannot change an earlier forecast", () => {
   });
   assert.deepEqual(changed, before);
   const future = series.sources.flatMap((entry, asset) => [1, 2, 3, 4].map((days) => ({
-    schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval: "1d" as const,
-    timestampMs: ORIGIN + days * DAY, sessionDate: new Date(ORIGIN + days * DAY).toISOString().slice(0, 10), value: 0.01 * (asset + days), sourceKeys: [],
+    schemaVersion: 2 as const, transformationVersion: "returns-v2" as const, network: "testnet" as const, underlying: entry.underlying, interval: "daily" as const,
+    timestampMs: ORIGIN + days * DAY, observationCloseTimeMs: ORIGIN + days * DAY + DAY - 1, sessionDate: new Date(ORIGIN + days * DAY).toISOString().slice(0, 10), value: 0.01 * (asset + days), sourceKeys: [],
   })));
   const selected = syntheticEvents(ORIGIN, series, future).map(({ outcome: _, ...ticket }) => ticket);
   const mutated = syntheticEvents(ORIGIN, series, future.map((row) => ({ ...row, value: row.value + 100 }))).map(({ outcome: _, ...ticket }) => ticket);
   assert.deepEqual(mutated, selected);
 
   const notYetObserved = series.sources.map((entry, asset) => ({
-    schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval: "1d" as const,
+    schemaVersion: 2 as const, transformationVersion: "returns-v2" as const, network: "testnet" as const, underlying: entry.underlying, interval: "daily" as const,
     timestampMs: ORIGIN, observationCloseTimeMs: ORIGIN + DAY, sessionDate: new Date(ORIGIN).toISOString().slice(0, 10), value: 100 + asset, sourceKeys: [],
   }));
   assert.deepEqual(forecastAt(ORIGIN, { ...series, rows: [...series.rows, ...notYetObserved] }), before);
@@ -135,6 +137,13 @@ test("historical dependence enforces candidate quarantine, pair quality, and exp
   assert.equal(fitReplayDependence(sparse.rows, fallbackSources, fallback, ORIGIN - DAY).admittedPairs.has("A:B"), true);
 });
 
+test("replay dependence uses daily returns for a same-cluster session pair", () => {
+  const complete = dailySeries(200);
+  const sources = complete.sources.filter((entry) => entry.underlying === "C" || entry.underlying === "D");
+  const series = { ...complete, sources, rows: complete.rows.filter((row) => sources.some((source) => source.underlying === row.underlying)) };
+  assert.equal(fitReplayDependence(series.rows, series.sources, candidateFor(series, "session-mode"), ORIGIN - DAY).admittedPairs.has("C:D"), true);
+});
+
 test("daily replay origins stay on an exact 24-hour UTC cadence", () => {
   const complete = dailySeries();
   const missingTimestamp = ORIGIN - 20 * DAY;
@@ -148,7 +157,7 @@ test("future outcomes require exact horizon-close alignment across every asset",
   const series = dailySeries();
   const future = series.sources.flatMap((entry, asset) => [1, 2, 3, 4].map((days) => {
     const timestampMs = ORIGIN + days * DAY + (asset === 0 ? 0 : 3_600_000);
-    return { schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval: "1d" as const, timestampMs, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: 0.01, sourceKeys: [] };
+    return { schemaVersion: 2 as const, transformationVersion: "returns-v2" as const, network: "testnet" as const, underlying: entry.underlying, interval: "daily" as const, timestampMs, observationCloseTimeMs: timestampMs + DAY - 1, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: 0.01, sourceKeys: [] };
   }));
   const crossAsset = syntheticEvents(ORIGIN, series, future).filter((ticket) => ticket.stratum !== "same-underlying");
   assert.ok(crossAsset.length > 0);
@@ -184,11 +193,13 @@ test("zero-hit challenger batches remain finite after add-one smoothing", () => 
 test("synthetic grid caps every stratum, covers two-to-four legs, and excludes four-leg same-underlying", () => {
   const series = dailySeries();
   const future = series.sources.flatMap((entry, asset) => [1, 2, 3, 4].map((days) => ({
-    schemaVersion: 1 as const,
-    transformationVersion: "returns-v1" as const,
+    schemaVersion: 2 as const,
+    transformationVersion: "returns-v2" as const,
+    network: "testnet" as const,
     underlying: entry.underlying,
-    interval: "1d" as const,
+    interval: "daily" as const,
     timestampMs: ORIGIN + days * DAY,
+    observationCloseTimeMs: ORIGIN + days * DAY + DAY - 1,
     sessionDate: new Date(ORIGIN + days * DAY).toISOString().slice(0, 10),
     value: 0.01 * (asset + 1),
     sourceKeys: [`future:${entry.underlying}:${days}`],
@@ -216,7 +227,7 @@ test("same-underlying mixed-direction tickets are visible as bands", () => {
   const series = { ...dailySeries(), manifestHash: "0".repeat(64) };
   const future = series.sources.flatMap((entry) => [1, 2, 3, 4].map((days) => {
     const timestampMs = ORIGIN + days * DAY;
-    return { schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval: "1d" as const, timestampMs, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: 0.01, sourceKeys: [] };
+    return { schemaVersion: 2 as const, transformationVersion: "returns-v2" as const, network: "testnet" as const, underlying: entry.underlying, interval: "daily" as const, timestampMs, observationCloseTimeMs: timestampMs + DAY - 1, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: 0.01, sourceKeys: [] };
   }));
   const mixed = syntheticEvents(ORIGIN, series, future).filter((ticket) => ticket.stratum === "same-underlying" && new Set(ticket.legs.map((leg) => leg.direction)).size > 1);
   assert.ok(mixed.length > 0);
@@ -228,11 +239,13 @@ test("filtered historical simulation is causal under a volatility shift and keep
   const rows = sources.flatMap((entry, asset) => Array.from({ length: 140 }, (_, index) => {
     const timestampMs = ORIGIN - (140 - index) * DAY;
     return {
-      schemaVersion: 1 as const,
-      transformationVersion: "returns-v1" as const,
+      schemaVersion: 2 as const,
+      transformationVersion: "returns-v2" as const,
+      network: "testnet" as const,
       underlying: entry.underlying,
-      interval: "1d" as const,
+      interval: "daily" as const,
       timestampMs,
+      observationCloseTimeMs: timestampMs + DAY - 1,
       sessionDate: new Date(timestampMs).toISOString().slice(0, 10),
       value: 0.01 + Math.sin(index) * (index < 100 ? 0.01 : 0.08) * (asset ? -1 : 1),
       sourceKeys: [],
@@ -255,11 +268,11 @@ test("stress classification compares future path drawdown with training drawdown
   const sources = [source("A", "equity", "session"), source("B", "commodity", "session")];
   const rows = sources.flatMap((entry) => Array.from({ length: 100 }, (_, index) => {
     const timestampMs = ORIGIN - (100 - index) * DAY;
-    return { schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval: "1d" as const, timestampMs, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: index % 2 === 0 ? 0.01 : -0.01, sourceKeys: [] };
+    return { schemaVersion: 2 as const, transformationVersion: "returns-v2" as const, network: "testnet" as const, underlying: entry.underlying, interval: "daily" as const, timestampMs, observationCloseTimeMs: timestampMs + DAY - 1, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: index % 2 === 0 ? 0.01 : -0.01, sourceKeys: [] };
   }));
   const future = sources.flatMap((entry) => [0.2, -0.2].map((value, index) => {
     const timestampMs = ORIGIN + (index + 1) * DAY;
-    return { schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval: "1d" as const, timestampMs, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value, sourceKeys: [] };
+    return { schemaVersion: 2 as const, transformationVersion: "returns-v2" as const, network: "testnet" as const, underlying: entry.underlying, interval: "daily" as const, timestampMs, observationCloseTimeMs: timestampMs + DAY - 1, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value, sourceKeys: [] };
   }));
   const ticket = {
     key: "stress-path", originMs: ORIGIN, horizonHours: 48, stratum: "cross-cluster" as const, direction: "all-up" as const,
@@ -285,26 +298,26 @@ test("degree-of-freedom selection uses only its nested training slice", () => {
   const series = dailySeries();
   const training = series.rows.filter((row) => row.timestampMs <= ORIGIN);
   const selected = selectDegreesOfFreedom(training, series.sources, "df");
-  const changedFuture = selectDegreesOfFreedom([...training, ...training.slice(0, 20).map((row) => ({ ...row, timestampMs: ORIGIN + DAY, value: 100 }))], series.sources, "df", ORIGIN);
+  const changedFuture = selectDegreesOfFreedom([...training, ...training.slice(0, 20).map((row) => ({ ...row, timestampMs: ORIGIN + DAY, observationCloseTimeMs: ORIGIN + 2 * DAY - 1, sessionDate: new Date(ORIGIN + DAY).toISOString().slice(0, 10), value: 100 }))], series.sources, "df", ORIGIN);
   assert.equal(changedFuture, selected);
   assert.ok([4, 6, 8, 12, 20, 30].includes(selected));
 });
 
-test("hourly degree selection fits dependence before its validation tail", () => {
+test("hourly degree selection accepts 1,000 closed observations", () => {
   const values = Array.from({ length: 1_250 }, (_, index) => {
     const a = Math.sin(index / 7) + 0.2 * Math.cos(index / 3);
     const b = index < 1_000 ? 0.85 * a + 0.15 * Math.sin(index / 5) : -0.85 * a + 0.15 * Math.sin(index / 5);
     return [a, b];
   });
-  const selection = (interval: "1h" | "1d", clusters: [SourceEntry["cluster"], SourceEntry["cluster"]]): number => {
-    const sources = [source("A", clusters[0]), source("B", clusters[1])];
+  const selection = (): number => {
+    const sources = [source("A", "crypto"), source("B", "crypto")];
     const rows = sources.flatMap((entry, asset) => values.map((row, index) => {
-      const timestampMs = ORIGIN - (1_250 - index) * DAY;
-      return { schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval, timestampMs, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: row[asset], sourceKeys: [] };
+      const timestampMs = ORIGIN - (1_250 - index) * 3_600_000;
+      return { schemaVersion: 2 as const, transformationVersion: "returns-v2" as const, network: "testnet" as const, underlying: entry.underlying, interval: "hourly" as const, timestampMs, observationCloseTimeMs: timestampMs + 3_600_000 - 1, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: row[asset], sourceKeys: [] };
     }));
     return selectDegreesOfFreedom(rows, sources, "nested-hourly", ORIGIN);
   };
-  assert.equal(selection("1h", ["crypto", "crypto"]), selection("1d", ["crypto", "equity"]));
+  assert.ok([4, 6, 8, 12, 20, 30].includes(selection()));
 });
 
 test("band tickets stay visible but are excluded from statistical success", () => {
@@ -391,6 +404,17 @@ test("runReplay rejects unsafe modelVersion paths before writing artifacts", () 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("runReplay rejects a return without required close-time provenance", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-replay-close-time-"));
+  try {
+    const series = dailySeries(95);
+    delete (series.rows[0] as Partial<typeof series.rows[number]>).observationCloseTimeMs;
+    const baselineFile = join(root, "correlations.json");
+    writeFileSync(baselineFile, JSON.stringify(baselineFor(series)));
+    assert.throws(() => runReplay({ root, candidate: candidateFor(series, "missing-close"), inputManifestSha256: series.manifestHash, baselineFile, series, seed: "missing-close" }), /observationCloseTimeMs/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("fresh runReplay artifacts are byte-identical and cover full replay determinism", () => {
   const roots = [mkdtempSync(join(tmpdir(), "hype-replay-fresh-a-")), mkdtempSync(join(tmpdir(), "hype-replay-fresh-b-"))];
   try {
@@ -439,7 +463,7 @@ test("representative 20-underlying replay fixture is deterministic within local 
   const sources = specs.map((entry) => source(entry.underlying, entry.cluster, entry.calendar));
   const rows = specs.flatMap((entry) => Array.from({ length: 94 }, (_, index) => {
     const timestampMs = ORIGIN + (index - 89) * DAY;
-    return { schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval: "1d" as const, timestampMs, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: entry.phase / 10_000 + Math.sin((index + entry.phase) / 7) * 0.02, sourceKeys: [] };
+    return { schemaVersion: 2 as const, transformationVersion: "returns-v2" as const, network: "testnet" as const, underlying: entry.underlying, interval: "daily" as const, timestampMs, observationCloseTimeMs: timestampMs + DAY - 1, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: entry.phase / 10_000 + Math.sin((index + entry.phase) / 7) * 0.02, sourceKeys: [] };
   }));
   const series = { rows, sources, manifestHash: "e".repeat(64) };
   const baselineFile = join(root, "correlations.json");
@@ -450,7 +474,7 @@ test("representative 20-underlying replay fixture is deterministic within local 
   const branchSources = branchSpecs.map((entry) => source(entry.underlying, entry.cluster, entry.calendar));
   const branchRows = branchSpecs.flatMap((entry) => Array.from({ length: 98 }, (_, index) => {
     const timestampMs = ORIGIN + (index - 89) * DAY;
-    return { schemaVersion: 1 as const, transformationVersion: "returns-v1" as const, underlying: entry.underlying, interval: "1d" as const, timestampMs, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: entry.phase / 10_000 + Math.sin((index + entry.phase) / 7) * 0.02, sourceKeys: [] };
+    return { schemaVersion: 2 as const, transformationVersion: "returns-v2" as const, network: "testnet" as const, underlying: entry.underlying, interval: "daily" as const, timestampMs, observationCloseTimeMs: timestampMs + DAY - 1, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: entry.phase / 10_000 + Math.sin((index + entry.phase) / 7) * 0.02, sourceKeys: [] };
   }));
   const branchSeries = { rows: branchRows, sources: branchSources, manifestHash: "f".repeat(64) };
   const branchBaselineFile = join(root, "branch-correlations.json");

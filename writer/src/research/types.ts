@@ -70,6 +70,32 @@ export interface CandleRawManifest {
   ignoredAfter: number;
 }
 
+export type ReturnMode = "hourly" | "daily";
+
+export interface ReturnRecord {
+  schemaVersion: 2;
+  transformationVersion: "returns-v2";
+  network: ResearchNetwork;
+  underlying: string;
+  interval: ReturnMode;
+  timestampMs: number;
+  observationCloseTimeMs: number;
+  sessionDate: string;
+  value: number;
+  sourceKeys: string[];
+}
+
+export interface DerivedManifestV2 {
+  schemaVersion: 2;
+  network: ResearchNetwork;
+  transformationVersion: "returns-v2";
+  dataManifestSha256: string;
+  sourceRegistrySha256: string;
+  window: { asOfMs: number; lookbackMs: number };
+  returns: { path: string; sha256: string; rows: number };
+  exclusions: { path: string; sha256: string; rows: number };
+}
+
 export interface ExclusionRecord {
   schemaVersion: 1;
   stage: "collect" | "returns" | "calibration" | "replay";
@@ -245,7 +271,26 @@ export function assertCandleRecord(record: CandleRecord): void {
 }
 
 export function assertExclusionRecord(record: ExclusionRecord): void {
+  const reasons = new Set<ExclusionRecord["reason"]>(["missing-interval", "non-positive-close", "stale-session-bar", "no-synchronized-peer", "insufficient-sample", "coverage-below-80pct", "conflicting-observation", "ineligible-source", "insufficient-stress-sample", "projection-failure", "structurally-unavailable"]);
+  if (record.schemaVersion !== 1 || !["collect", "returns", "calibration", "replay"].includes(record.stage) || typeof record.underlying !== "string" || (record.peerUnderlying !== null && typeof record.peerUnderlying !== "string") || !reasons.has(record.reason) || !Array.isArray(record.sourceKeys) || record.sourceKeys.some((key) => typeof key !== "string")) throw new Error("invalid exclusion record");
   if (record.timestampMs !== null) assertSafeIntegerTimestamp(record.timestampMs, "timestampMs");
+}
+
+export function parseReturnRecord(value: unknown, expectedNetwork?: ResearchNetwork): ReturnRecord {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid returns-v2 record: row must be an object");
+  const row = value as Record<string, unknown>;
+  const keys = ["schemaVersion", "transformationVersion", "network", "underlying", "interval", "timestampMs", "observationCloseTimeMs", "sessionDate", "value", "sourceKeys"];
+  for (const key of Object.keys(row)) if (!keys.includes(key)) throw new Error(`invalid returns-v2 record: unknown field ${key}`);
+  if (row.schemaVersion !== 2 || row.transformationVersion !== "returns-v2") throw new Error("invalid returns-v2 record: schemaVersion and transformationVersion are required");
+  if ((row.network !== "testnet" && row.network !== "mainnet") || (expectedNetwork !== undefined && row.network !== expectedNetwork)) throw new Error("invalid returns-v2 record: network mismatch");
+  if (typeof row.underlying !== "string" || !SAFE_FILENAME_ID.test(row.underlying)) throw new Error("invalid returns-v2 record: underlying is invalid");
+  if (row.interval !== "hourly" && row.interval !== "daily") throw new Error("invalid returns-v2 record: interval is invalid");
+  if (!Number.isSafeInteger(row.timestampMs)) throw new Error("invalid returns-v2 record: timestampMs must be a safe integer");
+  if (!Number.isSafeInteger(row.observationCloseTimeMs) || Number(row.observationCloseTimeMs) < Number(row.timestampMs)) throw new Error("invalid returns-v2 record: observationCloseTimeMs is required and must not precede timestampMs");
+  if (typeof row.sessionDate !== "string" || !isCalendarDate(row.sessionDate)) throw new Error("invalid returns-v2 record: sessionDate is invalid");
+  if (typeof row.value !== "number" || !Number.isFinite(row.value)) throw new Error("invalid returns-v2 record: value must be finite");
+  if (!Array.isArray(row.sourceKeys) || row.sourceKeys.some((key) => typeof key !== "string")) throw new Error("invalid returns-v2 record: sourceKeys must be strings");
+  return row as unknown as ReturnRecord;
 }
 
 export function assertDataManifest(record: DataManifest): void {

@@ -2,25 +2,19 @@ import { resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
 import { canonicalJson, readCandlePartition, sha256, verifyManifest } from "./store.js";
-import { parseSourceRegistry } from "./types.js";
-import type { CandleRecord, DataManifest, ExclusionRecord, SourceEntry } from "./types.js";
+import { parseReturnRecord, parseSourceRegistry } from "./types.js";
+import type { CandleRecord, DataManifest, DerivedManifestV2, ExclusionRecord, ReturnMode, ReturnRecord, SourceEntry } from "./types.js";
 
 export const HOUR = 3_600_000;
-export const TRANSFORMATION_VERSION = "returns-v1";
+export const TRANSFORMATION_VERSION = "returns-v2";
 
 export interface Window { asOfMs: number; lookbackMs: number }
-export type QualityMode = "hourly-within-cluster" | "daily-cross-session";
-export interface ReturnRecord {
-  schemaVersion: 1;
-  transformationVersion: typeof TRANSFORMATION_VERSION;
-  underlying: string;
-  interval: "1h" | "1d";
-  timestampMs: number;
-  /** Earliest close timestamp at which both prices used by this return were known. */
-  observationCloseTimeMs?: number;
-  sessionDate: string;
-  value: number;
-  sourceKeys: string[];
+export type QualityMode = ReturnMode;
+export type { ReturnMode, ReturnRecord } from "./types.js";
+export { parseReturnRecord } from "./types.js";
+
+export function returnModeFor(left: SourceEntry, right: SourceEntry): ReturnMode {
+  return left.calendar === "continuous" && right.calendar === "continuous" && left.cluster === right.cluster ? "hourly" : "daily";
 }
 export interface QualityResult {
   eligible: boolean;
@@ -148,7 +142,7 @@ function hourlySeries(candles: CandleRecord[], source: SourceEntry, window: Wind
     possible.push(String(timestamp));
     const prior = active.get(before);
     const current = active.get(timestamp);
-    if (prior && current) records.push({ schemaVersion: 1, transformationVersion: TRANSFORMATION_VERSION, underlying: source.underlying, interval: "1h", timestampMs: timestamp, observationCloseTimeMs: current.closeTimeMs, sessionDate: localDate(source, timestamp), value: Math.log(Number(current.close) / Number(prior.close)), sourceKeys: [key(prior), key(current)] });
+    if (prior && current) records.push({ schemaVersion: 2, transformationVersion: TRANSFORMATION_VERSION, network: source.sourceNetwork, underlying: source.underlying, interval: "hourly", timestampMs: timestamp, observationCloseTimeMs: current.closeTimeMs, sessionDate: localDate(source, timestamp), value: Math.log(Number(current.close) / Number(prior.close)), sourceKeys: [key(prior), key(current)] });
   }
   return { records, possible, exclusions };
 }
@@ -175,7 +169,7 @@ function dailySeries(candles: CandleRecord[], source: SourceEntry, window: Windo
     const previousClose = closes.get(dates[index - 1]);
     const current = closes.get(dates[index]);
     possible.push(dates[index]);
-    if (previousClose && current) records.push({ schemaVersion: 1, transformationVersion: TRANSFORMATION_VERSION, underlying: source.underlying, interval: "1d", timestampMs: current.openTimeMs, observationCloseTimeMs: current.closeTimeMs, sessionDate: dates[index], value: Math.log(Number(current.close) / Number(previousClose.close)), sourceKeys: [key(previousClose), key(current)] });
+    if (previousClose && current) records.push({ schemaVersion: 2, transformationVersion: TRANSFORMATION_VERSION, network: source.sourceNetwork, underlying: source.underlying, interval: "daily", timestampMs: current.openTimeMs, observationCloseTimeMs: current.closeTimeMs, sessionDate: dates[index], value: Math.log(Number(current.close) / Number(previousClose.close)), sourceKeys: [key(previousClose), key(current)] });
   }
   return { records, possible, exclusions };
 }
@@ -193,7 +187,7 @@ export function trailingFresh(source: SourceEntry, observedTimes: number[], asOf
 
 export function quality(observations: number, expected: number, mode: QualityMode, exclusions: ExclusionRecord[] = []): QualityResult {
   const coverage = expected === 0 ? 0 : observations / expected;
-  const minimum = mode === "hourly-within-cluster" ? 1_000 : 90;
+  const minimum = mode === "hourly" ? 1_000 : 90;
   const result = [...exclusions];
   if (observations < minimum) result.push(exclusion({ schemaVersion: 1, underlying: "pair", sourceNetwork: "testnet", sourceCoin: "pair", cluster: "crypto", calendar: "continuous", measurementEnabled: true, fallbackEligible: false }, "insufficient-sample", null, []));
   if (coverage < 0.8) result.push(exclusion({ schemaVersion: 1, underlying: "pair", sourceNetwork: "testnet", sourceCoin: "pair", cluster: "crypto", calendar: "continuous", measurementEnabled: true, fallbackEligible: false }, "coverage-below-80pct", null, []));
@@ -201,9 +195,9 @@ export function quality(observations: number, expected: number, mode: QualityMod
 }
 
 export function alignPair(a: CandleRecord[], b: CandleRecord[], sourceA: SourceEntry, sourceB: SourceEntry, window: Window, mode: QualityMode): PairSample {
-  const first = mode === "hourly-within-cluster" ? hourlySeries(a, sourceA, window) : dailySeries(a, sourceA, window);
-  const second = mode === "hourly-within-cluster" ? hourlySeries(b, sourceB, window) : dailySeries(b, sourceB, window);
-  const lookup = (records: ReturnRecord[]) => new Map(records.map((record) => [mode === "hourly-within-cluster" ? String(record.timestampMs) : record.sessionDate, record]));
+  const first = mode === "hourly" ? hourlySeries(a, sourceA, window) : dailySeries(a, sourceA, window);
+  const second = mode === "hourly" ? hourlySeries(b, sourceB, window) : dailySeries(b, sourceB, window);
+  const lookup = (records: ReturnRecord[]) => new Map(records.map((record) => [mode === "hourly" ? String(record.timestampMs) : record.sessionDate, record]));
   const aByKey = lookup(first.records);
   const bByKey = lookup(second.records);
   const possible = [...new Set(first.possible.filter((item) => second.possible.includes(item)))];
@@ -213,7 +207,7 @@ export function alignPair(a: CandleRecord[], b: CandleRecord[], sourceA: SourceE
     const left = aByKey.get(item);
     const right = bByKey.get(item);
     if (left && right) samples.push({ timestampMs: Math.max(left.timestampMs, right.timestampMs), a: left.value, b: right.value });
-    else exclusions.push(exclusion(sourceA, "no-synchronized-peer", mode === "hourly-within-cluster" ? Number(item) : null, left?.sourceKeys ?? [], sourceB.underlying));
+    else exclusions.push(exclusion(sourceA, "no-synchronized-peer", mode === "hourly" ? Number(item) : null, left?.sourceKeys ?? [], sourceB.underlying));
   }
   const usableTimes = (candles: CandleRecord[], source: SourceEntry) => {
     const { byTime, previous } = candlesAt(candles);
@@ -249,20 +243,18 @@ export function deriveReturns(root: string, manifest: DataManifest, window: Wind
   const exclusions = derived.flatMap((series) => series.exclusions).sort((a, b) => lexical(canonicalJson(a), canonicalJson(b)));
   const identity = sha256(canonicalJson({ dataManifestSha256: sha256(canonicalJson(manifest)), transformationVersion: TRANSFORMATION_VERSION, window }));
   const day = new Date(window.asOfMs).toISOString().slice(0, 10).replace(/-/g, "/");
-  const path = `derived/returns/${day}/${identity}.jsonl.gz`;
+  const path = `derived/returns-v2/returns/${day}/${identity}.jsonl.gz`;
   const bytes = gzipSync(`${records.map(canonicalJson).join("\n")}${records.length ? "\n" : ""}`);
   writeImmutable(storage, path, bytes, "immutable derived returns");
-  const exclusionPath = `derived/exclusions/${day}/${identity}.jsonl.gz`;
+  const exclusionPath = `derived/returns-v2/exclusions/${day}/${identity}.jsonl.gz`;
   const exclusionBytes = gzipSync(`${exclusions.map(canonicalJson).join("\n")}${exclusions.length ? "\n" : ""}`);
   writeImmutable(storage, exclusionPath, exclusionBytes, "immutable derived exclusions");
   const manifestPath = `${path}.manifest.json`;
-  const derivedManifest = canonicalJson({
-    schemaVersion: 1, transformationVersion: TRANSFORMATION_VERSION, dataManifestSha256: sha256(canonicalJson(manifest)), sourceRegistrySha256: manifest.sourceRegistrySha256, window,
-    files: [
-      { kind: "returns", path, bytes: bytes.length, sha256: sha256(bytes), rows: records.length, schemaVersion: 1 },
-      { kind: "exclusions", path: exclusionPath, bytes: exclusionBytes.length, sha256: sha256(exclusionBytes), rows: exclusions.length, schemaVersion: 1 },
-    ],
-  });
-  writeImmutable(storage, manifestPath, derivedManifest, "immutable derived manifest");
+  const derivedManifest: DerivedManifestV2 = {
+    schemaVersion: 2, network: registry.network, transformationVersion: TRANSFORMATION_VERSION, dataManifestSha256: sha256(canonicalJson(manifest)), sourceRegistrySha256: manifest.sourceRegistrySha256, window,
+    returns: { path, sha256: sha256(bytes), rows: records.length },
+    exclusions: { path: exclusionPath, sha256: sha256(exclusionBytes), rows: exclusions.length },
+  };
+  writeImmutable(storage, manifestPath, canonicalJson(derivedManifest), "immutable derived manifest");
   return { path: resolve(root, path), exclusionPath: resolve(root, exclusionPath), manifestPath: resolve(root, manifestPath), rows: records.length, exclusions: exclusions.length };
 }

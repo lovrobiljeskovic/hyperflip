@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
-import { assertCandleRecord, assertDataManifest, parseSourceRegistry } from "./types.js";
-import type { CandleRawManifest, CandleRecord, DataManifest, SourceRegistry } from "./types.js";
+import { assertCandleRecord, assertDataManifest, assertExclusionRecord, parseReturnRecord, parseSourceRegistry } from "./types.js";
+import type { CandleRawManifest, CandleRecord, DataManifest, DerivedManifestV2, ExclusionRecord, ResearchNetwork, ReturnRecord, SourceRegistry } from "./types.js";
 
 export function canonicalJson(value: unknown): string {
   if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
@@ -75,6 +75,41 @@ export function readCandlePartition(fileOrStorage: string | ResearchPersistence,
     return parseCandleBytes(openResearchPersistence(dirname(file)).read(basename(file)));
   }
   return parseCandleBytes(fileOrStorage.read(relativePath!));
+}
+
+function derivedPartition(root: string, storage: ResearchPersistence, entry: { path: string; sha256: string; rows: number }, kind: "returns" | "exclusions", network: ResearchNetwork): ReturnRecord[] | ExclusionRecord[] {
+  if (entry === null || typeof entry !== "object" || Object.keys(entry).some((key) => !["path", "sha256", "rows"].includes(key)) || typeof entry.path !== "string" || typeof entry.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(entry.sha256) || !Number.isSafeInteger(entry.rows) || entry.rows < 0) throw new Error(`derived manifest ${kind} entry is invalid`);
+  const path = researchRelativePath(root, entry.path);
+  if (!path.startsWith(`derived/returns-v2/${kind}/`) || !path.endsWith(".jsonl.gz")) throw new Error(`derived manifest ${kind} path is invalid`);
+  const bytes = storage.read(path);
+  if (sha256(bytes) !== entry.sha256) throw new Error(`derived manifest ${kind} hash mismatch`);
+  let text: string;
+  try { text = gunzipSync(bytes).toString("utf8").trim(); } catch { throw new Error(`derived manifest ${kind} partition is invalid`); }
+  const rows = text ? text.split("\n").map((line) => JSON.parse(line) as unknown) : [];
+  if (rows.length !== entry.rows) throw new Error(`derived manifest ${kind} row count mismatch`);
+  if (kind === "returns") return rows.map((row) => parseReturnRecord(row, network));
+  return rows.map((row) => {
+    assertExclusionRecord(row as ExclusionRecord);
+    if ((row as ExclusionRecord).stage !== "returns") throw new Error("derived exclusion stage mismatch");
+    return row as ExclusionRecord;
+  });
+}
+
+export function readDerivedDataset(root: string, manifestInput: string, storage = openResearchPersistence(root)): { manifest: DerivedManifestV2; returns: ReturnRecord[]; exclusions: ExclusionRecord[] } {
+  const path = researchRelativePath(root, manifestInput);
+  const parsed = JSON.parse(storage.readText(path)) as Record<string, unknown>;
+  const keys = ["schemaVersion", "network", "transformationVersion", "dataManifestSha256", "sourceRegistrySha256", "window", "returns", "exclusions"];
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed) || Object.keys(parsed).some((key) => !keys.includes(key)) || parsed.schemaVersion !== 2 || parsed.transformationVersion !== "returns-v2") throw new Error("derived manifest must be schema 2 returns-v2");
+  if (parsed.network !== "testnet" && parsed.network !== "mainnet") throw new Error("derived manifest network is invalid");
+  if (typeof parsed.dataManifestSha256 !== "string" || !/^[0-9a-f]{64}$/.test(parsed.dataManifestSha256) || typeof parsed.sourceRegistrySha256 !== "string" || !/^[0-9a-f]{64}$/.test(parsed.sourceRegistrySha256)) throw new Error("derived manifest identity is invalid");
+  const window = parsed.window as Record<string, unknown> | undefined;
+  if (!window || Object.keys(window).some((key) => !["asOfMs", "lookbackMs"].includes(key)) || !Number.isSafeInteger(window.asOfMs) || !Number.isSafeInteger(window.lookbackMs) || Number(window.lookbackMs) < 0) throw new Error("derived manifest window is invalid");
+  if (!parsed.returns) throw new Error("derived manifest returns entry is required");
+  if (!parsed.exclusions) throw new Error("derived manifest exclusions entry and hash are required");
+  const manifest = parsed as unknown as DerivedManifestV2;
+  const returns = derivedPartition(root, storage, manifest.returns, "returns", manifest.network) as ReturnRecord[];
+  const exclusions = derivedPartition(root, storage, manifest.exclusions, "exclusions", manifest.network) as ExclusionRecord[];
+  return { manifest, returns, exclusions };
 }
 
 const bytewise = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;

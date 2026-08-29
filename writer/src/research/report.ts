@@ -1,8 +1,8 @@
 import { resolve } from "node:path";
 import type { ValidationReport } from "./replay.js";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
-import { canonicalJson, researchRelativePath, sha256, verifyManifest } from "./store.js";
-import type { CorrelationArtifact, DataManifest } from "./types.js";
+import { canonicalJson, readDerivedDataset, readSourceRegistryFact, researchRelativePath, sha256, verifyManifest } from "./store.js";
+import type { CorrelationArtifact, DataManifest, ExclusionRecord } from "./types.js";
 
 export interface ReportInput {
   manifest: DataManifest;
@@ -11,6 +11,7 @@ export interface ReportInput {
   champion: { modelVersion: string; sha256: string } | null;
   funnel: { quotes: number; minted: number; resolved: number };
   failures: string[];
+  exclusions: ExclusionRecord[];
 }
 
 const MODELS = ["independence", "static-hierarchical-gaussian", "measured-hierarchical-gaussian", "signed-t-copula", "filtered-historical-simulation"] as const;
@@ -48,6 +49,9 @@ export function renderReport(input: ReportInput): string {
   const calibration = MODELS.flatMap((model) => validation.modelScores[model].overall.calibration.map((bucket) => [model, `${bucket.lower}-${bucket.upper}`, bucket.rows, number(bucket.meanProbability), number(bucket.observedRate)]));
   const stress = MODELS.flatMap((model) => Object.entries(validation.modelScores[model].byStressRegime).sort(([left], [right]) => left.localeCompare(right)).map(([bucket, score]) => [model, bucket, score.rows, score.eligibleRows, number(score.logLoss), score.gateEligible, score.exclusionReason ?? "none"]));
   const quarantines = candidate.quality.quarantinedUnderlyings.map((item) => [item.underlying, item.reason]);
+  const exclusionReasons: ExclusionRecord["reason"][] = ["missing-interval", "stale-session-bar", "non-positive-close", "no-synchronized-peer"];
+  const exclusions = exclusionReasons.map((reason) => [reason, input.exclusions.filter((row) => row.reason === reason).length]);
+  const exclusionEvidence = [...exclusions, ...candidate.quality.quarantinedUnderlyings.map((item) => [`quarantined: ${item.underlying} (${item.reason})`, 1])];
   const operational = [...input.failures].filter((item) => item.includes(" state:")).sort().map((item) => ["operation", item]);
   const failures = [...input.failures].filter((item) => !item.includes(" state:")).sort().map((failure) => ["operation", failure]);
   return `<!doctype html>
@@ -57,6 +61,7 @@ export function renderReport(input: ReportInput): string {
 ${section("Operator decision", "Validation state", `<p><strong>${escapeHtml(validation.decision)}</strong> — Supported / Inconclusive / Rejected</p>`)}
 ${section("Observed fact", "Immutable identities", table(["Identity", "Value"], [["candidate", candidate.modelVersion], ["manifest", `manifest-${candidate.dataManifestSha256.slice(0, 12)}`], ["champion", input.champion ? `champion-${input.champion.sha256.slice(0, 12)}` : "not promoted"]]))}
 ${section("Observed fact", "Freshness and missing intervals", table(["Underlying", "Rows", "Last usable (ms)", "Missing intervals"], Object.entries(manifest.underlyings).sort(([left], [right]) => left.localeCompare(right)).map(([underlying, value]) => [underlying, value.rows, value.lastUsableObservationMs, value.missingIntervals.join(", ") || "none"])))}
+${section("Observed fact", "Verified exclusions", table(["Reason", "Rows"], exclusionEvidence))}
 ${matrices}
 ${section("Model estimate", "Target / implied / residual", table(["Pair", "Mode", "Observations / expected", "Coverage", "Effective N", "Target", "Implied", "Residual", "Fallback"], [...candidate.quality.pairDiagnostics].sort((left, right) => left.pair.join(":").localeCompare(right.pair.join(":"))).map((row) => [row.pair.join(" / "), row.mode, `${row.observations} / ${row.expected}`, number(row.coverage), number(row.effectiveN), number(row.target), number(row.implied), number(row.residual), row.fallbackUsed])))}
 ${section("Model estimate", "Projection error", table(["Maximum", "Higham delta"], [[number(candidate.quality.maxProjectionError), number(candidate.quality.highamProjectionDelta)]]))}
@@ -142,10 +147,13 @@ function operationalFailures(storage: ResearchPersistence): string[] {
   return [...quarantines, ...requests, ...states];
 }
 
-export function generateReport(rootInput: string, candidateInput: string): { path: string; bytes: string } {
+export function generateReport(rootInput: string, candidateInput: string, derivedManifestInput: string): { path: string; bytes: string } {
   const root = resolve(rootInput);
   const storage = openResearchPersistence(root);
   const current = verified(root, candidateInput, storage);
+  const derived = readDerivedDataset(root, derivedManifestInput, storage);
+  if (derived.manifest.dataManifestSha256 !== current.candidate.dataManifestSha256 || derived.manifest.sourceRegistrySha256 !== current.candidate.sourceRegistrySha256) throw new Error("report derived manifest identity mismatch");
+  if (readSourceRegistryFact(root, derived.manifest.sourceRegistrySha256, storage).registry.network !== derived.manifest.network) throw new Error("report derived manifest network mismatch");
   const championPath = "artifacts/champion.json";
   let champion: ReportInput["champion"] = null;
   if (storage.exists(championPath)) {
@@ -157,7 +165,7 @@ export function generateReport(rootInput: string, candidateInput: string): { pat
     if (sha256(championBytes) !== sha256(storage.read(championCandidate))) throw new Error("report champion candidate mismatch");
     champion = { modelVersion: artifact.modelVersion, sha256: sha256(championBytes) };
   }
-  const bytes = renderReport({ manifest: current.manifest, candidate: current.candidate, validation: current.validation, champion, funnel: journalFunnel(root, storage), failures: operationalFailures(storage) });
+  const bytes = renderReport({ manifest: current.manifest, candidate: current.candidate, validation: current.validation, champion, funnel: journalFunnel(root, storage), failures: operationalFailures(storage), exclusions: derived.exclusions });
   const date = current.candidate.dataAsOf.slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("report dataAsOf date is invalid");
   const path = `reports/${date}-${current.candidate.modelVersion}.html`;

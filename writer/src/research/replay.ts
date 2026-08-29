@@ -4,9 +4,10 @@ import { resolve } from "node:path";
 import { jointProbWad, parseCorrelations, type CorrLeg, type CorrelationTable } from "../correlation.js";
 import { calibrationPairSample, fitHierarchical, type CalibrationAlignmentCache } from "./calibration.js";
 import { cholesky, nearestCorrelation, shrinkPair, structuredTargets, weightedCorrelation, type PairEstimate } from "./matrix.js";
-import { trailingFresh, type ReturnRecord } from "./returns.js";
+import { returnModeFor, trailingFresh, type ReturnMode, type ReturnRecord } from "./returns.js";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
 import { canonicalJson, readSourceRegistryFact, sha256 } from "./store.js";
+import { parseReturnRecord } from "./types.js";
 import type { CorrelationArtifact, SourceEntry } from "./types.js";
 
 const DAY = 86_400_000;
@@ -18,7 +19,7 @@ const DFS = [4, 6, 8, 12, 20, 30] as const;
 const MODELS = ["independence", "static-hierarchical-gaussian", "measured-hierarchical-gaussian", "signed-t-copula", "filtered-historical-simulation"] as const;
 const STRESS_REGIMES = ["drawdown-stress", "high-volatility", "normal"] as const;
 const SAFE_MODEL_VERSION = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const observationTime = (row: ReturnRecord): number => row.observationCloseTimeMs ?? row.timestampMs;
+const observationTime = (row: ReturnRecord): number => row.observationCloseTimeMs;
 const pairName = (left: string, right: string): string => left < right ? `${left}:${right}` : `${right}:${left}`;
 
 export function loadReplaySourceRegistry(root: string, sourceRegistrySha256: string, storage = openResearchPersistence(root)): SourceEntry[] {
@@ -346,29 +347,29 @@ function sourceFor(series: ReplaySeries, underlying: string): SourceEntry {
   return found;
 }
 
-function intervalFor(series: ReplaySeries, underlyings: string[], strict = false): "1h" | "1d" {
+function intervalFor(series: ReplaySeries, underlyings: string[], strict = false): ReturnMode {
   const sources = underlyings.map((underlying) => sourceFor(series, underlying));
-  const hourly = sources.every((source) => source.calendar === "continuous") && new Set(sources.map((source) => source.cluster)).size === 1;
-  if (!hourly) return "1d";
-  if (strict) return "1h";
-  return underlyings.every((underlying) => series.rows.some((row) => row.underlying === underlying && row.interval === "1h")) ? "1h" : "1d";
+  const hourly = sources.every((source) => returnModeFor(sources[0], source) === "hourly");
+  if (!hourly) return "daily";
+  if (strict) return "hourly";
+  return underlyings.every((underlying) => series.rows.some((row) => row.underlying === underlying && row.interval === "hourly")) ? "hourly" : "daily";
 }
 
-function cumulativeSamples(rows: ReturnRecord[], underlying: string, interval: "1h" | "1d", horizonHours: number, originMs: number): number[] {
-  const size = interval === "1h" ? horizonHours : horizonHours / 24;
+function cumulativeSamples(rows: ReturnRecord[], underlying: string, interval: ReturnMode, horizonHours: number, originMs: number): number[] {
+  const size = interval === "hourly" ? horizonHours : horizonHours / 24;
   const own = rows.filter((row) => row.underlying === underlying && row.interval === interval && observationTime(row) <= originMs).sort((left, right) => left.timestampMs - right.timestampMs);
   const samples: number[] = [];
   for (let start = 0; start + size <= own.length; start++) {
     const block = own.slice(start, start + size);
-    if (interval === "1h" && block.some((row, index) => index > 0 && row.timestampMs - block[index - 1].timestampMs !== HOUR)) continue;
+    if (interval === "hourly" && block.some((row, index) => index > 0 && row.timestampMs - block[index - 1].timestampMs !== HOUR)) continue;
     samples.push(block.reduce((sum, row) => sum + row.value, 0));
   }
   return samples;
 }
 
-function futureReturn(rows: ReturnRecord[], underlying: string, interval: "1h" | "1d", horizonHours: number, originMs: number): number | null {
-  const size = interval === "1h" ? horizonHours : horizonHours / 24;
-  const step = interval === "1h" ? HOUR : DAY;
+function futureReturn(rows: ReturnRecord[], underlying: string, interval: ReturnMode, horizonHours: number, originMs: number): number | null {
+  const size = interval === "hourly" ? horizonHours : horizonHours / 24;
+  const step = interval === "hourly" ? HOUR : DAY;
   const byTimestamp = new Map(rows.filter((row) => row.underlying === underlying && row.interval === interval).map((row) => [row.timestampMs, row]));
   const block = Array.from({ length: size }, (_, index) => byTimestamp.get(originMs + (index + 1) * step));
   if (block.some((row) => row === undefined)) return null;
@@ -401,7 +402,7 @@ export function syntheticEvents(originMs: number, series: ReplaySeries, future: 
   }
   const output: SyntheticTicket[] = [];
   const legs = new Map<string, SyntheticLeg | null>();
-  const cachedLeg = (source: SourceEntry, interval: "1h" | "1d", horizonHours: number, quantile: number, direction: Direction): SyntheticLeg | null => {
+  const cachedLeg = (source: SourceEntry, interval: ReturnMode, horizonHours: number, quantile: number, direction: Direction): SyntheticLeg | null => {
     const key = `${source.underlying}:${interval}:${horizonHours}:${quantile}:${direction}`;
     if (legs.has(key)) return legs.get(key)!;
     const samples = cumulativeSamples(series.rows, source.underlying, interval, horizonHours, originMs);
@@ -414,15 +415,14 @@ export function syntheticEvents(originMs: number, series: ReplaySeries, future: 
     return leg;
   };
   const futures = new Map<string, number | null>();
-  const cachedFuture = (underlying: string, interval: "1h" | "1d", horizonHours: number): number | null => {
+  const cachedFuture = (underlying: string, interval: ReturnMode, horizonHours: number): number | null => {
     const key = `${underlying}:${interval}:${horizonHours}`;
     if (!futures.has(key)) futures.set(key, futureReturn(future, underlying, interval, horizonHours, originMs));
     return futures.get(key)!;
   };
-  const hourlyUnderlyings = new Set(series.rows.filter((row) => row.interval === "1h").map((row) => row.underlying));
-  const intervalForAssets = (assets: SourceEntry[]): "1h" | "1d" => assets.every((source) => source.calendar === "continuous")
-    && new Set(assets.map((source) => source.cluster)).size === 1
-    && assets.every((source) => hourlyUnderlyings.has(source.underlying)) ? "1h" : "1d";
+  const hourlyUnderlyings = new Set(series.rows.filter((row) => row.interval === "hourly").map((row) => row.underlying));
+  const intervalForAssets = (assets: SourceEntry[]): ReturnMode => assets.every((source) => returnModeFor(assets[0], source) === "hourly")
+    && assets.every((source) => hourlyUnderlyings.has(source.underlying)) ? "hourly" : "daily";
   const quantileVectors = new Map<string, number[][]>();
   const directionsBySize = new Map<number, Direction[][]>();
   for (const size of [2, 3, 4]) {
@@ -431,7 +431,7 @@ export function syntheticEvents(originMs: number, series: ReplaySeries, future: 
     directionsBySize.set(size, [Array.from({ length: size }, () => "up" as const), Array.from({ length: size }, (_, index) => index % 2 ? "down" as const : "up" as const), Array.from({ length: size }, () => "down" as const)]);
   }
   for (const stratum of Object.keys(groups) as TicketStratum[]) {
-    type PendingTicket = Omit<SyntheticTicket, "key" | "outcome"> & { interval: "1h" | "1d" };
+    type PendingTicket = Omit<SyntheticTicket, "key" | "outcome"> & { interval: ReturnMode };
     const chosen: { ticketJson: string; key: string; ticket: PendingTicket }[] = [];
     const compare = (left: { ticketJson: string; key: string }, right: { ticketJson: string; key: string }): number => left.key < right.key ? -1 : left.key > right.key ? 1 : left.ticketJson < right.ticketJson ? -1 : left.ticketJson > right.ticketJson ? 1 : 0;
     const hashPrefix = `${series.manifestHash}${originMs}${stratum}`;
@@ -493,10 +493,10 @@ export function forecastAt(originMs: number, series: ReplaySeries): SyntheticTic
 
 interface FhsResult { available: boolean; probability: number | null; hits: number; blocks: number; originMean: number[]; originSigma: number[]; reason: "insufficient-sample" | null }
 
-function alignedRows(series: ReplaySeries, underlyings: string[], interval: "1h" | "1d", originMs = Number.POSITIVE_INFINITY): { timestampMs: number; values: number[]; contiguous: boolean }[] {
+function alignedRows(series: ReplaySeries, underlyings: string[], interval: ReturnMode, originMs = Number.POSITIVE_INFINITY): { timestampMs: number; values: number[]; contiguous: boolean }[] {
   const ordered = underlyings.map((underlying) => series.rows.filter((row) => row.underlying === underlying && row.interval === interval && observationTime(row) <= originMs).sort((left, right) => left.timestampMs - right.timestampMs));
-  const maps = ordered.map((rows) => new Map(rows.map((row) => [interval === "1h" ? String(row.timestampMs) : row.sessionDate, row])));
-  const positions = ordered.map((rows) => new Map(rows.map((row, index) => [interval === "1h" ? String(row.timestampMs) : row.sessionDate, index])));
+  const maps = ordered.map((rows) => new Map(rows.map((row) => [interval === "hourly" ? String(row.timestampMs) : row.sessionDate, row])));
+  const positions = ordered.map((rows) => new Map(rows.map((row, index) => [interval === "hourly" ? String(row.timestampMs) : row.sessionDate, index])));
   const common = [...maps[0].keys()].filter((key) => maps.every((map) => map.has(key))).sort((left, right) => (maps[0].get(left)!.timestampMs - maps[0].get(right)!.timestampMs));
   return common.map((key, index) => ({
     timestampMs: Math.max(...maps.map((map) => map.get(key)!.timestampMs)),
@@ -521,7 +521,7 @@ export function filteredHistoricalSimulation(ticket: SyntheticTicket, series: Re
   const rows = alignedRows(series, underlyings, interval, ticket.originMs);
   const originStats = underlyings.map((_, asset) => ewStats(rows, rows.length, asset));
   const empty = (reason: "insufficient-sample" | null): FhsResult => ({ available: false, probability: null, hits: 0, blocks: 0, originMean: originStats.map((stats) => stats?.mu ?? 0), originSigma: originStats.map((stats) => stats?.sigma ?? 0), reason });
-  if (originStats.some((stats) => stats === null) || (interval === "1h" && rows.length < 1_000)) return empty("insufficient-sample");
+  if (originStats.some((stats) => stats === null) || (interval === "hourly" && rows.length < 1_000)) return empty("insufficient-sample");
   const residuals: { timestampMs: number; values: number[]; contiguous: boolean }[] = [];
   for (let index = 0; index < rows.length; index++) {
     const stats = underlyings.map((_, asset) => ewStats(rows, index, asset));
@@ -529,12 +529,12 @@ export function filteredHistoricalSimulation(ticket: SyntheticTicket, series: Re
     const values = stats.map((value, asset) => (rows[index].values[asset] - value!.mu) / value!.sigma);
     if (values.every(Number.isFinite)) residuals.push({ timestampMs: rows[index].timestampMs, values, contiguous: rows[index].contiguous });
   }
-  const size = interval === "1h" ? ticket.horizonHours : ticket.horizonHours / 24;
+  const size = interval === "hourly" ? ticket.horizonHours : ticket.horizonHours / 24;
   let hits = 0;
   let blocks = 0;
   for (let start = 0; start + size <= residuals.length; start++) {
     const block = residuals.slice(start, start + size);
-    if (block.some((row, index) => index > 0 && (!row.contiguous || (interval === "1h" && row.timestampMs - block[index - 1].timestampMs !== HOUR)))) continue;
+    if (block.some((row, index) => index > 0 && (!row.contiguous || (interval === "hourly" && row.timestampMs - block[index - 1].timestampMs !== HOUR)))) continue;
     const reconstructed = underlyings.map((_, asset) => size * originStats[asset]!.mu + originStats[asset]!.sigma * block.reduce((sum, row) => sum + row.values[asset], 0));
     blocks++;
     if (ticket.legs.every((leg) => {
@@ -542,7 +542,7 @@ export function filteredHistoricalSimulation(ticket: SyntheticTicket, series: Re
       return leg.direction === "up" ? value > leg.threshold : value < leg.threshold;
     })) hits++;
   }
-  if (interval === "1d" && blocks < 90) return empty("insufficient-sample");
+  if (interval === "daily" && blocks < 90) return empty("insufficient-sample");
   return { available: true, probability: (hits + 1) / (blocks + 2), hits, blocks, originMean: originStats.map((stats) => stats!.mu), originSigma: originStats.map((stats) => stats!.sigma), reason: null };
 }
 
@@ -552,12 +552,11 @@ function fittedMatrix(rows: ReturnRecord[], sources: SourceEntry[], originMs = N
   const series: ReplaySeries = { rows, sources: sorted, manifestHash: "0".repeat(64) };
   const estimates: PairEstimate[] = [];
   for (let left = 0; left < sorted.length; left++) for (let right = left + 1; right < sorted.length; right++) {
-    const interval = sorted[left].cluster === sorted[right].cluster ? "1h" : "1d";
-    const pair = alignedRows(series, [sorted[left].underlying, sorted[right].underlying], interval, asOfMs);
-    if (pair.length < 2) continue;
+    const sample = calibrationPairSample(rows, sorted[left], sorted[right], { asOfMs, lookbackMs: 180 * DAY });
+    if (sample.rows.length < 2) continue;
     try {
-      const estimate = weightedCorrelation(pair.map((row) => ({ timestampMs: row.timestampMs, a: row.values[0], b: row.values[1] })), 45, asOfMs);
-      estimates.push({ pair: [sorted[left].underlying, sorted[right].underlying], ...estimate, eligible: pair.length >= (interval === "1h" ? 1_000 : 90) });
+      const estimate = weightedCorrelation(sample.rows, 45, asOfMs);
+      estimates.push({ pair: [sorted[left].underlying, sorted[right].underlying], ...estimate, eligible: sample.eligible });
     } catch (error) {
       if (!(error instanceof Error) || error.message !== "weighted correlation requires non-constant series") throw error;
     }
@@ -571,8 +570,8 @@ function fittedMatrix(rows: ReturnRecord[], sources: SourceEntry[], originMs = N
     const target = left.cluster === right.cluster ? targets.clusters[left.cluster] : targets.global;
     return estimate?.eligible ? shrinkPair(estimate, target) : target;
   }));
-  const daily = alignedRows(series, sorted.map((source) => source.underlying), "1d", asOfMs);
-  const base = daily.length >= 3 ? daily : alignedRows(series, sorted.map((source) => source.underlying), "1h", asOfMs);
+  const daily = alignedRows(series, sorted.map((source) => source.underlying), "daily", asOfMs);
+  const base = daily.length >= 3 ? daily : alignedRows(series, sorted.map((source) => source.underlying), "hourly", asOfMs);
   if (base.length < 3) throw new Error("dependence fit requires at least three complete rows");
   return { matrix: nearestCorrelation(raw), values: base.map((row) => row.values), observationTimes: base.map((row) => row.timestampMs), sources: sorted };
 }
@@ -593,7 +592,7 @@ export function fitReplayDependence(rows: ReturnRecord[], sources: SourceEntry[]
   const quarantined = new Set(candidate.quality.quarantinedUnderlyings.map((entry) => entry.underlying));
   const eligible = new Set(candidate.quality.eligibleUnderlyings);
   const sorted = sources.filter((source) => source.measurementEnabled && eligible.has(source.underlying) && !quarantined.has(source.underlying))
-    .filter((source) => trailingFresh(source, causal.filter((row) => row.underlying === source.underlying).map((row) => row.timestampMs), originMs))
+    .filter((source) => trailingFresh(source, causal.filter((row) => row.underlying === source.underlying).map((row) => row.observationCloseTimeMs), originMs))
     .sort((left, right) => left.underlying < right.underlying ? -1 : left.underlying > right.underlying ? 1 : 0);
   if (sorted.length < 2) throw new Error("dependence fit requires two eligible fresh sources");
   const policy = new Map(candidate.quality.pairEligibility.map((entry) => [pairName(...entry.pair), entry.status]));
@@ -633,8 +632,8 @@ export function fitReplayDependence(rows: ReturnRecord[], sources: SourceEntry[]
     return 0;
   }));
   const series: ReplaySeries = { rows: causal, sources: sorted, manifestHash: "0".repeat(64) };
-  const daily = alignedRows(series, sorted.map((source) => source.underlying), "1d", originMs);
-  const base = daily.length >= 3 ? daily : alignedRows(series, sorted.map((source) => source.underlying), "1h", originMs);
+  const daily = alignedRows(series, sorted.map((source) => source.underlying), "daily", originMs);
+  const base = daily.length >= 3 ? daily : alignedRows(series, sorted.map((source) => source.underlying), "hourly", originMs);
   if (base.length < 3) throw new Error("dependence fit requires at least three complete rows");
   const result = { matrix: nearestCorrelation(raw), values: base.map((row) => row.values), observationTimes: base.map((row) => row.timestampMs), sources: sorted, admittedPairs };
   fits?.set(originMs, result);
@@ -744,8 +743,8 @@ export function ticketStress(ticket: SyntheticTicket, series: ReplaySeries, futu
   const interval = intervalFor(series, underlyings);
   const rows = alignedRows(series, underlyings, interval, ticket.originMs);
   const portfolio = rows.map((row) => mean(row.values));
-  const dailyPortfolio = (values: number[]): number[] => interval === "1d" ? values : Array.from({ length: Math.floor(values.length / 24) }, (_, index) => values.slice(index * 24, index * 24 + 24).reduce((sum, value) => sum + value, 0));
-  const volatilities = (values: number[]): number[] => interval === "1d" ? values.map(Math.abs) : Array.from({ length: Math.max(0, values.length - 23) }, (_, index) => {
+  const dailyPortfolio = (values: number[]): number[] => interval === "daily" ? values : Array.from({ length: Math.floor(values.length / 24) }, (_, index) => values.slice(index * 24, index * 24 + 24).reduce((sum, value) => sum + value, 0));
+  const volatilities = (values: number[]): number[] => interval === "daily" ? values.map(Math.abs) : Array.from({ length: Math.max(0, values.length - 23) }, (_, index) => {
     const window = values.slice(index, index + 24);
     const average = mean(window);
     return Math.sqrt(window.reduce((sum, value) => sum + (value - average) ** 2, 0) / window.length) * Math.sqrt(24);
@@ -763,8 +762,8 @@ export function ticketStress(ticket: SyntheticTicket, series: ReplaySeries, futu
   const upperVolatilityTercile = percentile(trainingVolatilities, 2 / 3);
   const trainingDrawdowns = drawdowns(dailyPortfolio(portfolio));
   const drawdownFifthPercentile = percentile(trainingDrawdowns, 0.05);
-  const size = interval === "1h" ? ticket.horizonHours : ticket.horizonHours / 24;
-  const step = interval === "1h" ? HOUR : DAY;
+  const size = interval === "hourly" ? ticket.horizonHours : ticket.horizonHours / 24;
+  const step = interval === "hourly" ? HOUR : DAY;
   const futureByUnderlying = underlyings.map((underlying) => new Map(future.filter((row) => row.underlying === underlying && row.interval === interval).map((row) => [row.timestampMs, row.value])));
   const futurePortfolio = Array.from({ length: size }, (_, index) => mean(futureByUnderlying.map((values) => values.get(ticket.originMs + (index + 1) * step) ?? Number.NaN)));
   const futureDrawdowns = drawdowns(dailyPortfolio(futurePortfolio));
@@ -794,13 +793,13 @@ function modelScore(rows: ForecastRow[]): ModelScore {
 function ticketCountKey(ticket: SyntheticTicket): string { return `${ticket.stratum}:${ticket.legs.length}`; }
 
 export function replayOrigins(series: ReplaySeries): number[] {
-  const daily = [...new Set(series.rows.filter((row) => row.interval === "1d").map((row) => row.timestampMs))].sort((left, right) => left - right);
+  const daily = [...new Set(series.rows.filter((row) => row.interval === "daily").map((row) => row.timestampMs))].sort((left, right) => left - right);
   if (daily.length >= 90) {
     const origins: number[] = [];
     for (let origin = daily[89]; origin <= daily.at(-1)! - 96 * HOUR; origin += DAY) origins.push(origin);
     return origins;
   }
-  const hourly = [...new Set(series.rows.filter((row) => row.interval === "1h").map((row) => row.timestampMs))].sort((left, right) => left - right);
+  const hourly = [...new Set(series.rows.filter((row) => row.interval === "hourly").map((row) => row.timestampMs))].sort((left, right) => left - right);
   if (hourly.length < 1_000) return [];
   const first = hourly[999];
   const last = hourly.at(-1)! - 96 * HOUR;
@@ -839,6 +838,9 @@ export function runReplay(input: ReplayInput): ValidationReport {
   if ("draws" in input) throw new Error("replay uses exactly 20,000 draws");
   if (!SAFE_MODEL_VERSION.test(input.candidate.modelVersion)) throw new Error("replay modelVersion is not a safe artifact filename");
   if (input.inputManifestSha256 !== input.candidate.dataManifestSha256 || input.series.manifestHash !== input.inputManifestSha256) throw new Error("replay immutable input identities differ");
+  const networks = new Set(input.series.sources.map((source) => source.sourceNetwork));
+  if (networks.size > 1) throw new Error("replay network identity mismatch");
+  for (const row of input.series.rows) parseReturnRecord(row, input.series.sources[0]?.sourceNetwork);
   const candidateSha256 = sha256(input.candidateBytes ?? canonicalJson(input.candidate));
   const outputPath = validationPath(input.candidate.modelVersion);
   const existing = readExisting(storage, outputPath, candidateSha256, input.inputManifestSha256);

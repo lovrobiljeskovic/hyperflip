@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { gzipSync } from "node:zlib";
 import { generateReport, journalFunnel, renderReport, type ReportInput } from "../src/research/report.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
 
@@ -45,6 +46,7 @@ const input: ReportInput = {
   champion: { modelVersion: "beta-1", sha256: "b".repeat(64) },
   funnel: { quotes: 4, minted: 3, resolved: 2 },
   failures: [],
+  exclusions: [{ schemaVersion: 1 as const, stage: "returns" as const, underlying: "<missing>", peerUnderlying: null, timestampMs: 3, reason: "missing-interval" as const, sourceKeys: [] }],
 };
 
 test("research report renders deterministic escaped evidence with every required caveat", () => {
@@ -52,6 +54,8 @@ test("research report renders deterministic escaped evidence with every required
   assert.equal(renderReport(structuredClone(input)), html);
   for (const fragment of readFileSync(new URL("./fixtures/research/report-expected.html", import.meta.url), "utf8").trim().split("\n")) assert.ok(html.includes(fragment), `missing report fragment: ${fragment}`);
   assert.equal(html.includes("<script>"), false);
+  assert.match(html, /missing-interval<\/td><td>1/);
+  assert.equal(html.includes("<missing>"), false);
   assert.match(html, /<style>[\s\S]*<\/style>/);
   assert.equal(/<(?:link|script)\b/i.test(html), false);
 });
@@ -96,6 +100,19 @@ test("research report verifies every immutable reference before writing the dete
     fixture.validation.baselineSnapshotPath = `facts/baselines/${fixture.validation.baselineSha256}.json`;
     mkdirSync(join(root, "manifests"), { recursive: true });
     writeFileSync(join(root, "manifests", `${fixture.candidate.dataManifestSha256}.json`), canonicalJson(fixture.manifest));
+    const returnsPath = "derived/returns-v2/returns/2026/08/27/report.jsonl.gz";
+    const exclusionsPath = "derived/returns-v2/exclusions/2026/08/27/report.jsonl.gz";
+    const returnBytes = gzipSync("");
+    const exclusionBytes = gzipSync(`${canonicalJson(fixture.exclusions[0])}\n`);
+    mkdirSync(join(root, "derived", "returns-v2", "returns", "2026", "08", "27"), { recursive: true });
+    mkdirSync(join(root, "derived", "returns-v2", "exclusions", "2026", "08", "27"), { recursive: true });
+    writeFileSync(join(root, returnsPath), returnBytes);
+    writeFileSync(join(root, exclusionsPath), exclusionBytes);
+    const derivedManifestPath = join(root, `${returnsPath}.manifest.json`);
+    writeFileSync(derivedManifestPath, canonicalJson({
+      schemaVersion: 2, network: "testnet", transformationVersion: "returns-v2", dataManifestSha256: fixture.candidate.dataManifestSha256, sourceRegistrySha256: sourceHash,
+      window: { asOfMs: 2, lookbackMs: 1 }, returns: { path: returnsPath, sha256: sha256(returnBytes), rows: 0 }, exclusions: { path: exclusionsPath, sha256: sha256(exclusionBytes), rows: 1 },
+    }));
     mkdirSync(join(root, "facts", "baselines"), { recursive: true });
     writeFileSync(join(root, fixture.validation.baselineSnapshotPath), baselineBytes);
     mkdirSync(join(root, "artifacts", "candidates"), { recursive: true });
@@ -112,8 +129,8 @@ test("research report verifies every immutable reference before writing the dete
     writeFileSync(join(root, "state", "join.json"), canonicalJson({ schemaVersion: 1, operation: "join", status: "succeeded", startedAt: "2026-08-27T02:00:00.000Z", endedAt: "2026-08-27T02:01:00.000Z", error: null, details: {} }));
     writeFileSync(join(root, "state", "backup.json"), canonicalJson({ schemaVersion: 1, operation: "backup", status: "failed", startedAt: "2026-08-27T03:00:00.000Z", endedAt: "2026-08-27T03:01:00.000Z", error: "backup total timeout", details: {} }));
 
-    const first = generateReport(root, candidatePath);
-    const second = generateReport(root, candidatePath);
+    const first = generateReport(root, candidatePath, derivedManifestPath);
+    const second = generateReport(root, candidatePath, derivedManifestPath);
     assert.equal(first.path, join(root, "reports", "2026-08-27-beta-1.html"));
     assert.equal(readFileSync(first.path, "utf8"), first.bytes);
     assert.equal(second.bytes, first.bytes);
@@ -124,26 +141,30 @@ test("research report verifies every immutable reference before writing the dete
     assert.match(first.bytes, /join state: succeeded/);
     assert.match(first.bytes, /backup state: failed — backup total timeout/);
 
+    writeFileSync(join(root, exclusionsPath), "changed");
+    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath), /exclusions hash mismatch/);
+    writeFileSync(join(root, exclusionsPath), exclusionBytes);
+
     const stateTarget = join(root, "daily-state-target.json");
     const dailyState = readFileSync(join(root, "state", "daily.json"));
     writeFileSync(stateTarget, dailyState);
     rmSync(join(root, "state", "daily.json"));
     symlinkSync(stateTarget, join(root, "state", "daily.json"));
-    assert.throws(() => generateReport(root, candidatePath), /symbolic link/);
+    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath), /symbolic link/);
     rmSync(join(root, "state", "daily.json"));
     writeFileSync(join(root, "state", "daily.json"), dailyState);
 
     const unsafeCandidate = { ...fixture.candidate, modelVersion: "../../escape" };
     writeFileSync(candidatePath, `${canonicalJson(unsafeCandidate)}\n`);
-    assert.throws(() => generateReport(root, candidatePath), /safe artifact filename/);
+    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath), /safe artifact filename/);
     writeFileSync(candidatePath, `${canonicalJson({ ...fixture.candidate, modelVersion: 7 })}\n`);
-    assert.throws(() => generateReport(root, candidatePath), /safe artifact filename/);
+    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath), /safe artifact filename/);
     writeFileSync(candidatePath, candidateBytes);
     writeFileSync(join(root, "artifacts", "candidates", "beta-1.validation.json"), `${canonicalJson({ ...fixture.validation, modelVersion: "../escape" })}\n`);
-    assert.throws(() => generateReport(root, candidatePath), /safe artifact filename/);
+    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath), /safe artifact filename/);
     writeFileSync(join(root, "artifacts", "candidates", "beta-1.validation.json"), `${canonicalJson(fixture.validation)}\n`);
 
     writeFileSync(join(root, fixture.validation.baselineSnapshotPath), "corrupt");
-    assert.throws(() => generateReport(root, candidatePath), /baseline.*mismatch/i);
+    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath), /baseline.*mismatch/i);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

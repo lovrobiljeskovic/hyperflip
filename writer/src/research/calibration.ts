@@ -1,12 +1,10 @@
-import { gunzipSync } from "node:zlib";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
-import { expectedIntervals, HOUR, quality, sessionDates, trailingFresh, TRANSFORMATION_VERSION, classifyCandle } from "./returns.js";
+import { expectedIntervals, HOUR, quality, returnModeFor, sessionDates, trailingFresh, classifyCandle } from "./returns.js";
 import type { QualityMode, ReturnRecord, Window } from "./returns.js";
 import { nearestCorrelationResult, shrinkLambda, structuredTargets, weightedCorrelation } from "./matrix.js";
 import type { PairEstimate } from "./matrix.js";
-import { canonicalJson, operationError, readCandlePartition, readSourceRegistryFact, researchRelativePath, sha256, verifyManifest, writeOperationState } from "./store.js";
-import { assertExclusionRecord } from "./types.js";
-import type { CandleRecord, CorrelationArtifact, DataManifest, ExclusionRecord, SourceEntry } from "./types.js";
+import { canonicalJson, operationError, readCandlePartition, readDerivedDataset, readSourceRegistryFact, sha256, verifyManifest, writeOperationState } from "./store.js";
+import type { CandleRecord, CorrelationArtifact, DataManifest, DerivedManifestV2, SourceEntry } from "./types.js";
 
 const MAX_LOADING = Math.sqrt(0.99);
 const lexical = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
@@ -97,15 +95,6 @@ function fit(target: number[][], sources: SourceEntry[], admitted?: Set<string>)
 
 export function fitHierarchical(target: number[][], sources: SourceEntry[], admitted?: Set<string>): FactorFit { return fit(target, sources, admitted); }
 
-interface DerivedManifest {
-  schemaVersion: 1;
-  transformationVersion: typeof TRANSFORMATION_VERSION;
-  dataManifestSha256: string;
-  sourceRegistrySha256: string;
-  window: Window;
-  files: { kind: "returns" | "exclusions"; path: string; bytes: number; sha256: string; rows: number; schemaVersion: 1 }[];
-}
-
 export interface AlignedPair {
   rows: { timestampMs: number; a: number; b: number }[];
   mode: QualityMode;
@@ -121,39 +110,17 @@ export interface CalibrationAlignmentCache {
 
 const pairName = (left: string, right: string): string => left < right ? `${left}:${right}` : `${right}:${left}`;
 const candleKey = (candle: CandleRecord): string => `${candle.sourceNetwork}:${candle.sourceCoin}:${candle.interval}:${candle.openTimeMs}`;
-function verifiedReturns(input: CalibrationInput, storage: ResearchPersistence): { manifest: DerivedManifest; rows: ReturnRecord[] } {
-  const manifestPath = researchRelativePath(input.root, input.derivedManifestPath);
-  const parsed = JSON.parse(storage.readText(manifestPath)) as Partial<DerivedManifest>;
+function verifiedReturns(input: CalibrationInput, storage: ResearchPersistence): { manifest: DerivedManifestV2; rows: ReturnRecord[] } {
+  const parsed = readDerivedDataset(input.root, input.derivedManifestPath, storage);
   const dataManifestSha256 = sha256(canonicalJson(input.manifest));
-  if (parsed.schemaVersion !== 1 || parsed.transformationVersion !== TRANSFORMATION_VERSION || parsed.dataManifestSha256 !== dataManifestSha256 || parsed.sourceRegistrySha256 !== input.manifest.sourceRegistrySha256) throw new Error("derived manifest identity mismatch");
-  const window = parsed.window;
+  if (parsed.manifest.dataManifestSha256 !== dataManifestSha256 || parsed.manifest.sourceRegistrySha256 !== input.manifest.sourceRegistrySha256) throw new Error("derived manifest identity mismatch");
+  const window = parsed.manifest.window;
   if (!window || !Number.isSafeInteger(window.asOfMs) || window.lookbackMs !== 180 * 86_400_000) throw new Error("derived manifest must use the fixed 180-day window");
-  if (!Array.isArray(parsed.files) || !parsed.files.length) throw new Error("derived manifest has no files");
-  const rows: ReturnRecord[] = [];
-  for (const file of parsed.files) {
-    const path = researchRelativePath(input.root, file.path);
-    if (file.schemaVersion !== 1 || !file.path.endsWith(".jsonl.gz") || !storage.exists(path)) throw new Error(`derived manifest file mismatch: ${file.path}`);
-    const bytes = storage.read(path);
-    if (bytes.length !== file.bytes || sha256(bytes) !== file.sha256) throw new Error(`derived manifest file mismatch: ${file.path}`);
-    const text = gunzipSync(bytes).toString("utf8").trim();
-    const fileRows = text ? text.split("\n").map((line) => JSON.parse(line) as ReturnRecord | ExclusionRecord) : [];
-    if (fileRows.length !== file.rows) throw new Error(`derived manifest file mismatch: ${file.path}`);
-    if (file.kind === "exclusions") {
-      for (const row of fileRows as ExclusionRecord[]) assertExclusionRecord(row);
-      continue;
-    }
-    if (file.kind !== "returns") throw new Error(`derived manifest file kind is invalid: ${file.path}`);
-    for (const row of fileRows) {
-      const record = row as ReturnRecord;
-      if (record.schemaVersion !== 1 || record.transformationVersion !== TRANSFORMATION_VERSION || (record.interval !== "1h" && record.interval !== "1d") || !Number.isSafeInteger(record.timestampMs) || (record.observationCloseTimeMs !== undefined && (!Number.isSafeInteger(record.observationCloseTimeMs) || record.observationCloseTimeMs < record.timestampMs)) || !Number.isFinite(record.value) || typeof record.sessionDate !== "string" || !Array.isArray(record.sourceKeys) || record.sourceKeys.some((key) => typeof key !== "string")) throw new Error("invalid derived return record");
-    }
-    rows.push(...fileRows as ReturnRecord[]);
-  }
-  return { manifest: parsed as DerivedManifest, rows };
+  return { manifest: parsed.manifest, rows: parsed.returns };
 }
 
 function possibleKeys(source: SourceEntry, window: Window, mode: QualityMode): string[] {
-  if (mode === "daily-cross-session") {
+  if (mode === "daily") {
     if (source.calendar === "continuous") return [...new Set(expectedIntervals(source, window).map((timestamp) => new Date(timestamp).toISOString().slice(0, 10)))].slice(1);
     return sessionDates(window, source).slice(1);
   }
@@ -164,14 +131,14 @@ function possibleKeys(source: SourceEntry, window: Window, mode: QualityMode): s
 }
 
 export function calibrationPairSample(records: ReturnRecord[], left: SourceEntry, right: SourceEntry, window: Window, cache?: CalibrationAlignmentCache): AlignedPair {
-  const mode: QualityMode = left.cluster === right.cluster ? "hourly-within-cluster" : "daily-cross-session";
-  const interval = mode === "hourly-within-cluster" ? "1h" : "1d";
+  const mode = returnModeFor(left, right);
+  const interval = mode;
   const fromMs = window.asOfMs - window.lookbackMs;
   const own = (source: SourceEntry) => {
     const key = `${source.underlying}:${interval}:${fromMs}:${window.asOfMs}`;
     const existing = cache?.returns.get(key);
     if (existing) return existing;
-    const built = new Map(records.filter((row) => row.underlying === source.underlying && row.interval === interval && row.timestampMs >= fromMs && row.timestampMs <= window.asOfMs).map((row) => [mode === "hourly-within-cluster" ? String(row.timestampMs) : row.sessionDate, row]));
+    const built = new Map(records.filter((row) => row.underlying === source.underlying && row.interval === interval && row.timestampMs >= fromMs && row.timestampMs <= window.asOfMs).map((row) => [mode === "hourly" ? String(row.timestampMs) : row.sessionDate, row]));
     cache?.returns.set(key, built);
     return built;
   };
@@ -227,21 +194,22 @@ function calibrateImpl(input: CalibrationInput, storage: ResearchPersistence): C
   const dataManifestSha256 = sha256(canonicalJson(input.manifest));
   const sources = readSourceRegistryFact(input.root, input.manifest.sourceRegistrySha256, storage).registry.sources.sort((a, b) => lexical(a.underlying, b.underlying));
   const derived = verifiedReturns(input, storage);
+  if (derived.manifest.network !== sources[0]?.sourceNetwork || sources.some((source) => source.sourceNetwork !== derived.manifest.network)) throw new Error("derived manifest network mismatch");
   if (derived.rows.some((row) => !sources.some((source) => source.underlying === row.underlying))) throw new Error("derived return references unknown source");
   const candles = input.manifest.files.filter((file) => file.path.endsWith(".jsonl.gz")).flatMap((file) => readCandlePartition(storage, file.path));
   const contributing = new Set(derived.rows.flatMap((row) => row.sourceKeys));
   const usable = new Map(sources.map((source) => [source.underlying, usableCandles(candles, source, derived.manifest.window)]));
   const contributingCandles = [...usable.values()].flat().filter((candle) => contributing.has(candleKey(candle)));
   if (!contributingCandles.length) throw new Error("no usable candle contributes to the derived returns");
-  const dataAsOfMs = Math.max(...contributingCandles.map((candle) => candle.closeTimeMs));
+  const dataAsOfMs = Math.max(...derived.rows.map((row) => row.observationCloseTimeMs));
   const lastUsableObservationMs: Record<string, number | null> = Object.fromEntries(sources.map((source) => {
-    const rows = (usable.get(source.underlying) ?? []).filter((candle) => contributing.has(candleKey(candle)));
-    return [source.underlying, rows.length ? Math.max(...rows.map((candle) => candle.openTimeMs)) : null];
+    const rows = derived.rows.filter((row) => row.underlying === source.underlying);
+    return [source.underlying, rows.length ? Math.max(...rows.map((row) => row.observationCloseTimeMs)) : null];
   }));
   const sourceReason = new Map<string, string | null>();
   for (const source of sources) {
     if (!source.measurementEnabled) sourceReason.set(source.underlying, "ineligible-source");
-    else if (!trailingFresh(source, (usable.get(source.underlying) ?? []).filter((candle) => contributing.has(candleKey(candle))).map((candle) => candle.openTimeMs), derived.manifest.window.asOfMs)) sourceReason.set(source.underlying, "trailing-source-stale");
+    else if (!trailingFresh(source, derived.rows.filter((row) => row.underlying === source.underlying).map((row) => row.observationCloseTimeMs), derived.manifest.window.asOfMs)) sourceReason.set(source.underlying, "trailing-source-stale");
     else sourceReason.set(source.underlying, null);
   }
 

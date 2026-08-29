@@ -1,16 +1,14 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { gunzipSync } from "node:zlib";
 import { createPublicClient, http, isAddress } from "viem";
 import { collectSources } from "./candles.js";
 import { calibrate } from "./calibration.js";
 import { loadReplaySourceRegistry, runReplay } from "./replay.js";
 import { deriveReturns } from "./returns.js";
 import { openResearchPersistence } from "./persistence.js";
-import { readCurrentManifest, researchRelativePath, RESEARCH_LOOKBACK_MS, sha256 } from "./store.js";
+import { readCurrentManifest, readDerivedDataset, researchRelativePath, RESEARCH_LOOKBACK_MS, sha256 } from "./store.js";
 import { parseSourceRegistry } from "./types.js";
-import type { ReturnRecord } from "./returns.js";
 import type { CorrelationArtifact } from "./types.js";
 import { parseMarkets } from "../markets.js";
 import { promoteCandidate } from "./artifacts.js";
@@ -40,11 +38,12 @@ if (!commands.includes(command)) {
 } else if (command === "report") {
   const root = process.env.RESEARCH_ROOT;
   const candidateFile = process.env.RESEARCH_CANDIDATE_FILE;
-  if (!root || !candidateFile) {
-    console.error("RESEARCH_ROOT and RESEARCH_CANDIDATE_FILE are required");
+  const derivedManifestFile = process.env.RESEARCH_DERIVED_MANIFEST_FILE;
+  if (!root || !candidateFile || !derivedManifestFile) {
+    console.error("RESEARCH_ROOT, RESEARCH_CANDIDATE_FILE, and RESEARCH_DERIVED_MANIFEST_FILE are required");
     process.exitCode = 2;
   } else {
-    const output = generateReport(resolve(root), resolve(candidateFile));
+    const output = generateReport(resolve(root), resolve(candidateFile), resolve(derivedManifestFile));
     console.log(JSON.stringify({ path: output.path, sha256: sha256(output.bytes) }));
   }
 } else if (command === "backup") {
@@ -119,24 +118,15 @@ if (!commands.includes(command)) {
     const storage = openResearchPersistence(resolvedRoot);
     const candidateBytes = storage.readText(researchRelativePath(resolvedRoot, candidateFile));
     const candidate = JSON.parse(candidateBytes) as CorrelationArtifact;
-    const manifestPath = researchRelativePath(resolvedRoot, derivedManifestFile);
-    const manifest = JSON.parse(storage.readText(manifestPath)) as { dataManifestSha256: string; sourceRegistrySha256: string; files: { kind: "returns" | "exclusions"; path: string; bytes: number; sha256: string; rows: number; schemaVersion: number }[] };
+    const derived = readDerivedDataset(resolvedRoot, derivedManifestFile, storage);
+    const manifest = derived.manifest;
     if (candidate.dataManifestSha256 !== manifest.dataManifestSha256) throw new Error("candidate and replay return manifest identities differ");
-    const rows = manifest.files.flatMap((file) => {
-      const path = researchRelativePath(resolvedRoot, file.path);
-      const bytes = storage.read(path);
-      if (file.schemaVersion !== 1 || (file.kind !== "returns" && file.kind !== "exclusions") || bytes.length !== file.bytes) throw new Error(`replay return file mismatch: ${file.path}`);
-      if (sha256(bytes) !== file.sha256) throw new Error(`replay return file mismatch: ${file.path}`);
-      const text = gunzipSync(bytes).toString("utf8").trim();
-      const parsed = text ? text.split("\n").map((line) => JSON.parse(line)) : [];
-      if (parsed.length !== file.rows) throw new Error(`replay return file mismatch: ${file.path}`);
-      return file.kind === "returns" ? parsed as ReturnRecord[] : [];
-    });
     if (manifest.sourceRegistrySha256 !== candidate.sourceRegistrySha256) throw new Error("replay source registry identity mismatch");
     const sources = loadReplaySourceRegistry(resolvedRoot, manifest.sourceRegistrySha256, storage);
+    if (sources.some((source) => source.sourceNetwork !== manifest.network)) throw new Error("replay network identity mismatch");
     const report = runReplay({
       root: resolvedRoot, candidate, candidateBytes, inputManifestSha256: manifest.dataManifestSha256,
-      baselineFile: resolve(baselineFile), series: { rows, sources, manifestHash: manifest.dataManifestSha256 }, seed, storage,
+      baselineFile: resolve(baselineFile), series: { rows: derived.returns, sources, manifestHash: manifest.dataManifestSha256 }, seed, storage,
     });
     console.log(JSON.stringify({ modelVersion: report.modelVersion, decision: report.decision }));
   }

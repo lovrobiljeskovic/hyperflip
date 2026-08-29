@@ -11,6 +11,8 @@ import {
   classifyCandle,
   deriveReturns,
   quality,
+  parseReturnRecord,
+  returnModeFor,
   sessionDates,
   trailingFresh,
 } from "../src/research/returns.js";
@@ -33,6 +35,31 @@ const candle = (openTimeMs: number, close: string, volume = "1", tradeCount = 1,
 });
 const fixture = (name: string): CandleRecord[] => readFileSync(new URL(`./fixtures/research/${name}`, import.meta.url), "utf8").trim().split("\n").map((line) => JSON.parse(line) as CandleRecord);
 
+test("return mode uses hourly only for a same-cluster continuous pair", () => {
+  assert.equal(returnModeFor(continuousSource, { ...continuousSource, underlying: "ETH", sourceCoin: "ETH" }), "hourly");
+  assert.equal(returnModeFor(continuousSource, { ...sessionSource, cluster: "crypto" }), "daily");
+});
+
+test("return quality accepts exact hourly and daily boundaries and rejects one below", () => {
+  assert.equal(quality(1_000, 1_250, "hourly").eligible, true);
+  assert.equal(quality(999, 1_248, "hourly").eligible, false);
+  assert.equal(quality(90, 112, "daily").eligible, true);
+  assert.equal(quality(89, 111, "daily").eligible, false);
+  assert.equal(quality(100, 125, "daily").eligible, true);
+  assert.equal(quality(99, 125, "daily").eligible, false);
+});
+
+test("returns-v2 parser requires close-time causality and network identity", () => {
+  const valid = {
+    schemaVersion: 2, transformationVersion: "returns-v2", network: "testnet", underlying: "BTC", interval: "hourly",
+    timestampMs: HOUR, observationCloseTimeMs: 2 * HOUR - 1, sessionDate: "1970-01-01", value: 0.1, sourceKeys: [],
+  };
+  assert.doesNotThrow(() => parseReturnRecord(valid, "testnet"));
+  assert.throws(() => parseReturnRecord({ ...valid, observationCloseTimeMs: undefined }, "testnet"), /observationCloseTimeMs/);
+  assert.throws(() => parseReturnRecord({ ...valid, schemaVersion: 1, transformationVersion: "returns-v1" }, "testnet"), /returns-v2|schemaVersion/);
+  assert.throws(() => parseReturnRecord({ ...valid, network: "mainnet" }, "testnet"), /network/);
+});
+
 test("missing intervals stay missing and are never forward-filled", () => {
   const returns = buildHourlyReturns([candle(0, "100"), candle(2 * HOUR, "121")], continuousSource, window(0, 2 * HOUR));
   assert.deepEqual(returns, []);
@@ -49,9 +76,9 @@ test("zero-volume repeated session close is stale", () => {
 });
 
 test("quality gates enforce 1000 hourly, 90 daily, and 80 percent coverage", () => {
-  assert.equal(quality(999, 1_000, "hourly-within-cluster").eligible, false);
-  assert.equal(quality(90, 100, "daily-cross-session").eligible, true);
-  assert.equal(quality(90, 120, "daily-cross-session").eligible, false);
+  assert.equal(quality(999, 1_000, "hourly").eligible, false);
+  assert.equal(quality(90, 100, "daily").eligible, true);
+  assert.equal(quality(90, 120, "daily").eligible, false);
 });
 
 test("daily session returns bridge weekends and declared holidays, not missing sessions", () => {
@@ -71,7 +98,7 @@ test("trailing freshness follows expected sessions instead of global dataAsOf", 
 test("a leading-window gap reduces the fixed pair coverage denominator", () => {
   const rows = fixture("candles-continuous.jsonl");
   const peer = rows.map((row) => ({ ...row, underlying: "ETH", sourceCoin: "ETH" }));
-  const result = alignPair(rows, peer, continuousSource, { ...continuousSource, underlying: "ETH", sourceCoin: "ETH" }, window(0, 5 * HOUR), "hourly-within-cluster");
+  const result = alignPair(rows, peer, continuousSource, { ...continuousSource, underlying: "ETH", sourceCoin: "ETH" }, window(0, 5 * HOUR), "hourly");
   assert.equal(result.quality.expected, 5);
   assert.equal(result.quality.observations, 0);
   assert.equal(result.quality.coverage, 0);
@@ -89,7 +116,7 @@ test("daily returns reject a bridge over a missing scheduled session", () => {
     { ...sessionSource, session: { ...sessionSource.session!, closedDates: [] } },
     { ...sessionSource, underlying: "SP500", sourceCoin: "xyz:SP500" },
     window(at("2026-09-11T00:00:00.000Z"), at("2026-09-15T23:59:59.999Z")),
-    "daily-cross-session",
+    "daily",
   );
   assert.equal(monday < tuesday, true);
   assert.equal(result.quality.observations, 0);
@@ -118,9 +145,14 @@ test("derived partitions are immutable and deterministic after manifest verifica
     assert.equal(first.path, second.path);
     assert.equal(readFileSync(first.path).equals(readFileSync(second.path)), true);
     const derivedManifest = JSON.parse(readFileSync(first.manifestPath, "utf8"));
-    assert.deepEqual(derivedManifest.files.map((file: { kind: string }) => file.kind).sort(), ["exclusions", "returns"]);
-    const exclusionFile = derivedManifest.files.find((file: { kind: string }) => file.kind === "exclusions");
-    assert.ok(exclusionFile.rows > 0);
+    assert.equal(derivedManifest.schemaVersion, 2);
+    assert.equal(derivedManifest.network, "testnet");
+    assert.equal(derivedManifest.transformationVersion, "returns-v2");
+    assert.ok(derivedManifest.returns.sha256);
+    assert.ok(derivedManifest.exclusions.sha256);
+    assert.ok(derivedManifest.exclusions.rows > 0);
+    assert.match(derivedManifest.returns.path, /returns-v2/);
+    assert.match(derivedManifest.exclusions.path, /returns-v2/);
     writeFileSync(first.path, "corrupt immutable return bytes");
     assert.throws(() => deriveReturns(root, manifest, window(0, 5 * HOUR)), /different bytes/);
     assert.throws(() => deriveReturns(root, { ...manifest, files: [] }, window(0, 5 * HOUR)), /manifest/);

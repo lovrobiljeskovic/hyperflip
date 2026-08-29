@@ -3,14 +3,13 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { gunzipSync } from "node:zlib";
 import { calibrate } from "../src/research/calibration.js";
 import { collectSources } from "../src/research/candles.js";
 import { generateReport } from "../src/research/report.js";
 import { runReplay } from "../src/research/replay.js";
 import { deriveReturns, type ReturnRecord } from "../src/research/returns.js";
 import { loadResearchNetworkProfile } from "../src/research/network.js";
-import { canonicalJson, readCurrentManifest } from "../src/research/store.js";
+import { canonicalJson, readCurrentManifest, readDerivedDataset } from "../src/research/store.js";
 import type { SourceEntry, SourceRegistry } from "../src/research/types.js";
 
 const AS_OF = Date.parse("2026-08-28T12:00:00.000Z");
@@ -49,14 +48,12 @@ async function fixtureFlow(root: string): Promise<{ candidate: Buffer; validatio
   const derived = deriveReturns(root, manifest, { asOfMs: manifest.sourceRange.toMs, lookbackMs: 180 * DAY });
   const candidate = calibrate({ root, manifest, derivedManifestPath: derived.manifestPath, now: () => AS_OF });
   const candidatePath = join(root, "artifacts", "candidates", `${candidate.modelVersion}.json`);
-  const derivedManifest = JSON.parse(readFileSync(derived.manifestPath, "utf8")) as { files: { path: string }[] };
-  const text = gunzipSync(readFileSync(join(root, derivedManifest.files[0].path))).toString("utf8").trim();
-  const rows = text ? text.split("\n").map((line) => JSON.parse(line) as ReturnRecord) : [];
+  const rows: ReturnRecord[] = readDerivedDataset(root, derived.manifestPath).returns;
   const baseline = { clusters: { crypto: Object.fromEntries(sources.sources.map((source) => [source.underlying, { global: 0.1, cluster: 0.2, underlying: 0.3 }])) } };
   const baselineFile = join(root, "baseline.json");
   writeFileSync(baselineFile, canonicalJson(baseline));
   runReplay({ root, candidate, candidateBytes: readFileSync(candidatePath, "utf8"), inputManifestSha256: manifestHash, baselineFile, series: { rows, sources: sources.sources, manifestHash }, seed: "end-to-end" });
-  const report = generateReport(root, candidatePath);
+  const report = generateReport(root, candidatePath, derived.manifestPath);
   return {
     candidate: readFileSync(candidatePath),
     validation: readFileSync(join(root, "artifacts", "candidates", `${candidate.modelVersion}.validation.json`)),

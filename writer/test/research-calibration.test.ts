@@ -4,8 +4,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
-import { gzipSync } from "node:zlib";
-import { calibrate, fitHierarchical, type CalibrationInput } from "../src/research/calibration.js";
+import { gunzipSync, gzipSync } from "node:zlib";
+import { calibrate, calibrationPairSample, fitHierarchical, type CalibrationInput } from "../src/research/calibration.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
 import type { CandleRecord, DataManifest, SourceEntry, SourceRegistry } from "../src/research/types.js";
 import type { ReturnRecord } from "../src/research/returns.js";
@@ -66,7 +66,8 @@ function calibrationRoot(options: { staleParticipatingUnderlying?: string; const
   const rawPath = "raw/candles/2026/08/28/fixture.jsonl.gz";
   mkdirSync(join(root, "facts", "source-registries"), { recursive: true });
   mkdirSync(join(root, "raw", "candles", "2026", "08", "28"), { recursive: true });
-  mkdirSync(join(root, "derived", "returns", "2026", "08", "28"), { recursive: true });
+  mkdirSync(join(root, "derived", "returns-v2", "returns", "2026", "08", "28"), { recursive: true });
+  mkdirSync(join(root, "derived", "returns-v2", "exclusions", "2026", "08", "28"), { recursive: true });
   writeFileSync(join(root, "facts", "source-registries", `${registryHash}.json`), registryBytes);
   writeFileSync(join(root, rawPath), rawBytes);
   const manifest: DataManifest = {
@@ -84,26 +85,77 @@ function calibrationRoot(options: { staleParticipatingUnderlying?: string; const
   };
   const derivedText = options.staleParticipatingUnderlying || options.constantUnderlying
     ? `${fixtureReturns.trim().split("\n").map((line) => {
-      const row = JSON.parse(line) as ReturnRecord;
-      if (row.underlying === options.staleParticipatingUnderlying) row.sourceKeys = [`testnet:${row.underlying}:1h:${latest - 2 * HOUR}`];
+      const row = JSON.parse(line) as unknown as Record<string, unknown> & { underlying: string; interval: string; sourceKeys: string[]; value: number; observationCloseTimeMs: number };
+      if (row.underlying === options.staleParticipatingUnderlying) {
+        row.sourceKeys = [`testnet:${row.underlying}:1h:${latest - 2 * HOUR}`];
+        row.observationCloseTimeMs = latest - HOUR - 1;
+      }
       if (row.underlying === options.constantUnderlying) row.value = 0;
       return canonicalJson(row);
     }).join("\n")}\n`
     : fixtureReturns;
   const derivedBytes = gzipSync(derivedText);
-  const derivedPath = "derived/returns/2026/08/28/fixture.jsonl.gz";
+  const derivedPath = "derived/returns-v2/returns/2026/08/28/fixture.jsonl.gz";
+  const exclusionPath = "derived/returns-v2/exclusions/2026/08/28/fixture.jsonl.gz";
+  const exclusionBytes = gzipSync("");
   writeFileSync(join(root, derivedPath), derivedBytes);
+  writeFileSync(join(root, exclusionPath), exclusionBytes);
   const derivedManifest = {
-    schemaVersion: 1, transformationVersion: "returns-v1",
+    schemaVersion: 2, network: "testnet", transformationVersion: "returns-v2",
     dataManifestSha256: sha256(canonicalJson(manifest)), sourceRegistrySha256: registryHash,
     window: { asOfMs: AS_OF_MS, lookbackMs: 180 * 86_400_000 },
-    files: [{ kind: "returns", path: derivedPath, bytes: derivedBytes.length, sha256: sha256(derivedBytes), rows: 450, schemaVersion: 1 }],
+    returns: { path: derivedPath, sha256: sha256(derivedBytes), rows: 450 },
+    exclusions: { path: exclusionPath, sha256: sha256(exclusionBytes), rows: 0 },
   };
   const derivedManifestPath = join(root, `${derivedPath}.manifest.json`);
   writeFileSync(derivedManifestPath, canonicalJson(derivedManifest));
   writeFileSync(join(root, "manifest.json"), canonicalJson(manifest));
   return { root, input: { root, manifest, derivedManifestPath } };
 }
+
+function rewriteReturns(fixture: ReturnType<typeof calibrationRoot>, change: (row: Record<string, unknown>) => void): void {
+  const manifest = JSON.parse(readFileSync(fixture.input.derivedManifestPath, "utf8")) as { returns: { path: string; sha256: string; rows: number } };
+  const path = join(fixture.root, manifest.returns.path);
+  const rows = gunzipSync(readFileSync(path)).toString("utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+  change(rows[0]);
+  const bytes = gzipSync(`${rows.map(canonicalJson).join("\n")}\n`);
+  writeFileSync(path, bytes);
+  manifest.returns.sha256 = sha256(bytes);
+  writeFileSync(fixture.input.derivedManifestPath, canonicalJson(manifest));
+}
+
+test("calibration uses daily settlement mode when either same-cluster source has a session", () => {
+  const session = { ...source("B", "crypto"), calendar: "session" as const, session: { timeZone: "UTC", weekdays: [1, 2, 3, 4, 5], openLocal: "09:00", closeLocal: "17:00", closedDates: [] } };
+  const sample = calibrationPairSample([], source("A", "crypto"), session, { asOfMs: AS_OF_MS, lookbackMs: 180 * 86_400_000 });
+  assert.equal(sample.mode, "daily");
+});
+
+test("calibration rejects returns-v1 and missing or mismatched causal identity", () => {
+  for (const mutate of [
+    (row: Record<string, unknown>) => Object.assign(row, { schemaVersion: 1, transformationVersion: "returns-v1", interval: "1d" }),
+    (row: Record<string, unknown>) => { delete row.observationCloseTimeMs; },
+    (row: Record<string, unknown>) => { row.network = "mainnet"; },
+  ]) {
+    const fixture = calibrationRoot();
+    try {
+      rewriteReturns(fixture, mutate);
+      assert.throws(() => calibrate(fixture.input), /returns-v2|observationCloseTimeMs|network/);
+    } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+  }
+});
+
+test("calibration rejects a derived manifest without the exclusion partition or hash", () => {
+  for (const remove of ["partition", "hash"] as const) {
+    const fixture = calibrationRoot();
+    try {
+      const manifest = JSON.parse(readFileSync(fixture.input.derivedManifestPath, "utf8")) as { exclusions?: { sha256?: string } };
+      if (remove === "partition") delete manifest.exclusions;
+      else delete manifest.exclusions!.sha256;
+      writeFileSync(fixture.input.derivedManifestPath, canonicalJson(manifest));
+      assert.throws(() => calibrate(fixture.input), /exclusions/);
+    } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+  }
+});
 
 test("calibration preserves signed negatives and writes a byte-identical immutable candidate", () => {
   const first = calibrationRoot();
@@ -134,9 +186,9 @@ test("calibration preserves signed negatives and writes a byte-identical immutab
 test("calibration rejects a derived return whose immutable manifest closure changed", () => {
   const fixture = calibrationRoot();
   try {
-    const derived = JSON.parse(readFileSync(fixture.input.derivedManifestPath, "utf8")) as { files: { path: string }[] };
-    writeFileSync(join(fixture.root, derived.files[0].path), "changed");
-    assert.throws(() => calibrate(fixture.input), /derived manifest file mismatch/);
+    const derived = JSON.parse(readFileSync(fixture.input.derivedManifestPath, "utf8")) as { returns: { path: string } };
+    writeFileSync(join(fixture.root, derived.returns.path), "changed");
+    assert.throws(() => calibrate(fixture.input), /derived manifest returns hash mismatch/);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }
