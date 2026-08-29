@@ -137,14 +137,33 @@ export interface DataManifest {
   files: { path: string; bytes: number; sha256: string; rows: number; schemaVersion: 1 }[];
 }
 
+export interface PairRecord {
+  pair: [string, string];
+  correlation: number;
+  reason: "testnet-quality-passed" | "operator-reviewed-testnet-bootstrap";
+}
+
+export interface QuarantinedPairRecord {
+  pair: [string, string];
+  reason: string;
+}
+
 export interface CorrelationArtifact {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  network: ResearchNetwork;
+  profileSha256: string;
   modelVersion: string;
   modelFamily: "hierarchical-gaussian-factor";
   createdAt: string;
   dataAsOf: string;
   dataManifestSha256: string;
   sourceRegistrySha256: string;
+  marketRegistrySha256: string;
+  deploymentRegistrySha256: string;
+  baselineCorrelationSha256: string;
+  directPairs: PairRecord[];
+  fallbackPairs: PairRecord[];
+  quarantinedPairs: QuarantinedPairRecord[];
   policy: {
     lookbackDays: 180;
     halfLifeDays: 45;
@@ -315,7 +334,11 @@ export function assertDataManifest(record: DataManifest): void {
 
 export function assertCorrelationArtifact(record: CorrelationArtifact): void {
   assertSha256(record.dataManifestSha256, "dataManifestSha256");
+  assertSha256(record.profileSha256, "profileSha256");
   assertSha256(record.sourceRegistrySha256, "sourceRegistrySha256");
+  assertSha256(record.marketRegistrySha256, "marketRegistrySha256");
+  assertSha256(record.deploymentRegistrySha256, "deploymentRegistrySha256");
+  assertSha256(record.baselineCorrelationSha256, "baselineCorrelationSha256");
   for (const [underlying, timestampMs] of Object.entries(record.quality.lastUsableObservationMs)) {
     if (timestampMs !== null) assertSafeIntegerTimestamp(timestampMs, `quality.lastUsableObservationMs.${underlying}`);
   }

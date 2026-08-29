@@ -164,7 +164,7 @@ test("loadConfig refuses a malformed champion artifact", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-config-artifact-"));
   try {
     const artifact = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-valid.json", import.meta.url), "utf8"));
-    artifact.schemaVersion = 2;
+    artifact.schemaVersion = 1;
     const file = join(root, "champion.json");
     writeFileSync(file, JSON.stringify(artifact));
     withConfigEnv(file, () => assert.throws(() => loadConfig(Date.parse("2026-08-28T18:00:00.000Z")), /schemaVersion/));

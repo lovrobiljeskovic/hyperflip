@@ -6,6 +6,7 @@ import { trailingFresh } from "./returns.js";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
 import { canonicalJson, researchRelativePath, sha256, verifyManifest } from "./store.js";
 import type { CorrelationArtifact, DataManifest, SourceRegistry } from "./types.js";
+import { assertLoadedResearchNetworkProfile, type LoadedResearchNetworkProfile } from "./network.js";
 
 const SHA256 = /^[0-9a-f]{64}$/;
 const DAY = 86_400_000;
@@ -50,7 +51,7 @@ export interface PromotionReceipt {
   receiptPath: string;
 }
 
-type Context = { manifest: DataManifest; sources: SourceRegistry; markets: Map<string, MarketInfo>; validation: ValidationReport };
+type Context = { manifest: DataManifest; sources: SourceRegistry; markets: Map<string, MarketInfo>; profile: LoadedResearchNetworkProfile; validation: ValidationReport };
 function fail(message: string): never { throw new Error(`artifact: ${message}`); }
 const object = (value: unknown, label: string): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) fail(`${label} must be an object`);
@@ -86,12 +87,14 @@ function validateMatrix(value: unknown, size: number, label: string, nullable = 
   }
 }
 
-export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), sources?: SourceRegistry, markets?: Map<string, MarketInfo>): ValidatedArtifact {
+export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), sources?: SourceRegistry, markets?: Map<string, MarketInfo>, profile?: LoadedResearchNetworkProfile): ValidatedArtifact {
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { fail("malformed JSON"); }
   const artifact = parsed as CorrelationArtifact;
   const root = object(artifact, "root");
-  if (root.schemaVersion !== 1) fail("schemaVersion must be 1");
+  if (root.schemaVersion !== 2) fail("schemaVersion must be 2");
+  if (root.network !== "testnet") fail("network must be testnet");
+  const profileSha256 = hash(root.profileSha256, "profileSha256");
   if (root.modelFamily !== "hierarchical-gaussian-factor") fail("modelFamily must be hierarchical-gaussian-factor");
   const modelVersion = text(root.modelVersion, "modelVersion");
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(modelVersion)) fail("modelVersion is not a safe artifact filename");
@@ -102,6 +105,9 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
   if (dataAsOfMs > nowMs) fail("dataAsOf is in the future");
   const dataManifestSha256 = hash(root.dataManifestSha256, "dataManifestSha256");
   const sourceRegistrySha256 = hash(root.sourceRegistrySha256, "sourceRegistrySha256");
+  const marketRegistrySha256 = hash(root.marketRegistrySha256, "marketRegistrySha256");
+  const deploymentRegistrySha256 = hash(root.deploymentRegistrySha256, "deploymentRegistrySha256");
+  const baselineCorrelationSha256 = hash(root.baselineCorrelationSha256, "baselineCorrelationSha256");
   const policy = object(root.policy, "policy");
   if (policy.lookbackDays !== 180 || policy.halfLifeDays !== 45 || JSON.stringify(policy.diagnosticWindowsDays) !== "[30,90,180]" || policy.minHourly !== 1_000 || policy.minDaily !== 90 || policy.minCoverage !== 0.8 || policy.maxProjectionError !== 0.10) fail("policy must match [180,45,[30,90,180]] and fixed quality gates");
   const clusters = object(root.clusters, "clusters");
@@ -173,6 +179,35 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
     pairs.set(key, { status: entry.status as "direct" | "fallback" | "quarantined", reason: text(entry.reason, `pair eligibility reason ${key}`) });
   }
   if (!same(pairs.keys(), expectedPairs)) fail("pair eligibility must contain every canonical pair exactly once");
+  const partitioned = new Map<string, "direct" | "fallback" | "quarantined">();
+  const pairRecords = (name: "directPairs" | "fallbackPairs", status: "direct" | "fallback", expectedReason: string): void => {
+    if (!Array.isArray(root[name])) fail(`${name} must be an array`);
+    for (const value of root[name] as unknown[]) {
+      const entry = object(value, `${name} entry`);
+      if (!Array.isArray(entry.pair) || entry.pair.length !== 2 || typeof entry.pair[0] !== "string" || typeof entry.pair[1] !== "string") fail(`${name} pair is invalid`);
+      const [left, right] = entry.pair as [string, string];
+      if (left >= right) fail(`canonical pair required for ${left}:${right}`);
+      const key = pairKey(left, right);
+      if (partitioned.has(key)) fail(`pair evidence duplicates ${key}`);
+      if (pairs.get(key)?.status !== status || entry.reason !== expectedReason) fail(`${name} disagrees with pair eligibility for ${key}`);
+      finite(entry.correlation, `${name} correlation`);
+      partitioned.set(key, status);
+    }
+  };
+  pairRecords("directPairs", "direct", "testnet-quality-passed");
+  pairRecords("fallbackPairs", "fallback", "operator-reviewed-testnet-bootstrap");
+  if (!Array.isArray(root.quarantinedPairs)) fail("quarantinedPairs must be an array");
+  for (const value of root.quarantinedPairs as unknown[]) {
+    const entry = object(value, "quarantinedPairs entry");
+    if (!Array.isArray(entry.pair) || entry.pair.length !== 2 || typeof entry.pair[0] !== "string" || typeof entry.pair[1] !== "string") fail("quarantinedPairs pair is invalid");
+    const [left, right] = entry.pair as [string, string];
+    if (left >= right) fail(`canonical pair required for ${left}:${right}`);
+    const key = pairKey(left, right);
+    if (partitioned.has(key)) fail(`pair evidence duplicates ${key}`);
+    if (pairs.get(key)?.status !== "quarantined" || pairs.get(key)?.reason !== text(entry.reason, `quarantinedPairs reason ${key}`)) fail(`quarantinedPairs disagrees with pair eligibility for ${key}`);
+    partitioned.set(key, "quarantined");
+  }
+  if (!same(partitioned.keys(), expectedPairs)) fail("pair evidence must partition every canonical pair exactly once");
   const validation = object(root.validation, "validation");
   if (validation.status !== "pending") fail("candidate validation status must be pending");
   const table = parseCorrelations(raw);
@@ -188,14 +223,18 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
       if (artifactCluster !== undefined && artifactCluster !== market.cluster) fail(`market/artifact cluster disagreement for ${market.underlying}`);
     }
   }
+  if (profile) {
+    assertLoadedResearchNetworkProfile(profile);
+    if (profile.profile.network !== root.network || profile.profileSha256 !== profileSha256 || profile.sourceRegistrySha256 !== sourceRegistrySha256 || profile.marketRegistrySha256 !== marketRegistrySha256 || profile.deploymentRegistrySha256 !== deploymentRegistrySha256 || profile.baselineCorrelationSha256 !== baselineCorrelationSha256) fail("artifact profile identity mismatch");
+  }
   const ageMs = nowMs - dataAsOfMs;
-  const eligibleUnderlyings = new Set([...eligible].filter((underlying) => sources === undefined || sourceByUnderlying.get(underlying)?.measurementEnabled === true));
+  const eligibleUnderlyings = new Set(eligible);
   const fallbackEligible = new Set(sources?.sources.filter((entry) => entry.fallbackEligible).map((entry) => entry.underlying) ?? []);
   return { artifact, table, model: { version: modelVersion, dataAsOf: artifact.dataAsOf, dataManifestSha256, sourceRegistrySha256, ageMs, multiAssetEnabled: ageMs < CHAMPION_MAX_AGE_MS, eligibleUnderlyings, quarantinedUnderlyings: quarantined, fallbackEligible, pairEligibility: pairs } };
 }
 
 export function validateArtifact(raw: string, context: Context, nowMs: number): ValidatedArtifact {
-  const result = parseCorrelationArtifact(raw, nowMs, context.sources, context.markets);
+  const result = parseCorrelationArtifact(raw, nowMs, context.sources, context.markets, context.profile);
   const { artifact } = result;
   if (!Number.isSafeInteger(nowMs)) fail("nowMs must be a safe integer");
   const ageMs = nowMs - Date.parse(artifact.dataAsOf);
@@ -206,13 +245,14 @@ export function validateArtifact(raw: string, context: Context, nowMs: number): 
   if (context.manifest.createdAt !== artifact.createdAt) fail("manifest createdAt mismatch");
   if (sha256(canonicalJson(context.sources)) !== artifact.sourceRegistrySha256) fail("source registry hash mismatch");
   const sourceByUnderlying = new Map(context.sources.sources.map((entry) => [entry.underlying, entry]));
-  for (const underlying of artifact.quality.eligibleUnderlyings) {
-    const source = sourceByUnderlying.get(underlying)!;
-    if (!source.measurementEnabled) fail(`eligible artifact entry has ineligible source ${underlying}`);
-    const observed = artifact.quality.lastUsableObservationMs[underlying];
-    if (observed === null || !trailingFresh(source, [observed], Date.parse(artifact.dataAsOf))) fail(`trailing freshness failed for ${underlying}`);
-  }
-  for (const [key, pair] of result.model.pairEligibility) if (pair.status === "fallback") {
+  for (const [key, pair] of result.model.pairEligibility) if (pair.status === "direct") {
+    for (const underlying of key.split(":")) {
+      const source = sourceByUnderlying.get(underlying)!;
+      if (!source.measurementEnabled) fail(`direct pair ${key} has measurement-disabled source ${underlying}`);
+      const observed = artifact.quality.lastUsableObservationMs[underlying];
+      if (observed === null || !trailingFresh(source, [observed], Date.parse(artifact.dataAsOf))) fail(`trailing freshness failed for ${underlying}`);
+    }
+  } else if (pair.status === "fallback") {
     const [left, right] = key.split(":");
     if (!sourceByUnderlying.get(left)?.fallbackEligible || !sourceByUnderlying.get(right)?.fallbackEligible) fail(`fallback pair ${key} is not a subset of operator-approved fallbacks`);
   }
@@ -239,13 +279,15 @@ function manifestFor(storage: ResearchPersistence, expectedHash: string): { mani
   return fail(`referenced manifest ${expectedHash} not found`);
 }
 
-export function promoteCandidate(rootInput: string, candidatePath: string, sources: SourceRegistry, markets: Map<string, MarketInfo>, nowMs: number, hooks?: { beforeRename?: () => void }): PromotionReceipt {
+export function promoteCandidate(rootInput: string, candidatePath: string, profile: LoadedResearchNetworkProfile, markets: Map<string, MarketInfo>, nowMs: number, hooks?: { beforeRename?: () => void }): PromotionReceipt {
   const root = resolve(rootInput);
   const storage = openResearchPersistence(root);
+  assertLoadedResearchNetworkProfile(profile);
+  const sources = profile.sources;
   let candidate: string;
   try { candidate = researchRelativePath(root, candidatePath); } catch { return fail("candidate path escapes research root"); }
   const raw = storage.readText(candidate);
-  const preliminary = parseCorrelationArtifact(raw, nowMs, sources);
+  const preliminary = parseCorrelationArtifact(raw, nowMs, sources, undefined, profile);
   if (candidate.split("/").at(-1) !== `${preliminary.artifact.modelVersion}.json`) fail("candidate filename does not match modelVersion");
   const manifestFact = manifestFor(storage, preliminary.artifact.dataManifestSha256);
   verifyManifest(root, manifestFact.manifest, storage);
@@ -255,7 +297,7 @@ export function promoteCandidate(rootInput: string, candidatePath: string, sourc
   const validationPath = `${candidateDirectory}${preliminary.artifact.modelVersion}.validation.json`;
   const validationBytes = storage.readText(validationPath);
   const validation = JSON.parse(validationBytes) as ValidationReport;
-  const validated = validateArtifact(raw, { manifest: manifestFact.manifest, sources, markets, validation }, nowMs);
+  const validated = validateArtifact(raw, { manifest: manifestFact.manifest, sources, markets, profile, validation }, nowMs);
   let baseline: string;
   try { baseline = researchRelativePath(root, validation.baselineSnapshotPath); } catch { return fail("baseline snapshot hash mismatch"); }
   if (sha256(storage.read(baseline)) !== validation.baselineSha256) fail("baseline snapshot hash mismatch");

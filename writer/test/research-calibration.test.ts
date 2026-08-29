@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { gunzipSync, gzipSync } from "node:zlib";
-import { calibrate, calibrationPairSample, fitHierarchical, type CalibrationInput } from "../src/research/calibration.js";
+import { admitPair, calibrate, calibrationPairSample, fitHierarchical, type CalibrationInput } from "../src/research/calibration.js";
+import type { LoadedResearchNetworkProfile } from "../src/research/network.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
 import type { CandleRecord, DataManifest, SourceEntry, SourceRegistry } from "../src/research/types.js";
 import type { ReturnRecord } from "../src/research/returns.js";
@@ -13,6 +14,49 @@ import type { ReturnRecord } from "../src/research/returns.js";
 const source = (underlying: string, cluster: SourceEntry["cluster"]): SourceEntry => ({
   schemaVersion: 1, underlying, sourceNetwork: "testnet", sourceCoin: underlying, cluster,
   calendar: "continuous", measurementEnabled: true, fallbackEligible: false,
+});
+
+function baseline(sources: SourceEntry[], clusters: Record<string, Record<string, { global: number; cluster: number; underlying: number }>>): LoadedResearchNetworkProfile {
+  const registry: SourceRegistry = { schemaVersion: 2, network: "testnet", sources };
+  const profile = { schemaVersion: 1, network: "testnet", infoApiUrl: "https://api.hyperliquid-testnet.xyz/info", evmChainId: 998, sourceRegistryFile: "sources.json", marketRegistryFile: "markets.json", deploymentRegistryFile: "deployment.json", baselineCorrelationFile: "correlations.json" } as const;
+  const marketRegistryRaw = canonicalJson({ schemaVersion: 1, network: "testnet", markets: [] });
+  const deployment = { schemaVersion: 1, network: "testnet", evmChainId: 998, parlayVault: "0x1111111111111111111111111111111111111111", parlayDeployBlock: "1" } as const;
+  const baselineCorrelationRaw = canonicalJson({ network: "testnet", fallbackReason: "operator-reviewed-testnet-bootstrap", clusters });
+  return {
+    profile, profileSha256: sha256(canonicalJson(profile)), sources: registry, sourceRegistrySha256: sha256(canonicalJson(registry)),
+    marketRegistryRaw, marketRegistrySha256: sha256(marketRegistryRaw), deployment, deploymentRegistrySha256: sha256(canonicalJson(deployment)),
+    baselineCorrelationRaw, baselineCorrelationSha256: sha256(baselineCorrelationRaw),
+  };
+}
+
+const admissionSources = [
+  { ...source("BTC", "crypto"), fallbackEligible: true },
+  { ...source("ZEC", "crypto"), measurementEnabled: false, fallbackEligible: true },
+  { ...source("AAPL", "equity"), fallbackEligible: true },
+  { ...source("TSLA", "equity"), fallbackEligible: true },
+];
+const admissionBaseline = baseline(admissionSources, {
+  crypto: { BTC: { global: 0.3, cluster: 0.9, underlying: 0.1 }, ZEC: { global: 0.3, cluster: 0.8, underlying: 0.2 } },
+  equity: { AAPL: { global: 0, cluster: 0, underlying: 0 }, TSLA: { global: 0.3, cluster: 0.7, underlying: 0.2 } },
+});
+
+test("pair admission orders direct quality before exact static fallback and quarantine", () => {
+  const [btc, zec, aapl, tsla] = admissionSources;
+  assert.deepEqual(admitPair(btc, tsla, { network: "testnet", eligible: true, correlation: 0.42, reason: null }, admissionBaseline), { kind: "direct", correlation: 0.42, reason: "testnet-quality-passed" });
+  assert.deepEqual(admitPair(zec, btc, null, admissionBaseline), { kind: "fallback", correlation: 0.81, reason: "operator-reviewed-testnet-bootstrap" });
+  assert.deepEqual(admitPair(aapl, tsla, { network: "testnet", eligible: false, correlation: null, reason: "insufficient-pair-quality" }, admissionBaseline), { kind: "fallback", correlation: 0, reason: "operator-reviewed-testnet-bootstrap" });
+  assert.deepEqual(admitPair(tsla, aapl, { network: "testnet", eligible: false, correlation: null, reason: "trailing-source-stale" }, admissionBaseline), { kind: "fallback", correlation: 0, reason: "operator-reviewed-testnet-bootstrap" });
+
+  const absent = { ...source("ABSENT", "crypto"), fallbackEligible: true };
+  assert.deepEqual(admitPair(absent, btc, null, admissionBaseline), { kind: "quarantined", reason: "insufficient-pair-quality" });
+  assert.deepEqual(admitPair({ ...zec, fallbackEligible: false }, btc, null, admissionBaseline), { kind: "quarantined", reason: "ineligible-source" });
+});
+
+test("pair admission rejects mixed baseline identity and never admits wrong-network direct evidence", () => {
+  const [btc, zec] = admissionSources;
+  assert.throws(() => admitPair(zec, btc, null, { ...admissionBaseline, baselineCorrelationSha256: "0".repeat(64) }), /baseline correlation hash/);
+  assert.throws(() => admitPair(zec, btc, null, { ...admissionBaseline, profile: { ...admissionBaseline.profile, network: "mainnet" } }), /testnet/);
+  assert.deepEqual(admitPair(zec, btc, { network: "mainnet", eligible: true, correlation: 0.99, reason: null }, admissionBaseline), { kind: "fallback", correlation: 0.81, reason: "operator-reviewed-testnet-bootstrap" });
 });
 
 test("hierarchical fit is non-negative and preserves the explained-variance ceiling", () => {
@@ -45,13 +89,18 @@ const AS_OF_MS = Date.parse("2026-08-28T12:00:00.000Z");
 const HOUR = 3_600_000;
 const fixtureReturns = readFileSync(new URL("./fixtures/research/returns-small.jsonl", import.meta.url), "utf8");
 
-function calibrationRoot(options: { staleParticipatingUnderlying?: string; constantUnderlying?: string } = {}): { root: string; input: CalibrationInput } {
+function calibrationRoot(options: { staleParticipatingUnderlying?: string; constantUnderlying?: string } = {}): { root: string; input: CalibrationInput; profileFile: string } {
   const root = mkdtempSync(join(tmpdir(), "hype-research-calibration-"));
   const sources: SourceRegistry = {
     schemaVersion: 2,
     network: "testnet",
     sources: [source("A", "crypto"), source("B", "equity"), source("C", "commodity")].map((entry) => ({ ...entry, fallbackEligible: true })),
   };
+  const profile = baseline(sources.sources, {
+    crypto: { A: { global: 0.3, cluster: 0.8, underlying: 0.2 } },
+    equity: { B: { global: 0.3, cluster: 0.7, underlying: 0.3 } },
+    commodity: { C: { global: 0.3, cluster: 0.6, underlying: 0.4 } },
+  });
   const registryBytes = canonicalJson(sources);
   const registryHash = sha256(registryBytes);
   const latest = AS_OF_MS - 6 * HOUR;
@@ -110,7 +159,13 @@ function calibrationRoot(options: { staleParticipatingUnderlying?: string; const
   const derivedManifestPath = join(root, `${derivedPath}.manifest.json`);
   writeFileSync(derivedManifestPath, canonicalJson(derivedManifest));
   writeFileSync(join(root, "manifest.json"), canonicalJson(manifest));
-  return { root, input: { root, manifest, derivedManifestPath } };
+  const profileFile = join(root, "profile.json");
+  writeFileSync(profileFile, canonicalJson(profile.profile));
+  writeFileSync(join(root, "sources.json"), canonicalJson(profile.sources));
+  writeFileSync(join(root, "markets.json"), profile.marketRegistryRaw);
+  writeFileSync(join(root, "deployment.json"), canonicalJson(profile.deployment));
+  writeFileSync(join(root, "correlations.json"), profile.baselineCorrelationRaw);
+  return { root, input: { root, manifest, derivedManifestPath, profile }, profileFile };
 }
 
 function rewriteReturns(fixture: ReturnType<typeof calibrationRoot>, change: (row: Record<string, unknown>) => void): void {
@@ -198,8 +253,8 @@ test("freshness ignores a late raw candle absent from participating return sourc
   const fixture = calibrationRoot({ staleParticipatingUnderlying: "A" });
   try {
     const artifact = calibrate(fixture.input);
-    assert.deepEqual(artifact.quality.quarantinedUnderlyings.find((entry) => entry.underlying === "A"), { underlying: "A", reason: "trailing-source-stale" });
-    assert.ok(artifact.quality.pairEligibility.filter((entry) => entry.pair.includes("A")).every((entry) => entry.status === "quarantined" && entry.reason === "trailing-source-stale"));
+    assert.equal(artifact.quality.quarantinedUnderlyings.some((entry) => entry.underlying === "A"), false);
+    assert.ok(artifact.quality.pairEligibility.filter((entry) => entry.pair.includes("A")).every((entry) => entry.status === "fallback" && entry.reason === "operator-reviewed-testnet-bootstrap"));
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -210,9 +265,13 @@ test("a constant synchronized pair takes the pair-local fallback instead of abor
   try {
     const artifact = calibrate(fixture.input);
     assert.deepEqual(artifact.quality.pairEligibility, [
-      { pair: ["A", "B"], status: "fallback", reason: "operator-reviewed-structured-fallback" },
-      { pair: ["A", "C"], status: "direct", reason: "quality-gates-passed" },
-      { pair: ["B", "C"], status: "fallback", reason: "operator-reviewed-structured-fallback" },
+      { pair: ["A", "B"], status: "fallback", reason: "operator-reviewed-testnet-bootstrap" },
+      { pair: ["A", "C"], status: "direct", reason: "testnet-quality-passed" },
+      { pair: ["B", "C"], status: "fallback", reason: "operator-reviewed-testnet-bootstrap" },
+    ]);
+    assert.deepEqual(artifact.fallbackPairs, [
+      { pair: ["A", "B"], correlation: 0.09, reason: "operator-reviewed-testnet-bootstrap" },
+      { pair: ["B", "C"], correlation: 0.09, reason: "operator-reviewed-testnet-bootstrap" },
     ]);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
@@ -224,7 +283,7 @@ test("calibrate CLI writes the deterministic candidate from explicit immutable i
   try {
     const result = spawnSync(process.execPath, ["--import", "tsx", "src/research/cli.ts", "calibrate"], {
       cwd: resolve(import.meta.dirname, ".."), encoding: "utf8",
-      env: { ...process.env, RESEARCH_ROOT: fixture.root, RESEARCH_MANIFEST_FILE: join(fixture.root, "manifest.json"), RESEARCH_DERIVED_MANIFEST_FILE: fixture.input.derivedManifestPath },
+      env: { ...process.env, RESEARCH_ROOT: fixture.root, RESEARCH_NETWORK_PROFILE: fixture.profileFile, RESEARCH_MANIFEST_FILE: join(fixture.root, "manifest.json"), RESEARCH_DERIVED_MANIFEST_FILE: fixture.input.derivedManifestPath },
     });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /2026-08-28\.398fc2b3/);

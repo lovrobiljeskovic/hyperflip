@@ -39,14 +39,15 @@ function profile(root: string) {
 }
 
 async function fixtureFlow(root: string): Promise<{ candidate: Buffer; validation: Buffer; manifest: Buffer; report: Buffer }> {
-  const collection = await collectSources({ root, profile: profile(root), nowMs: AS_OF, fetch: async (_url, init) => new Response(candles(JSON.parse(String(init?.body)).req.coin)) });
+  const loadedProfile = profile(root);
+  const collection = await collectSources({ root, profile: loadedProfile, nowMs: AS_OF, fetch: async (_url, init) => new Response(candles(JSON.parse(String(init?.body)).req.coin)) });
   assert.equal(collection.failures.length, 0);
   const current = readCurrentManifest(root);
   const manifest = current.manifest;
   const manifestBytes = Buffer.from(canonicalJson(manifest));
   const manifestHash = current.manifestSha256;
   const derived = deriveReturns(root, manifest, { asOfMs: manifest.sourceRange.toMs, lookbackMs: 180 * DAY });
-  const candidate = calibrate({ root, manifest, derivedManifestPath: derived.manifestPath, now: () => AS_OF });
+  const candidate = calibrate({ root, manifest, derivedManifestPath: derived.manifestPath, profile: loadedProfile, now: () => AS_OF });
   const candidatePath = join(root, "artifacts", "candidates", `${candidate.modelVersion}.json`);
   const rows: ReturnRecord[] = readDerivedDataset(root, derived.manifestPath).returns;
   const baseline = { clusters: { crypto: Object.fromEntries(sources.sources.map((source) => [source.underlying, { global: 0.1, cluster: 0.2, underlying: 0.3 }])) } };

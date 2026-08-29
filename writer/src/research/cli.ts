@@ -7,7 +7,7 @@ import { calibrate } from "./calibration.js";
 import { loadReplaySourceRegistry, runReplay } from "./replay.js";
 import { deriveReturns } from "./returns.js";
 import { openResearchPersistence } from "./persistence.js";
-import { readCurrentManifest, readDerivedDataset, researchRelativePath, RESEARCH_LOOKBACK_MS, sha256 } from "./store.js";
+import { canonicalJson, readCurrentManifest, readDerivedDataset, researchRelativePath, RESEARCH_LOOKBACK_MS, sha256 } from "./store.js";
 import { parseSourceRegistry } from "./types.js";
 import type { CorrelationArtifact } from "./types.js";
 import { parseMarkets } from "../markets.js";
@@ -93,15 +93,16 @@ if (!commands.includes(command)) {
   }
 } else if (command === "calibrate") {
   const root = process.env.RESEARCH_ROOT;
+  const profileFile = process.env.RESEARCH_NETWORK_PROFILE;
   const manifestFile = process.env.RESEARCH_MANIFEST_FILE;
   const derivedManifestPath = process.env.RESEARCH_DERIVED_MANIFEST_FILE;
-  if (!root || !manifestFile || !derivedManifestPath) {
-    console.error("RESEARCH_ROOT, RESEARCH_MANIFEST_FILE, and RESEARCH_DERIVED_MANIFEST_FILE are required");
+  if (!root || !profileFile || !manifestFile || !derivedManifestPath) {
+    console.error("RESEARCH_ROOT, RESEARCH_NETWORK_PROFILE, RESEARCH_MANIFEST_FILE, and RESEARCH_DERIVED_MANIFEST_FILE are required");
     process.exitCode = 2;
   } else {
     const resolvedRoot = resolve(root);
     const storage = openResearchPersistence(resolvedRoot);
-    const artifact = calibrate({ root: resolvedRoot, manifest: JSON.parse(storage.readText(researchRelativePath(resolvedRoot, manifestFile))), derivedManifestPath: researchRelativePath(resolvedRoot, derivedManifestPath), storage });
+    const artifact = calibrate({ root: resolvedRoot, manifest: JSON.parse(storage.readText(researchRelativePath(resolvedRoot, manifestFile))), derivedManifestPath: researchRelativePath(resolvedRoot, derivedManifestPath), profile: loadResearchNetworkProfile(resolve(profileFile)), storage });
     console.log(JSON.stringify({ modelVersion: artifact.modelVersion, dataAsOf: artifact.dataAsOf, candidatePath: resolve(root, "artifacts", "candidates", `${artifact.modelVersion}.json`) }));
   }
 } else if (command === "replay") {
@@ -151,18 +152,21 @@ if (!commands.includes(command)) {
   }
 } else {
   const root = process.env.RESEARCH_ROOT;
+  const profileFile = process.env.RESEARCH_NETWORK_PROFILE;
   const sourcesFile = process.env.CORRELATION_SOURCES_FILE;
   const marketsFile = process.env.MARKETS_FILE;
   const args = process.argv.slice(3);
-  if (!root || !sourcesFile || !marketsFile || args.length !== 2 || args[0] !== "--candidate" || !args[1]) {
-    console.error("RESEARCH_ROOT, CORRELATION_SOURCES_FILE, MARKETS_FILE, and --candidate <path> are required");
+  if (!root || !profileFile || !sourcesFile || !marketsFile || args.length !== 2 || args[0] !== "--candidate" || !args[1]) {
+    console.error("RESEARCH_ROOT, RESEARCH_NETWORK_PROFILE, CORRELATION_SOURCES_FILE, MARKETS_FILE, and --candidate <path> are required");
     process.exitCode = 2;
   } else {
     const resolvedRoot = resolve(root);
     const candidate = resolve(resolvedRoot, args[1]);
+    const profile = loadResearchNetworkProfile(resolve(profileFile));
     const sources = parseSourceRegistry(readFileSync(resolve(sourcesFile), "utf8"));
+    if (sha256(canonicalJson(sources)) !== profile.sourceRegistrySha256) throw new Error("promotion source registry differs from profile");
     const markets = parseMarkets(readFileSync(resolve(marketsFile), "utf8"));
-    const receipt = promoteCandidate(resolvedRoot, candidate, sources, markets, Date.now());
+    const receipt = promoteCandidate(resolvedRoot, candidate, profile, markets, Date.now());
     console.log(JSON.stringify({ modelVersion: receipt.modelVersion, dataAgeMs: receipt.dataAgeMs, manifestHash: receipt.dataManifestSha256, validationState: receipt.validationState, championHash: receipt.championSha256 }));
   }
 }

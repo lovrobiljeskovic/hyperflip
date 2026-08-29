@@ -76,8 +76,10 @@ function artifactFixture(root: string): {
   markets: Map<string, MarketInfo>;
   partition: string;
   sources: SourceRegistry;
+  profile: ReturnType<typeof profile>;
 } {
   const sources: SourceRegistry = { schemaVersion: 2, network: "testnet", sources: [source("BTC"), source("ETH")] };
+  const loadedProfile = profile(root, sources);
   const sourceBytes = canonicalJson(sources);
   const sourceHash = sha256(sourceBytes);
   const sourcePath = join(root, "facts", "source-registries", `${sourceHash}.json`);
@@ -106,6 +108,16 @@ function artifactFixture(root: string): {
   writeFileSync(join(root, "manifests", `${manifestHash}.json`), canonicalJson(manifest));
 
   const artifact = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-valid.json", import.meta.url), "utf8")) as CorrelationArtifact;
+  artifact.schemaVersion = 2;
+  artifact.network = "testnet";
+  artifact.profileSha256 = loadedProfile.profileSha256;
+  artifact.marketRegistrySha256 = loadedProfile.marketRegistrySha256;
+  artifact.deploymentRegistrySha256 = loadedProfile.deploymentRegistrySha256;
+  artifact.baselineCorrelationSha256 = loadedProfile.baselineCorrelationSha256;
+  artifact.quality.pairEligibility = artifact.quality.pairEligibility.map((entry) => ({ ...entry, reason: "testnet-quality-passed" }));
+  artifact.directPairs = [{ pair: ["BTC", "ETH"], correlation: 0.05, reason: "testnet-quality-passed" }];
+  artifact.fallbackPairs = [];
+  artifact.quarantinedPairs = [];
   artifact.modelVersion = "acceptance-fixture";
   artifact.dataManifestSha256 = manifestHash;
   artifact.sourceRegistrySha256 = sourceHash;
@@ -120,7 +132,7 @@ function artifactFixture(root: string): {
     [BTC_VAULT.toLowerCase(), { vault: BTC_VAULT, coinYes: "+1", coinNo: "+2", underlying: "BTC", cluster: "crypto", direction: "up", title: "BTC", category: "crypto" }],
     [ETH_VAULT.toLowerCase(), { vault: ETH_VAULT, coinYes: "+3", coinNo: "+4", underlying: "ETH", cluster: "crypto", direction: "up", title: "ETH", category: "crypto" }],
   ]);
-  return { artifact, candidateRaw, champion, markets, partition, sources };
+  return { artifact, candidateRaw, champion, markets, partition, sources, profile: loadedProfile };
 }
 
 function quoteDeps(root: string, artifact: ReturnType<typeof artifactFixture>): QuoteDeps {
@@ -255,11 +267,11 @@ test("correlation beta acceptance is deterministic, durable, joined, isolated, a
     const priorChampion = readFileSync(artifact.champion);
     const candidate = join(roots[0], "artifacts", "candidates", `${artifact.artifact.modelVersion}.json`);
 
-    assert.throws(() => promoteCandidate(roots[0], candidate, artifact.sources, artifact.markets, NOW), /manifest file mismatch/);
+    assert.throws(() => promoteCandidate(roots[0], candidate, artifact.profile, artifact.markets, NOW), /manifest file mismatch/);
     assert.deepEqual(readFileSync(artifact.champion), priorChampion);
     mkdirSync(resolve(artifact.partition, ".."), { recursive: true });
     writeFileSync(artifact.partition, fixturePartition("101"));
-    assert.throws(() => promoteCandidate(roots[0], candidate, artifact.sources, artifact.markets, NOW), /manifest file mismatch/);
+    assert.throws(() => promoteCandidate(roots[0], candidate, artifact.profile, artifact.markets, NOW), /manifest file mismatch/);
     assert.deepEqual(readFileSync(artifact.champion), priorChampion);
 
     writeFileSync(artifact.champion, artifact.candidateRaw);

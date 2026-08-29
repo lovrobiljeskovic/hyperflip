@@ -39,6 +39,19 @@ export interface LoadedResearchNetworkProfile {
   baselineCorrelationSha256: string;
 }
 
+export function assertLoadedResearchNetworkProfile(loaded: LoadedResearchNetworkProfile): void {
+  if (loaded.profile.network !== "testnet" || loaded.sources.network !== "testnet" || loaded.deployment.network !== "testnet") throw new Error("loaded research network profile must be testnet");
+  if (sha256(canonicalJson(loaded.profile)) !== loaded.profileSha256) throw new Error("loaded profile hash differs");
+  if (sha256(canonicalJson(loaded.sources)) !== loaded.sourceRegistrySha256) throw new Error("loaded profile source registry hash differs");
+  if (sha256(loaded.marketRegistryRaw) !== loaded.marketRegistrySha256) throw new Error("loaded profile market registry hash differs");
+  if (sha256(canonicalJson(loaded.deployment)) !== loaded.deploymentRegistrySha256) throw new Error("loaded profile deployment registry hash differs");
+  if (sha256(loaded.baselineCorrelationRaw) !== loaded.baselineCorrelationSha256) throw new Error("loaded profile baseline correlation hash differs");
+  const markets = parseJson(loaded.marketRegistryRaw, "market registry");
+  const baseline = parseJson(loaded.baselineCorrelationRaw, "correlation registry");
+  if (markets.network !== "testnet" || baseline.network !== "testnet") throw new Error("loaded profile registries must be testnet");
+  if (baseline.fallbackReason !== "operator-reviewed-testnet-bootstrap") throw new Error("correlation registry fallbackReason must be operator-reviewed-testnet-bootstrap");
+}
+
 const INFO_HOSTS: Record<ResearchNetwork, string> = {
   testnet: "api.hyperliquid-testnet.xyz",
   mainnet: "api.hyperliquid.xyz",
@@ -129,7 +142,7 @@ export function loadResearchNetworkProfile(profileFile: string): LoadedResearchN
   const marketCanonical = canonicalJson(JSON.parse(marketRaw));
   const deploymentCanonical = canonicalJson(JSON.parse(deploymentRaw));
   const correlationCanonical = canonicalJson(JSON.parse(correlationRaw));
-  return {
+  const loaded = {
     profile,
     profileSha256: sha256(canonicalJson(JSON.parse(profileRaw))),
     sources,
@@ -141,4 +154,6 @@ export function loadResearchNetworkProfile(profileFile: string): LoadedResearchN
     baselineCorrelationRaw: correlationCanonical,
     baselineCorrelationSha256: sha256(correlationCanonical),
   };
+  assertLoadedResearchNetworkProfile(loaded);
+  return loaded;
 }

@@ -1,16 +1,21 @@
 {
   "network": "testnet",
   "fallbackReason": "operator-reviewed-testnet-bootstrap",
-  "_comment": "Hand-set factor loadings for parlay correlation pricing, grouped by correlation cluster. Pairwise correlation = global_a*global_b, plus cluster_a*cluster_b when the legs share a cluster, plus underlying_a*underlying_b when they share an underlying. Squares must sum to at most 0.99. The fallback for an underlying missing from this file is COMPUTED per cluster, not written here. Writer-only; not served to the frontend.",
+  "_comment": "Operator-reviewed testnet bootstrap loadings. SOL, HYPE, ZEC, TSLA, and AAPL freeze the exact parser-computed cluster fallbacks used before explicit coverage. Calibration admits only exact listed underlyings; generic writer fallback remains for unknown markets. Writer-only; not served to the frontend.",
   "clusters": {
     "crypto": {
       "BTC": { "global": 0.30, "cluster": 0.90, "underlying": 0.29 },
-      "ETH": { "global": 0.30, "cluster": 0.92, "underlying": 0.20 }
+      "ETH": { "global": 0.30, "cluster": 0.92, "underlying": 0.20 },
+      "SOL": { "global": 0.2954828964376993, "cluster": 0.9061475490756113, "underlying": 0.2856334665564427 },
+      "HYPE": { "global": 0.2954828964376993, "cluster": 0.9061475490756113, "underlying": 0.2856334665564427 },
+      "ZEC": { "global": 0.2954828964376993, "cluster": 0.9061475490756113, "underlying": 0.2856334665564427 }
     },
     "equity": {
       "NVDA": { "global": 0.30, "cluster": 0.8426, "underlying": 0.40 },
       "SP500": { "global": 0.30, "cluster": 0.8426, "underlying": 0.40 },
-      "SNDK": { "global": 0.30, "cluster": 0.75, "underlying": 0.55 }
+      "SNDK": { "global": 0.30, "cluster": 0.75, "underlying": 0.55 },
+      "TSLA": { "global": 0.2842853790390953, "cluster": 0.7984628679278057, "underlying": 0.5211898615716748 },
+      "AAPL": { "global": 0.2842853790390953, "cluster": 0.7984628679278057, "underlying": 0.5211898615716748 }
     },
     "commodity": {
       "GOLD": { "global": 0.30, "cluster": 0.70, "underlying": 0.60 }

@@ -1,10 +1,12 @@
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
+import { pairCorrelation, parseCorrelations } from "../correlation.js";
 import { expectedIntervals, HOUR, quality, returnModeFor, sessionDates, trailingFresh, classifyCandle } from "./returns.js";
 import type { QualityMode, ReturnRecord, Window } from "./returns.js";
 import { nearestCorrelationResult, shrinkLambda, structuredTargets, weightedCorrelation } from "./matrix.js";
 import type { PairEstimate } from "./matrix.js";
 import { canonicalJson, operationError, readCandlePartition, readDerivedDataset, readSourceRegistryFact, sha256, verifyManifest, writeOperationState } from "./store.js";
 import type { CandleRecord, CorrelationArtifact, DataManifest, DerivedManifestV2, SourceEntry } from "./types.js";
+import { assertLoadedResearchNetworkProfile, type LoadedResearchNetworkProfile } from "./network.js";
 
 const MAX_LOADING = Math.sqrt(0.99);
 const lexical = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
@@ -13,8 +15,36 @@ export interface CalibrationInput {
   root: string;
   manifest: DataManifest;
   derivedManifestPath: string;
+  profile: LoadedResearchNetworkProfile;
   now?: () => number;
   storage?: ResearchPersistence;
+}
+
+export type PairAdmission =
+  | { kind: "direct"; correlation: number; reason: "testnet-quality-passed" }
+  | { kind: "fallback"; correlation: number; reason: "operator-reviewed-testnet-bootstrap" }
+  | { kind: "quarantined"; reason: string };
+
+export interface DirectPairEvidence {
+  network: "testnet" | "mainnet";
+  eligible: boolean;
+  correlation: number | null;
+  reason: string | null;
+}
+
+export function admitPair(left: SourceEntry, right: SourceEntry, direct: DirectPairEvidence | null, baseline: LoadedResearchNetworkProfile): PairAdmission {
+  assertLoadedResearchNetworkProfile(baseline);
+  if (left.measurementEnabled && right.measurementEnabled && left.sourceNetwork === "testnet" && right.sourceNetwork === "testnet" && direct?.network === "testnet" && direct.eligible && direct.correlation !== null) {
+    return { kind: "direct", correlation: direct.correlation, reason: "testnet-quality-passed" };
+  }
+  if (left.fallbackEligible && right.fallbackEligible && left.sourceNetwork === "testnet" && right.sourceNetwork === "testnet") {
+    const table = parseCorrelations(baseline.baselineCorrelationRaw);
+    const a = table.underlyings[left.underlying];
+    const b = table.underlyings[right.underlying];
+    if (a !== undefined && b !== undefined) return { kind: "fallback", correlation: pairCorrelation(a, b, left.cluster === right.cluster, left.underlying === right.underlying), reason: "operator-reviewed-testnet-bootstrap" };
+  }
+  const ineligible = !left.measurementEnabled || !right.measurementEnabled || !left.fallbackEligible || !right.fallbackEligible;
+  return { kind: "quarantined", reason: direct?.reason ?? (ineligible ? "ineligible-source" : "insufficient-pair-quality") };
 }
 
 export interface FactorFit {
@@ -190,9 +220,11 @@ function usableCandles(candles: CandleRecord[], source: SourceEntry, window: Win
 }
 
 function calibrateImpl(input: CalibrationInput, storage: ResearchPersistence): CorrelationArtifact {
+  assertLoadedResearchNetworkProfile(input.profile);
   verifyManifest(input.root, input.manifest, storage);
   const dataManifestSha256 = sha256(canonicalJson(input.manifest));
   const sources = readSourceRegistryFact(input.root, input.manifest.sourceRegistrySha256, storage).registry.sources.sort((a, b) => lexical(a.underlying, b.underlying));
+  if (input.profile.sourceRegistrySha256 !== input.manifest.sourceRegistrySha256 || sha256(canonicalJson(input.profile.sources)) !== input.manifest.sourceRegistrySha256) throw new Error("calibration profile source registry identity mismatch");
   const derived = verifiedReturns(input, storage);
   if (derived.manifest.network !== sources[0]?.sourceNetwork || sources.some((source) => source.sourceNetwork !== derived.manifest.network)) throw new Error("derived manifest network mismatch");
   if (derived.rows.some((row) => !sources.some((source) => source.underlying === row.underlying))) throw new Error("derived return references unknown source");
@@ -249,22 +281,24 @@ function calibrateImpl(input: CalibrationInput, storage: ResearchPersistence): C
     let value = 0;
     let lambda = 0;
     let fallbackUsed = false;
-    if (ownReason) { status = "quarantined"; reason = ownReason; }
-    else if (estimate?.eligible) {
-      status = "direct"; reason = "quality-gates-passed";
-      lambda = shrinkLambda(estimate, shrinkTarget);
-      value = (1 - lambda) * estimate.correlation + lambda * shrinkTarget;
+    if (estimate?.eligible) lambda = shrinkLambda(estimate, shrinkTarget);
+    const directCorrelation = estimate?.eligible ? (1 - lambda) * estimate.correlation + lambda * shrinkTarget : null;
+    const decision = admitPair(a, b, { network: derived.manifest.network, eligible: estimate?.eligible === true, correlation: directCorrelation, reason: ownReason ?? "insufficient-pair-quality" }, input.profile);
+    status = decision.kind === "quarantined" ? "quarantined" : decision.kind;
+    reason = decision.reason;
+    if (decision.kind !== "quarantined") {
+      value = decision.correlation;
+      fallbackUsed = decision.kind === "fallback";
+      if (fallbackUsed) lambda = 0;
       admitted.add(key);
-    } else if (a.fallbackEligible && b.fallbackEligible) {
-      status = "fallback"; reason = "operator-reviewed-structured-fallback"; value = shrinkTarget; lambda = 1; fallbackUsed = true; admitted.add(key);
-    } else { status = "quarantined"; reason = "insufficient-pair-quality"; }
+    }
     baseTarget[left][right] = baseTarget[right][left] = value;
     pairEligibility.push({ pair: [a.underlying, b.underlying], status, reason });
     preliminary.set(key, { mode: sample.mode, observations: sample.rows.length, expected: sample.expected, coverage: sample.coverage, effectiveN: estimate?.effectiveN ?? null, raw: estimate?.correlation ?? null, shrinkTarget, shrinkLambda: lambda, fallbackUsed });
   }
   const admittedCount = new Map(sources.map((source) => [source.underlying, pairEligibility.filter((pair) => pair.status !== "quarantined" && pair.pair.includes(source.underlying)).length]));
   const quarantinedUnderlyings = sources.flatMap((source) => {
-    const reason = sourceReason.get(source.underlying) ?? (admittedCount.get(source.underlying) === 0 ? "no-admissible-pair" : null);
+    const reason = admittedCount.get(source.underlying) === 0 ? sourceReason.get(source.underlying) ?? "no-admissible-pair" : null;
     return reason ? [{ underlying: source.underlying, reason }] : [];
   });
   const eligibleUnderlyings = sources.map((source) => source.underlying).filter((underlying) => !quarantinedUnderlyings.some((entry) => entry.underlying === underlying));
@@ -293,9 +327,15 @@ function calibrateImpl(input: CalibrationInput, storage: ResearchPersistence): C
   })) as CorrelationArtifact["quality"]["diagnosticMatrices"];
   const dataAsOf = new Date(dataAsOfMs).toISOString();
   const modelVersion = `${dataAsOf.slice(0, 10)}.${dataManifestSha256.slice(0, 8)}`;
+  const directPairs = pairEligibility.flatMap(({ pair, status, reason }) => status === "direct" ? [{ pair, correlation: baseTarget[sources.findIndex((source) => source.underlying === pair[0])][sources.findIndex((source) => source.underlying === pair[1])], reason: reason as "testnet-quality-passed" }] : []);
+  const fallbackPairs = pairEligibility.flatMap(({ pair, status, reason }) => status === "fallback" ? [{ pair, correlation: baseTarget[sources.findIndex((source) => source.underlying === pair[0])][sources.findIndex((source) => source.underlying === pair[1])], reason: reason as "operator-reviewed-testnet-bootstrap" }] : []);
+  const quarantinedPairs = pairEligibility.flatMap(({ pair, status, reason }) => status === "quarantined" ? [{ pair, reason }] : []);
   const artifact: CorrelationArtifact = {
-    schemaVersion: 1, modelVersion, modelFamily: "hierarchical-gaussian-factor", createdAt: input.manifest.createdAt, dataAsOf,
-    dataManifestSha256, sourceRegistrySha256: input.manifest.sourceRegistrySha256,
+    schemaVersion: 2, network: input.profile.profile.network, profileSha256: input.profile.profileSha256,
+    modelVersion, modelFamily: "hierarchical-gaussian-factor", createdAt: input.manifest.createdAt, dataAsOf,
+    dataManifestSha256, sourceRegistrySha256: input.manifest.sourceRegistrySha256, marketRegistrySha256: input.profile.marketRegistrySha256,
+    deploymentRegistrySha256: input.profile.deploymentRegistrySha256, baselineCorrelationSha256: input.profile.baselineCorrelationSha256,
+    directPairs, fallbackPairs, quarantinedPairs,
     policy: { lookbackDays: 180, halfLifeDays: 45, diagnosticWindowsDays: [30, 90, 180], minHourly: 1000, minDaily: 90, minCoverage: 0.8, maxProjectionError: 0.10 },
     quality: {
       matrixOrder: sources.map((source) => source.underlying), eligibleUnderlyings, quarantinedUnderlyings, pairEligibility,

@@ -9,6 +9,7 @@ import { promoteCandidate, validateArtifact } from "../src/research/artifacts.js
 import type { ValidationReport } from "../src/research/replay.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
 import type { CorrelationArtifact, DataManifest, SourceEntry, SourceRegistry } from "../src/research/types.js";
+import type { LoadedResearchNetworkProfile } from "../src/research/network.js";
 
 const NOW = Date.parse("2026-08-28T18:00:00.000Z");
 const VALID = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-valid.json", import.meta.url), "utf8")) as CorrelationArtifact;
@@ -22,7 +23,7 @@ const source = (underlying: string, fallbackEligible = false): SourceEntry => ({
 
 function setup(artifactInput: CorrelationArtifact = VALID): {
   root: string; artifact: CorrelationArtifact; raw: string; candidate: string; manifest: DataManifest;
-  sources: SourceRegistry; markets: Map<string, MarketInfo>; validation: ValidationReport;
+  sources: SourceRegistry; markets: Map<string, MarketInfo>; profile: LoadedResearchNetworkProfile; validation: ValidationReport;
 } {
   const root = mkdtempSync(join(tmpdir(), "hype-artifact-"));
   const sources: SourceRegistry = { schemaVersion: 2, network: "testnet", sources: [source("BTC"), source("ETH")] };
@@ -32,7 +33,26 @@ function setup(artifactInput: CorrelationArtifact = VALID): {
   mkdirSync(join(root, "facts", "source-registries"), { recursive: true });
   writeFileSync(sourcePath, sourceBytes);
   const artifact = structuredClone(artifactInput);
+  artifact.schemaVersion = 2;
+  artifact.quality.pairEligibility = artifact.quality.pairEligibility.map((entry) => entry.status === "direct" ? { ...entry, reason: "testnet-quality-passed" } : entry);
+  artifact.directPairs = artifact.quality.pairEligibility.flatMap((entry) => entry.status === "direct" ? [{ pair: entry.pair, correlation: 0.05, reason: "testnet-quality-passed" as const }] : []);
+  artifact.fallbackPairs = [];
+  artifact.quarantinedPairs = artifact.quality.pairEligibility.flatMap((entry) => entry.status === "quarantined" ? [{ pair: entry.pair, reason: entry.reason }] : []);
   artifact.sourceRegistrySha256 = sourceRegistrySha256;
+  const profileValue = { schemaVersion: 1, network: "testnet", infoApiUrl: "https://api.hyperliquid-testnet.xyz/info", evmChainId: 998, sourceRegistryFile: "sources.json", marketRegistryFile: "markets.json", deploymentRegistryFile: "deployment.json", baselineCorrelationFile: "correlations.json" } as const;
+  const marketRegistryRaw = canonicalJson({ schemaVersion: 1, network: "testnet", markets: [] });
+  const deployment = { schemaVersion: 1, network: "testnet", evmChainId: 998, parlayVault: VAULT, parlayDeployBlock: "1" } as const;
+  const baselineCorrelationRaw = canonicalJson({ network: "testnet", fallbackReason: "operator-reviewed-testnet-bootstrap", clusters: artifact.clusters });
+  const profile: LoadedResearchNetworkProfile = {
+    profile: profileValue, profileSha256: sha256(canonicalJson(profileValue)), sources, sourceRegistrySha256,
+    marketRegistryRaw, marketRegistrySha256: sha256(marketRegistryRaw), deployment, deploymentRegistrySha256: sha256(canonicalJson(deployment)),
+    baselineCorrelationRaw, baselineCorrelationSha256: sha256(baselineCorrelationRaw),
+  };
+  artifact.network = "testnet";
+  artifact.profileSha256 = profile.profileSha256;
+  artifact.marketRegistrySha256 = profile.marketRegistrySha256;
+  artifact.deploymentRegistrySha256 = profile.deploymentRegistrySha256;
+  artifact.baselineCorrelationSha256 = profile.baselineCorrelationSha256;
   const manifest: DataManifest = {
     schemaVersion: 1,
     createdAt: artifact.createdAt,
@@ -61,11 +81,11 @@ function setup(artifactInput: CorrelationArtifact = VALID): {
   } satisfies ValidationReport;
   writeFileSync(join(root, "artifacts", "candidates", `${artifact.modelVersion}.validation.json`), `${canonicalJson(validation)}\n`);
   const markets = new Map<string, MarketInfo>([[VAULT, { vault: VAULT, coinYes: "+1", coinNo: "+2", underlying: "BTC", cluster: "crypto", direction: "up", title: "BTC", category: "crypto" }]]);
-  return { root, artifact, raw, candidate, manifest, sources, markets, validation };
+  return { root, artifact, raw, candidate, manifest, sources, markets, profile, validation };
 }
 
 function validate(fixture: ReturnType<typeof setup>, artifact = fixture.artifact, validation = fixture.validation): void {
-  validateArtifact(`${canonicalJson(artifact)}\n`, { manifest: fixture.manifest, sources: fixture.sources, markets: fixture.markets, validation }, NOW);
+  validateArtifact(`${canonicalJson(artifact)}\n`, { manifest: fixture.manifest, sources: fixture.sources, markets: fixture.markets, profile: fixture.profile, validation }, NOW);
 }
 
 test("artifact validation accepts the exact schema and immutable reference closure", () => {
@@ -73,6 +93,10 @@ test("artifact validation accepts the exact schema and immutable reference closu
   try {
     const result = validateArtifact(fixture.raw, fixture, NOW);
     assert.equal(result.artifact.modelVersion, "fixture");
+    assert.equal((result.artifact as unknown as Record<string, unknown>).schemaVersion, 2);
+    for (const key of ["network", "profileSha256", "marketRegistrySha256", "deploymentRegistrySha256", "baselineCorrelationSha256", "directPairs", "fallbackPairs", "quarantinedPairs"]) {
+      assert.notEqual((result.artifact as unknown as Record<string, unknown>)[key], undefined, key);
+    }
     assert.deepEqual([...result.model.eligibleUnderlyings], ["BTC", "ETH"]);
   } finally { rmSync(fixture.root, { recursive: true, force: true }); }
 });
@@ -81,7 +105,7 @@ test("artifact validation rejects malformed schema, model family, hashes, timest
   const fixture = setup();
   try {
     const cases: [string, (artifact: Record<string, any>) => void][] = [
-      ["schemaVersion", (a) => { a.schemaVersion = 2; }],
+      ["schemaVersion", (a) => { a.schemaVersion = 1; }],
       ["modelFamily", (a) => { a.modelFamily = "other"; }],
       ["dataManifestSha256", (a) => { a.dataManifestSha256 = "bad"; }],
       ["createdAt", (a) => { a.createdAt = "2026-08-28"; }],
@@ -104,6 +128,10 @@ test("artifact validation rejects manifest, source, market, and validation ident
     assert.throws(() => validate(fixture, manifestMismatch), /manifest hash mismatch/);
     const sourceMismatch = structuredClone(fixture.artifact); sourceMismatch.sourceRegistrySha256 = "c".repeat(64);
     assert.throws(() => validate(fixture, sourceMismatch), /source registry hash mismatch/);
+    for (const key of ["profileSha256", "marketRegistrySha256", "deploymentRegistrySha256", "baselineCorrelationSha256"] as const) {
+      const mismatch = structuredClone(fixture.artifact); mismatch[key] = "c".repeat(64);
+      assert.throws(() => validate(fixture, mismatch), /profile identity mismatch/);
+    }
     const badMarkets = new Map([...fixture.markets].map(([key, market]) => [key, { ...market, cluster: "equity" }]));
     assert.throws(() => validateArtifact(fixture.raw, { ...fixture, markets: badMarkets }, NOW), /cluster disagreement/);
     assert.throws(() => validate(fixture, fixture.artifact, { ...fixture.validation, candidateSha256: "d".repeat(64) }), /candidate hash mismatch/);
@@ -127,10 +155,31 @@ test("artifact validation requires exact eligible entries and every canonical pa
 test("artifact validation requires operator approval for fallback pairs and quarantine reasons", () => {
   const fixture = setup();
   try {
-    const fallback = structuredClone(fixture.artifact); fallback.quality.pairEligibility[0] = { pair: ["BTC", "ETH"], status: "fallback", reason: "operator-reviewed-structured-fallback" };
+    const fallback = structuredClone(fixture.artifact); fallback.quality.pairEligibility[0] = { pair: ["BTC", "ETH"], status: "fallback", reason: "operator-reviewed-testnet-bootstrap" }; fallback.directPairs = []; fallback.fallbackPairs = [{ pair: ["BTC", "ETH"], correlation: 0.05, reason: "operator-reviewed-testnet-bootstrap" }];
     assert.throws(() => validate(fixture, fallback), /fallback.*operator-approved/);
-    const quarantined = structuredClone(fixture.artifact); quarantined.quality.quarantinedUnderlyings = [{ underlying: "ETH", reason: "" }]; quarantined.quality.eligibleUnderlyings = ["BTC"]; delete quarantined.clusters.crypto.ETH; quarantined.quality.pairEligibility[0] = { pair: ["BTC", "ETH"], status: "quarantined", reason: "missing" };
+    const quarantined = structuredClone(fixture.artifact); quarantined.quality.quarantinedUnderlyings = [{ underlying: "ETH", reason: "" }]; quarantined.quality.eligibleUnderlyings = ["BTC"]; delete quarantined.clusters.crypto.ETH; quarantined.quality.pairEligibility[0] = { pair: ["BTC", "ETH"], status: "quarantined", reason: "missing" }; quarantined.directPairs = []; quarantined.quarantinedPairs = [{ pair: ["BTC", "ETH"], reason: "missing" }];
     assert.throws(() => validate(fixture, quarantined), /quarantine reason/);
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test("artifact validation keeps measurement eligibility independent from approved fallback eligibility", () => {
+  const fixture = setup();
+  try {
+    const sources = structuredClone(fixture.sources);
+    sources.sources = sources.sources.map((entry) => ({ ...entry, measurementEnabled: entry.underlying === "ETH" ? false : entry.measurementEnabled, fallbackEligible: true }));
+    const sourceRegistrySha256 = sha256(canonicalJson(sources));
+    const profile = { ...fixture.profile, sources, sourceRegistrySha256 };
+    const artifact = structuredClone(fixture.artifact);
+    artifact.sourceRegistrySha256 = sourceRegistrySha256;
+    artifact.quality.pairEligibility = [{ pair: ["BTC", "ETH"], status: "fallback", reason: "operator-reviewed-testnet-bootstrap" }];
+    artifact.directPairs = [];
+    artifact.fallbackPairs = [{ pair: ["BTC", "ETH"], correlation: 0.05, reason: "operator-reviewed-testnet-bootstrap" }];
+    const manifest = { ...fixture.manifest, sourceRegistrySha256 };
+    artifact.dataManifestSha256 = sha256(canonicalJson(manifest));
+    const raw = `${canonicalJson(artifact)}\n`;
+    const validation = { ...fixture.validation, inputManifestSha256: artifact.dataManifestSha256, candidateSha256: sha256(raw) };
+    const result = validateArtifact(raw, { manifest, sources, markets: fixture.markets, profile, validation }, NOW);
+    assert.deepEqual([...result.model.eligibleUnderlyings], ["BTC", "ETH"]);
   } finally { rmSync(fixture.root, { recursive: true, force: true }); }
 });
 
@@ -148,15 +197,16 @@ test("artifact validation repeats schedule-aware trailing freshness", () => {
     const manifest = { ...fixture.manifest, sourceRegistrySha256: sha256(canonicalJson(session)), createdAt: weekend.createdAt };
     weekend.sourceRegistrySha256 = manifest.sourceRegistrySha256;
     weekend.dataManifestSha256 = sha256(canonicalJson(manifest));
+    const profile = { ...fixture.profile, sources: session, sourceRegistrySha256: weekend.sourceRegistrySha256 };
     const validation = { ...fixture.validation, candidateSha256: sha256(`${canonicalJson(weekend)}\n`), inputManifestSha256: weekend.dataManifestSha256 };
-    assert.doesNotThrow(() => validateArtifact(`${canonicalJson(weekend)}\n`, { manifest, sources: session, markets: fixture.markets, validation }, now));
+    assert.doesNotThrow(() => validateArtifact(`${canonicalJson(weekend)}\n`, { manifest, sources: session, markets: fixture.markets, profile, validation }, now));
     weekend.quality.lastUsableObservationMs.BTC = Date.parse("2026-08-30T04:00:00.000Z");
     validation.candidateSha256 = sha256(`${canonicalJson(weekend)}\n`);
-    assert.throws(() => validateArtifact(`${canonicalJson(weekend)}\n`, { manifest, sources: session, markets: fixture.markets, validation }, now), /trailing freshness/);
+    assert.throws(() => validateArtifact(`${canonicalJson(weekend)}\n`, { manifest, sources: session, markets: fixture.markets, profile, validation }, now), /trailing freshness/);
     weekend.quality.lastUsableObservationMs.BTC = Date.parse("2026-08-30T11:00:00.000Z");
     weekend.quality.lastUsableObservationMs.ETH = Date.parse("2026-08-28T15:00:00.000Z");
     validation.candidateSha256 = sha256(`${canonicalJson(weekend)}\n`);
-    assert.throws(() => validateArtifact(`${canonicalJson(weekend)}\n`, { manifest, sources: session, markets: fixture.markets, validation }, now), /trailing freshness/);
+    assert.throws(() => validateArtifact(`${canonicalJson(weekend)}\n`, { manifest, sources: session, markets: fixture.markets, profile, validation }, now), /trailing freshness/);
   } finally { rmSync(fixture.root, { recursive: true, force: true }); }
 });
 
@@ -182,7 +232,7 @@ test("promotion refuses stale, rejected, unverified, and baseline-mismatched can
       } else if (kind === "baseline") {
         writeFileSync(join(fixture.root, fixture.validation.baselineSnapshotPath), "changed");
       }
-      assert.throws(() => promoteCandidate(fixture.root, fixture.candidate, fixture.sources, fixture.markets, NOW), new RegExp(kind === "stale" ? "30 hours" : kind, "i"));
+      assert.throws(() => promoteCandidate(fixture.root, fixture.candidate, fixture.profile, fixture.markets, NOW), new RegExp(kind === "stale" ? "30 hours" : kind, "i"));
     } finally { rmSync(fixture.root, { recursive: true, force: true }); }
   }
 });
@@ -193,9 +243,9 @@ test("promotion writes the exact candidate bytes and a forced pre-rename failure
     const artifacts = join(fixture.root, "artifacts");
     const champion = join(artifacts, "champion.json");
     writeFileSync(champion, "old champion\n");
-    assert.throws(() => promoteCandidate(fixture.root, fixture.candidate, fixture.sources, fixture.markets, NOW, { beforeRename: () => { throw new Error("forced"); } }), /forced/);
+    assert.throws(() => promoteCandidate(fixture.root, fixture.candidate, fixture.profile, fixture.markets, NOW, { beforeRename: () => { throw new Error("forced"); } }), /forced/);
     assert.equal(readFileSync(champion, "utf8"), "old champion\n");
-    const receipt = promoteCandidate(fixture.root, fixture.candidate, fixture.sources, fixture.markets, NOW);
+    const receipt = promoteCandidate(fixture.root, fixture.candidate, fixture.profile, fixture.markets, NOW);
     assert.equal(readFileSync(champion, "utf8"), fixture.raw);
     assert.equal(receipt.championSha256, sha256(fixture.raw));
     assert.equal(receipt.validationState, "Supported");

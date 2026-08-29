@@ -22,8 +22,9 @@ const input: ReportInput = {
     }, files: [],
   },
   candidate: {
-    schemaVersion: 1 as const, modelVersion: "beta-1", modelFamily: "hierarchical-gaussian-factor" as const,
-    createdAt: "2026-08-27T03:00:00.000Z", dataAsOf: "2026-08-27T00:00:00.000Z", dataManifestSha256: "a".repeat(64), sourceRegistrySha256: "c".repeat(64),
+    schemaVersion: 2 as const, network: "testnet" as const, profileSha256: "b".repeat(64), marketRegistrySha256: "d".repeat(64), deploymentRegistrySha256: "e".repeat(64), baselineCorrelationSha256: "f".repeat(64),
+    modelVersion: "beta-1", modelFamily: "hierarchical-gaussian-factor" as const,
+    createdAt: "2026-08-27T03:00:00.000Z", dataAsOf: "2026-08-27T00:00:00.000Z", dataManifestSha256: "a".repeat(64), sourceRegistrySha256: "c".repeat(64), directPairs: [], fallbackPairs: [], quarantinedPairs: [{ pair: ["<script>", "BTC"] as [string, string], reason: "coverage-below-80pct" }],
     policy: { lookbackDays: 180 as const, halfLifeDays: 45 as const, diagnosticWindowsDays: [30, 90, 180] as [30, 90, 180], minHourly: 1000, minDaily: 90, minCoverage: 0.8, maxProjectionError: 0.10 as const },
     quality: {
       matrixOrder: ["<script>", "BTC"], eligibleUnderlyings: ["BTC"], quarantinedUnderlyings: [{ underlying: "<script>", reason: "coverage-below-80pct" }],

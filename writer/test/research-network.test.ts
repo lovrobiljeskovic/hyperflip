@@ -4,6 +4,7 @@ import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadResearchNetworkProfile } from "../src/research/network.js";
+import { parseCorrelations } from "../src/correlation.js";
 
 const registry = new URL("../../registry/", import.meta.url);
 
@@ -28,6 +29,17 @@ test("loads the checked-in testnet profile with canonical registry identities", 
   const pretty = copyProfile();
   writeFileSync(pretty, `\n${readFileSync(pretty, "utf8").replace(/,/g, ",\n  ")}\n`);
   assert.equal(loadResearchNetworkProfile(pretty).profileSha256, loaded.profileSha256);
+});
+
+test("every fallback-eligible testnet source has explicit baseline loadings", () => {
+  const loaded = loadResearchNetworkProfile(copyProfile());
+  const table = parseCorrelations(loaded.baselineCorrelationRaw);
+  assert.deepEqual(
+    loaded.sources.sources.filter((source) => source.fallbackEligible && table.underlyings[source.underlying] === undefined).map((source) => source.underlying),
+    [],
+  );
+  assert.deepEqual(table.underlyings.SOL, { global: 0.2954828964376993, cluster: 0.9061475490756113, underlying: 0.2856334665564427 });
+  assert.deepEqual(table.underlyings.AAPL, { global: 0.2842853790390953, cluster: 0.7984628679278057, underlying: 0.5211898615716748 });
 });
 
 test("only testnet is enabled", () => {

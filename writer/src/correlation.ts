@@ -57,7 +57,7 @@ function parseLoadings(what: string, v: unknown): Loadings {
   };
   const l = { global: read("global"), cluster: read("cluster"), underlying: read("underlying") };
   const explained = l.global ** 2 + l.cluster ** 2 + l.underlying ** 2;
-  if (explained > MAX_EXPLAINED) {
+  if (explained > MAX_EXPLAINED + 1e-12) {
     throw new Error(`correlations: ${what} loadings explain ${explained.toFixed(3)} of variance, max ${MAX_EXPLAINED}`);
   }
   return l;

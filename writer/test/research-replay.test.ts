@@ -65,9 +65,11 @@ function candidateFor(series: ReplaySeries, modelVersion = "fixture", signedPsdT
   const matrixOrder = series.sources.filter((entry) => entry.measurementEnabled).map((entry) => entry.underlying);
   const clusters: CorrelationArtifact["clusters"] = {};
   for (const entry of series.sources) (clusters[entry.cluster] ??= {})[entry.underlying] = { global: 0.1, cluster: 0.2, underlying: 0.3, underlyingBasis: "structural-underlying" };
+  const directPairs = matrixOrder.flatMap((left, index) => matrixOrder.slice(index + 1).map((right) => ({ pair: [left, right] as [string, string], correlation: 0, reason: "testnet-quality-passed" as const })));
   return {
-    schemaVersion: 1, modelVersion, modelFamily: "hierarchical-gaussian-factor", createdAt: "2026-08-01T00:00:00.000Z", dataAsOf: "2026-07-31T00:00:00.000Z",
-    dataManifestSha256: series.manifestHash, sourceRegistrySha256: "d".repeat(64),
+    schemaVersion: 2, network: "testnet", profileSha256: "b".repeat(64), marketRegistrySha256: "c".repeat(64), deploymentRegistrySha256: "e".repeat(64), baselineCorrelationSha256: "f".repeat(64),
+    modelVersion, modelFamily: "hierarchical-gaussian-factor", createdAt: "2026-08-01T00:00:00.000Z", dataAsOf: "2026-07-31T00:00:00.000Z",
+    dataManifestSha256: series.manifestHash, sourceRegistrySha256: "d".repeat(64), directPairs, fallbackPairs: [], quarantinedPairs: [],
     policy: { lookbackDays: 180, halfLifeDays: 45, diagnosticWindowsDays: [30, 90, 180], minHourly: 1000, minDaily: 90, minCoverage: 0.8, maxProjectionError: 0.10 },
     quality: { matrixOrder, eligibleUnderlyings: matrixOrder, quarantinedUnderlyings: series.sources.filter((entry) => !entry.measurementEnabled).map((entry) => ({ underlying: entry.underlying, reason: "fixture-ineligible" })), pairEligibility: matrixOrder.flatMap((left, index) => matrixOrder.slice(index + 1).map((right) => ({ pair: [left, right] as [string, string], status: "direct" as const, reason: "fixture" }))), lastUsableObservationMs: Object.fromEntries(matrixOrder.map((underlying) => [underlying, ORIGIN - DAY])), pairDiagnostics: [], maxProjectionError: 0, highamProjectionDelta: 0, clippedNegativePairs: [], signedPsdTarget: signedPsdTarget ?? matrixOrder.map((_, row) => matrixOrder.map((__, column) => row === column ? 1 : 0)), diagnosticMatrices: { "30": [], "90": [], "180": [] } },
     validation: { status: "pending" },
