@@ -9,7 +9,8 @@ Type=oneshot
 User=hype
 WorkingDirectory=/opt/hype/writer
 EnvironmentFile=/opt/hype/research.env
-ExecStart=/usr/bin/flock -w 900 /opt/hype/research/state/job.lock /usr/bin/npm run research -- daily
+Environment=RESEARCH_REQUIRE_ANCHORED_FS=1
+ExecStart=/usr/bin/flock -w 900 /opt/hype/research/testnet/state/job.lock /usr/bin/npm run research -- daily
 Nice=15
 IOSchedulingClass=idle
 CPUQuota=50%

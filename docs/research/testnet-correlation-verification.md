@@ -22,6 +22,18 @@ The fixture-only `correlation beta acceptance` integration covers:
 - collector and calibrator failures stopping locally without writer or keeper control calls; and
 - execution of the research suite by the non-interactive repository gate.
 
+The Task 8 `research end-to-end` fixture additionally runs the no-network pipeline twice through:
+
+- profile load, 180-day testnet collection, returns-v2 derivation, calibration, and deterministic replay;
+- one direct pair, one exact reviewed static fallback, and one quarantined pair;
+- explicit fixture-only promotion, writer startup identity validation, durable quote journaling, and confirmed mint/void joining;
+- a failed immutable operation followed by success, with both the current success and retained failure rendered in the report;
+- writer persistence reopen, market-registry rotation with an unchanged stable testnet root marker, and an in-memory verified backup closure; and
+- a scan of every fixture path and decoded output for forbidden mainnet inputs and legacy returns paths.
+
+The synthetic `Supported` replay value is only a deterministic fixture precondition used to exercise
+promotion. It is not statistical acceptance and says nothing about production expected value.
+
 TDD evidence:
 
 - RED: exit 1; the repository-gate probe observed `forge fmt --check`, `forge build`, and `forge test`, but expected and did not observe `npm run research:check`.
@@ -65,6 +77,11 @@ Run after the first evidence table was written:
 
 All operational evidence below is **Pending separate approval**. No VPS files, systemd units, timers, buckets, champions, services, quotes, mints, resolutions, or shared testnet state were read or changed for this record.
 
+Local macOS runs use the compatibility persistence backend. They cannot prove the required Linux
+`/proc/self/fd` containment behavior; the shipped research services therefore set
+`RESEARCH_REQUIRE_ANCHORED_FS=1` and must be exercised on the approved Ubuntu target before any
+operational acceptance claim.
+
 | # | Criterion | State | Required approved evidence |
 |---|---|---|---|
 | 1 | At most 20 explicitly mapped underlyings | Pending separate approval | Installed source-registry hash and mapped count |
@@ -93,3 +110,22 @@ The following fields intentionally remain unpopulated until the corresponding sh
 - off-box object checksum.
 
 No automatic promotion, live t-copula/FHS writer integration, new statistics dependency, band-dispersion model, paid provider, managed database, public dashboard, QuickNode, mainnet bankroll change, or production action was added.
+
+## Permission-gated testnet verification runbook
+
+Do not execute this section without separate shared-state approval.
+
+1. Record the target commit; verify the selected testnet profile, chain ID 998, deployment registry,
+   `/opt/hype/research/testnet` root, and `RESEARCH_REQUIRE_ANCHORED_FS=1`. Abort on mismatch.
+2. On Ubuntu, run the persistence suite with anchoring required and retain the real intermediate- and
+   destination-swap results. A macOS pass is not a substitute.
+3. Run collect, derive, calibrate, replay, and report with only the selected profile; record immutable
+   paths, hashes, boundary counters, exclusions, pair states, validation, runtime, and peak RSS.
+4. Inspect the evidence before any manual promotion. If separately approved, promote the exact
+   candidate, restart only the writer, then record writer and keeper health independently.
+5. If separately approved, obtain one testnet quote, mint it, join its resolution or void, and verify
+   quote/digest/event identity. Never send private keys, invite codes, or raw signatures to the report.
+6. Verify writer reopen, nightly market rotation, and off-box backup preserve the root marker,
+   champion, immutable history, retained failures, and backup object checksum.
+7. Re-run every Task 8 local gate at the evidence commit. Record raw failures; do not claim testnet
+   operational acceptance until every local and Ubuntu criterion is green.

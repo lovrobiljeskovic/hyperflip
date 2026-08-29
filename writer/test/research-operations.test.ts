@@ -133,16 +133,16 @@ test("research operations definitions are isolated, bounded, and scheduled indep
   };
   assertService("hype-research-collector.service", {
     Type: ["oneshot"], User: ["hype"], WorkingDirectory: ["/opt/hype/writer"], EnvironmentFile: ["/opt/hype/research.env"],
-    ExecStart: ["/usr/bin/flock -w 300 /opt/hype/research/state/job.lock /usr/bin/npm run research -- collect"], Nice: ["10"], IOSchedulingClass: ["idle"], CPUQuota: ["25%"], MemoryMax: ["512M"], TimeoutStartSec: ["15m"],
+    Environment: ["RESEARCH_REQUIRE_ANCHORED_FS=1"], ExecStart: ["/usr/bin/flock -w 300 /opt/hype/research/testnet/state/job.lock /usr/bin/npm run research -- collect"], Nice: ["10"], IOSchedulingClass: ["idle"], CPUQuota: ["25%"], MemoryMax: ["512M"], TimeoutStartSec: ["15m"],
   });
   assertService("hype-research-daily.service", {
     Type: ["oneshot"], User: ["hype"], WorkingDirectory: ["/opt/hype/writer"], EnvironmentFile: ["/opt/hype/research.env"],
-    ExecStart: ["/usr/bin/flock -w 900 /opt/hype/research/state/job.lock /usr/bin/npm run research -- daily"], Nice: ["15"], IOSchedulingClass: ["idle"], CPUQuota: ["50%"], MemoryMax: ["1G"], TimeoutStartSec: ["2h"],
+    Environment: ["RESEARCH_REQUIRE_ANCHORED_FS=1"], ExecStart: ["/usr/bin/flock -w 900 /opt/hype/research/testnet/state/job.lock /usr/bin/npm run research -- daily"], Nice: ["15"], IOSchedulingClass: ["idle"], CPUQuota: ["50%"], MemoryMax: ["1G"], TimeoutStartSec: ["2h"],
   });
   assert.deepEqual(parse("hype-research-daily.service").Unit.After, ["network-online.target", "hype-research-collector.service"]);
   assertService("hype-research-backup.service", {
     Type: ["oneshot"], User: ["hype"], WorkingDirectory: ["/opt/hype/writer"], EnvironmentFile: ["/opt/hype/research.env", "/opt/hype/research-backup.env"],
-    ExecStart: ["/usr/bin/flock -w 7200 /opt/hype/research/state/job.lock /usr/bin/npm run research -- backup"], Nice: ["15"], IOSchedulingClass: ["idle"], CPUQuota: ["25%"], MemoryMax: ["512M"], TimeoutStartSec: ["4h"],
+    Environment: ["RESEARCH_REQUIRE_ANCHORED_FS=1"], ExecStart: ["/usr/bin/flock -w 7200 /opt/hype/research/testnet/state/job.lock /usr/bin/npm run research -- backup"], Nice: ["15"], IOSchedulingClass: ["idle"], CPUQuota: ["25%"], MemoryMax: ["512M"], TimeoutStartSec: ["4h"],
   });
   assert.deepEqual(parse("hype-research-backup.service").Unit.ConditionPathExists, ["/opt/hype/research-backup.env"]);
   assert.deepEqual(parse("hype-research-backup.service").Unit.After, ["network-online.target", "hype-research-daily.service"]);

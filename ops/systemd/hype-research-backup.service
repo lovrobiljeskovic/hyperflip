@@ -11,7 +11,8 @@ User=hype
 WorkingDirectory=/opt/hype/writer
 EnvironmentFile=/opt/hype/research.env
 EnvironmentFile=/opt/hype/research-backup.env
-ExecStart=/usr/bin/flock -w 7200 /opt/hype/research/state/job.lock /usr/bin/npm run research -- backup
+Environment=RESEARCH_REQUIRE_ANCHORED_FS=1
+ExecStart=/usr/bin/flock -w 7200 /opt/hype/research/testnet/state/job.lock /usr/bin/npm run research -- backup
 Nice=15
 IOSchedulingClass=idle
 CPUQuota=25%

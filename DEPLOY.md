@@ -41,7 +41,7 @@ free. Realistic usage here is a rounding error against that allowance.
 ```
 /opt/hype/
   .env                    # filtered secrets, mode 600, owned by hype
-  research/               # preserved research facts, artifacts, journals, state, reports
+  research/testnet/       # preserved testnet research facts, artifacts, journals, state, reports
   research.env            # public/read-only research inputs only, mode 600
   research-backup.env     # least-privilege backup credentials only, mode 600
   keeper/                 # rsynced from repo keeper/
@@ -205,22 +205,26 @@ market followed by `keeper started { vaults: N, pollIntervalMs: 5000 }`.
 
 ## Isolated correlation research operations
 
-Research data lives only below `/opt/hype/research`; writer/repo rsync destinations must never be
-changed to that directory. Before separately approving unit installation, create the private state
-directory without replacing existing research data:
+Research data for the only enabled profile lives below `/opt/hype/research/testnet`; writer/repo
+rsync destinations must never be changed to `/opt/hype/research` or any child. Before separately
+approving unit installation, create the private state directory without replacing existing research
+data:
 
 ```bash
-ssh -o BatchMode=yes root@91.99.94.25 'install -d -o hype -g hype -m 0700 /opt/hype/research /opt/hype/research/state'
+ssh -o BatchMode=yes root@91.99.94.25 'install -d -o hype -g hype -m 0700 /opt/hype/research /opt/hype/research/testnet /opt/hype/research/testnet/state'
 ```
 
 The immutable inputs are under `facts/source-registries/`, `facts/baselines/`, `raw/`, and
 `manifests/`. Derived returns, candidates, validation sidecars, promotion receipts, journals,
 operator state, and HTML evidence are under `derived/`, `artifacts/`, `journal/`, `state/`, and
-`reports/`. Never delete or replace this tree during a deploy. Verify it around rotation:
+`reports/`, all relative to `/opt/hype/research/testnet`. Never delete or replace this tree during
+a deploy. Source, market, and baseline content rotations create content-addressed epochs inside the
+same root. A network, profile declaration, chain, or deployment-registry change requires a fresh
+root; do not edit or reuse `network-profile.json`. Verify the testnet root around rotation:
 
 ```bash
-ssh -o BatchMode=yes root@91.99.94.25 'test -d /opt/hype/research && stat -c "%U:%G %a %n" /opt/hype/research /opt/hype/research/state && test -r /opt/hype/registry/correlation-sources.json'
-ssh -o BatchMode=yes root@91.99.94.25 'systemctl start rotate.service && test -d /opt/hype/research && test -r /opt/hype/registry/correlation-sources.json'
+ssh -o BatchMode=yes root@91.99.94.25 'test -d /opt/hype/research/testnet && stat -c "%U:%G %a %n" /opt/hype/research/testnet /opt/hype/research/testnet/state && test -r /opt/hype/registry/correlation-sources.json'
+ssh -o BatchMode=yes root@91.99.94.25 'systemctl start rotate.service && test -d /opt/hype/research/testnet && test -r /opt/hype/research/testnet/network-profile.json && test -r /opt/hype/registry/correlation-sources.json'
 ```
 
 `tools/rotate-markets.mjs` reads and parses `correlation-sources.json` before calling
@@ -233,9 +237,17 @@ ssh -o BatchMode=yes root@91.99.94.25 'chown hype:hype /opt/hype/registry/correl
 ```
 
 `/opt/hype/research.env` is owned by `hype:hype`, mode `0600`, and contains only these public or
-read-only inputs: `RESEARCH_ROOT`, `RESEARCH_NETWORK_PROFILE_FILE`, `WRITER_RPC`, and
-`RESEARCH_REPLAY_SEED`. The selected profile
-is the sole source of the Info URL plus source, market, deployment, and baseline registries. Collection publishes the
+read-only inputs (the profile path is relative to the units' `/opt/hype/writer` working directory):
+
+```dotenv
+RESEARCH_NETWORK_PROFILE_FILE=../registry/research-network.testnet.json
+RESEARCH_ROOT=/opt/hype/research/testnet
+WRITER_RPC=<approved-testnet-read-endpoint>
+RESEARCH_REPLAY_SEED=<reviewed-public-seed>
+```
+
+The selected profile is the sole source of the Info URL plus source, market, deployment, and
+baseline registries. Collection publishes the
 mapping-epoch-specific rolling closure through `manifests/current.json`; daily derives its fixed
 180-day window and as-of from that pointer, then passes the derived manifest and candidate paths
 between steps without mutable environment pins. The file contains no signer, poker,
@@ -247,8 +259,10 @@ invite, waitlist, deployer, or keeper secret. `/opt/hype/research-backup.env` is
 The bounded units are `hype-research-collector.{service,timer}` (hourly),
 `hype-research-daily.{service,timer}` (01:15 UTC), and
 `hype-research-backup.{service,timer}` (03:30 UTC). Unit installation and enablement require a
-separate approval. After that approval, install non-interactively and verify on Ubuntu before
-enabling:
+separate approval. Every service sets `RESEARCH_REQUIRE_ANCHORED_FS=1`; on Linux it must use the
+`/proc/self/fd` anchored backend or fail closed. macOS fixture runs use compatibility storage and
+cannot satisfy Linux operational containment acceptance. After approval, install non-interactively
+and verify on Ubuntu before enabling:
 
 ```bash
 scp -o BatchMode=yes ops/systemd/hype-research-* root@91.99.94.25:/tmp/
@@ -273,8 +287,16 @@ Health checks:
 ```bash
 ssh -o BatchMode=yes root@91.99.94.25 'systemctl list-timers --all hype-research-* --no-pager && systemctl status hype-research-collector.service hype-research-daily.service hype-research-backup.service --no-pager'
 ssh -o BatchMode=yes root@91.99.94.25 'journalctl -u hype-research-collector.service -u hype-research-daily.service -u hype-research-backup.service -n 100 --no-pager'
-ssh -o BatchMode=yes root@91.99.94.25 'test -s /opt/hype/research/state/backup.json && find /opt/hype/research/reports -type f -name "*.html" -print'
+ssh -o BatchMode=yes root@91.99.94.25 'test -s /opt/hype/research/testnet/state/backup.json && find /opt/hype/research/testnet/reports -type f -name "*.html" -print'
 ```
+
+## Future mainnet checklist (non-executable)
+
+Mainnet remains disabled. Before any future enablement, separately review and add a mainnet profile
+and all referenced registries, enable that network in code, allocate a fresh research root, deploy
+fresh contracts, collect fresh network-specific evidence, validate the complete immutable closure,
+and only then consider an explicit manual promotion. This is a design boundary, not authorization;
+no mainnet values or executable commands belong in the current testnet runbook.
 
 ## Recovering the settlement cache
 
