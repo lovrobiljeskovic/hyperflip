@@ -293,10 +293,12 @@ ssh -o BatchMode=yes root@91.99.94.25 'test -s /opt/hype/research/testnet/state/
 ## Future mainnet checklist (non-executable)
 
 Mainnet remains disabled. Before any future enablement, separately review and add a mainnet profile
-and all referenced registries, enable that network in code, allocate a fresh research root, deploy
-fresh contracts, collect fresh network-specific evidence, validate the complete immutable closure,
-and only then consider an explicit manual promotion. This is a design boundary, not authorization;
-no mainnet values or executable commands belong in the current testnet runbook.
+and all referenced registries, land a reviewed change adding mainnet to the single
+enabled-research-network allowlist, allocate a fresh mainnet research root, deploy fresh contracts,
+collect fresh mainnet evidence, validate the complete immutable closure, and promote only a fresh
+mainnet champion produced and validated from that fresh mainnet root and evidence. This is a design
+boundary, not authorization; no mainnet values or executable commands belong in the current testnet
+runbook.
 
 ## Recovering the settlement cache
 

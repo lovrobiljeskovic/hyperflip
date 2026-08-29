@@ -163,3 +163,11 @@ test("deployment rsync never excludes the writer research implementation", () =>
   const deploy = readFileSync(resolve(cwd, "..", "DEPLOY.md"), "utf8");
   assert.doesNotMatch(deploy, /--exclude(?:=|\s+)['\"]?research(?:['\"]?|\/)(?:\s|\\|$)/);
 });
+
+test("future mainnet checklist requires an allowlist change and a fresh-root champion", () => {
+  const deploy = readFileSync(resolve(cwd, "..", "DEPLOY.md"), "utf8");
+  const checklist = deploy.split("## Future mainnet checklist (non-executable)")[1]?.split("\n## ")[0] ?? "";
+  const normalized = checklist.replace(/\s+/g, " ");
+  assert.match(normalized, /reviewed change adding mainnet to the single enabled-research-network allowlist/);
+  assert.match(normalized, /promote only a fresh mainnet champion produced and validated from that fresh mainnet root and evidence/);
+});
