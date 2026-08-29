@@ -10,6 +10,8 @@ import { jointProbWad, parseCorrelations } from "../src/correlation.js";
 import { WAD } from "../src/pure.js";
 import type { WriterConfig } from "../src/config.js";
 import { quoteDigest } from "../src/quotes.js";
+import { loadResearchNetworkProfile } from "../src/research/network.js";
+import type { QuoteDecision } from "../src/research/types.js";
 
 const V1 = "0x1111111111111111111111111111111111111111" as Address;
 const V2 = "0x2222222222222222222222222222222222222222" as Address;
@@ -26,12 +28,16 @@ const SP500_VAULT = "0x8888888888888888888888888888888888888888" as const;
 const BAND_VAULT = "0x9999999999999999999999999999999999999999" as Address;
 
 const CORRELATIONS = parseCorrelations(readFileSync(new URL("../../registry/correlations.json", import.meta.url), "utf8"));
+const RESEARCH_PROFILE = loadResearchNetworkProfile(new URL("../../registry/research-network.testnet.json", import.meta.url).pathname);
 const UNDERLYINGS = ["BTC", "ETH", "NVDA", "SP500", "GOLD"];
 const pair = (a: string, b: string) => [a, b].sort().join(":");
 const MODEL: WriterConfig["model"] = {
+  artifactKind: "champion", network: "testnet", profileSha256: RESEARCH_PROFILE.profileSha256,
   version: "fixture", dataAsOf: "2026-08-28T00:00:00.000Z", dataManifestSha256: "a".repeat(64), sourceRegistrySha256: "b".repeat(64),
+  marketRegistrySha256: RESEARCH_PROFILE.marketRegistrySha256, deploymentRegistrySha256: RESEARCH_PROFILE.deploymentRegistrySha256,
+  baselineCorrelationSha256: RESEARCH_PROFILE.baselineCorrelationSha256, artifactSha256: "d".repeat(64), validationSha256: "e".repeat(64), validationState: "Supported", identityFailureReason: null,
   ageMs: 0, multiAssetEnabled: true, eligibleUnderlyings: new Set(UNDERLYINGS), quarantinedUnderlyings: new Map(), fallbackEligible: new Set(),
-  pairEligibility: new Map(UNDERLYINGS.flatMap((left, index) => UNDERLYINGS.slice(index + 1).map((right) => [pair(left, right), { status: "direct" as const, reason: "fixture" }]))),
+  pairEligibility: new Map(UNDERLYINGS.flatMap((left, index) => UNDERLYINGS.slice(index + 1).map((right) => [pair(left, right), { status: "direct" as const, reason: "fixture", correlation: 0.1 }]))),
 };
 
 const FIXTURE_MARKETS = new Map(
@@ -62,7 +68,7 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     rpcUrl: "", parlayVault: V1, writerAddress: TAKER,
     quoteSignerKey: `0x${"11".repeat(32)}` as `0x${string}`,
     pokerKey: `0x${"22".repeat(32)}` as `0x${string}`,
-    infoApiUrl: "", researchRoot: "/tmp", port: 0, edgeBps: 0n, minPremiumBps: 100n, minLegs: 2,
+    infoApiUrl: "", researchRoot: "/tmp", researchProfile: RESEARCH_PROFILE, researchPersistence: {} as WriterConfig["researchPersistence"], port: 0, edgeBps: 0n, minPremiumBps: 100n, minLegs: 2,
     maxStake: 10_000_000n, perMarketCap: 1_000_000_000n, perClusterCap: 1_000_000_000n,
     perCodeReservedCap: 1_000_000_000n,
     rhoBandPct: 0.2, correlations: CORRELATIONS, model: MODEL, legEdgeBps: 0n, quoteTtlMs: 30_000,
@@ -287,7 +293,7 @@ test("correlation eligibility rejects stale, missing, ineligible, quarantined, a
     { ...MODEL, eligibleUnderlyings: new Set(["BTC"]) },
     { ...MODEL, quarantinedUnderlyings: new Map([["ETH", "stale"]]) },
     { ...MODEL, pairEligibility: new Map() },
-    { ...MODEL, pairEligibility: new Map([[pair("BTC", "ETH"), { status: "fallback", reason: "fixture" }]]) },
+    { ...MODEL, pairEligibility: new Map([[pair("BTC", "ETH"), { status: "fallback", reason: "fixture", correlation: 0.1 }]]) },
   ];
   for (const model of cases) {
     assert.deepEqual(validateQuoteRequest(goodBody, cfg({ model }), 1_000_000), { ok: false, status: 400, reason: "correlation-unavailable" });
@@ -307,7 +313,7 @@ test("correlation eligibility admits only explicit operator-approved fallback pa
   const model = {
     ...MODEL,
     fallbackEligible: new Set(["BTC", "ETH"]),
-    pairEligibility: new Map([[pair("BTC", "ETH"), { status: "fallback" as const, reason: "operator-reviewed" }]]),
+    pairEligibility: new Map([[pair("BTC", "ETH"), { status: "fallback" as const, reason: "operator-reviewed", correlation: 0.1 }]]),
   };
   assert.equal(validateQuoteRequest(goodBody, cfg({ model }), 1_000_000).ok, true);
 });
@@ -423,6 +429,20 @@ test("journal: records the returned quote identity and economics before returnin
     maxPayout: response.quote.maxPayout,
   });
   assert.equal(typeof (recorded as { quoteDigest?: unknown }).quoteDigest, "string");
+  const decision = recorded as QuoteDecision;
+  assert.deepEqual({
+    artifactKind: decision.artifactKind,
+    artifactSha256: decision.artifactSha256,
+    validationSha256: decision.validationSha256,
+    validationState: decision.validationState,
+    pairDecisions: decision.pairDecisions,
+  }, {
+    artifactKind: "champion",
+    artifactSha256: MODEL.artifactSha256,
+    validationSha256: MODEL.validationSha256,
+    validationState: "Supported",
+    pairDecisions: [{ pair: ["BTC", "ETH"], status: "direct", reason: "fixture", correlation: 0.1 }],
+  });
   assert.equal(
     (recorded as { quoteDigest: string }).quoteDigest,
     quoteDigest(d.chainId, d.cfg.parlayVault, {

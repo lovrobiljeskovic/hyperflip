@@ -36,7 +36,7 @@ const input: ReportInput = {
     }, validation: { status: "pending" as const }, clusters: {},
   },
   validation: {
-    schemaVersion: 1 as const, modelVersion: "beta-1", candidateSha256: "d".repeat(64), inputManifestSha256: "a".repeat(64), baselineSha256: "e".repeat(64), baselineSnapshotPath: "facts/baselines/e.json",
+    schemaVersion: 2 as const, network: "testnet" as const, profileSha256: "b".repeat(64), modelVersion: "beta-1", candidateSha256: "d".repeat(64), inputManifestSha256: "a".repeat(64), sourceRegistrySha256: "c".repeat(64), marketRegistrySha256: "d".repeat(64), deploymentRegistrySha256: "e".repeat(64), baselineCorrelationSha256: "f".repeat(64), baselineSha256: "f".repeat(64), baselineSnapshotPath: "facts/baselines/f.json",
     seed: "fixture", drawCount: 20_000, originStrideHours: 24 as const, policy: { maxProjectionError: 0.10 as const, bootstrapBlockHours: 96 as const, bootstrapSamples: 2_000 as const },
     ticketCounts: {}, selectedTicketKeys: [], modelScores: {
       independence: score, "static-hierarchical-gaussian": score, "measured-hierarchical-gaussian": score, "signed-t-copula": score, "filtered-historical-simulation": score,

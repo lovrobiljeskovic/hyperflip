@@ -1,13 +1,15 @@
 import { config as loadDotenv } from "dotenv";
-import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isAddress, type Address } from "viem";
-import type { CorrelationTable } from "./correlation.js";
+import { parseCorrelations, type CorrelationTable } from "./correlation.js";
 import { parseMarkets, type MarketInfo } from "./markets.js";
 import { BPS, parseDecimalToUnits } from "./pure.js";
-import { parseCorrelationArtifact, type ArtifactModelMetadata } from "./research/artifacts.js";
-import { parseSourceRegistry } from "./research/types.js";
+import { assertValidationArtifactIdentity, parseCorrelationArtifact, type ArtifactModelMetadata } from "./research/artifacts.js";
+import { bindResearchRootIdentity, loadResearchNetworkProfile, type LoadedResearchNetworkProfile } from "./research/network.js";
+import { openResearchPersistence, type ResearchPersistence } from "./research/persistence.js";
+import { sha256 } from "./research/store.js";
+import type { ValidationReport } from "./research/replay.js";
 
 // .env lives at the repo root, one level above writer/ — same pattern as keeper/config.ts.
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -25,6 +27,8 @@ export interface WriterConfig {
   pokerKey: `0x${string}`;
   infoApiUrl: string;
   researchRoot: string;
+  researchProfile: LoadedResearchNetworkProfile;
+  researchPersistence: ResearchPersistence;
   port: number;
   edgeBps: bigint;
   minPremiumBps: bigint;
@@ -62,8 +66,8 @@ export interface WriterConfig {
    * rho and quotes the house-favorable end, so the house is paid for the fact
    * that the loadings table is hand-set rather than measured. */
   rhoBandPct: number;
-  /** Factor loadings, loaded from CORRELATION_ARTIFACT_FILE. Writer-only — deliberately
-   * not part of markets.json, which GET /markets serves verbatim. */
+  /** Factor loadings from the profile-bound champion (or the profile baseline
+   * for same-underlying-only degraded service). Writer-only. */
   correlations: CorrelationTable;
   /** Validated champion metadata and source/pair admission state. */
   model: ArtifactModelMetadata;
@@ -158,12 +162,80 @@ export function syncedPerCodeReservedCap(
   return envWasSet ? current : defaultPerCodeReservedCap(maxStake, chainMinPremiumBps);
 }
 
+export function assertProfileChain(profile: LoadedResearchNetworkProfile, actualChainId: number): void {
+  if (actualChainId !== profile.profile.evmChainId) throw new Error(`research profile expected chain ${profile.profile.evmChainId}, got ${actualChainId}`);
+}
+
+export function profileDeploymentMismatchReason(profile: LoadedResearchNetworkProfile, vault: string, deployBlock: bigint): string | null {
+  if (vault.toLowerCase() !== profile.deployment.parlayVault.toLowerCase()) return `research profile expected vault ${profile.deployment.parlayVault}, got ${vault}`;
+  const expectedBlock = BigInt(profile.deployment.parlayDeployBlock);
+  if (deployBlock !== expectedBlock) return `research profile expected deploy block ${expectedBlock}, got ${deployBlock}`;
+  return null;
+}
+
+export function writerProfileIdentityFailure(config: Pick<WriterConfig, "researchProfile" | "parlayVault" | "deployBlock" | "model">, actualChainId: number): string | null {
+  try { assertProfileChain(config.researchProfile, actualChainId); } catch (error) { return (error as Error).message; }
+  const deployment = profileDeploymentMismatchReason(config.researchProfile, config.parlayVault, config.deployBlock);
+  if (deployment) return deployment;
+  const profile = config.researchProfile;
+  const model = config.model;
+  if (model.identityFailureReason) return model.identityFailureReason;
+  if (model.network !== profile.profile.network) return `research champion expected network ${profile.profile.network}, got ${model.network}`;
+  for (const [label, actual, expected] of [
+    ["profile", model.profileSha256, profile.profileSha256],
+    ["source registry", model.sourceRegistrySha256, profile.sourceRegistrySha256],
+    ["market registry", model.marketRegistrySha256, profile.marketRegistrySha256],
+    ["deployment registry", model.deploymentRegistrySha256, profile.deploymentRegistrySha256],
+    ["baseline correlation", model.baselineCorrelationSha256, profile.baselineCorrelationSha256],
+  ]) if (actual !== expected) return `research champion ${label} hash mismatch`;
+  if (model.validationState !== "Supported" || !model.validationSha256) return "research champion has no Supported validation";
+  return null;
+}
+
+export function applyWriterProfileIdentity(config: Pick<WriterConfig, "researchProfile" | "parlayVault" | "deployBlock" | "model">, actualChainId: number): string | null {
+  const reason = writerProfileIdentityFailure(config, actualChainId);
+  config.model.identityFailureReason = reason;
+  if (reason) config.model.multiAssetEnabled = false;
+  return reason;
+}
+
 export function loadConfig(nowMs = Date.now()): WriterConfig {
-  const registryJson = readFileSync(path.resolve(here, "../..", requireEnv("MARKETS_FILE")), "utf8");
+  const researchRoot = path.resolve(here, "../..", requireEnv("RESEARCH_ROOT"));
+  const researchProfile = loadResearchNetworkProfile(path.resolve(here, "../..", requireEnv("RESEARCH_NETWORK_PROFILE_FILE")));
+  const storage = openResearchPersistence(researchRoot);
+  bindResearchRootIdentity(storage, researchProfile);
+  const registryJson = researchProfile.marketRegistryRaw;
   const markets = parseMarkets(registryJson);
-  const sources = parseSourceRegistry(readFileSync(path.resolve(here, "../..", process.env.CORRELATION_SOURCES_FILE ?? "registry/correlation-sources.json"), "utf8"));
-  const champion = parseCorrelationArtifact(readFileSync(path.resolve(here, "../..", requireEnv("CORRELATION_ARTIFACT_FILE")), "utf8"), nowMs, sources, markets);
-  const { table: correlations, model } = champion;
+  let correlations: CorrelationTable;
+  let model: ArtifactModelMetadata;
+  try {
+    const championRaw = storage.readText("artifacts/champion.json");
+    const champion = parseCorrelationArtifact(championRaw, nowMs, researchProfile.sources, markets, researchProfile);
+    const validationBytes = storage.readText(`artifacts/candidates/${champion.artifact.modelVersion}.validation.json`);
+    const validation = JSON.parse(validationBytes) as ValidationReport;
+    assertValidationArtifactIdentity(championRaw, champion.artifact, validation, researchProfile);
+    if (validation.decision !== "Supported") throw new Error("artifact: writer requires Supported validation");
+    ({ table: correlations, model } = champion);
+    model.validationSha256 = sha256(validationBytes);
+    model.validationState = "Supported";
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    const profileIdentityFailure = (error as NodeJS.ErrnoException).code === "ENOENT"
+      || /network|profile identity|registry hash mismatch|validation.*mismatch|requires Supported validation/.test(reason);
+    if (!profileIdentityFailure) throw error;
+    correlations = parseCorrelations(researchProfile.baselineCorrelationRaw);
+    model = {
+      artifactKind: "profile-baseline", network: "testnet", profileSha256: researchProfile.profileSha256,
+      version: "profile-baseline", dataAsOf: new Date(0).toISOString(), dataManifestSha256: researchProfile.baselineCorrelationSha256,
+      sourceRegistrySha256: researchProfile.sourceRegistrySha256, marketRegistrySha256: researchProfile.marketRegistrySha256,
+      deploymentRegistrySha256: researchProfile.deploymentRegistrySha256, baselineCorrelationSha256: researchProfile.baselineCorrelationSha256,
+      artifactSha256: researchProfile.baselineCorrelationSha256, validationSha256: null, validationState: "Unavailable",
+      identityFailureReason: `research champion unavailable: ${reason}`, ageMs: Number.POSITIVE_INFINITY, multiAssetEnabled: false,
+      eligibleUnderlyings: new Set(), quarantinedUnderlyings: new Map(),
+      fallbackEligible: new Set(researchProfile.sources.sources.filter((source) => source.fallbackEligible).map((source) => source.underlying)),
+      pairEligibility: new Map(),
+    };
+  }
   // Boot-time signal, not per-request noise: the shipped table's shrunk
   // clusters don't change quote to quote, so this fires once here rather than
   // from the pure parse function on every call.
@@ -217,8 +289,10 @@ export function loadConfig(nowMs = Date.now()): WriterConfig {
     writerAddress: requireAddress("WRITER_ADDRESS"),
     quoteSignerKey: requireKey("QUOTE_SIGNER_PRIVATE_KEY"),
     pokerKey: requireKey("POKER_PRIVATE_KEY"),
-    infoApiUrl: process.env.INFO_API_URL ?? "https://api.hyperliquid-testnet.xyz/info",
-    researchRoot: path.resolve(here, "../..", requireEnv("RESEARCH_ROOT")),
+    infoApiUrl: researchProfile.profile.infoApiUrl,
+    researchRoot,
+    researchProfile,
+    researchPersistence: storage,
     port: Number(process.env.WRITER_PORT ?? 8787),
     edgeBps: BigInt(process.env.EDGE_BPS ?? 500),
     minPremiumBps,

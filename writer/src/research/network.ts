@@ -4,6 +4,7 @@ import { parseCorrelations } from "../correlation.js";
 import { parseMarkets } from "../markets.js";
 import { canonicalJson, sha256 } from "./store.js";
 import { assertResearchNetworkEnabled, parseSourceRegistry, type ResearchNetwork, type SourceRegistry } from "./types.js";
+import type { ResearchPersistence } from "./persistence.js";
 
 export type { ResearchNetwork } from "./types.js";
 
@@ -37,6 +38,37 @@ export interface LoadedResearchNetworkProfile {
   deploymentRegistrySha256: string;
   baselineCorrelationRaw: string;
   baselineCorrelationSha256: string;
+}
+
+export interface ResearchRootIdentity {
+  schemaVersion: 1;
+  network: ResearchNetwork;
+  profileSha256: string;
+}
+
+export const RESEARCH_ROOT_IDENTITY_FILE = "network-profile.json";
+const ROOT_DATA_DIRECTORIES = ["facts", "raw", "manifests", "derived", "artifacts", "journal", "reports", "state", "quarantine"];
+
+export function researchRootIdentity(profile: LoadedResearchNetworkProfile): ResearchRootIdentity {
+  return { schemaVersion: 1, network: profile.profile.network, profileSha256: profile.profileSha256 };
+}
+
+export function assertResearchRootIdentity(storage: ResearchPersistence, expected: Pick<ResearchRootIdentity, "network" | "profileSha256">): void {
+  if (!storage.exists(RESEARCH_ROOT_IDENTITY_FILE)) throw new Error("research root network/profile marker is missing");
+  let marker: ResearchRootIdentity;
+  try { marker = JSON.parse(storage.readText(RESEARCH_ROOT_IDENTITY_FILE)) as ResearchRootIdentity; }
+  catch { throw new Error("research root network/profile marker is invalid"); }
+  if (marker.schemaVersion !== 1 || marker.network !== expected.network || marker.profileSha256 !== expected.profileSha256) throw new Error("research root network/profile marker mismatch");
+}
+
+export function bindResearchRootIdentity(storage: ResearchPersistence, profile: LoadedResearchNetworkProfile): void {
+  assertLoadedResearchNetworkProfile(profile);
+  const marker = researchRootIdentity(profile);
+  if (storage.exists(RESEARCH_ROOT_IDENTITY_FILE)) return assertResearchRootIdentity(storage, marker);
+  if (storage.exists("manifest.json") || ROOT_DATA_DIRECTORIES.some((directory) => storage.list(directory).length > 0)) throw new Error("research root network/profile marker is missing");
+  const bytes = `${canonicalJson(marker)}\n`;
+  if (!storage.writeNew(RESEARCH_ROOT_IDENTITY_FILE, bytes) && storage.readText(RESEARCH_ROOT_IDENTITY_FILE) !== bytes) throw new Error("research root network/profile marker mismatch");
+  assertResearchRootIdentity(storage, marker);
 }
 
 export function assertLoadedResearchNetworkProfile(loaded: LoadedResearchNetworkProfile): void {

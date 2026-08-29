@@ -2,11 +2,11 @@ import crypto from "node:crypto";
 import { createPublicClient, createWalletClient, erc20Abi, fallback, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { parlayVaultAbi } from "./abi.js";
-import { loadConfig, syncedPerCodeReservedCap } from "./config.js";
+import { applyWriterProfileIdentity, loadConfig, syncedPerCodeReservedCap } from "./config.js";
 import { CorrelationWorker } from "./correlationWorker.js";
 import { ExposureBook } from "./exposure.js";
 import { fetchBestAskWad } from "./infoApi.js";
-import { appendQuoteDecision, initializeQuoteJournal } from "./research/journal.js";
+import { appendQuoteDecision } from "./research/journal.js";
 import { buildPriceFreshness, makeLegPriceFetcher, readSpotPxWad } from "./spotPx.js";
 import { Poker } from "./poker.js";
 import { isStalled, stallThresholdMs } from "./pure.js";
@@ -22,7 +22,7 @@ const RECEIPT_TIMEOUT_MS = 60_000;
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
-  const quoteJournal = initializeQuoteJournal(cfg.researchRoot);
+  const quoteJournal = cfg.researchPersistence;
   const correlationWorker = new CorrelationWorker();
   // Testnet RPCs rate-limit bursts (-32005, retryable in viem) and the poker's cold-start
   // rescan is one — deployBlock..head in 1000-block chunks, two getLogs each. Retry hard with a
@@ -32,6 +32,8 @@ async function main(): Promise<void> {
   const transport = fallback(rpcUrls.map((u) => http(u, { retryCount: 6, retryDelay: 2_000 })));
   const publicClient = createPublicClient({ transport });
   const chainId = await publicClient.getChainId();
+  const profileIdentityFailure = applyWriterProfileIdentity(cfg, chainId);
+  if (profileIdentityFailure) console.warn(JSON.stringify({ event: "correlation-profile-mismatch", reason: profileIdentityFailure }));
   const usdcAddress = (await publicClient.readContract({
     address: cfg.parlayVault,
     abi: parlayVaultAbi,
@@ -221,7 +223,7 @@ async function main(): Promise<void> {
     return {
       ok: true,
       quoteJournalLastAppendMs: lastQuoteJournalAppendMs,
-      model: { version: cfg.model.version, dataAsOf: cfg.model.dataAsOf, dataManifestSha256: cfg.model.dataManifestSha256, sourceRegistrySha256: cfg.model.sourceRegistrySha256, ...modelStatus },
+      model: { version: cfg.model.version, dataAsOf: cfg.model.dataAsOf, dataManifestSha256: cfg.model.dataManifestSha256, sourceRegistrySha256: cfg.model.sourceRegistrySha256, identityFailureReason: cfg.model.identityFailureReason, ...modelStatus },
       openParlays: poker.openCount(),
       priceFreshnessMs,
       perMarketCap: cfg.perMarketCap.toString(),

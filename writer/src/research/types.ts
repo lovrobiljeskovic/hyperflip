@@ -201,7 +201,17 @@ export interface CorrelationArtifact {
 }
 
 export interface QuoteDecision {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  network: ResearchNetwork;
+  profileSha256: string;
+  marketRegistrySha256: string;
+  deploymentRegistrySha256: string;
+  baselineCorrelationSha256: string;
+  artifactKind: "champion" | "profile-baseline";
+  artifactSha256: string;
+  validationSha256: string | null;
+  validationState: "Supported" | "Unavailable";
+  pairDecisions: { pair: [string, string]; status: "direct" | "fallback" | "quarantined"; reason: string; correlation: number | null }[];
   recordedAtMs: number;
   quoteId: string;
   quoteDigest: string;
@@ -232,7 +242,10 @@ export interface QuoteDecision {
 }
 
 export interface ChainLogRecord {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  network: ResearchNetwork;
+  profileSha256: string;
+  deploymentRegistrySha256: string;
   kind: "minted" | "resolved";
   eventKey: string;
   blockNumber: string;
@@ -250,7 +263,10 @@ export interface ChainLogRecord {
 }
 
 export interface StateObservationRecord {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  network: ResearchNetwork;
+  profileSha256: string;
+  deploymentRegistrySha256: string;
   kind: "leg-finalized";
   observationKey: string;
   observedBlockNumber: string;
@@ -264,7 +280,10 @@ export interface StateObservationRecord {
 }
 
 export interface OrphanCorrectionRecord {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  network: ResearchNetwork;
+  profileSha256: string;
+  deploymentRegistrySha256: string;
   kind: "orphaned";
   targetKind: "chain-log" | "state-observation";
   targetKey: string;
@@ -345,10 +364,35 @@ export function assertCorrelationArtifact(record: CorrelationArtifact): void {
 }
 
 export function assertQuoteDecision(record: QuoteDecision): void {
+  if (record.schemaVersion !== 2) throw new Error("quote decision schemaVersion must be 2");
+  assertResearchNetworkEnabled(record.network);
   assertSafeIntegerTimestamp(record.recordedAtMs, "recordedAtMs");
   for (const input of record.bookInputs) assertSafeIntegerTimestamp(input.observedAtMs, "bookInputs.observedAtMs");
+  assertSha256(record.profileSha256, "profileSha256");
   assertSha256(record.dataManifestSha256, "dataManifestSha256");
   assertSha256(record.sourceRegistrySha256, "sourceRegistrySha256");
+  assertSha256(record.marketRegistrySha256, "marketRegistrySha256");
+  assertSha256(record.deploymentRegistrySha256, "deploymentRegistrySha256");
+  assertSha256(record.baselineCorrelationSha256, "baselineCorrelationSha256");
+  if (record.artifactKind !== "champion" && record.artifactKind !== "profile-baseline") throw new Error("artifactKind is invalid");
+  assertSha256(record.artifactSha256, "artifactSha256");
+  if (record.artifactKind === "champion") {
+    if (record.validationState !== "Supported" || record.validationSha256 === null) throw new Error("champion validationState must be Supported");
+    assertSha256(record.validationSha256, "validationSha256");
+  } else if (record.validationState !== "Unavailable" || record.validationSha256 !== null || record.artifactSha256 !== record.baselineCorrelationSha256) {
+    throw new Error("profile baseline decision identity is invalid");
+  }
+  const expectedPairs: string[] = [];
+  const underlyings = [...new Set(record.legs.map((leg) => leg.underlying))].sort();
+  for (let left = 0; left < underlyings.length; left++) for (let right = left + 1; right < underlyings.length; right++) expectedPairs.push(`${underlyings[left]}:${underlyings[right]}`);
+  const recordedPairs: string[] = [];
+  for (const pair of record.pairDecisions) {
+    if (!Array.isArray(pair.pair) || pair.pair.length !== 2 || pair.pair[0] >= pair.pair[1]) throw new Error("pairDecisions must use canonical pairs");
+    if (pair.status !== "direct" && pair.status !== "fallback" && pair.status !== "quarantined") throw new Error("pairDecisions status is invalid");
+    if (!pair.reason || (pair.status === "quarantined" ? pair.correlation !== null : typeof pair.correlation !== "number" || !Number.isFinite(pair.correlation))) throw new Error("pairDecisions evidence is invalid");
+    recordedPairs.push(pair.pair.join(":"));
+  }
+  if (JSON.stringify(recordedPairs.sort()) !== JSON.stringify(expectedPairs)) throw new Error("pairDecisions must record every quoted underlying pair exactly once");
   assertSha256(record.signatureHash, "signatureHash");
 }
 
@@ -356,10 +400,14 @@ export function assertJoinedEventRecord(record: JoinedEventRecord): void {
   const value = record as unknown;
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("joined event record must be an object");
   const object = value as Record<string, unknown>;
-  if (object.schemaVersion !== 1) throw new Error("joined event record schemaVersion must be 1");
+  if (object.schemaVersion !== 2) throw new Error("joined event record schemaVersion must be 2");
+  if (object.network !== "testnet" && object.network !== "mainnet") throw new Error("joined event record network is invalid");
+  assertResearchNetworkEnabled(object.network);
+  assertSha256(String(object.profileSha256), "profileSha256");
+  assertSha256(String(object.deploymentRegistrySha256), "deploymentRegistrySha256");
   const kind = object.kind;
   if (kind === "minted" || kind === "resolved") {
-    assertJoinedExactKeys(object, ["schemaVersion", "kind", "eventKey", "blockNumber", "blockHash", "transactionHash", "logIndex", "quoteId", "parlayId", "taker", "premium", "maxPayout", "status", "legs", "recordedAtMs"]);
+    assertJoinedExactKeys(object, ["schemaVersion", "network", "profileSha256", "deploymentRegistrySha256", "kind", "eventKey", "blockNumber", "blockHash", "transactionHash", "logIndex", "quoteId", "parlayId", "taker", "premium", "maxPayout", "status", "legs", "recordedAtMs"]);
     assertJoinedString(object.eventKey, "eventKey");
     assertJoinedString(object.blockNumber, "blockNumber");
     assertJoinedString(object.blockHash, "blockHash");
@@ -383,11 +431,11 @@ export function assertJoinedEventRecord(record: JoinedEventRecord): void {
       if (legObject.result !== "win" && legObject.result !== "loss" && legObject.result !== "void" && legObject.result !== "pending") throw new Error("legs.result is invalid");
     });
   } else if (kind === "leg-finalized") {
-    assertJoinedExactKeys(object, ["schemaVersion", "kind", "observationKey", "observedBlockNumber", "observedBlockHash", "quoteId", "parlayId", "vault", "settleFractionWad", "result", "recordedAtMs"]);
+    assertJoinedExactKeys(object, ["schemaVersion", "network", "profileSha256", "deploymentRegistrySha256", "kind", "observationKey", "observedBlockNumber", "observedBlockHash", "quoteId", "parlayId", "vault", "settleFractionWad", "result", "recordedAtMs"]);
     for (const key of ["observationKey", "observedBlockNumber", "observedBlockHash", "quoteId", "parlayId", "vault", "settleFractionWad"]) assertJoinedString(object[key], key);
     if (object.result !== "win" && object.result !== "loss" && object.result !== "void") throw new Error("result is invalid");
   } else if (kind === "orphaned") {
-    assertJoinedExactKeys(object, ["schemaVersion", "kind", "targetKind", "targetKey", "detectedAtBlockNumber", "canonicalBlockHash", "recordedAtMs"]);
+    assertJoinedExactKeys(object, ["schemaVersion", "network", "profileSha256", "deploymentRegistrySha256", "kind", "targetKind", "targetKey", "detectedAtBlockNumber", "canonicalBlockHash", "recordedAtMs"]);
     if (object.targetKind !== "chain-log" && object.targetKind !== "state-observation") throw new Error("targetKind is invalid");
     for (const key of ["targetKey", "detectedAtBlockNumber", "canonicalBlockHash"]) assertJoinedString(object[key], key);
   } else {

@@ -4,8 +4,9 @@ import { parlayVaultAbi, outcomeVaultAbi } from "../abi.js";
 import { WAD, blockRanges } from "../pure.js";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
 import { canonicalJson, operationError, writeOperationState } from "./store.js";
-import { assertJoinedEventRecord } from "./types.js";
+import { assertJoinedEventRecord, assertQuoteDecision } from "./types.js";
 import type { ChainLogRecord, JoinedEventRecord, OrphanCorrectionRecord, QuoteDecision, StateObservationRecord } from "./types.js";
+import { assertResearchRootIdentity, bindResearchRootIdentity, type LoadedResearchNetworkProfile } from "./network.js";
 
 export interface PublicQuoteDecision extends Omit<QuoteDecision, "taker" | "quoteDigest" | "signatureHash" | "bookInputs" | "modelVersion" | "dataAsOf" | "dataManifestSha256" | "sourceRegistrySha256" | "bestEstimateJointProbWad" | "riskAdjustedJointProbWad" | "rhoBandPct" | "edge"> {
   taker: string;
@@ -23,11 +24,15 @@ export interface PublicQuoteDecision extends Omit<QuoteDecision, "taker" | "quot
   edge?: QuoteDecision["edge"];
 }
 
-export function initializeQuoteJournal(root: string): ResearchPersistence {
-  return openResearchPersistence(root);
+export function initializeQuoteJournal(root: string, profile: LoadedResearchNetworkProfile): ResearchPersistence {
+  const storage = openResearchPersistence(root);
+  bindResearchRootIdentity(storage, profile);
+  return storage;
 }
 
 export function appendQuoteDecision(storage: ResearchPersistence, decision: QuoteDecision): void {
+  try { assertResearchRootIdentity(storage, decision); } catch { throw new Error("quote decision network mismatch with research root"); }
+  assertQuoteDecision(decision);
   const date = new Date(decision.recordedAtMs);
   storage.append(`journal/quotes/${date.getUTCFullYear()}/${String(date.getUTCMonth() + 1).padStart(2, "0")}/${String(date.getUTCDate()).padStart(2, "0")}.jsonl`, canonicalJson(decision));
 }
@@ -57,6 +62,7 @@ export interface JoinDeps {
   client: PublicClient;
   vault: Address;
   deployBlock: bigint;
+  profile: LoadedResearchNetworkProfile;
   now?: () => number;
 }
 
@@ -110,6 +116,7 @@ function readJsonl<T>(storage: ResearchPersistence, relative: string): T[] {
 }
 
 function appendEventRecord(storage: ResearchPersistence, record: JoinedEventRecord): void {
+  assertResearchRootIdentity(storage, record);
   assertJoinedEventRecord(record);
   const date = new Date(record.recordedAtMs);
   storage.append(`journal/events/${date.getUTCFullYear()}/${String(date.getUTCMonth() + 1).padStart(2, "0")}/${String(date.getUTCDate()).padStart(2, "0")}.jsonl`, canonicalJson(record));
@@ -131,8 +138,13 @@ async function canonicalHash(client: PublicClient, blockNumber: bigint): Promise
   return block.hash.toLowerCase();
 }
 
-async function verifyOverlap(storage: ResearchPersistence, client: PublicClient, from: bigint, to: bigint, now: number): Promise<number> {
+async function verifyOverlap(storage: ResearchPersistence, client: PublicClient, from: bigint, to: bigint, now: number, identity: Pick<ChainLogRecord, "network" | "profileSha256" | "deploymentRegistrySha256">): Promise<number> {
   const records = readJsonl<JoinedEventRecord>(storage, "journal/events");
+  records.forEach((record) => {
+    assertResearchRootIdentity(storage, record);
+    assertJoinedEventRecord(record);
+    if (record.deploymentRegistrySha256 !== identity.deploymentRegistrySha256) throw new Error("joined event deployment identity mismatch");
+  });
   const active = activeRecords(records);
   let appended = 0;
   for (const record of [...active.chain, ...active.observations]) {
@@ -142,7 +154,7 @@ async function verifyOverlap(storage: ResearchPersistence, client: PublicClient,
     const hash = await canonicalHash(client, blockNumber);
     if (hash === storedHash.toLowerCase()) continue;
     const correction: OrphanCorrectionRecord = {
-      schemaVersion: 1, kind: "orphaned", targetKind: record.kind === "leg-finalized" ? "state-observation" : "chain-log",
+      schemaVersion: 2, ...identity, kind: "orphaned", targetKind: record.kind === "leg-finalized" ? "state-observation" : "chain-log",
       targetKey: record.kind === "leg-finalized" ? record.observationKey : physicalChainKey(record),
       detectedAtBlockNumber: to.toString(), canonicalBlockHash: hash, recordedAtMs: now,
     };
@@ -239,16 +251,28 @@ function pendingAndResolutions(records: JoinedEventRecord[], knownQuoteIds: Set<
 /** Appends canonical chain facts and resumable state without rewriting prior history. */
 async function joinEventsImpl(storage: ResearchPersistence, deps: JoinDeps): Promise<JoinSummary> {
   const now = (deps.now ?? Date.now)();
+  const identity = { network: deps.profile.profile.network, profileSha256: deps.profile.profileSha256, deploymentRegistrySha256: deps.profile.deploymentRegistrySha256 } as const;
   const state = readState(storage, deps.deployBlock);
   const head = await deps.client.getBlockNumber();
   const confirmed = head - CONFIRMATIONS;
   if (confirmed < deps.deployBlock) return { scannedFrom: null, scannedTo: null, nextBlock: state.nextBlock, appended: 0, resolutions: {} };
   const nextBlock = BigInt(state.nextBlock);
   const from = nextBlock > deps.deployBlock ? nextBlock - OVERLAP : deps.deployBlock;
-  let appended = await verifyOverlap(storage, deps.client, from, confirmed, now);
+  let appended = await verifyOverlap(storage, deps.client, from, confirmed, now, identity);
   let scannedTo: bigint | null = null;
   const records = readJsonl<JoinedEventRecord>(storage, "journal/events");
-  const quoteIds = new Set(readJsonl<QuoteDecision>(storage, "journal/quotes").map((quote) => quote.quoteId));
+  records.forEach((record) => {
+    assertResearchRootIdentity(storage, record);
+    assertJoinedEventRecord(record);
+    if (record.deploymentRegistrySha256 !== identity.deploymentRegistrySha256) throw new Error("joined event deployment identity mismatch");
+  });
+  const quotes = readJsonl<QuoteDecision>(storage, "journal/quotes");
+  quotes.forEach((quote) => {
+    assertResearchRootIdentity(storage, quote);
+    assertQuoteDecision(quote);
+    if (quote.marketRegistrySha256 !== deps.profile.marketRegistrySha256 || quote.deploymentRegistrySha256 !== deps.profile.deploymentRegistrySha256 || quote.baselineCorrelationSha256 !== deps.profile.baselineCorrelationSha256) throw new Error("quote decision profile identity mismatch");
+  });
+  const quoteIds = new Set(quotes.map((quote) => quote.quoteId));
   for (const range of blockRanges(from, confirmed, CHUNK_SIZE)) {
     const events = await scanEventChunk(deps.client, deps.vault, range.from, range.to);
     for (const event of events) {
@@ -256,7 +280,7 @@ async function joinEventsImpl(storage: ResearchPersistence, deps: JoinDeps): Pro
       if (event.kind === "minted") {
         const parlay = await parlayAt(deps.client, deps.vault, event.id, event.blockNumber);
         const record: ChainLogRecord = {
-          schemaVersion: 1, kind: "minted", eventKey: eventKey(event.transactionHash, event.logIndex), blockNumber: event.blockNumber.toString(), blockHash: event.blockHash,
+          schemaVersion: 2, ...identity, kind: "minted", eventKey: eventKey(event.transactionHash, event.logIndex), blockNumber: event.blockNumber.toString(), blockHash: event.blockHash,
           transactionHash: event.transactionHash, logIndex: event.logIndex, quoteId: event.quoteId, parlayId: event.id.toString(), taker: event.taker,
           premium: event.premium.toString(), maxPayout: event.maxPayout.toString(), status: "open",
           legs: parlay.legs.map((leg) => ({ vault: leg.vault, isYes: leg.isYes, settled: false, settleFractionWad: null, result: "pending" })), recordedAtMs: now,
@@ -268,7 +292,7 @@ async function joinEventsImpl(storage: ResearchPersistence, deps: JoinDeps): Pro
         const parlay = await parlayAt(deps.client, deps.vault, event.id, event.blockNumber);
         const legs = await observedLegs(deps.client, parlay.legs, event.blockNumber);
         const record: ChainLogRecord = {
-          schemaVersion: 1, kind: "resolved", eventKey: eventKey(event.transactionHash, event.logIndex), blockNumber: event.blockNumber.toString(), blockHash: event.blockHash,
+          schemaVersion: 2, ...identity, kind: "resolved", eventKey: eventKey(event.transactionHash, event.logIndex), blockNumber: event.blockNumber.toString(), blockHash: event.blockHash,
           transactionHash: event.transactionHash, logIndex: event.logIndex, quoteId: mint?.quoteId ?? "", parlayId: event.id.toString(), taker: mint?.taker ?? null,
           premium: mint?.premium ?? parlay.premium.toString(), maxPayout: mint?.maxPayout ?? parlay.maxPayout.toString(), status: status(event.status), legs, recordedAtMs: now,
         };
@@ -276,7 +300,7 @@ async function joinEventsImpl(storage: ResearchPersistence, deps: JoinDeps): Pro
         for (const leg of legs) {
           if (!leg.settled) continue;
           const observation: StateObservationRecord = {
-            schemaVersion: 1, kind: "leg-finalized", observationKey: `${event.id}:${leg.vault.toLowerCase()}:${event.blockNumber}:${event.blockHash.toLowerCase()}`,
+            schemaVersion: 2, ...identity, kind: "leg-finalized", observationKey: `${event.id}:${leg.vault.toLowerCase()}:${event.blockNumber}:${event.blockHash.toLowerCase()}`,
             observedBlockNumber: event.blockNumber.toString(), observedBlockHash: event.blockHash.toLowerCase(), quoteId: record.quoteId, parlayId: record.parlayId,
             vault: leg.vault, settleFractionWad: leg.settleFractionWad!, result: leg.result as "win" | "loss" | "void", recordedAtMs: now,
           };
@@ -295,7 +319,7 @@ async function joinEventsImpl(storage: ResearchPersistence, deps: JoinDeps): Pro
     if (!settled) continue;
     const hash = await canonicalHash(deps.client, confirmed);
     const record: StateObservationRecord = {
-      schemaVersion: 1, kind: "leg-finalized", observationKey: `${leg.parlayId}:${leg.vault.toLowerCase()}:${confirmed}:${hash}`,
+      schemaVersion: 2, ...identity, kind: "leg-finalized", observationKey: `${leg.parlayId}:${leg.vault.toLowerCase()}:${confirmed}:${hash}`,
       observedBlockNumber: confirmed.toString(), observedBlockHash: hash, quoteId: leg.quoteId, parlayId: leg.parlayId, vault: leg.vault,
       settleFractionWad: fraction.toString(), result: legResult(leg.isYes, fraction), recordedAtMs: now,
     };
@@ -309,6 +333,11 @@ async function joinEventsImpl(storage: ResearchPersistence, deps: JoinDeps): Pro
 
 export async function joinEvents(root: string, deps: JoinDeps): Promise<JoinSummary> {
   const storage = openResearchPersistence(root);
+  const chainId = await deps.client.getChainId();
+  if (chainId !== deps.profile.profile.evmChainId) throw new Error(`research profile expected chain ${deps.profile.profile.evmChainId}, got ${chainId}`);
+  if (deps.vault.toLowerCase() !== deps.profile.deployment.parlayVault.toLowerCase()) throw new Error(`research profile expected vault ${deps.profile.deployment.parlayVault}, got ${deps.vault}`);
+  if (deps.deployBlock !== BigInt(deps.profile.deployment.parlayDeployBlock)) throw new Error(`research profile expected deploy block ${deps.profile.deployment.parlayDeployBlock}, got ${deps.deployBlock}`);
+  bindResearchRootIdentity(storage, deps.profile);
   const now = deps.now ?? Date.now;
   const started = now();
   const persist = (status: "running" | "succeeded" | "failed", error: string | null, details: Record<string, string | number | boolean | null> = {}): void => {

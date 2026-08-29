@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   parseMarkets,
   parseInviteCodes,
@@ -10,29 +10,67 @@ import {
   defaultPerCodeReservedCap,
   syncedPerCodeReservedCap,
   loadConfig,
+  assertProfileChain,
+  profileDeploymentMismatchReason,
+  applyWriterProfileIdentity,
 } from "../src/config.js";
 import { parseCorrelations } from "../src/correlation.js";
+import { loadResearchNetworkProfile } from "../src/research/network.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
 
 const VAULT = "0x1111111111111111111111111111111111111111";
 const CONFIG_NOW = Date.parse("2026-08-28T18:00:00.000Z");
+const TESTNET_PROFILE = loadResearchNetworkProfile(new URL("../../registry/research-network.testnet.json", import.meta.url).pathname);
 
-function writeLiveConfigFixture(root: string): { artifactFile: string; sourcesFile: string; marketsFile: string; artifact: Record<string, any> } {
+test("writer refuses a chain that differs from the selected profile", () => {
+  assert.throws(() => assertProfileChain(TESTNET_PROFILE, 999), /expected chain 998.*got 999/);
+});
+
+test("writer reports configured deployment mismatches precisely", () => {
+  assert.match(profileDeploymentMismatchReason(TESTNET_PROFILE, VAULT, 1n)!, /expected vault 0x407cdc/i);
+  assert.match(profileDeploymentMismatchReason(TESTNET_PROFILE, TESTNET_PROFILE.deployment.parlayVault, 1n)!, /expected deploy block 61906227.*got 1/);
+  assert.equal(profileDeploymentMismatchReason(TESTNET_PROFILE, TESTNET_PROFILE.deployment.parlayVault, 61_906_227n), null);
+});
+
+function writeLiveConfigFixture(root: string): { artifactFile: string; validationFile: string; profileFile: string; sourcesFile: string; marketsFile: string; artifact: Record<string, any> } {
   const sources = {
     schemaVersion: 2,
     network: "testnet",
     sources: ["BTC", "ETH"].map((underlying) => ({ schemaVersion: 1, underlying, sourceNetwork: "testnet", sourceCoin: underlying, cluster: "crypto", calendar: "continuous", measurementEnabled: true, fallbackEligible: false })),
   };
   const artifact = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-valid.json", import.meta.url), "utf8")) as Record<string, any>;
-  artifact.sourceRegistrySha256 = sha256(canonicalJson(sources));
-  const markets = [{ vault: VAULT, coinYes: "+1", coinNo: "+2", underlying: "BTC", cluster: "crypto", direction: "up", title: "BTC", category: "crypto" }];
-  const artifactFile = join(root, "champion.json");
+  const markets = { schemaVersion: 1, network: "testnet", markets: [{ vault: VAULT, coinYes: "+1", coinNo: "+2", underlying: "BTC", cluster: "crypto", direction: "up", title: "BTC", category: "crypto" }] };
   const sourcesFile = join(root, "sources.json");
   const marketsFile = join(root, "markets.json");
-  writeFileSync(artifactFile, JSON.stringify(artifact));
+  const deployment = { schemaVersion: 1, network: "testnet", evmChainId: 998, parlayVault: VAULT, parlayDeployBlock: "1" };
+  const baseline = { network: "testnet", fallbackReason: "operator-reviewed-testnet-bootstrap", clusters: artifact.clusters };
+  const profileValue = { schemaVersion: 1, network: "testnet", infoApiUrl: "https://api.hyperliquid-testnet.xyz/info", evmChainId: 998, sourceRegistryFile: "sources.json", marketRegistryFile: "markets.json", deploymentRegistryFile: "deployment.json", baselineCorrelationFile: "correlations.json" };
+  const profileFile = join(root, "profile.json");
   writeFileSync(sourcesFile, canonicalJson(sources));
-  writeFileSync(marketsFile, JSON.stringify(markets));
-  return { artifactFile, sourcesFile, marketsFile, artifact };
+  writeFileSync(marketsFile, canonicalJson(markets));
+  writeFileSync(join(root, "deployment.json"), canonicalJson(deployment));
+  writeFileSync(join(root, "correlations.json"), canonicalJson(baseline));
+  writeFileSync(profileFile, canonicalJson(profileValue));
+  const profile = loadResearchNetworkProfile(profileFile);
+  Object.assign(artifact, {
+    network: "testnet", profileSha256: profile.profileSha256, sourceRegistrySha256: profile.sourceRegistrySha256,
+    marketRegistrySha256: profile.marketRegistrySha256, deploymentRegistrySha256: profile.deploymentRegistrySha256,
+    baselineCorrelationSha256: profile.baselineCorrelationSha256,
+  });
+  writeFileSync(join(root, "network-profile.json"), `${canonicalJson({ schemaVersion: 1, network: "testnet", profileSha256: profile.profileSha256 })}\n`);
+  const artifactFile = join(root, "artifacts", "champion.json");
+  const validationFile = join(root, "artifacts", "candidates", `${artifact.modelVersion}.validation.json`);
+  const raw = JSON.stringify(artifact);
+  mkdirSync(join(root, "artifacts", "candidates"), { recursive: true });
+  writeFileSync(artifactFile, raw);
+  writeFileSync(validationFile, `${canonicalJson({
+    schemaVersion: 2, network: "testnet", profileSha256: profile.profileSha256, modelVersion: artifact.modelVersion,
+    candidateSha256: sha256(raw), inputManifestSha256: artifact.dataManifestSha256, sourceRegistrySha256: profile.sourceRegistrySha256,
+    marketRegistrySha256: profile.marketRegistrySha256, deploymentRegistrySha256: profile.deploymentRegistrySha256,
+    baselineCorrelationSha256: profile.baselineCorrelationSha256, baselineSha256: profile.baselineCorrelationSha256,
+    baselineSnapshotPath: `facts/baselines/${profile.baselineCorrelationSha256}.json`, decision: "Supported", deterministicRerunMatches: true,
+  })}\n`);
+  return { artifactFile, validationFile, profileFile, sourcesFile, marketsFile, artifact };
 }
 
 test("parseMarkets parses JSON array and keys by lowercase vault", () => {
@@ -143,16 +181,17 @@ test("loadConfig throws on a non-numeric SPOT_PX_STALE_MS", () => {
       assert.throws(() => loadConfig(CONFIG_NOW), /SPOT_PX_STALE_MS/);
       process.env.SPOT_PX_STALE_MS = "0";
       assert.equal(loadConfig(CONFIG_NOW).spotPxStaleMs, Infinity);
-    }, { MARKETS_FILE: fixture.marketsFile, CORRELATION_SOURCES_FILE: fixture.sourcesFile });
+    });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 function withConfigEnv(artifactFile: string, run: () => void, overrides: Record<string, string> = {}): void {
+  const fixtureRoot = resolve(artifactFile, "../..");
   const values: Record<string, string> = {
-    MARKETS_FILE: "writer/test/fixtures/markets.json", MAX_STAKE: "1000000", PER_MARKET_CAP: "1000000", PER_CLUSTER_CAP: "1000000", INVITE_CODES: "test",
+    MAX_STAKE: "1000000", PER_MARKET_CAP: "1000000", PER_CLUSTER_CAP: "1000000", INVITE_CODES: "test",
     PARLAY_VAULT_ADDRESS: "0x1111111111111111111111111111111111111111", WRITER_ADDRESS: "0x2222222222222222222222222222222222222222",
     QUOTE_SIGNER_PRIVATE_KEY: `0x${"11".repeat(32)}`, POKER_PRIVATE_KEY: `0x${"22".repeat(32)}`, TESTNET_RPC: "http://localhost:1",
-    CORRELATION_ARTIFACT_FILE: artifactFile, CORRELATION_SOURCES_FILE: "registry/correlation-sources.json", RESEARCH_ROOT: "research-data",
+    RESEARCH_NETWORK_PROFILE_FILE: join(fixtureRoot, "profile.json"), RESEARCH_ROOT: fixtureRoot,
     ...overrides,
   };
   const saved = new Map(Object.keys(values).map((key) => [key, process.env[key]]));
@@ -163,11 +202,10 @@ function withConfigEnv(artifactFile: string, run: () => void, overrides: Record<
 test("loadConfig refuses a malformed champion artifact", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-config-artifact-"));
   try {
-    const artifact = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-valid.json", import.meta.url), "utf8"));
-    artifact.schemaVersion = 1;
-    const file = join(root, "champion.json");
-    writeFileSync(file, JSON.stringify(artifact));
-    withConfigEnv(file, () => assert.throws(() => loadConfig(Date.parse("2026-08-28T18:00:00.000Z")), /schemaVersion/));
+    const fixture = writeLiveConfigFixture(root);
+    fixture.artifact.schemaVersion = 1;
+    writeFileSync(fixture.artifactFile, JSON.stringify(fixture.artifact));
+    withConfigEnv(fixture.artifactFile, () => assert.throws(() => loadConfig(Date.parse("2026-08-28T18:00:00.000Z")), /schemaVersion/));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -175,25 +213,33 @@ test("a champion age at seven days disables only multi-asset correlation", () =>
   const root = mkdtempSync(join(tmpdir(), "hype-config-stale-"));
   try {
     const fixture = writeLiveConfigFixture(root);
-    fixture.artifact.dataAsOf = new Date(CONFIG_NOW - 7 * 86_400_000).toISOString();
-    writeFileSync(fixture.artifactFile, JSON.stringify(fixture.artifact));
+      fixture.artifact.dataAsOf = new Date(CONFIG_NOW - 7 * 86_400_000).toISOString();
+    const raw = JSON.stringify(fixture.artifact);
+    writeFileSync(fixture.artifactFile, raw);
+    const validation = JSON.parse(readFileSync(fixture.validationFile, "utf8"));
+    writeFileSync(fixture.validationFile, `${canonicalJson({ ...validation, candidateSha256: sha256(raw) })}\n`);
     withConfigEnv(fixture.artifactFile, () => {
       const config = loadConfig(CONFIG_NOW);
       assert.equal(config.model.ageMs, 7 * 86_400_000);
       assert.equal(config.model.multiAssetEnabled, false);
       assert.ok(config.correlations.underlyings.BTC);
-    }, { MARKETS_FILE: fixture.marketsFile, CORRELATION_SOURCES_FILE: fixture.sourcesFile });
+    });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("loadConfig rejects a champion from a different current source registry", () => {
+test("loadConfig degrades a champion from a different profile without disabling same-underlying service", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-config-source-hash-"));
   try {
     const fixture = writeLiveConfigFixture(root);
     fixture.artifact.sourceRegistrySha256 = "c".repeat(64);
+    fixture.artifact.clusters.crypto.BTC.globalLoading = 0.99;
     writeFileSync(fixture.artifactFile, JSON.stringify(fixture.artifact));
-    withConfigEnv(fixture.artifactFile, () => assert.throws(() => loadConfig(CONFIG_NOW), /source registry hash mismatch/), {
-      MARKETS_FILE: fixture.marketsFile, CORRELATION_SOURCES_FILE: fixture.sourcesFile,
+    withConfigEnv(fixture.artifactFile, () => {
+      const config = loadConfig(CONFIG_NOW);
+      assert.equal(config.model.multiAssetEnabled, false);
+      assert.match(config.model.identityFailureReason!, /source registry hash mismatch/);
+      assert.equal(config.correlations.underlyings.BTC.global, 0.1);
+      assert.equal(applyWriterProfileIdentity(config, 998), config.model.identityFailureReason);
     });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -210,9 +256,7 @@ test("loadConfig rejects source, market, and artifact cluster disagreement", () 
         delete fixture.artifact.clusters.crypto.BTC;
         writeFileSync(fixture.artifactFile, JSON.stringify(fixture.artifact));
       }
-      withConfigEnv(fixture.artifactFile, () => assert.throws(() => loadConfig(CONFIG_NOW), /cluster disagreement/), {
-        MARKETS_FILE: fixture.marketsFile, CORRELATION_SOURCES_FILE: fixture.sourcesFile,
-      });
+      withConfigEnv(fixture.artifactFile, () => assert.throws(() => loadConfig(CONFIG_NOW), /cluster disagreement|profile identity mismatch|market registry/i));
     } finally { rmSync(root, { recursive: true, force: true }); }
   }
 });
@@ -224,9 +268,7 @@ test("loadConfig rejects a future-dated champion", () => {
     fixture.artifact.dataAsOf = new Date(CONFIG_NOW + 3_600_000).toISOString();
     fixture.artifact.createdAt = fixture.artifact.dataAsOf;
     writeFileSync(fixture.artifactFile, JSON.stringify(fixture.artifact));
-    withConfigEnv(fixture.artifactFile, () => assert.throws(() => loadConfig(CONFIG_NOW), /future/), {
-      MARKETS_FILE: fixture.marketsFile, CORRELATION_SOURCES_FILE: fixture.sourcesFile,
-    });
+    withConfigEnv(fixture.artifactFile, () => assert.throws(() => loadConfig(CONFIG_NOW), /future/));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

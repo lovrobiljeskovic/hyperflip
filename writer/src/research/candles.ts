@@ -2,7 +2,7 @@ import { gzipSync } from "node:zlib";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
 import { assertCandleRecord } from "./types.js";
 import { canonicalJson, publishRollingManifest, readCandlePartition, sha256 } from "./store.js";
-import type { LoadedResearchNetworkProfile } from "./network.js";
+import { bindResearchRootIdentity, type LoadedResearchNetworkProfile } from "./network.js";
 import type { CandleRawManifest, CandleRecord, CandleRequestJournal, SourceEntry } from "./types.js";
 
 const HOUR_MS = 3_600_000;
@@ -190,6 +190,7 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
   if (!Number.isSafeInteger(nowMs)) throw new Error("nowMs must be a safe integer timestamp");
   if (!deps.profile) throw new Error("loaded research network profile is required");
   const { profile } = deps;
+  bindResearchRootIdentity(storage, profile);
   if (profile.profile.network !== "testnet" || profile.sources.network !== "testnet" || profile.sources.schemaVersion !== 2) throw new Error("loaded research network profile must be testnet");
   const registry = profile.sources;
   const requestFetch = deps.fetch ?? fetch;

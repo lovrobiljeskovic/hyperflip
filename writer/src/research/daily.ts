@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { openResearchPersistence } from "./persistence.js";
 import { operationError, writeOperationState } from "./store.js";
+import { bindResearchRootIdentity, loadResearchNetworkProfile } from "./network.js";
 
 export interface DailyResult { status: number | null; stdout: string; stderr: string }
 type DailyStep = "derive" | "calibrate" | "replay" | "join" | "report";
@@ -14,6 +15,10 @@ function output(result: DailyResult): Record<string, unknown> {
 export function runDaily(env: NodeJS.ProcessEnv, run: (step: DailyStep, env: NodeJS.ProcessEnv) => DailyResult, now: () => number = Date.now): number {
   const root = env.RESEARCH_ROOT ? resolve(env.RESEARCH_ROOT) : null;
   const storage = root ? openResearchPersistence(root) : null;
+  if (root) {
+    if (!env.RESEARCH_NETWORK_PROFILE_FILE) throw new Error("RESEARCH_NETWORK_PROFILE_FILE is required");
+    bindResearchRootIdentity(storage!, loadResearchNetworkProfile(resolve(env.RESEARCH_NETWORK_PROFILE_FILE)));
+  }
   const started = now();
   const persist = (status: "running" | "succeeded" | "failed", error: string | null, step: DailyStep | null): void => {
     if (!root) return;

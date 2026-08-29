@@ -48,6 +48,7 @@ function setup(artifactInput: CorrelationArtifact = VALID, fallbackEligible = fa
     marketRegistryRaw, marketRegistrySha256: sha256(marketRegistryRaw), deployment, deploymentRegistrySha256: sha256(canonicalJson(deployment)),
     baselineCorrelationRaw, baselineCorrelationSha256: sha256(baselineCorrelationRaw),
   };
+  writeFileSync(join(root, "network-profile.json"), `${canonicalJson({ schemaVersion: 1, network: "testnet", profileSha256: profile.profileSha256 })}\n`);
   artifact.network = "testnet";
   artifact.profileSha256 = profile.profileSha256;
   artifact.marketRegistrySha256 = profile.marketRegistrySha256;
@@ -68,12 +69,14 @@ function setup(artifactInput: CorrelationArtifact = VALID, fallbackEligible = fa
   mkdirSync(join(root, "manifests"), { recursive: true });
   writeFileSync(candidate, raw);
   writeFileSync(join(root, "manifests", `${artifact.dataManifestSha256}.json`), canonicalJson(manifest));
-  const baseline = canonicalJson({ clusters: artifact.clusters });
+  const baseline = profile.baselineCorrelationRaw;
   const baselineSha256 = sha256(baseline);
   mkdirSync(join(root, "facts", "baselines"), { recursive: true });
   writeFileSync(join(root, "facts", "baselines", `${baselineSha256}.json`), baseline);
   const validation = {
-    schemaVersion: 1, modelVersion: artifact.modelVersion, candidateSha256: sha256(raw), inputManifestSha256: artifact.dataManifestSha256,
+    schemaVersion: 2, network: profile.profile.network, profileSha256: profile.profileSha256, modelVersion: artifact.modelVersion, candidateSha256: sha256(raw), inputManifestSha256: artifact.dataManifestSha256,
+    sourceRegistrySha256: artifact.sourceRegistrySha256, marketRegistrySha256: artifact.marketRegistrySha256,
+    deploymentRegistrySha256: artifact.deploymentRegistrySha256, baselineCorrelationSha256: artifact.baselineCorrelationSha256,
     baselineSha256, baselineSnapshotPath: `facts/baselines/${baselineSha256}.json`, seed: "fixture", drawCount: 20_000, originStrideHours: 24 as const,
     policy: { maxProjectionError: 0.10 as const, bootstrapBlockHours: 96 as const, bootstrapSamples: 2_000 as const }, ticketCounts: {}, selectedTicketKeys: [], modelScores: {} as ValidationReport["modelScores"],
     bootstrap: { point: -0.01, lower: -0.02, upper: 0, groups: [], samples: 2_000, blockHours: 96 }, stressThresholds: [], degreeOfFreedomSelections: [], exclusions: [], decision: "Supported" as const,
@@ -135,6 +138,19 @@ test("artifact validation rejects manifest, source, market, and validation ident
     const badMarkets = new Map([...fixture.markets].map(([key, market]) => [key, { ...market, cluster: "equity" }]));
     assert.throws(() => validateArtifact(fixture.raw, { ...fixture, markets: badMarkets }, NOW), /cluster disagreement/);
     assert.throws(() => validate(fixture, fixture.artifact, { ...fixture.validation, candidateSha256: "d".repeat(64) }), /candidate hash mismatch/);
+    assert.throws(() => validate(fixture, fixture.artifact, { ...fixture.validation, network: "mainnet" }), /validation network mismatch/);
+    assert.throws(() => validate(fixture, fixture.artifact, { ...fixture.validation, deploymentRegistrySha256: "d".repeat(64) }), /validation deployment registry mismatch/);
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test("promotion requires Supported validation and the root profile marker", () => {
+  const fixture = setup();
+  try {
+    writeFileSync(join(fixture.root, "network-profile.json"), `${canonicalJson({ schemaVersion: 1, network: "mainnet", profileSha256: "0".repeat(64) })}\n`);
+    assert.throws(() => promoteCandidate(fixture.root, fixture.candidate, fixture.profile, fixture.markets, NOW), /research root network\/profile marker mismatch/);
+    writeFileSync(join(fixture.root, "network-profile.json"), `${canonicalJson({ schemaVersion: 1, network: "testnet", profileSha256: fixture.profile.profileSha256 })}\n`);
+    writeFileSync(join(fixture.root, "artifacts", "candidates", `${fixture.artifact.modelVersion}.validation.json`), `${canonicalJson({ ...fixture.validation, decision: "Inconclusive" })}\n`);
+    assert.throws(() => promoteCandidate(fixture.root, fixture.candidate, fixture.profile, fixture.markets, NOW), /Supported validation/);
   } finally { rmSync(fixture.root, { recursive: true, force: true }); }
 });
 
@@ -177,7 +193,7 @@ test("artifact validation keeps measurement eligibility independent from approve
     const manifest = { ...fixture.manifest, sourceRegistrySha256 };
     artifact.dataManifestSha256 = sha256(canonicalJson(manifest));
     const raw = `${canonicalJson(artifact)}\n`;
-    const validation = { ...fixture.validation, inputManifestSha256: artifact.dataManifestSha256, candidateSha256: sha256(raw) };
+    const validation = { ...fixture.validation, sourceRegistrySha256, inputManifestSha256: artifact.dataManifestSha256, candidateSha256: sha256(raw) };
     const result = validateArtifact(raw, { manifest, sources, markets: fixture.markets, profile, validation }, NOW);
     assert.deepEqual([...result.model.eligibleUnderlyings], ["BTC", "ETH"]);
   } finally { rmSync(fixture.root, { recursive: true, force: true }); }
@@ -198,7 +214,7 @@ test("artifact validation repeats schedule-aware trailing freshness", () => {
     weekend.sourceRegistrySha256 = manifest.sourceRegistrySha256;
     weekend.dataManifestSha256 = sha256(canonicalJson(manifest));
     const profile = { ...fixture.profile, sources: session, sourceRegistrySha256: weekend.sourceRegistrySha256 };
-    const validation = { ...fixture.validation, candidateSha256: sha256(`${canonicalJson(weekend)}\n`), inputManifestSha256: weekend.dataManifestSha256 };
+    const validation = { ...fixture.validation, sourceRegistrySha256: weekend.sourceRegistrySha256, candidateSha256: sha256(`${canonicalJson(weekend)}\n`), inputManifestSha256: weekend.dataManifestSha256 };
     assert.doesNotThrow(() => validateArtifact(`${canonicalJson(weekend)}\n`, { manifest, sources: session, markets: fixture.markets, profile, validation }, now));
     weekend.quality.lastUsableObservationMs.BTC = Date.parse("2026-08-30T04:00:00.000Z");
     validation.candidateSha256 = sha256(`${canonicalJson(weekend)}\n`);
@@ -273,12 +289,16 @@ test("promotion writes the exact candidate bytes and a forced pre-rename failure
     assert.equal(readFileSync(champion, "utf8"), fixture.raw);
     assert.equal(receipt.championSha256, sha256(fixture.raw));
     assert.equal(receipt.validationState, "Supported");
+    assert.equal(receipt.schemaVersion, 2);
+    assert.equal(receipt.network, "testnet");
+    assert.equal(receipt.profileSha256, fixture.profile.profileSha256);
+    assert.equal(receipt.deploymentRegistrySha256, fixture.profile.deploymentRegistrySha256);
   } finally { rmSync(fixture.root, { recursive: true, force: true }); }
 });
 
 test("promotion CLI refuses automatic latest selection and requires an explicit candidate path", () => {
   const result = spawnSync(process.execPath, ["--import", "tsx", "src/research/cli.ts", "promote", "--latest"], {
-    cwd: resolve(import.meta.dirname, ".."), encoding: "utf8", env: { RESEARCH_ROOT: "/tmp", CORRELATION_SOURCES_FILE: "/tmp/sources", MARKETS_FILE: "/tmp/markets" },
+    cwd: resolve(import.meta.dirname, ".."), encoding: "utf8", env: { RESEARCH_ROOT: "/tmp" },
   });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /--candidate/);
@@ -294,7 +314,7 @@ test("research CLI never loads a working-directory dotenv file", () => {
       cwd: resolve(import.meta.dirname, ".."), encoding: "utf8", env: { ...env, DOTENV_CONFIG_PATH: dotenv },
     });
     assert.equal(result.status, 2);
-    assert.match(result.stderr, /RESEARCH_ROOT is required/);
+    assert.match(result.stderr, /RESEARCH_ROOT and RESEARCH_NETWORK_PROFILE_FILE are required/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -7,12 +7,13 @@ import test from "node:test";
 import { runDaily, type DailyResult } from "../src/research/daily.js";
 
 const cwd = resolve(import.meta.dirname, "..");
+const profileFile = new URL("../../registry/research-network.testnet.json", import.meta.url).pathname;
 const cli = (command: string, env: NodeJS.ProcessEnv) => spawnSync(process.execPath, ["--import", "tsx", "src/research/cli.ts", command], { cwd, env, encoding: "utf8" });
 
 test("research backup exits successfully with an explicit disabled status when configuration is absent", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-backup-disabled-"));
   try {
-    const result = cli("backup", { ...process.env, RESEARCH_ROOT: root, RESEARCH_BACKUP_ENDPOINT: "", RESEARCH_BACKUP_REGION: "", RESEARCH_BACKUP_BUCKET: "", RESEARCH_BACKUP_ACCESS_KEY: "", RESEARCH_BACKUP_SECRET_KEY: "" });
+    const result = cli("backup", { ...process.env, RESEARCH_ROOT: root, RESEARCH_NETWORK_PROFILE_FILE: profileFile, RESEARCH_BACKUP_ENDPOINT: "", RESEARCH_BACKUP_REGION: "", RESEARCH_BACKUP_BUCKET: "", RESEARCH_BACKUP_ACCESS_KEY: "", RESEARCH_BACKUP_SECRET_KEY: "" });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /"status":"disabled"/);
     assert.match(result.stdout, /backup configuration absent/);
@@ -22,7 +23,7 @@ test("research backup exits successfully with an explicit disabled status when c
 test("research daily derives immutable inputs from the collector pointer without manual window pins", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-daily-"));
   try {
-    const result = cli("daily", { ...process.env, RESEARCH_ROOT: root, RESEARCH_MANIFEST_FILE: "", RESEARCH_AS_OF_MS: "", RESEARCH_LOOKBACK_MS: "" });
+    const result = cli("daily", { ...process.env, RESEARCH_ROOT: root, RESEARCH_NETWORK_PROFILE_FILE: profileFile, RESEARCH_MANIFEST_FILE: "", RESEARCH_AS_OF_MS: "", RESEARCH_LOOKBACK_MS: "" });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /current manifest pointer|manifests.*current/i);
     assert.doesNotMatch(result.stderr, /RESEARCH_MANIFEST_FILE.*RESEARCH_AS_OF_MS.*RESEARCH_LOOKBACK_MS/);
@@ -47,7 +48,7 @@ test("research daily reports the candidate produced by the same derivation and c
     report: { status: 0, stdout: `${JSON.stringify({ path: join(root, "reports/fresh.html") })}\n`, stderr: "" },
   };
   try {
-    const result = runDaily({ RESEARCH_ROOT: root, RESEARCH_DERIVED_MANIFEST_FILE: staleDerived, RESEARCH_CANDIDATE_FILE: staleCandidate }, (step, env) => {
+    const result = runDaily({ RESEARCH_ROOT: root, RESEARCH_NETWORK_PROFILE_FILE: profileFile, RESEARCH_DERIVED_MANIFEST_FILE: staleDerived, RESEARCH_CANDIDATE_FILE: staleCandidate }, (step, env) => {
       seen.push({ step, manifest: env.RESEARCH_MANIFEST_FILE, derived: env.RESEARCH_DERIVED_MANIFEST_FILE, candidate: env.RESEARCH_CANDIDATE_FILE });
       return outputs[step];
     }, () => 1_725_000_000_000);

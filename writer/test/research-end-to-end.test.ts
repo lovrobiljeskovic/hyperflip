@@ -49,11 +49,9 @@ async function fixtureFlow(root: string): Promise<{ candidate: Buffer; validatio
   const derived = deriveReturns(root, manifest, { asOfMs: manifest.sourceRange.toMs, lookbackMs: 180 * DAY });
   const candidate = calibrate({ root, manifest, derivedManifestPath: derived.manifestPath, profile: loadedProfile, now: () => AS_OF });
   const candidatePath = join(root, "artifacts", "candidates", `${candidate.modelVersion}.json`);
-  const rows: ReturnRecord[] = readDerivedDataset(root, derived.manifestPath).returns;
-  const baseline = { clusters: { crypto: Object.fromEntries(sources.sources.map((source) => [source.underlying, { global: 0.1, cluster: 0.2, underlying: 0.3 }])) } };
-  const baselineFile = join(root, "baseline.json");
-  writeFileSync(baselineFile, canonicalJson(baseline));
-  runReplay({ root, candidate, candidateBytes: readFileSync(candidatePath, "utf8"), inputManifestSha256: manifestHash, baselineFile, series: { rows, sources: sources.sources, manifestHash }, seed: "end-to-end" });
+  const dataset = readDerivedDataset(root, derived.manifestPath);
+  const rows: ReturnRecord[] = dataset.returns;
+  runReplay({ root, profile: loadedProfile, candidate, candidateBytes: readFileSync(candidatePath, "utf8"), inputManifestSha256: manifestHash, series: { network: "testnet", rows, exclusions: dataset.exclusions, sources: sources.sources, manifestHash }, seed: "end-to-end" });
   const report = generateReport(root, candidatePath, derived.manifestPath);
   return {
     candidate: readFileSync(candidatePath),

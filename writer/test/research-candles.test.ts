@@ -340,12 +340,10 @@ test("identical fixture collections in independent roots produce identical seale
 
 test("collector CLI requires a loaded network profile before fetching", () => {
   const root = scratch();
-  const sources = join(root, "sources.json");
   try {
-    writeFileSync(sources, JSON.stringify({ schemaVersion: 2, network: "testnet", sources: [source] }));
-    const result = spawnSync(process.execPath, ["--import", "tsx", "src/research/cli.ts", "collect"], { cwd: resolve(import.meta.dirname, ".."), env: { ...process.env, RESEARCH_ROOT: root, CORRELATION_SOURCES_FILE: sources, RESEARCH_INFO_API_URL: "http://127.0.0.1:1" }, encoding: "utf8" });
+    const result = spawnSync(process.execPath, ["--import", "tsx", "src/research/cli.ts", "collect"], { cwd: resolve(import.meta.dirname, ".."), env: { ...process.env, RESEARCH_ROOT: root }, encoding: "utf8" });
     assert.equal(result.status, 2, result.stderr);
-    assert.match(result.stderr, /RESEARCH_NETWORK_PROFILE/);
+    assert.match(result.stderr, /RESEARCH_NETWORK_PROFILE_FILE/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

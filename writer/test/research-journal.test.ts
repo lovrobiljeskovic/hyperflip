@@ -5,13 +5,19 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { appendQuoteDecision, initializeQuoteJournal, redactQuoteDecision } from "../src/research/journal.js";
+import { assertJoinedEventRecord } from "../src/research/types.js";
+import { loadResearchNetworkProfile } from "../src/research/network.js";
 import { canonicalJson } from "../src/research/store.js";
 import type { QuoteDecision } from "../src/research/types.js";
 
 const fs: typeof import("node:fs") = createRequire(import.meta.url)("node:fs");
+const profile = loadResearchNetworkProfile(new URL("../../registry/research-network.testnet.json", import.meta.url).pathname);
 
 const decision: QuoteDecision = {
-  schemaVersion: 1, recordedAtMs: 1_725_000_000_000, quoteId: "0x01", quoteDigest: "0x02", chainId: 31337,
+  schemaVersion: 2, network: "testnet", profileSha256: profile.profileSha256, deploymentRegistrySha256: profile.deploymentRegistrySha256,
+  marketRegistrySha256: profile.marketRegistrySha256, baselineCorrelationSha256: profile.baselineCorrelationSha256,
+  artifactKind: "champion", artifactSha256: "d".repeat(64), validationSha256: "e".repeat(64), validationState: "Supported",
+  pairDecisions: [], recordedAtMs: 1_725_000_000_000, quoteId: "0x01", quoteDigest: "0x02", chainId: 31337,
   parlayVault: "0x1111111111111111111111111111111111111111", taker: "0x2222222222222222222222222222222222222222",
   legs: [{ vault: "0x3333333333333333333333333333333333333333", isYes: true, underlying: "BTC", cluster: "crypto", direction: "up", outcomeCoin: "+1" }],
   bookInputs: [{ priceWad: "500000000000000000", source: "l2Book", observedAtMs: 1_725_000_000_000, depthWad: "50000000000000000000", vwapWad: "500000000000000000", freshnessMs: null }],
@@ -22,7 +28,7 @@ const decision: QuoteDecision = {
 
 test("journal: one initialized persistence object supports repeated quote appends", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-journal-reuse-"));
-  const storage = initializeQuoteJournal(root);
+  const storage = initializeQuoteJournal(root, profile);
   appendQuoteDecision(storage, decision);
   appendQuoteDecision(storage, { ...decision, quoteId: "0x02" });
 
@@ -32,7 +38,7 @@ test("journal: one initialized persistence object supports repeated quote append
 
 test("journal: durable append writes canonical daily JSONL with private modes", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-journal-"));
-  appendQuoteDecision(initializeQuoteJournal(root), decision);
+  appendQuoteDecision(initializeQuoteJournal(root, profile), decision);
   const file = join(root, "journal", "quotes", "2024", "08", "30.jsonl");
   assert.equal(readFileSync(file, "utf8"), `${canonicalJson(decision)}\n`);
   assert.equal(statSync(file).mode & 0o777, 0o600);
@@ -57,7 +63,7 @@ test("journal: fsyncs the daily directory after appending a new file", async (t)
   }) as typeof fs.fsyncSync);
   syncBuiltinESMExports();
   const journal = await import(`../src/research/journal.js?daily-directory-fsync=${Date.now()}`);
-  journal.appendQuoteDecision(journal.initializeQuoteJournal(root), decision);
+  journal.appendQuoteDecision(journal.initializeQuoteJournal(root, profile), decision);
   const file = join(root, "journal", "quotes", "2024", "08", "30.jsonl");
   assert.deepEqual([
     root,
@@ -72,13 +78,24 @@ test("journal: rejects a symlinked daily file without touching its target", () =
   const root = mkdtempSync(join(tmpdir(), "hype-journal-symlink-"));
   const target = join(root, "outside.jsonl");
   const file = join(root, "journal", "quotes", "2024", "08", "30.jsonl");
+  const storage = initializeQuoteJournal(root, profile);
   fs.writeFileSync(target, "sentinel\n", { mode: 0o644 });
   fs.mkdirSync(dirname(file), { recursive: true });
   fs.symlinkSync(target, file);
-  const storage = initializeQuoteJournal(root);
   assert.throws(() => appendQuoteDecision(storage, decision), /symbolic link/);
   assert.equal(readFileSync(target, "utf8"), "sentinel\n");
   assert.equal(statSync(target).mode & 0o777, 0o644);
+});
+
+test("journal: creates one immutable root marker and rejects quote/event network mismatch", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-journal-profile-"));
+  const storage = initializeQuoteJournal(root, profile);
+  assert.deepEqual(JSON.parse(readFileSync(join(root, "network-profile.json"), "utf8")), { schemaVersion: 1, network: "testnet", profileSha256: profile.profileSha256 });
+  assert.throws(() => appendQuoteDecision(storage, { ...decision, network: "mainnet" }), /quote decision network mismatch/);
+  assert.throws(() => assertJoinedEventRecord({
+    schemaVersion: 2, network: "mainnet", profileSha256: profile.profileSha256, deploymentRegistrySha256: profile.deploymentRegistrySha256,
+    kind: "orphaned", targetKind: "chain-log", targetKey: "0xtx:0", detectedAtBlockNumber: "2", canonicalBlockHash: "0xnew", recordedAtMs: 0,
+  }), /network/);
 });
 
 test("journal: redaction needs a salt and delays hashes and research inputs until all legs final", () => {

@@ -165,6 +165,7 @@ function calibrationRoot(options: { staleParticipatingUnderlying?: string; const
   writeFileSync(join(root, "markets.json"), profile.marketRegistryRaw);
   writeFileSync(join(root, "deployment.json"), canonicalJson(profile.deployment));
   writeFileSync(join(root, "correlations.json"), profile.baselineCorrelationRaw);
+  writeFileSync(join(root, "network-profile.json"), `${canonicalJson({ schemaVersion: 1, network: "testnet", profileSha256: profile.profileSha256 })}\n`);
   return { root, input: { root, manifest, derivedManifestPath, profile }, profileFile };
 }
 
@@ -310,7 +311,7 @@ test("calibrate CLI writes the deterministic candidate from explicit immutable i
   try {
     const result = spawnSync(process.execPath, ["--import", "tsx", "src/research/cli.ts", "calibrate"], {
       cwd: resolve(import.meta.dirname, ".."), encoding: "utf8",
-      env: { ...process.env, RESEARCH_ROOT: fixture.root, RESEARCH_NETWORK_PROFILE: fixture.profileFile, RESEARCH_MANIFEST_FILE: join(fixture.root, "manifest.json"), RESEARCH_DERIVED_MANIFEST_FILE: fixture.input.derivedManifestPath },
+      env: { ...process.env, RESEARCH_ROOT: fixture.root, RESEARCH_NETWORK_PROFILE_FILE: fixture.profileFile, RESEARCH_MANIFEST_FILE: join(fixture.root, "manifest.json"), RESEARCH_DERIVED_MANIFEST_FILE: fixture.input.derivedManifestPath },
     });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /2026-08-28\.398fc2b3/);

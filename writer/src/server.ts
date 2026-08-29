@@ -272,7 +272,20 @@ export async function handleQuote(
     return { status: 503, json: { error: "sign-failed" } };
   }
   const decision: QuoteDecision = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    network: cfg.model.network,
+    profileSha256: cfg.model.profileSha256,
+    marketRegistrySha256: cfg.model.marketRegistrySha256,
+    deploymentRegistrySha256: cfg.model.deploymentRegistrySha256,
+    baselineCorrelationSha256: cfg.model.baselineCorrelationSha256,
+    artifactKind: cfg.model.artifactKind,
+    artifactSha256: cfg.model.artifactSha256,
+    validationSha256: cfg.model.validationSha256,
+    validationState: cfg.model.validationState,
+    pairDecisions: [...new Set(corrLegs.map((leg) => leg.underlying))].sort().flatMap((left, index, underlyings) => underlyings.slice(index + 1).map((right) => {
+      const evidence = cfg.model.pairEligibility.get(pairKey(left, right))!;
+      return { pair: [left, right] as [string, string], ...evidence };
+    })),
     recordedAtMs: deps.now(),
     quoteId,
     quoteDigest: quoteDigest(deps.chainId, cfg.parlayVault, quote),

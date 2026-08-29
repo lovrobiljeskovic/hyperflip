@@ -21,10 +21,12 @@ import {
   studentTInv,
   syntheticEvents,
   ticketStress,
+  assertReplayProfileIdentity,
   type ReplaySeries,
 } from "../src/research/replay.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
 import type { CorrelationArtifact, SourceEntry } from "../src/research/types.js";
+import type { LoadedResearchNetworkProfile } from "../src/research/network.js";
 
 const DAY = 86_400_000;
 const ORIGIN = Date.parse("2026-08-01T00:00:00.000Z");
@@ -58,7 +60,7 @@ function dailySeries(days = 130): ReplaySeries {
       sourceKeys: [`fixture:${entry.underlying}:${timestampMs}`],
     };
   }));
-  return { rows, sources, manifestHash: "a".repeat(64) };
+  return { network: "testnet", rows, exclusions: [], sources, manifestHash: "a".repeat(64) };
 }
 
 function candidateFor(series: ReplaySeries, modelVersion = "fixture", signedPsdTarget?: number[][]): CorrelationArtifact {
@@ -82,6 +84,48 @@ function baselineFor(series: ReplaySeries): { clusters: Record<string, Record<st
   for (const entry of series.sources) baseline.clusters[entry.cluster][entry.underlying] = { global: 0.1, cluster: 0.2, underlying: 0.3 };
   return baseline;
 }
+
+function replayProfile(series: ReplaySeries): LoadedResearchNetworkProfile {
+  const sources = { schemaVersion: 2 as const, network: "testnet" as const, sources: series.sources };
+  const profileValue = { schemaVersion: 1 as const, network: "testnet" as const, infoApiUrl: "https://api.hyperliquid-testnet.xyz/info", evmChainId: 998, sourceRegistryFile: "sources.json", marketRegistryFile: "markets.json", deploymentRegistryFile: "deployment.json", baselineCorrelationFile: "correlations.json" };
+  const marketRegistryRaw = canonicalJson({ schemaVersion: 1, network: "testnet", markets: [] });
+  const deployment = { schemaVersion: 1 as const, network: "testnet" as const, evmChainId: 998, parlayVault: "0x1111111111111111111111111111111111111111" as const, parlayDeployBlock: "1" };
+  const baselineCorrelationRaw = canonicalJson({ network: "testnet", fallbackReason: "operator-reviewed-testnet-bootstrap", ...baselineFor(series) });
+  return {
+    profile: profileValue, profileSha256: sha256(canonicalJson(profileValue)), sources, sourceRegistrySha256: sha256(canonicalJson(sources)),
+    marketRegistryRaw, marketRegistrySha256: sha256(marketRegistryRaw), deployment, deploymentRegistrySha256: sha256(canonicalJson(deployment)),
+    baselineCorrelationRaw, baselineCorrelationSha256: sha256(baselineCorrelationRaw),
+  };
+}
+
+function replayInput(root: string, candidate: CorrelationArtifact, series: ReplaySeries, seed: string, extra: Record<string, unknown> = {}) {
+  const profile = replayProfile(series);
+  return {
+    root,
+    candidate: { ...candidate, network: profile.profile.network, profileSha256: profile.profileSha256, sourceRegistrySha256: profile.sourceRegistrySha256, marketRegistrySha256: profile.marketRegistrySha256, deploymentRegistrySha256: profile.deploymentRegistrySha256, baselineCorrelationSha256: profile.baselineCorrelationSha256 },
+    inputManifestSha256: series.manifestHash,
+    profile,
+    series,
+    seed,
+    ...extra,
+  };
+}
+
+test("replay rejects candidate and return identities outside the selected profile", () => {
+  const series = dailySeries();
+  const candidate = candidateFor(series);
+  const profile = {
+    profile: { network: "testnet" },
+    profileSha256: candidate.profileSha256,
+    sourceRegistrySha256: candidate.sourceRegistrySha256,
+    marketRegistrySha256: candidate.marketRegistrySha256,
+    deploymentRegistrySha256: candidate.deploymentRegistrySha256,
+    baselineCorrelationSha256: candidate.baselineCorrelationSha256,
+  } as LoadedResearchNetworkProfile;
+  assert.doesNotThrow(() => assertReplayProfileIdentity(profile, candidate, "testnet"));
+  assert.throws(() => assertReplayProfileIdentity(profile, { ...candidate, profileSha256: "0".repeat(64) }, "testnet"), /profile hash mismatch/);
+  assert.throws(() => assertReplayProfileIdentity(profile, candidate, "mainnet"), /return network mismatch/);
+});
 
 test("future mutation cannot change an earlier forecast", () => {
   const series = dailySeries();
@@ -157,7 +201,7 @@ test("replay never substitutes daily rows for policy-selected sparse hourly evid
       timestampMs, observationCloseTimeMs: timestampMs + 3_600_000 - 1, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: 0.001 * index, sourceKeys: [],
     };
   });
-  const series = { rows: [...daily, ...sparseHourly], sources, manifestHash: complete.manifestHash };
+  const series = { network: "testnet" as const, rows: [...daily, ...sparseHourly], exclusions: [], sources, manifestHash: complete.manifestHash };
   assert.equal(syntheticEvents(ORIGIN, series, []).some((ticket) => ticket.stratum === "same-cluster"), false);
 });
 
@@ -273,8 +317,8 @@ test("filtered historical simulation is causal under a volatility shift and keep
     legs: sources.map((entry) => ({ underlying: entry.underlying, cluster: entry.cluster, direction: "up" as const, quantile: 0.5, threshold: 0.005, marginalProbability: 0.5 })),
     outcome: 1 as const,
   };
-  const before = filteredHistoricalSimulation(ticket, { rows, sources, manifestHash: "b".repeat(64) });
-  const mutated = filteredHistoricalSimulation(ticket, { rows: rows.map((row) => row.timestampMs > ORIGIN ? { ...row, value: 100 } : row), sources, manifestHash: "b".repeat(64) });
+  const before = filteredHistoricalSimulation(ticket, { network: "testnet", rows, exclusions: [], sources, manifestHash: "b".repeat(64) });
+  const mutated = filteredHistoricalSimulation(ticket, { network: "testnet", rows: rows.map((row) => row.timestampMs > ORIGIN ? { ...row, value: 100 } : row), exclusions: [], sources, manifestHash: "b".repeat(64) });
   assert.deepEqual(mutated, before);
   assert.equal(before.available, true);
   assert.ok(before.originMean.every((mean) => mean > 0.005));
@@ -295,7 +339,7 @@ test("stress classification compares future path drawdown with training drawdown
     key: "stress-path", originMs: ORIGIN, horizonHours: 48, stratum: "cross-cluster" as const, direction: "all-up" as const,
     legs: sources.map((entry) => ({ underlying: entry.underlying, cluster: entry.cluster, direction: "up" as const, quantile: 0.5, threshold: 0, marginalProbability: 0.5 })), outcome: 0 as const,
   };
-  assert.equal(ticketStress(ticket, { rows, sources, manifestHash: "c".repeat(64) }, future).regime, "drawdown-stress");
+  assert.equal(ticketStress(ticket, { network: "testnet", rows, exclusions: [], sources, manifestHash: "c".repeat(64) }, future).regime, "drawdown-stress");
 });
 
 test("block bootstrap is seeded and never splits a forecast origin", () => {
@@ -354,7 +398,7 @@ test("replay snapshots the baseline and immutable reruns ignore later registry e
     const baselineFile = join(root, "correlations.json");
     writeFileSync(baselineFile, JSON.stringify(baselineFor(series)));
     const candidate = candidateFor(series);
-    const input = { root, candidate, inputManifestSha256: series.manifestHash, baselineFile, series, seed: "fixture" };
+    const input = replayInput(root, candidate, series, "fixture");
     const first = runReplay(input);
     const bytes = readFileSync(join(root, "artifacts", "candidates", "fixture.validation.json"), "utf8");
     writeFileSync(baselineFile, JSON.stringify({ clusters: {} }));
@@ -383,7 +427,7 @@ test("failed dependence fit yields a serializable Rejected report", () => {
     const series = { ...complete, rows: complete.rows.filter((row) => row.underlying === "A") };
     const baselineFile = join(root, "correlations.json");
     writeFileSync(baselineFile, JSON.stringify(baselineFor(series)));
-    const report = runReplay({ root, candidate: candidateFor(series, "failed-fit"), inputManifestSha256: series.manifestHash, baselineFile, series, seed: "failed-fit" });
+    const report = runReplay(replayInput(root, candidateFor(series, "failed-fit"), series, "failed-fit"));
     assert.equal(report.decision, "Rejected");
     assert.ok(report.exclusions.some((entry) => entry.reason === "non-finite-probability"));
     assert.doesNotThrow(() => canonicalJson(report));
@@ -403,7 +447,7 @@ test("runReplay signed t probabilities use each origin's fitted matrix, not the 
       const baselineFile = join(root, "correlations.json");
       writeFileSync(baselineFile, JSON.stringify(baselineFor(series)));
       const candidate = candidateFor(series, `candidate-matrix-${index}`, index === 0 ? positive : signed);
-      return runReplay({ root, candidate, inputManifestSha256: series.manifestHash, baselineFile, series, seed: "candidate-matrix" }).modelScores["signed-t-copula"].overall.logLoss;
+      return runReplay(replayInput(root, candidate, series, "candidate-matrix")).modelScores["signed-t-copula"].overall.logLoss;
     });
     assert.equal(scores[0], scores[1]);
   } finally {
@@ -417,7 +461,7 @@ test("runReplay rejects unsafe modelVersion paths before writing artifacts", () 
     const series = dailySeries(95);
     const baselineFile = join(root, "correlations.json");
     writeFileSync(baselineFile, JSON.stringify(baselineFor(series)));
-    assert.throws(() => runReplay({ root, candidate: candidateFor(series, "../escape"), inputManifestSha256: series.manifestHash, baselineFile, series, seed: "path" }), /safe artifact filename/);
+    assert.throws(() => runReplay(replayInput(root, candidateFor(series, "../escape"), series, "path")), /safe artifact filename/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -428,7 +472,7 @@ test("runReplay rejects a return without required close-time provenance", () => 
     delete (series.rows[0] as Partial<typeof series.rows[number]>).observationCloseTimeMs;
     const baselineFile = join(root, "correlations.json");
     writeFileSync(baselineFile, JSON.stringify(baselineFor(series)));
-    assert.throws(() => runReplay({ root, candidate: candidateFor(series, "missing-close"), inputManifestSha256: series.manifestHash, baselineFile, series, seed: "missing-close" }), /observationCloseTimeMs/);
+    assert.throws(() => runReplay(replayInput(root, candidateFor(series, "missing-close"), series, "missing-close")), /observationCloseTimeMs/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -440,7 +484,7 @@ test("fresh runReplay artifacts are byte-identical and cover full replay determi
     const bytes = roots.map((root) => {
       const baselineFile = join(root, "correlations.json");
       writeFileSync(baselineFile, JSON.stringify(baselineFor(series)));
-      const report = runReplay({ root, candidate, inputManifestSha256: series.manifestHash, baselineFile, series, seed: "fresh-determinism" });
+      const report = runReplay(replayInput(root, candidate, series, "fresh-determinism"));
       assert.equal(report.deterministicRerunMatches, true);
       return readFileSync(join(root, "artifacts", "candidates", "fresh-determinism.validation.json"), "utf8");
     });
@@ -457,7 +501,7 @@ test("replay CLI requires explicit immutable inputs", () => {
     env: {},
   });
   assert.equal(result.status, 2);
-  assert.match(result.stderr, /RESEARCH_ROOT, RESEARCH_CANDIDATE_FILE, RESEARCH_DERIVED_MANIFEST_FILE, CORRELATIONS_FILE, and RESEARCH_REPLAY_SEED are required/);
+  assert.match(result.stderr, /RESEARCH_ROOT, RESEARCH_NETWORK_PROFILE_FILE, RESEARCH_CANDIDATE_FILE, RESEARCH_DERIVED_MANIFEST_FILE, and RESEARCH_REPLAY_SEED are required/);
 });
 
 test("replay fixes challenger simulation at exactly 20,000 draws", () => {
@@ -467,7 +511,7 @@ test("replay fixes challenger simulation at exactly 20,000 draws", () => {
     const series = { ...complete, rows: [] };
     const baselineFile = join(root, "correlations.json");
     writeFileSync(baselineFile, JSON.stringify(baselineFor(series)));
-    assert.throws(() => runReplay({ root, candidate: candidateFor(series, "draw-override"), inputManifestSha256: series.manifestHash, baselineFile, series, seed: "draw-override", draws: 200 } as Parameters<typeof runReplay>[0]), /exactly 20,000 draws/);
+    assert.throws(() => runReplay(replayInput(root, candidateFor(series, "draw-override"), series, "draw-override", { draws: 200 }) as Parameters<typeof runReplay>[0]), /exactly 20,000 draws/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -482,21 +526,21 @@ test("representative 20-underlying replay fixture is deterministic within local 
     const timestampMs = ORIGIN + (index - 89) * DAY;
     return { schemaVersion: 2 as const, transformationVersion: "returns-v2" as const, network: "testnet" as const, underlying: entry.underlying, interval: "daily" as const, timestampMs, observationCloseTimeMs: timestampMs + DAY - 1, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: entry.phase / 10_000 + Math.sin((index + entry.phase) / 7) * 0.02, sourceKeys: [] };
   }));
-  const series = { rows, sources, manifestHash: "e".repeat(64) };
+  const series = { network: "testnet" as const, rows, exclusions: [], sources, manifestHash: "e".repeat(64) };
   const baselineFile = join(root, "correlations.json");
   writeFileSync(baselineFile, JSON.stringify(baselineFor(series)));
   const started = performance.now();
-  const report = runReplay({ root, candidate: candidateFor(series, "performance"), inputManifestSha256: series.manifestHash, baselineFile, series, seed: "performance" });
+  const report = runReplay(replayInput(root, candidateFor(series, "performance"), series, "performance"));
   const branchSpecs = [specs[0], specs[8], specs[9], specs[15]];
   const branchSources = branchSpecs.map((entry) => source(entry.underlying, entry.cluster, entry.calendar));
   const branchRows = branchSpecs.flatMap((entry) => Array.from({ length: 98 }, (_, index) => {
     const timestampMs = ORIGIN + (index - 89) * DAY;
     return { schemaVersion: 2 as const, transformationVersion: "returns-v2" as const, network: "testnet" as const, underlying: entry.underlying, interval: "daily" as const, timestampMs, observationCloseTimeMs: timestampMs + DAY - 1, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: entry.phase / 10_000 + Math.sin((index + entry.phase) / 7) * 0.02, sourceKeys: [] };
   }));
-  const branchSeries = { rows: branchRows, sources: branchSources, manifestHash: "f".repeat(64) };
+  const branchSeries = { network: "testnet" as const, rows: branchRows, exclusions: [], sources: branchSources, manifestHash: "f".repeat(64) };
   const branchBaselineFile = join(root, "branch-correlations.json");
   writeFileSync(branchBaselineFile, JSON.stringify(baselineFor(branchSeries)));
-  const branchReport = runReplay({ root, candidate: candidateFor(branchSeries, "performance-branches"), inputManifestSha256: branchSeries.manifestHash, baselineFile: branchBaselineFile, series: branchSeries, seed: "performance-branches" });
+  const branchReport = runReplay(replayInput(root, candidateFor(branchSeries, "performance-branches"), branchSeries, "performance-branches"));
   const elapsedMs = performance.now() - started;
   const rssBytes = process.memoryUsage().rss;
   const summary = `${canonicalJson({ counts: Object.fromEntries(["same-underlying", "same-cluster", "cross-cluster"].map((stratum) => [stratum, Object.entries(report.ticketCounts).filter(([key]) => key.startsWith(`${stratum}:`)).reduce((sum, [, rows]) => sum + rows, 0)])), keys: report.selectedTicketKeys })}\n`;

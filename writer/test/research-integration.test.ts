@@ -11,7 +11,8 @@ import { WAD } from "../src/pure.js";
 import { handleQuote, newMetrics, type QuoteDeps } from "../src/server.js";
 import { parseCorrelationArtifact, promoteCandidate } from "../src/research/artifacts.js";
 import { collectSources } from "../src/research/candles.js";
-import { loadResearchNetworkProfile } from "../src/research/network.js";
+import { bindResearchRootIdentity, loadResearchNetworkProfile } from "../src/research/network.js";
+import { openResearchPersistence } from "../src/research/persistence.js";
 import { runDaily } from "../src/research/daily.js";
 import { appendQuoteDecision, initializeQuoteJournal, joinEvents, type JoinDeps } from "../src/research/journal.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
@@ -40,7 +41,12 @@ function profile(root: string, sources: SourceRegistry) {
   const value = { schemaVersion: 1, network: "testnet", infoApiUrl: "https://api.hyperliquid-testnet.xyz/info", evmChainId: 998, sourceRegistryFile: "sources.json", marketRegistryFile: "markets.json", deploymentRegistryFile: "deployment.json", baselineCorrelationFile: "correlations.json" };
   writeFileSync(join(root, "profile.json"), JSON.stringify(value));
   writeFileSync(join(root, "sources.json"), JSON.stringify(sources));
-  for (const name of ["markets.json", "deployment.testnet.json", "correlations.json"]) writeFileSync(join(root, name === "deployment.testnet.json" ? "deployment.json" : name), readFileSync(new URL(`../../registry/${name}`, import.meta.url)));
+  writeFileSync(join(root, "markets.json"), canonicalJson({ schemaVersion: 1, network: "testnet", markets: [
+    { vault: BTC_VAULT, coinYes: "+1", coinNo: "+2", underlying: "BTC", cluster: "crypto", direction: "up", title: "BTC", category: "crypto" },
+    { vault: ETH_VAULT, coinYes: "+3", coinNo: "+4", underlying: "ETH", cluster: "crypto", direction: "up", title: "ETH", category: "crypto" },
+  ] }));
+  writeFileSync(join(root, "deployment.json"), canonicalJson({ schemaVersion: 1, network: "testnet", evmChainId: 998, parlayVault: PARLAY_VAULT, parlayDeployBlock: "0" }));
+  writeFileSync(join(root, "correlations.json"), readFileSync(new URL("../../registry/correlations.json", import.meta.url)));
   return loadResearchNetworkProfile(join(root, "profile.json"));
 }
 
@@ -80,6 +86,7 @@ function artifactFixture(root: string): {
 } {
   const sources: SourceRegistry = { schemaVersion: 2, network: "testnet", sources: [source("BTC"), source("ETH")] };
   const loadedProfile = profile(root, sources);
+  bindResearchRootIdentity(openResearchPersistence(root), loadedProfile);
   const sourceBytes = canonicalJson(sources);
   const sourceHash = sha256(sourceBytes);
   const sourcePath = join(root, "facts", "source-registries", `${sourceHash}.json`);
@@ -136,8 +143,10 @@ function artifactFixture(root: string): {
 }
 
 function quoteDeps(root: string, artifact: ReturnType<typeof artifactFixture>): QuoteDeps {
-  const parsed = parseCorrelationArtifact(artifact.candidateRaw, NOW, artifact.sources, artifact.markets);
-  const quoteJournal = initializeQuoteJournal(root);
+  const parsed = parseCorrelationArtifact(artifact.candidateRaw, NOW, artifact.sources, artifact.markets, artifact.profile);
+  parsed.model.validationSha256 = "e".repeat(64);
+  parsed.model.validationState = "Supported";
+  const quoteJournal = initializeQuoteJournal(root, artifact.profile);
   const cfg: QuoteDeps["cfg"] = {
     rpcUrl: "",
     parlayVault: PARLAY_VAULT,
@@ -146,6 +155,8 @@ function quoteDeps(root: string, artifact: ReturnType<typeof artifactFixture>): 
     pokerKey: `0x${"22".repeat(32)}`,
     infoApiUrl: "",
     researchRoot: root,
+    researchProfile: artifact.profile,
+    researchPersistence: quoteJournal,
     port: 0,
     edgeBps: 0n,
     minPremiumBps: 100n,
@@ -198,6 +209,7 @@ class FixtureChain {
   }
 
   async getBlockNumber(): Promise<bigint> { return 5n; }
+  async getChainId(): Promise<number> { return 998; }
   async getBlock({ blockNumber }: { blockNumber: bigint }): Promise<{ hash: Hex }> { return { hash: hash(blockNumber) }; }
   async getLogs({ event, fromBlock, toBlock }: { event: { name: string }; fromBlock: bigint; toBlock: bigint }): Promise<FakeLog[]> {
     const logs = event.name === "ParlayMinted" ? this.minted : this.resolved;
@@ -297,7 +309,7 @@ test("correlation beta acceptance is deterministic, durable, joined, isolated, a
     assert.ok(statSync(quoteFile).size > 0);
 
     const chain = new FixtureChain(returned);
-    const joined = await joinEvents(roots[0], { client: chain as unknown as JoinDeps["client"], vault: PARLAY_VAULT, deployBlock: 0n, now: () => NOW });
+    const joined = await joinEvents(roots[0], { client: chain as unknown as JoinDeps["client"], vault: PARLAY_VAULT, deployBlock: 0n, profile: artifact.profile, now: () => NOW });
     assert.deepEqual(joined.resolutions[returned.quoteId], { status: "void", allLegsFinal: true });
     const events = filesBelow(join(roots[0], "journal", "events")).flatMap((file) => readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line) as JoinedEventRecord));
     const minted = events.find((event) => event.kind === "minted");

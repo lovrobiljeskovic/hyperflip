@@ -6,7 +6,7 @@ import { trailingFresh } from "./returns.js";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
 import { canonicalJson, researchRelativePath, sha256, verifyManifest } from "./store.js";
 import type { CorrelationArtifact, DataManifest, SourceRegistry } from "./types.js";
-import { assertLoadedResearchNetworkProfile, type LoadedResearchNetworkProfile } from "./network.js";
+import { assertLoadedResearchNetworkProfile, bindResearchRootIdentity, type LoadedResearchNetworkProfile } from "./network.js";
 
 const SHA256 = /^[0-9a-f]{64}$/;
 const DAY = 86_400_000;
@@ -14,16 +14,26 @@ const CANDIDATE_MAX_AGE_MS = 30 * 3_600_000;
 const CHAMPION_MAX_AGE_MS = 7 * DAY;
 
 export interface ArtifactModelMetadata {
+  artifactKind: "champion" | "profile-baseline";
+  network: "testnet";
+  profileSha256: string;
   version: string;
   dataAsOf: string;
   dataManifestSha256: string;
   sourceRegistrySha256: string;
+  marketRegistrySha256: string;
+  deploymentRegistrySha256: string;
+  baselineCorrelationSha256: string;
+  artifactSha256: string;
+  validationSha256: string | null;
+  validationState: "Supported" | "Unavailable";
+  identityFailureReason: string | null;
   ageMs: number;
   multiAssetEnabled: boolean;
   eligibleUnderlyings: Set<string>;
   quarantinedUnderlyings: Map<string, string>;
   fallbackEligible: Set<string>;
-  pairEligibility: Map<string, { status: "direct" | "fallback" | "quarantined"; reason: string }>;
+  pairEligibility: Map<string, { status: "direct" | "fallback" | "quarantined"; reason: string; correlation: number | null }>;
 }
 
 export interface ValidatedArtifact {
@@ -33,7 +43,9 @@ export interface ValidatedArtifact {
 }
 
 export interface PromotionReceipt {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  network: "testnet";
+  profileSha256: string;
   modelVersion: string;
   promotedAt: string;
   dataAgeMs: number;
@@ -41,9 +53,12 @@ export interface PromotionReceipt {
   championSha256: string;
   dataManifestSha256: string;
   sourceRegistrySha256: string;
+  marketRegistrySha256: string;
+  deploymentRegistrySha256: string;
+  baselineCorrelationSha256: string;
   baselineSha256: string;
   validationSha256: string;
-  validationState: "Supported" | "Inconclusive";
+  validationState: "Supported";
   candidatePath: string;
   manifestPath: string;
   validationPath: string;
@@ -165,7 +180,7 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
   if (!Array.isArray(quality.pairEligibility)) fail("pair eligibility must be an array");
   const expectedPairs = new Set<string>();
   for (let left = 0; left < matrixOrder.length; left++) for (let right = left + 1; right < matrixOrder.length; right++) expectedPairs.add(pairKey(matrixOrder[left], matrixOrder[right]));
-  const pairs = new Map<string, { status: "direct" | "fallback" | "quarantined"; reason: string }>();
+  const pairs = new Map<string, { status: "direct" | "fallback" | "quarantined"; reason: string; correlation: number | null }>();
   for (const value of quality.pairEligibility as unknown[]) {
     const entry = object(value, "pair eligibility entry");
     if (!Array.isArray(entry.pair) || entry.pair.length !== 2 || typeof entry.pair[0] !== "string" || typeof entry.pair[1] !== "string") fail("pair eligibility pair is invalid");
@@ -176,7 +191,7 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
     if (!expectedPairs.has(key)) fail(`pair eligibility references unknown pair ${key}`);
     if (entry.status !== "direct" && entry.status !== "fallback" && entry.status !== "quarantined") fail(`pair eligibility status is invalid for ${key}`);
     if (entry.status !== "quarantined" && (!eligible.has(left) || !eligible.has(right))) fail(`non-quarantined pair ${key} contains a quarantined underlying`);
-    pairs.set(key, { status: entry.status as "direct" | "fallback" | "quarantined", reason: text(entry.reason, `pair eligibility reason ${key}`) });
+    pairs.set(key, { status: entry.status as "direct" | "fallback" | "quarantined", reason: text(entry.reason, `pair eligibility reason ${key}`), correlation: null });
   }
   if (!same(pairs.keys(), expectedPairs)) fail("pair eligibility must contain every canonical pair exactly once");
   const partitioned = new Map<string, "direct" | "fallback" | "quarantined">();
@@ -192,6 +207,7 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
       if (partitioned.has(key)) fail(`pair evidence duplicates ${key}`);
       if (pairs.get(key)?.status !== status || pairs.get(key)?.reason !== expectedReason || entry.reason !== expectedReason) fail(`${name} disagrees with pair eligibility for ${key}`);
       const correlation = finite(entry.correlation, `${name} correlation`);
+      pairs.get(key)!.correlation = correlation;
       if (status === "fallback") fallbackRecords.set(key, { pair: [left, right], correlation });
       partitioned.set(key, status);
     }
@@ -244,7 +260,12 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
   const ageMs = nowMs - dataAsOfMs;
   const eligibleUnderlyings = new Set(eligible);
   const fallbackEligible = new Set(sources?.sources.filter((entry) => entry.fallbackEligible).map((entry) => entry.underlying) ?? []);
-  return { artifact, table, model: { version: modelVersion, dataAsOf: artifact.dataAsOf, dataManifestSha256, sourceRegistrySha256, ageMs, multiAssetEnabled: ageMs < CHAMPION_MAX_AGE_MS, eligibleUnderlyings, quarantinedUnderlyings: quarantined, fallbackEligible, pairEligibility: pairs } };
+  return { artifact, table, model: {
+    artifactKind: "champion", network: "testnet", profileSha256, version: modelVersion, dataAsOf: artifact.dataAsOf, dataManifestSha256, sourceRegistrySha256,
+    marketRegistrySha256, deploymentRegistrySha256, baselineCorrelationSha256, artifactSha256: sha256(raw), validationSha256: null,
+    validationState: "Unavailable", identityFailureReason: null, ageMs, multiAssetEnabled: ageMs < CHAMPION_MAX_AGE_MS,
+    eligibleUnderlyings, quarantinedUnderlyings: quarantined, fallbackEligible, pairEligibility: pairs,
+  } };
 }
 
 export function validateArtifact(raw: string, context: Context, nowMs: number): ValidatedArtifact {
@@ -271,14 +292,26 @@ export function validateArtifact(raw: string, context: Context, nowMs: number): 
     if (!sourceByUnderlying.get(left)?.fallbackEligible || !sourceByUnderlying.get(right)?.fallbackEligible) fail(`fallback pair ${key} is not a subset of operator-approved fallbacks`);
   }
   const report = context.validation;
-  if (report.schemaVersion !== 1 || report.modelVersion !== artifact.modelVersion || report.inputManifestSha256 !== artifact.dataManifestSha256) fail("validation identity mismatch");
-  if (report.candidateSha256 !== sha256(raw)) fail("validation candidate hash mismatch");
+  assertValidationArtifactIdentity(raw, artifact, report, context.profile);
   hash(report.baselineSha256, "validation baselineSha256");
   if (!report.baselineSnapshotPath) fail("validation baselineSnapshotPath is missing");
   if (report.decision === "Rejected") fail("validation is Rejected");
   if (report.decision !== "Supported" && report.decision !== "Inconclusive") fail("validation decision is invalid");
   if (!report.deterministicRerunMatches) fail("validation deterministic rerun failed");
   return result;
+}
+
+export function assertValidationArtifactIdentity(raw: string, artifact: CorrelationArtifact, report: ValidationReport, profile: LoadedResearchNetworkProfile): void {
+  if (report.schemaVersion !== 2) fail("validation schemaVersion must be 2");
+  if (report.network !== profile.profile.network || report.network !== artifact.network) fail("validation network mismatch");
+  if (report.profileSha256 !== profile.profileSha256 || report.profileSha256 !== artifact.profileSha256) fail("validation profile mismatch");
+  if (report.modelVersion !== artifact.modelVersion || report.inputManifestSha256 !== artifact.dataManifestSha256) fail("validation identity mismatch");
+  if (report.candidateSha256 !== sha256(raw)) fail("validation candidate hash mismatch");
+  if (report.sourceRegistrySha256 !== profile.sourceRegistrySha256 || report.sourceRegistrySha256 !== artifact.sourceRegistrySha256) fail("validation source registry mismatch");
+  if (report.marketRegistrySha256 !== profile.marketRegistrySha256 || report.marketRegistrySha256 !== artifact.marketRegistrySha256) fail("validation market registry mismatch");
+  if (report.deploymentRegistrySha256 !== profile.deploymentRegistrySha256 || report.deploymentRegistrySha256 !== artifact.deploymentRegistrySha256) fail("validation deployment registry mismatch");
+  if (report.baselineCorrelationSha256 !== profile.baselineCorrelationSha256 || report.baselineCorrelationSha256 !== artifact.baselineCorrelationSha256 || report.baselineSha256 !== profile.baselineCorrelationSha256) fail("validation baseline correlation mismatch");
+  if (report.baselineSnapshotPath !== `facts/baselines/${profile.baselineCorrelationSha256}.json`) fail("validation baseline snapshot path mismatch");
 }
 
 function manifestFor(storage: ResearchPersistence, expectedHash: string): { manifest: DataManifest; path: string } {
@@ -297,6 +330,7 @@ export function promoteCandidate(rootInput: string, candidatePath: string, profi
   const root = resolve(rootInput);
   const storage = openResearchPersistence(root);
   assertLoadedResearchNetworkProfile(profile);
+  bindResearchRootIdentity(storage, profile);
   const sources = profile.sources;
   let candidate: string;
   try { candidate = researchRelativePath(root, candidatePath); } catch { return fail("candidate path escapes research root"); }
@@ -312,6 +346,7 @@ export function promoteCandidate(rootInput: string, candidatePath: string, profi
   const validationBytes = storage.readText(validationPath);
   const validation = JSON.parse(validationBytes) as ValidationReport;
   const validated = validateArtifact(raw, { manifest: manifestFact.manifest, sources, markets, profile, validation }, nowMs);
+  if (validation.decision !== "Supported") fail("promotion requires Supported validation");
   let baseline: string;
   try { baseline = researchRelativePath(root, validation.baselineSnapshotPath); } catch { return fail("baseline snapshot hash mismatch"); }
   if (sha256(storage.read(baseline)) !== validation.baselineSha256) fail("baseline snapshot hash mismatch");
@@ -319,16 +354,22 @@ export function promoteCandidate(rootInput: string, candidatePath: string, profi
   const validationSha256 = sha256(validationBytes);
   const verificationPath = `artifacts/candidates/${validated.artifact.modelVersion}.verification.json`;
   const verification = {
-    schemaVersion: 1, modelVersion: validated.artifact.modelVersion, candidateSha256, dataManifestSha256: validated.artifact.dataManifestSha256,
-    sourceRegistrySha256: validated.artifact.sourceRegistrySha256, baselineSha256: validation.baselineSha256, validationSha256,
+    schemaVersion: 2, network: validated.artifact.network, profileSha256: validated.artifact.profileSha256,
+    modelVersion: validated.artifact.modelVersion, candidateSha256, dataManifestSha256: validated.artifact.dataManifestSha256,
+    sourceRegistrySha256: validated.artifact.sourceRegistrySha256, marketRegistrySha256: validated.artifact.marketRegistrySha256,
+    deploymentRegistrySha256: validated.artifact.deploymentRegistrySha256, baselineCorrelationSha256: validated.artifact.baselineCorrelationSha256,
+    baselineSha256: validation.baselineSha256, validationSha256,
     candidatePath: candidate, manifestPath: manifestFact.path, validationPath, baselineSnapshotPath: validation.baselineSnapshotPath,
   };
   storage.writeAtomic(verificationPath, `${canonicalJson(verification)}\n`);
   const receiptPath = `artifacts/promotions/${validated.artifact.modelVersion}.${nowMs}.json`;
   const receipt: PromotionReceipt = {
-    schemaVersion: 1, modelVersion: validated.artifact.modelVersion, promotedAt: new Date(nowMs).toISOString(), dataAgeMs: nowMs - Date.parse(validated.artifact.dataAsOf),
+    schemaVersion: 2, network: "testnet", profileSha256: validated.artifact.profileSha256,
+    modelVersion: validated.artifact.modelVersion, promotedAt: new Date(nowMs).toISOString(), dataAgeMs: nowMs - Date.parse(validated.artifact.dataAsOf),
     candidateSha256, championSha256: candidateSha256, dataManifestSha256: validated.artifact.dataManifestSha256, sourceRegistrySha256: validated.artifact.sourceRegistrySha256,
-    baselineSha256: validation.baselineSha256, validationSha256, validationState: validation.decision as "Supported" | "Inconclusive",
+    marketRegistrySha256: validated.artifact.marketRegistrySha256, deploymentRegistrySha256: validated.artifact.deploymentRegistrySha256,
+    baselineCorrelationSha256: validated.artifact.baselineCorrelationSha256, baselineSha256: validation.baselineSha256,
+    validationSha256, validationState: "Supported",
     candidatePath: candidate, manifestPath: manifestFact.path, validationPath,
     verificationPath, receiptPath,
   };

@@ -6,7 +6,7 @@ import { nearestCorrelationResult, structuredTargets, weightedCorrelation } from
 import type { PairEstimate } from "./matrix.js";
 import { canonicalJson, operationError, readCandlePartition, readDerivedDataset, readSourceRegistryFact, sha256, verifyManifest, writeOperationState } from "./store.js";
 import type { CandleRecord, CorrelationArtifact, DataManifest, DerivedManifestV2, SourceEntry } from "./types.js";
-import { assertLoadedResearchNetworkProfile, type LoadedResearchNetworkProfile } from "./network.js";
+import { assertLoadedResearchNetworkProfile, bindResearchRootIdentity, type LoadedResearchNetworkProfile } from "./network.js";
 
 const MAX_LOADING = Math.sqrt(0.99);
 const lexical = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
@@ -357,6 +357,7 @@ function calibrateImpl(input: CalibrationInput, storage: ResearchPersistence): C
 
 export function calibrate(input: CalibrationInput): CorrelationArtifact {
   const storage = input.storage ?? openResearchPersistence(input.root);
+  bindResearchRootIdentity(storage, input.profile);
   const now = input.now ?? Date.now;
   const started = now();
   const persist = (status: "running" | "succeeded" | "failed", error: string | null, details: Record<string, string | number | boolean | null> = {}): void => {
