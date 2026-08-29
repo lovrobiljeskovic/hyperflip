@@ -222,7 +222,7 @@ export function loadConfig(nowMs = Date.now()): WriterConfig {
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     const profileIdentityFailure = (error as NodeJS.ErrnoException).code === "ENOENT"
-      || /network|profile identity|registry hash mismatch|validation.*mismatch|derived manifest|requires Supported validation/.test(reason);
+      || /network|profile identity|registry hash mismatch|source\/market cluster disagreement|validation.*mismatch|derived manifest|requires Supported validation/.test(reason);
     if (!profileIdentityFailure) throw error;
     correlations = parseCorrelations(researchProfile.baselineCorrelationRaw);
     model = {

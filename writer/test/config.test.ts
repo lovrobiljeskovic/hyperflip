@@ -33,7 +33,7 @@ test("writer reports configured deployment mismatches precisely", () => {
   assert.equal(profileDeploymentMismatchReason(TESTNET_PROFILE, TESTNET_PROFILE.deployment.parlayVault, 61_906_227n), null);
 });
 
-function writeLiveConfigFixture(root: string): { artifactFile: string; validationFile: string; profileFile: string; sourcesFile: string; marketsFile: string; derivedReturnsFile: string; artifact: Record<string, any> } {
+function writeLiveConfigFixture(root: string): { artifactFile: string; validationFile: string; profileFile: string; sourcesFile: string; marketsFile: string; baselineFile: string; derivedReturnsFile: string; artifact: Record<string, any> } {
   const sources = {
     schemaVersion: 2,
     network: "testnet",
@@ -43,6 +43,7 @@ function writeLiveConfigFixture(root: string): { artifactFile: string; validatio
   const markets = { schemaVersion: 1, network: "testnet", markets: [{ vault: VAULT, coinYes: "+1", coinNo: "+2", underlying: "BTC", cluster: "crypto", direction: "up", title: "BTC", category: "crypto" }] };
   const sourcesFile = join(root, "sources.json");
   const marketsFile = join(root, "markets.json");
+  const baselineFile = join(root, "correlations.json");
   const deployment = { schemaVersion: 1, network: "testnet", evmChainId: 998, parlayVault: VAULT, parlayDeployBlock: "1" };
   const baseline = { network: "testnet", fallbackReason: "operator-reviewed-testnet-bootstrap", clusters: artifact.clusters };
   const profileValue = { schemaVersion: 1, network: "testnet", infoApiUrl: "https://api.hyperliquid-testnet.xyz/info", evmChainId: 998, sourceRegistryFile: "sources.json", marketRegistryFile: "markets.json", deploymentRegistryFile: "deployment.json", baselineCorrelationFile: "correlations.json" };
@@ -50,7 +51,7 @@ function writeLiveConfigFixture(root: string): { artifactFile: string; validatio
   writeFileSync(sourcesFile, canonicalJson(sources));
   writeFileSync(marketsFile, canonicalJson(markets));
   writeFileSync(join(root, "deployment.json"), canonicalJson(deployment));
-  writeFileSync(join(root, "correlations.json"), canonicalJson(baseline));
+  writeFileSync(baselineFile, canonicalJson(baseline));
   writeFileSync(profileFile, canonicalJson(profileValue));
   const profile = loadResearchNetworkProfile(profileFile);
   Object.assign(artifact, {
@@ -89,7 +90,7 @@ function writeLiveConfigFixture(root: string): { artifactFile: string; validatio
     baselineCorrelationSha256: profile.baselineCorrelationSha256, baselineSha256: profile.baselineCorrelationSha256,
     baselineSnapshotPath: `facts/baselines/${profile.baselineCorrelationSha256}.json`, decision: "Supported", deterministicRerunMatches: true,
   })}\n`);
-  return { artifactFile, validationFile, profileFile, sourcesFile, marketsFile, derivedReturnsFile, artifact };
+  return { artifactFile, validationFile, profileFile, sourcesFile, marketsFile, baselineFile, derivedReturnsFile, artifact };
 }
 
 test("parseMarkets parses JSON array and keys by lowercase vault", () => {
@@ -275,6 +276,40 @@ test("loadConfig degrades a champion from a different profile without disabling 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("nightly market registry rotation reuses the root, preserves raw history, and degrades the old champion", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-config-market-rotation-"));
+  try {
+    const fixture = writeLiveConfigFixture(root);
+    mkdirSync(join(root, "raw"), { recursive: true });
+    writeFileSync(join(root, "raw", "history.json"), "preserved\n");
+    const markets = JSON.parse(readFileSync(fixture.marketsFile, "utf8"));
+    markets.markets[0].title = "BTC nightly rotation";
+    writeFileSync(fixture.marketsFile, canonicalJson(markets));
+    withConfigEnv(fixture.artifactFile, () => {
+      const config = loadConfig(CONFIG_NOW);
+      assert.equal(config.model.multiAssetEnabled, false);
+      assert.match(config.model.identityFailureReason!, /artifact profile identity mismatch/);
+      assert.equal(readFileSync(join(root, "raw", "history.json"), "utf8"), "preserved\n");
+    });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("baseline rotation reuses the root but makes the old champion ineligible until recalibration", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-config-baseline-rotation-"));
+  try {
+    const fixture = writeLiveConfigFixture(root);
+    const baseline = JSON.parse(readFileSync(fixture.baselineFile, "utf8"));
+    baseline.clusters.crypto.BTC.global = 0.23;
+    writeFileSync(fixture.baselineFile, canonicalJson(baseline));
+    withConfigEnv(fixture.artifactFile, () => {
+      const config = loadConfig(CONFIG_NOW);
+      assert.equal(config.model.multiAssetEnabled, false);
+      assert.match(config.model.identityFailureReason!, /artifact profile identity mismatch/);
+      assert.equal(config.correlations.underlyings.BTC.global, 0.23);
+    });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("loadConfig fails closed for multi-asset pricing when validated derived bytes change", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-config-derived-hash-"));
   try {
@@ -289,21 +324,30 @@ test("loadConfig fails closed for multi-asset pricing when validated derived byt
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("loadConfig rejects source, market, and artifact cluster disagreement", () => {
-  for (const kind of ["market", "artifact"] as const) {
-    const root = mkdtempSync(join(tmpdir(), `hype-config-${kind}-cluster-`));
-    try {
-      const fixture = writeLiveConfigFixture(root);
-      if (kind === "market") {
-        writeFileSync(fixture.marketsFile, JSON.stringify([{ vault: VAULT, coinYes: "+1", coinNo: "+2", underlying: "BTC", cluster: "equity", direction: "up", title: "BTC", category: "crypto" }]));
-      } else {
-        fixture.artifact.clusters.equity = { BTC: fixture.artifact.clusters.crypto.BTC };
-        delete fixture.artifact.clusters.crypto.BTC;
-        writeFileSync(fixture.artifactFile, JSON.stringify(fixture.artifact));
-      }
-      withConfigEnv(fixture.artifactFile, () => assert.throws(() => loadConfig(CONFIG_NOW), /cluster disagreement|profile identity mismatch|market registry/i));
-    } finally { rmSync(root, { recursive: true, force: true }); }
-  }
+test("loadConfig degrades an old champion after a market cluster rotation", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-config-market-cluster-"));
+  try {
+    const fixture = writeLiveConfigFixture(root);
+    const markets = JSON.parse(readFileSync(fixture.marketsFile, "utf8"));
+    markets.markets[0].cluster = "equity";
+    writeFileSync(fixture.marketsFile, canonicalJson(markets));
+    withConfigEnv(fixture.artifactFile, () => {
+      const config = loadConfig(CONFIG_NOW);
+      assert.equal(config.model.multiAssetEnabled, false);
+      assert.match(config.model.identityFailureReason!, /source\/market cluster disagreement/);
+    });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("loadConfig rejects artifact cluster disagreement", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-config-artifact-cluster-"));
+  try {
+    const fixture = writeLiveConfigFixture(root);
+    fixture.artifact.clusters.equity = { BTC: fixture.artifact.clusters.crypto.BTC };
+    delete fixture.artifact.clusters.crypto.BTC;
+    writeFileSync(fixture.artifactFile, JSON.stringify(fixture.artifact));
+    withConfigEnv(fixture.artifactFile, () => assert.throws(() => loadConfig(CONFIG_NOW), /cluster disagreement/));
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("loadConfig rejects a future-dated champion", () => {

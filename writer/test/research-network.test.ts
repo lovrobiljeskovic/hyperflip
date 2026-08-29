@@ -32,23 +32,65 @@ test("loads the checked-in testnet profile with canonical registry identities", 
   assert.equal(loadResearchNetworkProfile(pretty).profileSha256, loaded.profileSha256);
 });
 
-test("research root marker binds every loaded registry identity", () => {
+test("research root marker permits market and baseline rotation while preserving raw history", () => {
   const profileFile = copyProfile();
   const root = dirname(profileFile);
   try {
     const first = loadResearchNetworkProfile(profileFile);
     const storage = openResearchPersistence(root);
     bindResearchRootIdentity(storage, first);
-    assert.deepEqual(JSON.parse(readFileSync(join(root, "network-profile.json"), "utf8")), researchRootIdentity(first));
+    storage.writeAtomic("raw/history.json", "preserved\n");
+    assert.deepEqual(JSON.parse(readFileSync(join(root, "network-profile.json"), "utf8")), {
+      schemaVersion: 3,
+      network: "testnet",
+      profileSha256: first.profileSha256,
+      evmChainId: 998,
+      deploymentRegistrySha256: first.deploymentRegistrySha256,
+    });
 
+    const marketsFile = join(root, "markets.json");
+    const markets = JSON.parse(readFileSync(marketsFile, "utf8"));
+    markets.markets[0].title = `${markets.markets[0].title} (rotated)`;
+    writeFileSync(marketsFile, JSON.stringify(markets));
     const correlations = join(root, "correlations.json");
     const changed = JSON.parse(readFileSync(correlations, "utf8"));
     changed.clusters.crypto.BTC.global = 0.2;
     writeFileSync(correlations, JSON.stringify(changed));
     const second = loadResearchNetworkProfile(profileFile);
     assert.equal(second.profileSha256, first.profileSha256);
+    assert.notEqual(second.marketRegistrySha256, first.marketRegistrySha256);
     assert.notEqual(second.baselineCorrelationSha256, first.baselineCorrelationSha256);
-    assert.throws(() => bindResearchRootIdentity(storage, second), /research root network\/profile marker mismatch/);
+    assert.doesNotThrow(() => bindResearchRootIdentity(storage, second));
+    assert.equal(storage.readText("raw/history.json"), "preserved\n");
+    assert.deepEqual(researchRootIdentity(second), researchRootIdentity(first));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("research root rejects deployment registry rotation", () => {
+  const profileFile = copyProfile();
+  const root = dirname(profileFile);
+  try {
+    const storage = openResearchPersistence(root);
+    bindResearchRootIdentity(storage, loadResearchNetworkProfile(profileFile));
+    const deploymentFile = join(root, "deployment.testnet.json");
+    const deployment = JSON.parse(readFileSync(deploymentFile, "utf8"));
+    deployment.parlayDeployBlock = String(BigInt(deployment.parlayDeployBlock) + 1n);
+    writeFileSync(deploymentFile, JSON.stringify(deployment));
+    assert.throws(() => bindResearchRootIdentity(storage, loadResearchNetworkProfile(profileFile)), /research root network\/profile marker mismatch/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("research root rejects profile declaration rotation even when referenced content is unchanged", () => {
+  const profileFile = copyProfile();
+  const root = dirname(profileFile);
+  try {
+    const storage = openResearchPersistence(root);
+    bindResearchRootIdentity(storage, loadResearchNetworkProfile(profileFile));
+    cpSync(join(root, "correlations.json"), join(root, "correlations-rotated.json"));
+    const declaration = JSON.parse(readFileSync(profileFile, "utf8"));
+    declaration.baselineCorrelationFile = "correlations-rotated.json";
+    writeFileSync(profileFile, JSON.stringify(declaration));
+    assert.throws(() => bindResearchRootIdentity(storage, loadResearchNetworkProfile(profileFile)), /research root network\/profile marker mismatch/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

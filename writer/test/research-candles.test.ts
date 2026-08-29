@@ -246,15 +246,21 @@ test("collector ignores an ahead checkpoint and resumes from its sealed shard", 
   }
 });
 
-test("research root rejects source-registry rotation and retains the fact that produced its sealed shard", async () => {
+test("source-registry rotation starts a new mapping epoch without mixing old and new manifest closure", async () => {
   const root = scratch();
   const nowMs = 12_000_000;
   const registryA = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
   const registryB = { schemaVersion: 2 as const, network: "testnet" as const, sources: [{ ...source, underlying: "BTC-RENAMED" }] };
   try {
-    await collectSources({ root, profile: loadedProfile(root, registryA), nowMs, fetch: async () => new Response(fixture("candle-snapshot.json")) });
-    await assert.rejects(collectSources({ root, profile: loadedProfile(root, registryB), nowMs: nowMs + 86_400_000, fetch: async () => new Response("[]") }), /research root network\/profile marker mismatch/);
-    assert.equal(buildDailyManifest(root, "1970-01-01").sourceRegistrySha256, sha256(canonicalJson(registryA)));
+    const hashA = sha256(canonicalJson(registryA));
+    const hashB = sha256(canonicalJson(registryB));
+    const first = await collectSources({ root, profile: loadedProfile(root, registryA), nowMs, fetch: async () => new Response(fixture("candle-snapshot.json")) });
+    const second = await collectSources({ root, profile: loadedProfile(root, registryB), nowMs: nowMs + 86_400_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
+    assert.notEqual(first.manifestPath, second.manifestPath);
+    assert.equal(JSON.parse(readFileSync(first.manifestPath!, "utf8")).sourceRegistrySha256, hashA);
+    assert.equal(JSON.parse(readFileSync(second.manifestPath!, "utf8")).sourceRegistrySha256, hashB);
+    assert.equal(JSON.parse(readFileSync(join(root, "manifests", "current.json"), "utf8")).sourceRegistrySha256, hashB);
+    assert.equal(buildDailyManifest(root, "1970-01-01").sourceRegistrySha256, hashA);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

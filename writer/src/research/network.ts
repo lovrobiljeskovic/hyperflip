@@ -41,13 +41,11 @@ export interface LoadedResearchNetworkProfile {
 }
 
 export interface ResearchRootIdentity {
-  schemaVersion: 2;
+  schemaVersion: 3;
   network: ResearchNetwork;
   profileSha256: string;
-  sourceRegistrySha256: string;
-  marketRegistrySha256: string;
+  evmChainId: number;
   deploymentRegistrySha256: string;
-  baselineCorrelationSha256: string;
 }
 
 export const RESEARCH_ROOT_IDENTITY_FILE = "network-profile.json";
@@ -55,13 +53,11 @@ const ROOT_DATA_DIRECTORIES = ["facts", "raw", "manifests", "derived", "artifact
 
 export function researchRootIdentity(profile: LoadedResearchNetworkProfile): ResearchRootIdentity {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     network: profile.profile.network,
     profileSha256: profile.profileSha256,
-    sourceRegistrySha256: profile.sourceRegistrySha256,
-    marketRegistrySha256: profile.marketRegistrySha256,
+    evmChainId: profile.profile.evmChainId,
     deploymentRegistrySha256: profile.deploymentRegistrySha256,
-    baselineCorrelationSha256: profile.baselineCorrelationSha256,
   };
 }
 
@@ -70,13 +66,14 @@ export function assertResearchRootIdentity(storage: ResearchPersistence, expecte
   let marker: ResearchRootIdentity;
   try { marker = JSON.parse(storage.readText(RESEARCH_ROOT_IDENTITY_FILE)) as ResearchRootIdentity; }
   catch { throw new Error("research root network/profile marker is invalid"); }
-  const keys = ["schemaVersion", "network", "profileSha256", "sourceRegistrySha256", "marketRegistrySha256", "deploymentRegistrySha256", "baselineCorrelationSha256"] as const;
-  const identityKeys = ["network", "profileSha256", "sourceRegistrySha256", "marketRegistrySha256", "deploymentRegistrySha256", "baselineCorrelationSha256"] as const;
-  const hashKeys = identityKeys.slice(1) as readonly (keyof ResearchRootIdentity)[];
+  const keys = ["schemaVersion", "network", "profileSha256", "evmChainId", "deploymentRegistrySha256"] as const;
+  const identityKeys = ["network", "profileSha256", "evmChainId", "deploymentRegistrySha256"] as const;
+  const hashKeys = ["profileSha256", "deploymentRegistrySha256"] as const;
   if (marker === null || typeof marker !== "object" || Array.isArray(marker)
     || Object.keys(marker).length !== keys.length || keys.some((key) => !(key in marker))
-    || marker.schemaVersion !== 2 || (marker.network !== "testnet" && marker.network !== "mainnet")
-    || hashKeys.some((key) => typeof marker[key] !== "string" || !/^[0-9a-f]{64}$/.test(String(marker[key])))) {
+    || marker.schemaVersion !== 3 || (marker.network !== "testnet" && marker.network !== "mainnet")
+    || !Number.isSafeInteger(marker.evmChainId) || marker.evmChainId < 1
+    || hashKeys.some((key) => !/^[0-9a-f]{64}$/.test(marker[key]))) {
     throw new Error("research root network/profile marker is invalid");
   }
   if (identityKeys.some((key) => expected[key] !== undefined && marker[key] !== expected[key])) throw new Error("research root network/profile marker mismatch");
