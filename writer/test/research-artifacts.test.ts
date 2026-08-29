@@ -56,7 +56,9 @@ function setup(artifactInput: CorrelationArtifact = VALID, fallbackEligible = fa
   artifact.deploymentRegistrySha256 = profile.deploymentRegistrySha256;
   artifact.baselineCorrelationSha256 = profile.baselineCorrelationSha256;
   const manifest: DataManifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    network: "testnet",
+    profileSha256: profile.profileSha256,
     createdAt: artifact.createdAt,
     sourceRegistrySha256,
     sourceRange: { fromMs: Date.parse(artifact.dataAsOf) - 180 * 86_400_000, toMs: Date.parse(artifact.dataAsOf) },

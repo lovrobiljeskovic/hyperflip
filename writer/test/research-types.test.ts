@@ -9,7 +9,7 @@ import {
   parseSourceRegistry,
   sourceFor,
 } from "../src/research/types.js";
-import type { CandleRecord, DataManifest, JoinedEventRecord } from "../src/research/types.js";
+import type { CandleRecord, DataManifest, JoinedEventRecord, SourceEntry } from "../src/research/types.js";
 
 const fixture = (name: string) => new URL(`./fixtures/research/${name}`, import.meta.url);
 
@@ -22,7 +22,7 @@ const btcSource = {
   calendar: "continuous",
   measurementEnabled: true,
   fallbackEligible: true,
-};
+} satisfies SourceEntry;
 
 test("source registry rejects duplicates and more than twenty underlyings", () => {
   assert.throws(() => parseSourceRegistry(readFileSync(fixture("sources-invalid-over-cap.json"), "utf8")), /at most 20/);
@@ -61,11 +61,40 @@ test("CandleRecord validation blocks unsafe millisecond timestamps before persis
   );
 });
 
+test("CandleRecord validation rejects foreign or mismatched source identities", () => {
+  const candle: CandleRecord = {
+    schemaVersion: 1, source: "hyperliquid-info", sourceNetwork: "testnet", underlying: "BTC", sourceCoin: "BTC", interval: "1h",
+    openTimeMs: 3_600_000, closeTimeMs: 7_199_999, open: "100", high: "110", low: "90", close: "105", volume: "1", tradeCount: 1, retrievedAtMs: 7_200_000,
+  };
+  for (const mutation of [
+    { sourceNetwork: "mainnet" },
+    { underlying: "ETH" },
+    { sourceCoin: "ETH" },
+    { interval: "4h" },
+    { source: "foreign" },
+    { high: "99" },
+  ]) assert.throws(() => assertCandleRecord({ ...candle, ...mutation } as CandleRecord, btcSource), /candle record/i);
+});
+
 test("DataManifest validation blocks noncanonical SHA-256 hashes before persistence", () => {
   assert.throws(
     () => assertDataManifest({ sourceRegistrySha256: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" } as DataManifest),
     /sourceRegistrySha256 must be a lowercase 64-character hex hash/,
   );
+});
+
+test("DataManifest requires schema v2 network and profile identity", () => {
+  const manifest = {
+    schemaVersion: 1,
+    createdAt: "2026-08-29T00:00:00.000Z",
+    sourceRegistrySha256: "a".repeat(64),
+    sourceRange: { fromMs: 0, toMs: 0 },
+    underlyings: {},
+    files: [],
+  } as unknown as DataManifest;
+  assert.throws(() => assertDataManifest(manifest), /schemaVersion must be 2/);
+  assert.throws(() => assertDataManifest({ ...manifest, schemaVersion: 2 } as DataManifest), /network/);
+  assert.throws(() => assertDataManifest({ ...manifest, schemaVersion: 2, network: "testnet" } as DataManifest), /profileSha256/);
 });
 
 test("QuoteDecision validation blocks raw signature hashes before persistence", () => {

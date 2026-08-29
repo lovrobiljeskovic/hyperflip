@@ -61,24 +61,27 @@ export function atomicWriteNew(file: string, bytes: string | Uint8Array): boolea
   return openResearchPersistence(dirname(resolve(file))).writeNew(basename(file), Buffer.from(bytes));
 }
 
-function parseCandleBytes(bytes: Buffer): CandleRecord[] {
+function parseCandleBytes(bytes: Buffer, registry?: SourceRegistry): CandleRecord[] {
   const rows = gunzipSync(bytes).toString("utf8").trim();
   if (!rows) return [];
   return rows.split("\n").map((line) => {
-    const record = JSON.parse(line) as CandleRecord;
-    assertCandleRecord(record);
+    let record: CandleRecord;
+    try { record = JSON.parse(line) as CandleRecord; } catch { throw new Error("invalid candle record JSON"); }
+    const expected = registry?.sources.find((source) => source.underlying === record.underlying);
+    if (registry && !expected) throw new Error(`invalid candle record underlying ${String(record.underlying)}`);
+    assertCandleRecord(record, expected);
     return record;
   });
 }
 
 export function readCandlePartition(file: string): CandleRecord[];
-export function readCandlePartition(storage: ResearchPersistence, relativePath: string): CandleRecord[];
-export function readCandlePartition(fileOrStorage: string | ResearchPersistence, relativePath?: string): CandleRecord[] {
+export function readCandlePartition(storage: ResearchPersistence, relativePath: string, registry?: SourceRegistry): CandleRecord[];
+export function readCandlePartition(fileOrStorage: string | ResearchPersistence, relativePath?: string, registry?: SourceRegistry): CandleRecord[] {
   if (typeof fileOrStorage === "string") {
     const file = resolve(fileOrStorage);
     return parseCandleBytes(openResearchPersistence(dirname(file)).read(basename(file)));
   }
-  return parseCandleBytes(fileOrStorage.read(relativePath!));
+  return parseCandleBytes(fileOrStorage.read(relativePath!), registry);
 }
 
 function derivedPartition(root: string, storage: ResearchPersistence, entry: { path: string; sha256: string; rows: number }, kind: "returns" | "exclusions", network: ResearchNetwork): ReturnRecord[] | ExclusionRecord[] {
@@ -151,21 +154,55 @@ export function readSourceRegistryFact(root: string, hash: string, storage = ope
   const relativePath = `facts/source-registries/${hash}.json`;
   const bytes = storage.readText(relativePath);
   if (sha256(bytes) !== hash) throw new Error("source registry fact hash mismatch");
-  return { registry: parseSourceRegistry(bytes), hash, path: resolve(root, relativePath) };
+  const registry = parseSourceRegistry(bytes);
+  assertResearchNetworkEnabled(registry.network);
+  return { registry, hash, path: resolve(root, relativePath) };
 }
 
-function sourceRegistry(root: string, rawFiles: string[], storage: ResearchPersistence): { registry: SourceRegistry; hash: string; path: string } {
+type RootProfileIdentity = { network: ResearchNetwork; profileSha256: string };
+
+function rootProfileIdentity(storage: ResearchPersistence): RootProfileIdentity {
+  let marker: Record<string, unknown>;
+  try { marker = JSON.parse(storage.readText("network-profile.json")) as Record<string, unknown>; } catch { throw new Error("research root network/profile marker is invalid"); }
+  if (marker === null || typeof marker !== "object" || Array.isArray(marker) || marker.schemaVersion !== 3 || marker.network !== "testnet" || typeof marker.profileSha256 !== "string" || !/^[0-9a-f]{64}$/.test(marker.profileSha256)) throw new Error("research root network/profile marker is invalid");
+  assertResearchNetworkEnabled(marker.network);
+  return { network: marker.network, profileSha256: marker.profileSha256 };
+}
+
+function candleProvenance(storage: ResearchPersistence, file: string, expected: RootProfileIdentity, sourceRegistrySha256?: string): CandleRawManifest {
+  let provenance: CandleRawManifest;
+  try { provenance = JSON.parse(storage.readText(`${file}.provenance.json`)) as CandleRawManifest; } catch { throw new Error("candle shard provenance is invalid"); }
+  const keys = ["schemaVersion", "sourceRegistrySha256", "network", "profileSha256", "startTimeMs", "endTimeMs", "ignoredBefore", "ignoredAfter"];
+  if (provenance === null || typeof provenance !== "object" || Array.isArray(provenance)
+    || Object.keys(provenance).length !== keys.length || keys.some((key) => !(key in provenance))
+    || provenance.schemaVersion !== 2 || provenance.network !== expected.network || provenance.profileSha256 !== expected.profileSha256
+    || !/^[0-9a-f]{64}$/.test(provenance.sourceRegistrySha256) || (sourceRegistrySha256 !== undefined && provenance.sourceRegistrySha256 !== sourceRegistrySha256)
+    || !Number.isSafeInteger(provenance.startTimeMs) || !Number.isSafeInteger(provenance.endTimeMs) || provenance.startTimeMs > provenance.endTimeMs
+    || !Number.isSafeInteger(provenance.ignoredBefore) || provenance.ignoredBefore < 0 || !Number.isSafeInteger(provenance.ignoredAfter) || provenance.ignoredAfter < 0) throw new Error("candle shard provenance identity mismatch");
+  return provenance;
+}
+
+function readProvenancedCandlePartition(storage: ResearchPersistence, file: string, registry: SourceRegistry, identity: RootProfileIdentity, sourceRegistrySha256: string): CandleRecord[] {
+  const provenance = candleProvenance(storage, file, identity, sourceRegistrySha256);
+  const records = readCandlePartition(storage, file, registry);
+  if (records.some((record) => record.openTimeMs < provenance.startTimeMs || record.closeTimeMs > provenance.endTimeMs)) throw new Error("candle shard row is outside provenance range");
+  return records;
+}
+
+function sourceRegistry(root: string, rawFiles: string[], storage: ResearchPersistence): { registry: SourceRegistry; hash: string; path: string; identity: RootProfileIdentity } {
+  const identity = rootProfileIdentity(storage);
   const provenanceHashes = [...new Set(rawFiles.map((file) => {
-    const provenance = JSON.parse(storage.readText(`${file}.provenance.json`)) as Partial<CandleRawManifest>;
-    if (provenance.schemaVersion !== 2 || typeof provenance.sourceRegistrySha256 !== "string" || provenance.network !== "testnet" || typeof provenance.profileSha256 !== "string") throw new Error("candle shard provenance is invalid");
-    return provenance.sourceRegistrySha256;
+    return candleProvenance(storage, file, identity).sourceRegistrySha256;
   }))];
   if (provenanceHashes.length > 1) throw new Error("daily shards use multiple source registries");
   if (!storage.exists("state/collector.json")) throw new Error("collector state is missing");
-  const state = JSON.parse(storage.readText("state/collector.json")) as { sourceRegistrySha256?: unknown };
+  const state = JSON.parse(storage.readText("state/collector.json")) as { sourceRegistrySha256?: unknown; network?: unknown; profileSha256?: unknown };
+  if (state.network !== identity.network || state.profileSha256 !== identity.profileSha256) throw new Error("collector state network/profile identity mismatch");
   const hash = provenanceHashes[0] ?? state.sourceRegistrySha256;
   if (typeof hash !== "string") throw new Error("collector state has no source registry hash");
-  return readSourceRegistryFact(root, hash, storage);
+  const fact = readSourceRegistryFact(root, hash, storage);
+  if (fact.registry.network !== identity.network) throw new Error("source registry network identity mismatch");
+  return { ...fact, identity };
 }
 
 function isExpectedSessionHour(timestampMs: number, source: SourceRegistry["sources"][number]): boolean {
@@ -182,7 +219,7 @@ export function buildDailyManifest(root: string, day: string, storage = openRese
   const [year, month, date] = dateParts(day);
   const rawFiles = storage.list(`raw/candles/${year}/${month}/${date}`).filter((file) => file.endsWith(".jsonl.gz"));
   const fact = sourceRegistry(root, rawFiles, storage);
-  const records = rawFiles.flatMap((file) => readCandlePartition(storage, file));
+  const records = rawFiles.flatMap((file) => readProvenancedCandlePartition(storage, file, fact.registry, fact.identity, fact.hash));
   const byUnderlying = new Map<string, CandleRecord[]>();
   for (const record of records) byUnderlying.set(record.underlying, [...(byUnderlying.get(record.underlying) ?? []), record]);
   const underlyings: DataManifest["underlyings"] = {};
@@ -202,11 +239,13 @@ export function buildDailyManifest(root: string, day: string, storage = openRese
   const factPath = `facts/source-registries/${fact.hash}.json`;
   const files = [factPath, ...rawFiles.flatMap((file) => [file, `${file}.provenance.json`])].map((path) => {
     const bytes = storage.read(path);
-    return { path, bytes: bytes.length, sha256: sha256(bytes), rows: path.endsWith(".jsonl.gz") ? parseCandleBytes(bytes).length : 1, schemaVersion: 1 as const };
+    return { path, bytes: bytes.length, sha256: sha256(bytes), rows: path.endsWith(".jsonl.gz") ? parseCandleBytes(bytes, fact.registry).length : 1, schemaVersion: 1 as const };
   }).sort((a, b) => bytewise(a.path, b.path));
   const timestamps = records.map((record) => record.retrievedAtMs);
   const manifest: DataManifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    network: fact.identity.network,
+    profileSha256: fact.identity.profileSha256,
     createdAt: new Date(timestamps.length ? Math.max(...timestamps) : 0).toISOString(),
     sourceRegistrySha256: fact.hash,
     sourceRange: { fromMs: records.length ? Math.min(...records.map((record) => record.openTimeMs)) : 0, toMs: records.length ? Math.max(...records.map((record) => record.closeTimeMs)) : 0 },
@@ -218,17 +257,16 @@ export function buildDailyManifest(root: string, day: string, storage = openRese
 }
 
 export function buildRollingManifest(root: string, sourceRegistrySha256: string, storage = openResearchPersistence(root)): DataManifest {
+  const identity = rootProfileIdentity(storage);
   const fact = readSourceRegistryFact(root, sourceRegistrySha256, storage);
-  const rawFiles = storage.list("raw/candles").filter((file) => file.endsWith(".jsonl.gz") && (() => {
-    const provenance = JSON.parse(storage.readText(`${file}.provenance.json`)) as Partial<CandleRawManifest>;
-    return provenance.schemaVersion === 2 && provenance.sourceRegistrySha256 === sourceRegistrySha256 && provenance.network === "testnet" && typeof provenance.profileSha256 === "string";
-  })());
-  const all = rawFiles.flatMap((file) => readCandlePartition(storage, file));
+  if (fact.registry.network !== identity.network) throw new Error("source registry network identity mismatch");
+  const rawFiles = storage.list("raw/candles").filter((file) => file.endsWith(".jsonl.gz") && candleProvenance(storage, file, identity).sourceRegistrySha256 === sourceRegistrySha256);
+  const all = rawFiles.flatMap((file) => readProvenancedCandlePartition(storage, file, fact.registry, identity, sourceRegistrySha256));
   if (!all.length) throw new Error("rolling manifest requires at least one closed candle");
   const toMs = Math.max(...all.map((record) => record.closeTimeMs));
   const fromMs = Math.max(0, toMs - RESEARCH_LOOKBACK_MS);
-  const selectedFiles = rawFiles.filter((file) => readCandlePartition(storage, file).some((record) => record.closeTimeMs >= fromMs && record.closeTimeMs <= toMs));
-  const records = selectedFiles.flatMap((file) => readCandlePartition(storage, file)).filter((record) => record.closeTimeMs >= fromMs && record.closeTimeMs <= toMs);
+  const selectedFiles = rawFiles.filter((file) => readProvenancedCandlePartition(storage, file, fact.registry, identity, sourceRegistrySha256).some((record) => record.closeTimeMs >= fromMs && record.closeTimeMs <= toMs));
+  const records = selectedFiles.flatMap((file) => readProvenancedCandlePartition(storage, file, fact.registry, identity, sourceRegistrySha256)).filter((record) => record.closeTimeMs >= fromMs && record.closeTimeMs <= toMs);
   const underlyings: DataManifest["underlyings"] = {};
   for (const source of fact.registry.sources) {
     const candles = records.filter((record) => record.underlying === source.underlying).sort((a, b) => a.openTimeMs - b.openTimeMs);
@@ -247,10 +285,12 @@ export function buildRollingManifest(root: string, sourceRegistrySha256: string,
   const factPath = `facts/source-registries/${fact.hash}.json`;
   const files = [factPath, ...selectedFiles.flatMap((file) => [file, `${file}.provenance.json`])].map((path) => {
     const bytes = storage.read(path);
-    return { path, bytes: bytes.length, sha256: sha256(bytes), rows: path.endsWith(".jsonl.gz") ? parseCandleBytes(bytes).length : 1, schemaVersion: 1 as const };
+    return { path, bytes: bytes.length, sha256: sha256(bytes), rows: path.endsWith(".jsonl.gz") ? parseCandleBytes(bytes, fact.registry).length : 1, schemaVersion: 1 as const };
   }).sort((a, b) => bytewise(a.path, b.path));
   const manifest: DataManifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    network: identity.network,
+    profileSha256: identity.profileSha256,
     createdAt: new Date(Math.max(...records.map((record) => record.retrievedAtMs))).toISOString(),
     sourceRegistrySha256,
     sourceRange: { fromMs, toMs },
@@ -299,6 +339,8 @@ export function readCurrentManifest(root: string, storage = openResearchPersiste
 
 export function verifyManifest(root: string, manifest: DataManifest, storage = openResearchPersistence(root)): void {
   assertDataManifest(manifest);
+  const identity = rootProfileIdentity(storage);
+  if (manifest.network !== identity.network || manifest.profileSha256 !== identity.profileSha256) throw new Error("manifest network/profile identity mismatch");
   for (const file of manifest.files) {
     let bytes: Buffer;
     try {
@@ -315,4 +357,11 @@ export function verifyManifest(root: string, manifest: DataManifest, storage = o
   const fact = manifest.files.find((file) => file.path === `facts/source-registries/${manifest.sourceRegistrySha256}.json`);
   if (!fact) throw new Error("manifest omits source registry fact");
   if (fact.sha256 !== manifest.sourceRegistrySha256) throw new Error("source registry fact hash mismatch");
+  const registry = readSourceRegistryFact(root, manifest.sourceRegistrySha256, storage).registry;
+  if (registry.network !== manifest.network) throw new Error("manifest source registry network mismatch");
+  for (const file of manifest.files.filter((entry) => entry.path.endsWith(".jsonl.gz"))) {
+    candleProvenance(storage, file.path, identity, manifest.sourceRegistrySha256);
+    if (!manifest.files.some((entry) => entry.path === `${file.path}.provenance.json`)) throw new Error(`manifest omits candle shard provenance: ${file.path}`);
+    readProvenancedCandlePartition(storage, file.path, registry, identity, manifest.sourceRegistrySha256);
+  }
 }

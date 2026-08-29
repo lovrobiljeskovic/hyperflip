@@ -836,10 +836,10 @@ interface ReplayDerivedIdentity {
   derivationWindow: { asOfMs: number; lookbackMs: number };
 }
 
-function readExisting(storage: ResearchPersistence, path: string, candidateSha256: string, inputManifestSha256: string, profile: LoadedResearchNetworkProfile, derived: ReplayDerivedIdentity): ValidationReport | null {
+function readExisting(storage: ResearchPersistence, path: string, candidateSha256: string, inputManifestSha256: string, profile: LoadedResearchNetworkProfile, derived: ReplayDerivedIdentity, seed: string): ValidationReport | null {
   if (!storage.exists(path)) return null;
   const report = JSON.parse(storage.readText(path)) as ValidationReport;
-  if (report.schemaVersion !== 3 || report.network !== profile.profile.network || report.profileSha256 !== profile.profileSha256 || report.candidateSha256 !== candidateSha256 || report.inputManifestSha256 !== inputManifestSha256 || report.sourceRegistrySha256 !== profile.sourceRegistrySha256 || report.marketRegistrySha256 !== profile.marketRegistrySha256 || report.deploymentRegistrySha256 !== profile.deploymentRegistrySha256 || report.baselineCorrelationSha256 !== profile.baselineCorrelationSha256 || report.baselineSha256 !== profile.baselineCorrelationSha256 || report.baselineSnapshotPath !== `facts/baselines/${profile.baselineCorrelationSha256}.json` || report.derivedManifestPath !== derived.derivedManifestPath || report.derivedManifestSha256 !== derived.derivedManifestSha256 || report.returnsSha256 !== derived.returnsSha256 || report.exclusionsSha256 !== derived.exclusionsSha256 || canonicalJson(report.derivationWindow) !== canonicalJson(derived.derivationWindow)) throw new Error("validation already exists for different immutable inputs");
+  if (report.schemaVersion !== 3 || report.network !== profile.profile.network || report.profileSha256 !== profile.profileSha256 || report.candidateSha256 !== candidateSha256 || report.inputManifestSha256 !== inputManifestSha256 || report.sourceRegistrySha256 !== profile.sourceRegistrySha256 || report.marketRegistrySha256 !== profile.marketRegistrySha256 || report.deploymentRegistrySha256 !== profile.deploymentRegistrySha256 || report.baselineCorrelationSha256 !== profile.baselineCorrelationSha256 || report.baselineSha256 !== profile.baselineCorrelationSha256 || report.baselineSnapshotPath !== `facts/baselines/${profile.baselineCorrelationSha256}.json` || report.derivedManifestPath !== derived.derivedManifestPath || report.derivedManifestSha256 !== derived.derivedManifestSha256 || report.returnsSha256 !== derived.returnsSha256 || report.exclusionsSha256 !== derived.exclusionsSha256 || canonicalJson(report.derivationWindow) !== canonicalJson(derived.derivationWindow) || report.seed !== seed) throw new Error("validation already exists for different immutable inputs");
   const snapshot = storage.read(report.baselineSnapshotPath);
   if (sha256(snapshot) !== report.baselineSha256) throw new Error("baseline snapshot hash mismatch");
   return report;
@@ -889,7 +889,7 @@ export function runReplay(input: ReplayInput): ValidationReport {
   }
   const candidateSha256 = sha256(input.candidateBytes ?? canonicalJson(input.candidate));
   const outputPath = validationPath(input.candidate.modelVersion);
-  const existing = readExisting(storage, outputPath, candidateSha256, input.inputManifestSha256, input.profile, derivedIdentity);
+  const existing = readExisting(storage, outputPath, candidateSha256, input.inputManifestSha256, input.profile, derivedIdentity, input.seed);
   if (existing) return existing;
   const baselineCanonical = input.profile.baselineCorrelationRaw;
   const baselineSha256 = sha256(baselineCanonical);

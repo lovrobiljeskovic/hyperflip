@@ -146,6 +146,16 @@ test("best-estimate worker failure returns pricing-unavailable before reservatio
   assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
 });
 
+test("same-underlying quote succeeds while the correlation worker is unavailable", async () => {
+  let workerCalled = false;
+  const d = deps({
+    bestEstimateJointProbWad: async () => { workerCalled = true; throw new Error("worker down"); },
+  });
+  const result = await handleQuote(d, body({ legs: [legOn(BTC_VAULT_A, true), legOn(BTC_VAULT_B, true)] }));
+  assert.equal(result.status, 200);
+  assert.equal(workerCalled, false);
+});
+
 test("same-cluster same-direction legs now quote instead of 400", async () => {
   const res = await handleQuote(deps(), body({ legs: [legOn(NVDA_VAULT, true), legOn(SP500_VAULT, true)] }));
   assert.equal(res.status, 200);

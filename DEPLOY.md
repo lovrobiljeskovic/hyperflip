@@ -115,7 +115,12 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-The writer unit is identical with `WorkingDirectory=/opt/hype/writer`.
+The writer unit is identical with `WorkingDirectory=/opt/hype/writer` and this additional
+fail-closed storage requirement under `[Service]`:
+
+```ini
+Environment=RESEARCH_REQUIRE_ANCHORED_FS=1
+```
 
 `tools/supervise.sh` is not used on the server — systemd replaces it. The script remains for
 local runs.
@@ -242,6 +247,7 @@ read-only inputs (the profile path is relative to the units' `/opt/hype/writer` 
 ```dotenv
 RESEARCH_NETWORK_PROFILE_FILE=../registry/research-network.testnet.json
 RESEARCH_ROOT=/opt/hype/research/testnet
+RESEARCH_REQUIRE_ANCHORED_FS=1
 WRITER_RPC=<approved-testnet-read-endpoint>
 RESEARCH_REPLAY_SEED=<reviewed-public-seed>
 ```

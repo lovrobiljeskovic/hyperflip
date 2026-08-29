@@ -189,7 +189,7 @@ async function fixtureFlow(root: string): Promise<Record<string, Buffer>> {
   assert.equal(resolved.quoteId, quote.quoteId);
 
   recordFailedThenSuccessfulCollect(root);
-  const report = generateReport(root, candidatePath, derived.manifestPath, AS_OF);
+  const report = generateReport(root, candidatePath, derived.manifestPath, selected.loaded, AS_OF);
   assert.match(report.bytes, /collect terminal: success/);
   assert.match(report.bytes, /collect failure: fixture collector failed/);
   const backup = await backUpFixture(root);

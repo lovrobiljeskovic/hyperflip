@@ -450,6 +450,16 @@ test("replay snapshots the baseline and immutable reruns ignore later registry e
   }
 });
 
+test("validation sidecar reuse rejects a different requested seed", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-replay-seed-"));
+  try {
+    const series = dailySeries(95);
+    const candidate = candidateFor(series, "seed-closure");
+    runReplay(replayInput(root, candidate, series, "first-seed"));
+    assert.throws(() => runReplay(replayInput(root, candidate, series, "second-seed")), /different immutable inputs/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("validation reuse rejects mutated derived returns, exclusions, and window identities", () => {
   for (const kind of ["returns", "exclusions", "window"] as const) {
     const root = mkdtempSync(join(tmpdir(), `hype-replay-derived-${kind}-`));

@@ -140,7 +140,9 @@ export interface ExclusionRecord {
 }
 
 export interface DataManifest {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  network: ResearchNetwork;
+  profileSha256: string;
   createdAt: string;
   sourceRegistrySha256: string;
   sourceRange: { fromMs: number; toMs: number };
@@ -324,10 +326,25 @@ function assertSha256(value: string, label: string): void {
   if (!SHA256.test(value)) throw new Error(`${label} must be a lowercase 64-character hex hash`);
 }
 
-export function assertCandleRecord(record: CandleRecord): void {
+export function assertCandleRecord(record: CandleRecord, expected?: Pick<SourceEntry, "sourceNetwork" | "underlying" | "sourceCoin">): void {
+  if (record === null || typeof record !== "object" || Array.isArray(record)) throw new Error("invalid candle record");
   assertSafeIntegerTimestamp(record.openTimeMs, "openTimeMs");
   assertSafeIntegerTimestamp(record.closeTimeMs, "closeTimeMs");
   assertSafeIntegerTimestamp(record.retrievedAtMs, "retrievedAtMs");
+  const keys = ["schemaVersion", "source", "sourceNetwork", "underlying", "sourceCoin", "interval", "openTimeMs", "closeTimeMs", "open", "high", "low", "close", "volume", "tradeCount", "retrievedAtMs"];
+  if (record === null || typeof record !== "object" || Array.isArray(record)
+    || Object.keys(record).length !== keys.length || keys.some((key) => !(key in record))
+    || record.schemaVersion !== 1 || record.source !== "hyperliquid-info"
+    || typeof record.underlying !== "string" || !SAFE_FILENAME_ID.test(record.underlying)
+    || typeof record.sourceCoin !== "string" || !record.sourceCoin || record.interval !== "1h") throw new Error("invalid candle record identity");
+  if (record.sourceNetwork !== "testnet") throw new Error("invalid candle record network identity");
+  if (expected && (record.sourceNetwork !== expected.sourceNetwork || record.underlying !== expected.underlying || record.sourceCoin !== expected.sourceCoin)) throw new Error("invalid candle record source identity");
+  if (record.openTimeMs % 3_600_000 !== 0 || record.closeTimeMs - record.openTimeMs !== 3_600_000 - 1 || record.closeTimeMs >= record.retrievedAtMs) throw new Error("invalid candle record timestamps");
+  const numeric = [record.open, record.high, record.low, record.close, record.volume];
+  if (numeric.some((value) => typeof value !== "string" || !value.trim() || !Number.isFinite(Number(value)))
+    || Number(record.volume) < 0 || Number(record.high) < Math.max(Number(record.open), Number(record.close))
+    || Number(record.low) > Math.min(Number(record.open), Number(record.close))
+    || !Number.isSafeInteger(record.tradeCount) || record.tradeCount < 0) throw new Error("invalid candle record values");
 }
 
 export function assertExclusionRecord(record: ExclusionRecord): void {
@@ -356,15 +373,38 @@ export function parseReturnRecord(value: unknown, expectedNetwork?: ResearchNetw
 }
 
 export function assertDataManifest(record: DataManifest): void {
+  if (record === null || typeof record !== "object" || Array.isArray(record)) throw new Error("DataManifest must be an object");
   assertSha256(record.sourceRegistrySha256, "sourceRegistrySha256");
+  if (record.schemaVersion !== 2) throw new Error("DataManifest schemaVersion must be 2");
+  if (!("network" in record)) throw new Error("DataManifest network is required");
+  if (!("profileSha256" in record)) throw new Error("DataManifest profileSha256 is required");
+  const keys = ["schemaVersion", "network", "profileSha256", "createdAt", "sourceRegistrySha256", "sourceRange", "underlyings", "files"];
+  if (Object.keys(record).length !== keys.length || keys.some((key) => !(key in record))) throw new Error("DataManifest has invalid fields");
+  if (record.network !== "testnet") throw new Error("DataManifest network must be testnet");
+  assertResearchNetworkEnabled(record.network);
+  assertSha256(record.profileSha256, "profileSha256");
+  if (typeof record.createdAt !== "string" || !Number.isFinite(Date.parse(record.createdAt)) || new Date(Date.parse(record.createdAt)).toISOString() !== record.createdAt) throw new Error("DataManifest createdAt must be an exact ISO timestamp");
+  if (record.sourceRange === null || typeof record.sourceRange !== "object" || Array.isArray(record.sourceRange)
+    || Object.keys(record.sourceRange).length !== 2 || !("fromMs" in record.sourceRange) || !("toMs" in record.sourceRange)) throw new Error("DataManifest sourceRange is invalid");
   assertSafeIntegerTimestamp(record.sourceRange.fromMs, "sourceRange.fromMs");
   assertSafeIntegerTimestamp(record.sourceRange.toMs, "sourceRange.toMs");
+  if (record.sourceRange.fromMs > record.sourceRange.toMs) throw new Error("DataManifest sourceRange is reversed");
+  if (record.underlyings === null || typeof record.underlyings !== "object" || Array.isArray(record.underlyings)) throw new Error("DataManifest underlyings must be an object");
   for (const [underlying, observations] of Object.entries(record.underlyings)) {
+    if (observations === null || typeof observations !== "object" || Array.isArray(observations)
+      || Object.keys(observations).length !== 4 || !["rows", "firstUsableObservationMs", "lastUsableObservationMs", "missingIntervals"].every((key) => key in observations)
+      || !SAFE_FILENAME_ID.test(underlying) || !Number.isSafeInteger(observations.rows) || observations.rows < 0 || !Array.isArray(observations.missingIntervals)) throw new Error(`DataManifest underlying ${underlying} is invalid`);
     if (observations.firstUsableObservationMs !== null) assertSafeIntegerTimestamp(observations.firstUsableObservationMs, `underlyings.${underlying}.firstUsableObservationMs`);
     if (observations.lastUsableObservationMs !== null) assertSafeIntegerTimestamp(observations.lastUsableObservationMs, `underlyings.${underlying}.lastUsableObservationMs`);
     for (const timestampMs of observations.missingIntervals) assertSafeIntegerTimestamp(timestampMs, `underlyings.${underlying}.missingIntervals`);
   }
-  for (const file of record.files) assertSha256(file.sha256, "files.sha256");
+  if (!Array.isArray(record.files)) throw new Error("DataManifest files must be an array");
+  for (const file of record.files) {
+    if (file === null || typeof file !== "object" || Array.isArray(file) || Object.keys(file).length !== 5
+      || !["path", "bytes", "sha256", "rows", "schemaVersion"].every((key) => key in file)
+      || typeof file.path !== "string" || !Number.isSafeInteger(file.bytes) || file.bytes < 0 || !Number.isSafeInteger(file.rows) || file.rows < 0 || file.schemaVersion !== 1) throw new Error("DataManifest file is invalid");
+    assertSha256(file.sha256, "files.sha256");
+  }
 }
 
 export function assertCorrelationArtifact(record: CorrelationArtifact): void {
@@ -380,10 +420,41 @@ export function assertCorrelationArtifact(record: CorrelationArtifact): void {
 }
 
 export function assertQuoteDecision(record: QuoteDecision): void {
+  const value = record as unknown;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("quote decision must be an object");
+  const object = value as Record<string, unknown>;
+  const keys = ["schemaVersion", "network", "profileSha256", "marketRegistrySha256", "deploymentRegistrySha256", "baselineCorrelationSha256", "artifactKind", "artifactSha256", "validationSha256", "validationState", "pairDecisions", "recordedAtMs", "quoteId", "quoteDigest", "chainId", "parlayVault", "taker", "legs", "bookInputs", "modelVersion", "dataAsOf", "dataManifestSha256", "sourceRegistrySha256", "bestEstimateJointProbWad", "riskAdjustedJointProbWad", "rhoBandPct", "edge", "premium", "maxPayout", "deadline", "signatureHash"];
+  if (Object.keys(object).length !== keys.length || keys.some((key) => !(key in object))) throw new Error("quote decision has invalid fields");
   if (record.schemaVersion !== 3) throw new Error("quote decision schemaVersion must be 3");
   assertResearchNetworkEnabled(record.network);
+  if (record.network !== "testnet") throw new Error("quote decision network must be testnet");
   assertSafeIntegerTimestamp(record.recordedAtMs, "recordedAtMs");
-  for (const input of record.bookInputs) assertSafeIntegerTimestamp(input.observedAtMs, "bookInputs.observedAtMs");
+  if (!Number.isSafeInteger(record.chainId) || record.chainId < 1) throw new Error("chainId must be a positive safe integer");
+  for (const key of ["quoteId", "quoteDigest", "parlayVault", "taker", "modelVersion", "dataAsOf", "bestEstimateJointProbWad", "riskAdjustedJointProbWad", "premium", "maxPayout", "deadline"] as const) {
+    if (typeof record[key] !== "string" || !record[key]) throw new Error(`${key} must be a non-empty string`);
+  }
+  const dataAsOfMs = Date.parse(record.dataAsOf);
+  if (!Number.isFinite(dataAsOfMs) || new Date(dataAsOfMs).toISOString() !== record.dataAsOf) throw new Error("dataAsOf must be an exact ISO timestamp");
+  if (!Array.isArray(record.legs) || !Array.isArray(record.bookInputs) || !Array.isArray(record.pairDecisions)) throw new Error("quote decision arrays are invalid");
+  for (const leg of record.legs) {
+    if (leg === null || typeof leg !== "object" || Array.isArray(leg) || Object.keys(leg).length !== 6
+      || !["vault", "isYes", "underlying", "cluster", "direction", "outcomeCoin"].every((key) => key in leg)
+      || typeof leg.vault !== "string" || !leg.vault || typeof leg.isYes !== "boolean" || typeof leg.underlying !== "string" || !leg.underlying
+      || (leg.cluster !== "crypto" && leg.cluster !== "equity" && leg.cluster !== "commodity")
+      || (leg.direction !== "up" && leg.direction !== "down" && leg.direction !== "band") || typeof leg.outcomeCoin !== "string" || !leg.outcomeCoin) throw new Error("quote decision leg is invalid");
+  }
+  for (const input of record.bookInputs) {
+    if (input === null || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length !== 6
+      || !["priceWad", "source", "observedAtMs", "depthWad", "vwapWad", "freshnessMs"].every((key) => key in input)
+      || typeof input.priceWad !== "string" || !input.priceWad || (input.source !== "l2Book" && input.source !== "spotPx")
+      || (input.depthWad !== null && typeof input.depthWad !== "string") || (input.vwapWad !== null && typeof input.vwapWad !== "string")
+      || (input.freshnessMs !== null && (!Number.isSafeInteger(input.freshnessMs) || input.freshnessMs < 0))) throw new Error("quote decision book input is invalid");
+    assertSafeIntegerTimestamp(input.observedAtMs, "bookInputs.observedAtMs");
+  }
+  if (record.edge === null || typeof record.edge !== "object" || Array.isArray(record.edge) || Object.keys(record.edge).length !== 3
+    || !["baseBps", "legBps", "totalBps"].every((key) => key in record.edge)
+    || Object.values(record.edge).some((entry) => typeof entry !== "string" || !entry)) throw new Error("quote decision edge is invalid");
+  if (typeof record.rhoBandPct !== "number" || !Number.isFinite(record.rhoBandPct)) throw new Error("rhoBandPct must be finite");
   assertSha256(record.profileSha256, "profileSha256");
   assertSha256(record.dataManifestSha256, "dataManifestSha256");
   assertSha256(record.sourceRegistrySha256, "sourceRegistrySha256");
@@ -403,7 +474,9 @@ export function assertQuoteDecision(record: QuoteDecision): void {
   for (let left = 0; left < underlyings.length; left++) for (let right = left + 1; right < underlyings.length; right++) expectedPairs.push(`${underlyings[left]}:${underlyings[right]}`);
   const recordedPairs: string[] = [];
   for (const pair of record.pairDecisions) {
-    if (!Array.isArray(pair.pair) || pair.pair.length !== 2 || pair.pair[0] >= pair.pair[1]) throw new Error("pairDecisions must use canonical pairs");
+    if (pair === null || typeof pair !== "object" || Array.isArray(pair) || Object.keys(pair).length !== 5
+      || !["pair", "status", "reason", "correlation", "evidenceCorrelation"].every((key) => key in pair)
+      || !Array.isArray(pair.pair) || pair.pair.length !== 2 || pair.pair.some((underlying) => typeof underlying !== "string" || !underlying) || pair.pair[0] >= pair.pair[1]) throw new Error("pairDecisions must use canonical pairs");
     if (pair.status !== "direct" && pair.status !== "fallback" && pair.status !== "quarantined") throw new Error("pairDecisions status is invalid");
     if (!pair.reason || typeof pair.correlation !== "number" || !Number.isFinite(pair.correlation)
       || (pair.status === "quarantined" ? pair.evidenceCorrelation !== null : typeof pair.evidenceCorrelation !== "number" || !Number.isFinite(pair.evidenceCorrelation))) throw new Error("pairDecisions evidence is invalid");

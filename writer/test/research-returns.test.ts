@@ -143,10 +143,11 @@ test("derived partitions are immutable and deterministic after manifest verifica
     mkdirSync(join(root, "state"), { recursive: true });
     mkdirSync(join(root, "raw", "candles", "1970", "01", "01", "BTC"), { recursive: true });
     writeFileSync(join(root, "facts", "source-registries", `${sourceHash}.json`), registryBytes);
-    writeFileSync(join(root, "state", "collector.json"), canonicalJson({ schemaVersion: 1, sourceRegistrySha256: sourceHash, sources: {} }));
-    const rows = [candle(0, "100", "1", 1, "BTC", "OTHER"), ...fixture("candles-continuous.jsonl")];
+    writeFileSync(join(root, "network-profile.json"), canonicalJson({ schemaVersion: 3, network: "testnet", profileSha256: "a".repeat(64), evmChainId: 998, deploymentRegistrySha256: "b".repeat(64) }));
+    writeFileSync(join(root, "state", "collector.json"), canonicalJson({ schemaVersion: 2, sourceRegistrySha256: sourceHash, network: "testnet", profileSha256: "a".repeat(64), sources: {} }));
+    const rows = fixture("candles-continuous.jsonl");
     writeFileSync(raw, gzipSync(`${rows.map((row) => JSON.stringify(row)).join("\n")}\n`));
-    writeFileSync(`${raw}.provenance.json`, canonicalJson({ schemaVersion: 2, sourceRegistrySha256: sourceHash, network: "testnet", profileSha256: "a".repeat(64), startTimeMs: 0, endTimeMs: 0, ignoredBefore: 0, ignoredAfter: 0 }));
+    writeFileSync(`${raw}.provenance.json`, canonicalJson({ schemaVersion: 2, sourceRegistrySha256: sourceHash, network: "testnet", profileSha256: "a".repeat(64), startTimeMs: HOUR, endTimeMs: 6 * HOUR - 1, ignoredBefore: 0, ignoredAfter: 0 }));
     const manifest = buildDailyManifest(root, "1970-01-01");
     const first = deriveReturns(root, manifest, window(0, 5 * HOUR));
     const second = deriveReturns(root, manifest, window(0, 5 * HOUR));

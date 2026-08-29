@@ -113,14 +113,18 @@ function calibrationRoot(options: { staleParticipatingUnderlying?: string; const
   })));
   const rawBytes = gzipSync(`${candles.map(canonicalJson).join("\n")}\n`);
   const rawPath = "raw/candles/2026/08/28/fixture.jsonl.gz";
+  const provenanceBytes = canonicalJson({ schemaVersion: 2, sourceRegistrySha256: registryHash, network: "testnet", profileSha256: profile.profileSha256, startTimeMs: candleTimes[0], endTimeMs: latest + HOUR - 1, ignoredBefore: 0, ignoredAfter: 0 });
   mkdirSync(join(root, "facts", "source-registries"), { recursive: true });
   mkdirSync(join(root, "raw", "candles", "2026", "08", "28"), { recursive: true });
   mkdirSync(join(root, "derived", "returns-v2", "returns", "2026", "08", "28"), { recursive: true });
   mkdirSync(join(root, "derived", "returns-v2", "exclusions", "2026", "08", "28"), { recursive: true });
   writeFileSync(join(root, "facts", "source-registries", `${registryHash}.json`), registryBytes);
   writeFileSync(join(root, rawPath), rawBytes);
+  writeFileSync(join(root, `${rawPath}.provenance.json`), provenanceBytes);
   const manifest: DataManifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    network: "testnet",
+    profileSha256: profile.profileSha256,
     createdAt: "2026-08-28T12:00:00.000Z",
     sourceRegistrySha256: registryHash,
     sourceRange: { fromMs: candleTimes[0], toMs: latest + HOUR - 1 },
@@ -130,6 +134,7 @@ function calibrationRoot(options: { staleParticipatingUnderlying?: string; const
     files: [
       { path: `facts/source-registries/${registryHash}.json`, bytes: Buffer.byteLength(registryBytes), sha256: registryHash, rows: 1, schemaVersion: 1 },
       { path: rawPath, bytes: rawBytes.length, sha256: sha256(rawBytes), rows: candles.length, schemaVersion: 1 },
+      { path: `${rawPath}.provenance.json`, bytes: Buffer.byteLength(provenanceBytes), sha256: sha256(provenanceBytes), rows: 1, schemaVersion: 1 },
     ],
   };
   const derivedText = options.staleParticipatingUnderlying || options.constantUnderlying
@@ -314,7 +319,7 @@ test("calibrate CLI writes the deterministic candidate from explicit immutable i
       env: { ...process.env, RESEARCH_ROOT: fixture.root, RESEARCH_NETWORK_PROFILE_FILE: fixture.profileFile, RESEARCH_MANIFEST_FILE: join(fixture.root, "manifest.json"), RESEARCH_DERIVED_MANIFEST_FILE: fixture.input.derivedManifestPath },
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /2026-08-28\.398fc2b3/);
+    assert.match(result.stdout, /2026-08-28\.c9e10015/);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

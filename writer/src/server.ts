@@ -207,7 +207,9 @@ export async function handleQuote(
   }
   let bestEstimate: bigint;
   try {
-    bestEstimate = await deps.bestEstimateJointProbWad(corrLegs);
+    bestEstimate = new Set(corrLegs.map((leg) => leg.underlying)).size === 1
+      ? riskAdjustedJointProbWad(corrLegs, cfg.correlations, 0)
+      : await deps.bestEstimateJointProbWad(corrLegs);
   } catch (error) {
     if (error instanceof TooComplexError) {
       reject(metrics, "ticket-too-complex");

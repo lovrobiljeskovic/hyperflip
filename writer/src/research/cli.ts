@@ -72,7 +72,7 @@ if (!commands.includes(command)) {
     console.error("RESEARCH_ROOT, RESEARCH_NETWORK_PROFILE_FILE, RESEARCH_CANDIDATE_FILE, and RESEARCH_DERIVED_MANIFEST_FILE are required");
     process.exitCode = 2;
   } else {
-    const output = await recorded(resolve(root), "report", () => generateReport(resolve(root), resolve(candidateFile), resolve(derivedManifestFile)), undefined, (value) => ({ path: researchRelativePath(resolve(root), value.path), sha256: sha256(value.bytes) }));
+    const output = await recorded(resolve(root), "report", () => generateReport(resolve(root), resolve(candidateFile), resolve(derivedManifestFile), profile()), undefined, (value) => ({ path: researchRelativePath(resolve(root), value.path), sha256: sha256(value.bytes) }));
     console.log(JSON.stringify({ path: output.path, sha256: sha256(output.bytes) }));
   }
 } else if (command === "backup") {

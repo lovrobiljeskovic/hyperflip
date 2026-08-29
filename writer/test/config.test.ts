@@ -23,6 +23,20 @@ const VAULT = "0x1111111111111111111111111111111111111111";
 const CONFIG_NOW = Date.parse("2026-08-28T18:00:00.000Z");
 const TESTNET_PROFILE = loadResearchNetworkProfile(new URL("../../registry/research-network.testnet.json", import.meta.url).pathname);
 
+test("shipped writer startup requires anchored research storage", () => {
+  const example = Object.fromEntries(readFileSync(new URL("../.env.example", import.meta.url), "utf8").split("\n").filter((line) => line && !line.startsWith("#")).map((line) => line.split("=", 2)));
+  assert.equal(example.RESEARCH_REQUIRE_ANCHORED_FS, "1");
+});
+
+test("writer startup refuses required anchoring when the platform cannot provide it", () => {
+  if (process.platform === "linux") return;
+  const root = mkdtempSync(join(tmpdir(), "hype-config-anchored-"));
+  try {
+    const fixture = writeLiveConfigFixture(root);
+    withConfigEnv(fixture.artifactFile, () => assert.throws(() => loadConfig(CONFIG_NOW), /Linux.*\/proc\/self\/fd/), { RESEARCH_REQUIRE_ANCHORED_FS: "1" });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("writer refuses a chain that differs from the selected profile", () => {
   assert.throws(() => assertProfileChain(TESTNET_PROFILE, 999), /expected chain 998.*got 999/);
 });

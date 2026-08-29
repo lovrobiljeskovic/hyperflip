@@ -80,9 +80,10 @@ test("research backup signs, skips verified objects, and restores the immutable 
     const sourcePath = `facts/source-registries/${sourceHash}.json`;
     mkdirSync(join(root, "facts", "source-registries"), { recursive: true });
     writeFileSync(join(root, sourcePath), sourceBytes);
-    const manifest: DataManifest = { schemaVersion: 1, createdAt: "2026-08-27T00:00:00.000Z", sourceRegistrySha256: sourceHash, sourceRange: { fromMs: 0, toMs: 0 }, underlyings: {}, files: [{ path: sourcePath, bytes: Buffer.byteLength(sourceBytes), sha256: sourceHash, rows: 1, schemaVersion: 1 }] };
+    const manifest: DataManifest = { schemaVersion: 2, network: "testnet", profileSha256: "b".repeat(64), createdAt: "2026-08-27T00:00:00.000Z", sourceRegistrySha256: sourceHash, sourceRange: { fromMs: 0, toMs: 0 }, underlyings: {}, files: [{ path: sourcePath, bytes: Buffer.byteLength(sourceBytes), sha256: sourceHash, rows: 1, schemaVersion: 1 }] };
     const manifestHash = sha256(canonicalJson(manifest));
     mkdirSync(join(root, "manifests"), { recursive: true });
+    writeFileSync(join(root, "network-profile.json"), canonicalJson({ schemaVersion: 3, network: "testnet", profileSha256: manifest.profileSha256, evmChainId: 998, deploymentRegistrySha256: "c".repeat(64) }));
     writeFileSync(join(root, "manifests", `${manifestHash}.json`), canonicalJson(manifest));
     const artifact = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-valid.json", import.meta.url), "utf8")) as CorrelationArtifact;
     artifact.modelVersion = "backup-fixture";

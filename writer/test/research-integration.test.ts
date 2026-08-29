@@ -96,8 +96,11 @@ function artifactFixture(root: string): {
   const partitionRelative = "raw/candles/2026/08/28/BTC/fixture.jsonl.gz";
   const partition = join(root, partitionRelative);
   const expectedPartition = fixturePartition("100");
+  const provenanceBytes = canonicalJson({ schemaVersion: 2, sourceRegistrySha256: sourceHash, network: "testnet", profileSha256: loadedProfile.profileSha256, startTimeMs: NOW - 3_600_000, endTimeMs: NOW - 1, ignoredBefore: 0, ignoredAfter: 0 });
   const manifest: DataManifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    network: "testnet",
+    profileSha256: loadedProfile.profileSha256,
     createdAt: "2026-08-28T12:00:00.000Z",
     sourceRegistrySha256: sourceHash,
     sourceRange: { fromMs: NOW - 3_600_000, toMs: NOW - 1 },
@@ -108,10 +111,13 @@ function artifactFixture(root: string): {
     files: [
       { path: relative(root, sourcePath), bytes: Buffer.byteLength(sourceBytes), sha256: sourceHash, rows: 1, schemaVersion: 1 },
       { path: partitionRelative, bytes: expectedPartition.length, sha256: sha256(expectedPartition), rows: 1, schemaVersion: 1 },
+      { path: `${partitionRelative}.provenance.json`, bytes: Buffer.byteLength(provenanceBytes), sha256: sha256(provenanceBytes), rows: 1, schemaVersion: 1 },
     ],
   };
   const manifestHash = sha256(canonicalJson(manifest));
   mkdirSync(join(root, "manifests"), { recursive: true });
+  mkdirSync(resolve(partition, ".."), { recursive: true });
+  writeFileSync(`${partition}.provenance.json`, provenanceBytes);
   writeFileSync(join(root, "manifests", `${manifestHash}.json`), canonicalJson(manifest));
 
   const artifact = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-valid.json", import.meta.url), "utf8")) as CorrelationArtifact;

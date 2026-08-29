@@ -8,6 +8,10 @@ import { generateReport, journalFunnel, renderReport, type ReportInput } from ".
 import { writeOperationRecord } from "../src/research/operations.js";
 import { openResearchPersistence } from "../src/research/persistence.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
+import { loadResearchNetworkProfile, researchRootIdentity } from "../src/research/network.js";
+import type { JoinedEventRecord, QuoteDecision } from "../src/research/types.js";
+
+const testnetProfile = loadResearchNetworkProfile(new URL("../../registry/research-network.testnet.json", import.meta.url).pathname);
 
 const score = {
   overall: { rows: 12, eligibleRows: 10, logLoss: 0.4, brier: 0.2, calibration: [{ lower: 0, upper: 0.1, rows: 2, meanProbability: 0.05, observedRate: 0 }], sharpness: 0.03, exclusions: [{ reason: "band-market" as const, rows: 2 }] },
@@ -17,7 +21,7 @@ const score = {
 
 const input: ReportInput = {
   manifest: {
-    schemaVersion: 1 as const, createdAt: "2026-08-27T03:00:00.000Z", sourceRegistrySha256: "c".repeat(64), sourceRange: { fromMs: 1, toMs: 2 },
+    schemaVersion: 2 as const, network: "testnet" as const, profileSha256: "b".repeat(64), createdAt: "2026-08-27T03:00:00.000Z", sourceRegistrySha256: "c".repeat(64), sourceRange: { fromMs: 1, toMs: 2 },
     underlyings: {
       "<script>": { rows: 90, firstUsableObservationMs: 1, lastUsableObservationMs: 2, missingIntervals: [3] },
       BTC: { rows: 100, firstUsableObservationMs: 1, lastUsableObservationMs: 2, missingIntervals: [] },
@@ -49,6 +53,8 @@ const input: ReportInput = {
     decision: "Supported" as const, deterministicRerunMatches: true, resourcePolicy: { maxWallClockMs: 30_000 as const, maxPeakRssBytes: 536_870_912 as const }, limitations: [],
   },
   champion: { modelVersion: "beta-1", sha256: "b".repeat(64) },
+  candidateSha256: "1".repeat(64),
+  validationSha256: "2".repeat(64),
   funnel: { quotes: 4, minted: 3, resolved: 2 },
   failures: [],
   exclusions: [
@@ -67,24 +73,55 @@ test("research report renders deterministic escaped evidence with every required
   assert.equal(html.includes("<missing>"), false);
   assert.match(html, /<style>[\s\S]*<\/style>/);
   assert.equal(/<(?:link|script)\b/i.test(html), false);
+  for (const hash of [input.candidateSha256, input.candidate.dataManifestSha256, input.champion!.sha256, input.candidate.profileSha256, input.validationSha256]) assert.ok(html.includes(hash));
 });
 
 test("journal funnel joins only quoted canonical mints to their matching parlay resolution", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-report-funnel-"));
   try {
+    writeFileSync(join(root, "network-profile.json"), `${canonicalJson(researchRootIdentity(testnetProfile))}\n`);
+    const quote: QuoteDecision = {
+      schemaVersion: 3, network: "testnet", profileSha256: testnetProfile.profileSha256, marketRegistrySha256: testnetProfile.marketRegistrySha256,
+      deploymentRegistrySha256: testnetProfile.deploymentRegistrySha256, baselineCorrelationSha256: testnetProfile.baselineCorrelationSha256,
+      artifactKind: "profile-baseline", artifactSha256: testnetProfile.baselineCorrelationSha256, validationSha256: null, validationState: "Unavailable",
+      pairDecisions: [], recordedAtMs: 1_725_000_000_000, quoteId: "q1", quoteDigest: "0x02", chainId: testnetProfile.profile.evmChainId,
+      parlayVault: testnetProfile.deployment.parlayVault, taker: "0x2222222222222222222222222222222222222222",
+      legs: [{ vault: "0x3333333333333333333333333333333333333333", isYes: true, underlying: "BTC", cluster: "crypto", direction: "up", outcomeCoin: "+1" }],
+      bookInputs: [{ priceWad: "500000000000000000", source: "l2Book", observedAtMs: 1_725_000_000_000, depthWad: null, vwapWad: null, freshnessMs: null }],
+      modelVersion: "profile-baseline", dataAsOf: new Date(0).toISOString(), dataManifestSha256: testnetProfile.baselineCorrelationSha256,
+      sourceRegistrySha256: testnetProfile.sourceRegistrySha256, bestEstimateJointProbWad: "1", riskAdjustedJointProbWad: "1", rhoBandPct: 0,
+      edge: { baseBps: "0", legBps: "0", totalBps: "0" }, premium: "1", maxPayout: "4", deadline: "1", signatureHash: "c".repeat(64),
+    };
     mkdirSync(join(root, "journal", "quotes"), { recursive: true });
-    writeFileSync(join(root, "journal", "quotes", "quotes.jsonl"), `${canonicalJson({ quoteId: "q1" })}\n`);
+    const quotesPath = join(root, "journal", "quotes", "quotes.jsonl");
+    writeFileSync(quotesPath, `${canonicalJson(quote)}\n`);
     mkdirSync(join(root, "journal", "events"), { recursive: true });
-    const rows = [
-      { kind: "minted", eventKey: "tx1:0", blockHash: "0xaaa", quoteId: "q1", parlayId: "1" },
-      { kind: "resolved", eventKey: "tx2:0", blockHash: "0xbbb", quoteId: "q1", parlayId: "1" },
-      { kind: "minted", eventKey: "tx3:0", blockHash: "0xccc", quoteId: "q2", parlayId: "2" },
-      { kind: "resolved", eventKey: "tx4:0", blockHash: "0xddd", quoteId: "q2", parlayId: "2" },
-      { kind: "resolved", eventKey: "tx5:0", blockHash: "0xeee", quoteId: "q1", parlayId: "99" },
-      { kind: "orphaned", targetKind: "chain-log", targetKey: "tx3:0:0xccc" },
+    const identity = { schemaVersion: 2 as const, network: "testnet" as const, profileSha256: testnetProfile.profileSha256, deploymentRegistrySha256: testnetProfile.deploymentRegistrySha256 };
+    const rows: JoinedEventRecord[] = [
+      { ...identity, kind: "minted", eventKey: "tx1:0", blockNumber: "1", blockHash: "0xaaa", transactionHash: "0xtx1", logIndex: 0, quoteId: "q1", parlayId: "1", taker: quote.taker, premium: "1", maxPayout: "4", status: "open", legs: [], recordedAtMs: 1 },
+      { ...identity, kind: "resolved", eventKey: "tx2:0", blockNumber: "2", blockHash: "0xbbb", transactionHash: "0xtx2", logIndex: 0, quoteId: "q1", parlayId: "1", taker: null, premium: null, maxPayout: null, status: "won", legs: [], recordedAtMs: 2 },
     ];
-    writeFileSync(join(root, "journal", "events", "events.jsonl"), `${rows.map(canonicalJson).join("\n")}\n`);
-    assert.deepEqual(journalFunnel(root), { quotes: 1, minted: 1, resolved: 1 });
+    const eventsPath = join(root, "journal", "events", "events.jsonl");
+    writeFileSync(eventsPath, `${rows.map(canonicalJson).join("\n")}\n`);
+    assert.deepEqual(journalFunnel(root, testnetProfile), { quotes: 1, minted: 1, resolved: 1 });
+
+    for (const mixed of [
+      { ...quote, profileSha256: "0".repeat(64) },
+      { ...quote, sourceRegistrySha256: "0".repeat(64) },
+      { ...quote, marketRegistrySha256: "0".repeat(64) },
+      { ...quote, deploymentRegistrySha256: "0".repeat(64) },
+      { ...quote, baselineCorrelationSha256: "0".repeat(64), artifactSha256: "0".repeat(64) },
+    ]) {
+      writeFileSync(quotesPath, `${canonicalJson(quote)}\n${canonicalJson(mixed)}\n`);
+      assert.throws(() => journalFunnel(root, testnetProfile), /mismatch/);
+    }
+    writeFileSync(quotesPath, `${canonicalJson(quote)}\nnot-json\n`);
+    assert.throws(() => journalFunnel(root, testnetProfile), /journal row is malformed/);
+    writeFileSync(quotesPath, `${canonicalJson(quote)}\n`);
+    writeFileSync(eventsPath, `${canonicalJson(rows[0])}\n${canonicalJson({ ...rows[1], profileSha256: "0".repeat(64) })}\n`);
+    assert.throws(() => journalFunnel(root, testnetProfile), /mismatch/);
+    writeFileSync(eventsPath, `${canonicalJson(rows[0])}\n[]\n`);
+    assert.throws(() => journalFunnel(root, testnetProfile), /event journal row is invalid/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -92,21 +129,50 @@ test("research report verifies every immutable reference before writing the dete
   const root = mkdtempSync(join(tmpdir(), "hype-report-"));
   try {
     const fixture = structuredClone(input);
-    const sourceBytes = canonicalJson({ schemaVersion: 2, network: "testnet", sources: [] });
+    const candidate = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-valid.json", import.meta.url), "utf8"));
+    const sources = {
+      schemaVersion: 2, network: "testnet", sources: ["BTC", "ETH"].map((underlying) => ({
+        schemaVersion: 1, underlying, sourceNetwork: "testnet", sourceCoin: underlying, cluster: "crypto", calendar: "continuous", measurementEnabled: true, fallbackEligible: true,
+      })),
+    };
+    const markets = { schemaVersion: 1, network: "testnet", markets: [] };
+    const deployment = { schemaVersion: 1, network: "testnet", evmChainId: 998, parlayVault: "0x1111111111111111111111111111111111111111", parlayDeployBlock: "1" };
+    const baseline = { network: "testnet", fallbackReason: "operator-reviewed-testnet-bootstrap", clusters: candidate.clusters };
+    const profileValue = { schemaVersion: 1, network: "testnet", infoApiUrl: "https://api.hyperliquid-testnet.xyz/info", evmChainId: 998, sourceRegistryFile: "sources.json", marketRegistryFile: "markets.json", deploymentRegistryFile: "deployment.json", baselineCorrelationFile: "baseline.json" };
+    for (const [file, value] of [["sources.json", sources], ["markets.json", markets], ["deployment.json", deployment], ["baseline.json", baseline], ["profile.json", profileValue]] as const) writeFileSync(join(root, file), canonicalJson(value));
+    const profile = loadResearchNetworkProfile(join(root, "profile.json"));
+    writeFileSync(join(root, "network-profile.json"), `${canonicalJson(researchRootIdentity(profile))}\n`);
+    const sourceBytes = canonicalJson(sources);
     const sourceHash = sha256(sourceBytes);
     const sourceRelative = `facts/source-registries/${sourceHash}.json`;
     mkdirSync(join(root, "facts", "source-registries"), { recursive: true });
     writeFileSync(join(root, sourceRelative), sourceBytes);
-    fixture.manifest.sourceRegistrySha256 = sourceHash;
+    fixture.manifest = {
+      schemaVersion: 2, network: "testnet", profileSha256: profile.profileSha256, createdAt: "2026-08-27T03:00:00.000Z", sourceRegistrySha256: sourceHash,
+      sourceRange: { fromMs: 1, toMs: 2 }, underlyings: {
+        BTC: { rows: 0, firstUsableObservationMs: null, lastUsableObservationMs: null, missingIntervals: [] },
+        ETH: { rows: 0, firstUsableObservationMs: null, lastUsableObservationMs: null, missingIntervals: [] },
+      }, files: [],
+    };
     fixture.manifest.files = [{ path: sourceRelative, bytes: statSync(join(root, sourceRelative)).size, sha256: sourceHash, rows: 1, schemaVersion: 1 }];
-    fixture.candidate.sourceRegistrySha256 = sourceHash;
+    Object.assign(candidate, {
+      modelVersion: "beta-1", createdAt: fixture.manifest.createdAt, dataAsOf: fixture.manifest.createdAt,
+      network: "testnet", profileSha256: profile.profileSha256, sourceRegistrySha256: sourceHash,
+      marketRegistrySha256: profile.marketRegistrySha256, deploymentRegistrySha256: profile.deploymentRegistrySha256,
+      baselineCorrelationSha256: profile.baselineCorrelationSha256,
+    });
+    fixture.candidate = candidate;
     fixture.candidate.dataManifestSha256 = sha256(canonicalJson(fixture.manifest));
-    fixture.validation.inputManifestSha256 = fixture.candidate.dataManifestSha256;
+    Object.assign(fixture.validation, {
+      network: "testnet", profileSha256: profile.profileSha256, modelVersion: fixture.candidate.modelVersion,
+      inputManifestSha256: fixture.candidate.dataManifestSha256, sourceRegistrySha256: sourceHash,
+      marketRegistrySha256: profile.marketRegistrySha256, deploymentRegistrySha256: profile.deploymentRegistrySha256,
+      baselineCorrelationSha256: profile.baselineCorrelationSha256, baselineSha256: profile.baselineCorrelationSha256,
+      baselineSnapshotPath: `facts/baselines/${profile.baselineCorrelationSha256}.json`,
+    });
     const candidateBytes = `${canonicalJson(fixture.candidate)}\n`;
     fixture.validation.candidateSha256 = sha256(candidateBytes);
-    const baselineBytes = canonicalJson({ fixture: true });
-    fixture.validation.baselineSha256 = sha256(baselineBytes);
-    fixture.validation.baselineSnapshotPath = `facts/baselines/${fixture.validation.baselineSha256}.json`;
+    const baselineBytes = profile.baselineCorrelationRaw;
     mkdirSync(join(root, "manifests"), { recursive: true });
     writeFileSync(join(root, "manifests", `${fixture.candidate.dataManifestSha256}.json`), canonicalJson(fixture.manifest));
     const returnsPath = "derived/returns-v2/returns/2026/08/27/report.jsonl.gz";
@@ -133,10 +199,12 @@ test("research report verifies every immutable reference before writing the dete
     mkdirSync(join(root, "artifacts", "candidates"), { recursive: true });
     const candidatePath = join(root, "artifacts", "candidates", "beta-1.json");
     writeFileSync(candidatePath, candidateBytes);
-    writeFileSync(join(root, "artifacts", "candidates", "beta-1.validation.json"), `${canonicalJson(fixture.validation)}\n`);
+    const validationPath = join(root, "artifacts", "candidates", "beta-1.validation.json");
+    const validationBytes = `${canonicalJson(fixture.validation)}\n`;
+    writeFileSync(validationPath, validationBytes);
     writeFileSync(join(root, "artifacts", "champion.json"), candidateBytes);
     mkdirSync(join(root, "journal", "requests", "2026", "08"), { recursive: true });
-    writeFileSync(join(root, "journal", "requests", "2026", "08", "27.jsonl"), `${canonicalJson({ schemaVersion: 1, sourceKey: "testnet:ETH", startTime: 1, endTime: 2, retrievedAtMs: 3, httpStatus: 503, error: "info API 503", returnedRows: 0 })}\n`);
+    writeFileSync(join(root, "journal", "requests", "2026", "08", "27.jsonl"), `${canonicalJson({ schemaVersion: 2, sourceKey: "testnet:ETH", network: "testnet", profileSha256: profile.profileSha256, startTimeMs: 1, endTimeMs: 2, retrievedAtMs: 3, httpStatus: 503, error: "info API 503", returnedRows: 0, ignoredBefore: 0, ignoredAfter: 0 })}\n`);
     const storage = openResearchPersistence(root);
     const operation = (record: Parameters<typeof writeOperationRecord>[1]) => writeOperationRecord(storage, record);
     operation({ schemaVersion: 1, network: "testnet", runId: "20260827T000000000Z-00000000-0000-4000-8000-000000000001", operation: "calibrate", phase: "terminal", startedAt: "2026-08-27T00:00:00.000Z", endedAt: "2026-08-27T00:01:00.000Z", status: "success", detail: { modelVersion: "beta-1" } });
@@ -149,8 +217,8 @@ test("research report verifies every immutable reference before writing the dete
     writeFileSync(join(root, "state", "daily.json"), canonicalJson({ status: "failed", error: "mutable state must not be evidence" }));
 
     const reportNow = Date.parse("2026-09-26T01:01:00.000Z");
-    const first = generateReport(root, candidatePath, derivedManifestPath, reportNow);
-    const second = generateReport(root, candidatePath, derivedManifestPath, reportNow);
+    const first = generateReport(root, candidatePath, derivedManifestPath, profile, reportNow);
+    const second = generateReport(root, candidatePath, derivedManifestPath, profile, reportNow);
     assert.equal(first.path, join(root, "reports", "2026-08-27-beta-1.html"));
     assert.equal(readFileSync(first.path, "utf8"), first.bytes);
     assert.equal(second.bytes, first.bytes);
@@ -163,21 +231,86 @@ test("research report verifies every immutable reference before writing the dete
     assert.doesNotMatch(first.bytes, /promote terminal|mutable state must not be evidence/);
     assert.match(first.bytes, /no-synchronized-peer<\/td><td>1/);
 
+    for (const candidateMutation of [
+      { ...fixture.candidate, network: "mainnet" },
+      { ...fixture.candidate, profileSha256: "0".repeat(64) },
+      { ...fixture.candidate, sourceRegistrySha256: "0".repeat(64) },
+      { ...fixture.candidate, marketRegistrySha256: "0".repeat(64) },
+      { ...fixture.candidate, deploymentRegistrySha256: "0".repeat(64) },
+      { ...fixture.candidate, baselineCorrelationSha256: "0".repeat(64) },
+    ]) {
+      writeFileSync(candidatePath, `${canonicalJson(candidateMutation)}\n`);
+      assert.throws(() => generateReport(root, candidatePath, derivedManifestPath, profile), /artifact: (?:network must be testnet|.*mismatch)/);
+    }
+    writeFileSync(candidatePath, candidateBytes);
+
+    for (const validationMutation of [
+      { ...fixture.validation, network: "mainnet" },
+      { ...fixture.validation, profileSha256: "0".repeat(64) },
+      { ...fixture.validation, sourceRegistrySha256: "0".repeat(64) },
+      { ...fixture.validation, marketRegistrySha256: "0".repeat(64) },
+      { ...fixture.validation, deploymentRegistrySha256: "0".repeat(64) },
+      { ...fixture.validation, baselineCorrelationSha256: "0".repeat(64), baselineSha256: "0".repeat(64), baselineSnapshotPath: `facts/baselines/${"0".repeat(64)}.json` },
+      { ...fixture.validation, candidateSha256: "0".repeat(64) },
+      { ...fixture.validation, inputManifestSha256: "0".repeat(64) },
+      { ...fixture.validation, derivedManifestSha256: "0".repeat(64) },
+      { ...fixture.validation, returnsSha256: "0".repeat(64) },
+      { ...fixture.validation, exclusionsSha256: "0".repeat(64) },
+      { ...fixture.validation, derivationWindow: { ...fixture.validation.derivationWindow, asOfMs: 3 } },
+      { ...fixture.validation, decision: "Rejected" },
+      { ...fixture.validation, deterministicRerunMatches: false },
+    ]) {
+      writeFileSync(validationPath, `${canonicalJson(validationMutation)}\n`);
+      assert.throws(() => generateReport(root, candidatePath, derivedManifestPath, profile), /mismatch|Rejected|Supported and deterministic/);
+    }
+    writeFileSync(validationPath, validationBytes);
+
+    const championQuote: QuoteDecision = {
+      schemaVersion: 3, network: "testnet", profileSha256: profile.profileSha256, marketRegistrySha256: profile.marketRegistrySha256,
+      deploymentRegistrySha256: profile.deploymentRegistrySha256, baselineCorrelationSha256: profile.baselineCorrelationSha256,
+      artifactKind: "champion", artifactSha256: sha256(candidateBytes), validationSha256: sha256(validationBytes), validationState: "Supported",
+      pairDecisions: [], recordedAtMs: 1, quoteId: "q-report", quoteDigest: "0x02", chainId: profile.profile.evmChainId,
+      parlayVault: profile.deployment.parlayVault, taker: "0x2222222222222222222222222222222222222222",
+      legs: [{ vault: "0x3333333333333333333333333333333333333333", isYes: true, underlying: "BTC", cluster: "crypto", direction: "up", outcomeCoin: "+1" }],
+      bookInputs: [{ priceWad: "1", source: "l2Book", observedAtMs: 1, depthWad: null, vwapWad: null, freshnessMs: null }],
+      modelVersion: "beta-1", dataAsOf: fixture.candidate.dataAsOf, dataManifestSha256: fixture.candidate.dataManifestSha256,
+      sourceRegistrySha256: profile.sourceRegistrySha256, bestEstimateJointProbWad: "1", riskAdjustedJointProbWad: "1", rhoBandPct: 0,
+      edge: { baseBps: "0", legBps: "0", totalBps: "0" }, premium: "1", maxPayout: "4", deadline: "1", signatureHash: "c".repeat(64),
+    };
+    const reportQuotes = join(root, "journal", "quotes", "report.jsonl");
+    mkdirSync(join(root, "journal", "quotes"), { recursive: true });
+    writeFileSync(reportQuotes, `${canonicalJson(championQuote)}\n`);
+    assert.deepEqual(journalFunnel(root, profile), { quotes: 1, minted: 0, resolved: 0 });
+    for (const quoteMutation of [
+      { ...championQuote, profileSha256: "0".repeat(64) },
+      { ...championQuote, sourceRegistrySha256: "0".repeat(64) },
+      { ...championQuote, marketRegistrySha256: "0".repeat(64) },
+      { ...championQuote, deploymentRegistrySha256: "0".repeat(64) },
+      { ...championQuote, baselineCorrelationSha256: "0".repeat(64) },
+      { ...championQuote, artifactSha256: "0".repeat(64) },
+      { ...championQuote, validationSha256: "0".repeat(64) },
+      { ...championQuote, dataManifestSha256: "0".repeat(64) },
+    ]) {
+      writeFileSync(reportQuotes, `${canonicalJson(championQuote)}\n${canonicalJson(quoteMutation)}\n`);
+      assert.throws(() => journalFunnel(root, profile), /mismatch/);
+    }
+    writeFileSync(reportQuotes, "");
+
     writeFileSync(join(root, exclusionsPath), "changed");
-    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath), /exclusions hash mismatch/);
+    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath, profile), /exclusions hash mismatch/);
     writeFileSync(join(root, exclusionsPath), exclusionBytes);
 
     const unsafeCandidate = { ...fixture.candidate, modelVersion: "../../escape" };
     writeFileSync(candidatePath, `${canonicalJson(unsafeCandidate)}\n`);
-    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath), /safe artifact filename/);
+    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath, profile), /modelVersion/);
     writeFileSync(candidatePath, `${canonicalJson({ ...fixture.candidate, modelVersion: 7 })}\n`);
-    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath), /safe artifact filename/);
+    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath, profile), /modelVersion/);
     writeFileSync(candidatePath, candidateBytes);
-    writeFileSync(join(root, "artifacts", "candidates", "beta-1.validation.json"), `${canonicalJson({ ...fixture.validation, modelVersion: "../escape" })}\n`);
-    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath), /safe artifact filename/);
-    writeFileSync(join(root, "artifacts", "candidates", "beta-1.validation.json"), `${canonicalJson(fixture.validation)}\n`);
+    writeFileSync(validationPath, `${canonicalJson({ ...fixture.validation, modelVersion: "../escape" })}\n`);
+    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath, profile), /validation identity mismatch/);
+    writeFileSync(validationPath, validationBytes);
 
     writeFileSync(join(root, fixture.validation.baselineSnapshotPath), "corrupt");
-    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath), /baseline.*mismatch/i);
+    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath, profile), /baseline.*mismatch/i);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
