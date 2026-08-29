@@ -23,12 +23,11 @@ export interface PublicQuoteDecision extends Omit<QuoteDecision, "taker" | "quot
   edge?: QuoteDecision["edge"];
 }
 
-export function initializeQuoteJournal(root: string): void {
-  openResearchPersistence(root);
+export function initializeQuoteJournal(root: string): ResearchPersistence {
+  return openResearchPersistence(root);
 }
 
-export function appendQuoteDecision(root: string, decision: QuoteDecision): void {
-  const storage = openResearchPersistence(root);
+export function appendQuoteDecision(storage: ResearchPersistence, decision: QuoteDecision): void {
   const date = new Date(decision.recordedAtMs);
   storage.append(`journal/quotes/${date.getUTCFullYear()}/${String(date.getUTCMonth() + 1).padStart(2, "0")}/${String(date.getUTCDate()).padStart(2, "0")}.jsonl`, canonicalJson(decision));
 }

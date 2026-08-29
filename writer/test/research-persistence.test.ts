@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, chownSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -113,10 +113,47 @@ test("a root swapped before the leaf open cannot redirect persistence", (t) => {
   else assert.throws(() => storage.readText("state/value.txt"), /research root changed|symbolic link/);
 });
 
+test("an intermediate directory swapped before the leaf open cannot redirect persistence", (t) => {
+  const root = tempRoot();
+  const held = join(root, "state-held");
+  const outside = `${root}-outside`;
+  let swapped = false;
+  t.after(() => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+  mkdirSync(join(root, "state"));
+  writeFileSync(join(root, "state", "value.txt"), "inside");
+  mkdirSync(outside);
+  writeFileSync(join(outside, "value.txt"), "outside");
+  const storage = openResearchPersistence(root, { beforeLeafOpen: () => {
+    if (swapped) return;
+    swapped = true;
+    renameSync(join(root, "state"), held);
+    symlinkSync(outside, join(root, "state"));
+  } });
+
+  if (process.platform === "linux") assert.equal(storage.readText("state/value.txt"), "inside");
+  else assert.throws(() => storage.readText("state/value.txt"), /research directory changed|symbolic link/);
+});
+
 test("required anchored storage fails closed when unavailable", () => {
   if (process.platform === "linux") return;
   assert.throws(
     () => openResearchPersistence(tempRoot(), { requireAnchored: true }),
     /Linux.*\/proc\/self\/fd/,
   );
+});
+
+test("the anchored-storage environment requirement cannot be disabled by a caller", (t) => {
+  const previous = process.env.RESEARCH_REQUIRE_ANCHORED_FS;
+  t.after(() => {
+    if (previous === undefined) delete process.env.RESEARCH_REQUIRE_ANCHORED_FS;
+    else process.env.RESEARCH_REQUIRE_ANCHORED_FS = previous;
+  });
+  process.env.RESEARCH_REQUIRE_ANCHORED_FS = "1";
+
+  const open = () => openResearchPersistence(tempRoot(), { requireAnchored: false });
+  if (process.platform === "linux" && existsSync("/proc/self/fd")) assert.doesNotThrow(open);
+  else assert.throws(open, /Linux.*\/proc\/self\/fd/);
 });

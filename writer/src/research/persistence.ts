@@ -399,6 +399,6 @@ export function openResearchPersistence(
 ): ResearchPersistence {
   const root = resolve(rootInput);
   if (process.platform === "linux" && existsSync("/proc/self/fd")) return anchoredPersistence(root, options.beforeLeafOpen);
-  if (options.requireAnchored === true) throw new Error("Anchored research persistence requires Linux and /proc/self/fd");
+  if (options.requireAnchored === true || process.env.RESEARCH_REQUIRE_ANCHORED_FS === "1") throw new Error("Anchored research persistence requires Linux and /proc/self/fd");
   return compatibilityPersistence(root, options.beforeLeafOpen);
 }

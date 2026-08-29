@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { Address } from "viem";
-import { appendQuoteDecision, joinEvents, type JoinDeps } from "../src/research/journal.js";
+import { appendQuoteDecision, initializeQuoteJournal, joinEvents, type JoinDeps } from "../src/research/journal.js";
 import type { QuoteDecision } from "../src/research/types.js";
 
 const VAULT = "0x9999999999999999999999999999999999999999" as Address;
@@ -74,7 +74,7 @@ test("event resume: checkpoints an inclusive 1,001-block scan before a later RPC
   const chain = new FakeChain();
   addMint(chain, 1n, "0x01", 1n);
   chain.logs.resolved.push({ blockNumber: 2n, blockHash: hash(2n), transactionHash: tx(2), logIndex: 1, args: { id: 1n, status: 2n } });
-  appendQuoteDecision(root, quote("0x01"));
+  appendQuoteDecision(initializeQuoteJournal(root), quote("0x01"));
   chain.failFrom = 1000n;
 
   await assert.rejects(joinEvents(root, deps(chain)), /simulated RPC failure/);
@@ -105,7 +105,7 @@ test("event join: preserves confirmed canonical records when rerun", async () =>
   const root = mkdtempSync(join(tmpdir(), "hype-event-idempotent-"));
   const chain = new FakeChain();
   addMint(chain, 1n, "0x01", 1n);
-  appendQuoteDecision(root, quote("0x01"));
+  appendQuoteDecision(initializeQuoteJournal(root), quote("0x01"));
   await joinEvents(root, deps(chain));
   const file = join(root, "journal", "events", "2024", "08", "30.jsonl");
   const first = readFileSync(file, "utf8");
@@ -118,7 +118,7 @@ test("orphaning one physical chain log permits the same transaction/log identity
   const chain = new FakeChain();
   chain.head = 12n;
   addMint(chain, 1n, "0x01", 1n);
-  appendQuoteDecision(root, quote("0x01"));
+  appendQuoteDecision(initializeQuoteJournal(root), quote("0x01"));
   await joinEvents(root, deps(chain));
 
   chain.hashes.set(1n, `0x${"f".repeat(64)}` as `0x${string}`);
@@ -137,10 +137,11 @@ test("orphaning one physical chain log permits the same transaction/log identity
 test("void outcome: reads each leg at one confirmed block, delays detail, and restores orphaned observations to pending", async () => {
   const root = mkdtempSync(join(tmpdir(), "hype-event-outcome-"));
   const chain = new FakeChain();
+  const storage = initializeQuoteJournal(root);
   const fixture = JSON.parse(readFileSync(new URL("./fixtures/research/parlay-events.json", import.meta.url), "utf8")) as { parlays: { id: string; quoteId: string; status: "won" | "dead" | "void"; legs: { vault: Address; isYes: boolean; fraction: string | null }[] }[] };
   for (const [index, p] of fixture.parlays.entries()) {
     const id = BigInt(p.id);
-    appendQuoteDecision(root, quote(p.quoteId));
+    appendQuoteDecision(storage, quote(p.quoteId));
     chain.parlays.set(id, { legs: p.legs.map(({ vault, isYes }) => ({ vault, isYes })), premium: 1n, maxPayout: 4n, status: p.status === "won" ? 1 : p.status === "dead" ? 2 : 3 });
     chain.logs.minted.push({ blockNumber: 1n + BigInt(index), blockHash: hash(1n + BigInt(index)), transactionHash: tx(index + 1), logIndex: 0, args: { id, quoteId: p.quoteId, taker: TAKER, premium: 1n, maxPayout: 4n } });
     chain.logs.resolved.push({ blockNumber: 10n + BigInt(index), blockHash: hash(10n + BigInt(index)), transactionHash: tx(index + 10), logIndex: 1, args: { id, status: BigInt(p.status === "won" ? 1 : p.status === "dead" ? 2 : 3) } });

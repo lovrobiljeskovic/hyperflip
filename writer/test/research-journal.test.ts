@@ -4,7 +4,7 @@ import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { appendQuoteDecision, redactQuoteDecision } from "../src/research/journal.js";
+import { appendQuoteDecision, initializeQuoteJournal, redactQuoteDecision } from "../src/research/journal.js";
 import { canonicalJson } from "../src/research/store.js";
 import type { QuoteDecision } from "../src/research/types.js";
 
@@ -20,9 +20,19 @@ const decision: QuoteDecision = {
   edge: { baseBps: "500", legBps: "300", totalBps: "800" }, premium: "1000000", maxPayout: "4000000", deadline: "1725000030", signatureHash: "c".repeat(64),
 };
 
+test("journal: one initialized persistence object supports repeated quote appends", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-journal-reuse-"));
+  const storage = initializeQuoteJournal(root);
+  appendQuoteDecision(storage, decision);
+  appendQuoteDecision(storage, { ...decision, quoteId: "0x02" });
+
+  const file = join(root, "journal", "quotes", "2024", "08", "30.jsonl");
+  assert.equal(readFileSync(file, "utf8"), `${canonicalJson(decision)}\n${canonicalJson({ ...decision, quoteId: "0x02" })}\n`);
+});
+
 test("journal: durable append writes canonical daily JSONL with private modes", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-journal-"));
-  appendQuoteDecision(root, decision);
+  appendQuoteDecision(initializeQuoteJournal(root), decision);
   const file = join(root, "journal", "quotes", "2024", "08", "30.jsonl");
   assert.equal(readFileSync(file, "utf8"), `${canonicalJson(decision)}\n`);
   assert.equal(statSync(file).mode & 0o777, 0o600);
@@ -47,7 +57,7 @@ test("journal: fsyncs the daily directory after appending a new file", async (t)
   }) as typeof fs.fsyncSync);
   syncBuiltinESMExports();
   const journal = await import(`../src/research/journal.js?daily-directory-fsync=${Date.now()}`);
-  journal.appendQuoteDecision(root, decision);
+  journal.appendQuoteDecision(journal.initializeQuoteJournal(root), decision);
   const file = join(root, "journal", "quotes", "2024", "08", "30.jsonl");
   assert.deepEqual([
     root,
@@ -65,7 +75,8 @@ test("journal: rejects a symlinked daily file without touching its target", () =
   fs.writeFileSync(target, "sentinel\n", { mode: 0o644 });
   fs.mkdirSync(dirname(file), { recursive: true });
   fs.symlinkSync(target, file);
-  assert.throws(() => appendQuoteDecision(root, decision), /symbolic link/);
+  const storage = initializeQuoteJournal(root);
+  assert.throws(() => appendQuoteDecision(storage, decision), /symbolic link/);
   assert.equal(readFileSync(target, "utf8"), "sentinel\n");
   assert.equal(statSync(target).mode & 0o777, 0o644);
 });

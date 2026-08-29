@@ -22,7 +22,7 @@ const RECEIPT_TIMEOUT_MS = 60_000;
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
-  initializeQuoteJournal(cfg.researchRoot);
+  const quoteJournal = initializeQuoteJournal(cfg.researchRoot);
   const correlationWorker = new CorrelationWorker();
   // Testnet RPCs rate-limit bursts (-32005, retryable in viem) and the poker's cold-start
   // rescan is one — deployBlock..head in 1000-block chunks, two getLogs each. Retry hard with a
@@ -109,7 +109,7 @@ async function main(): Promise<void> {
       return legPriceFetcher.fetch(coin);
     },
     recordQuote: async (decision) => {
-      appendQuoteDecision(cfg.researchRoot, decision);
+      appendQuoteDecision(quoteJournal, decision);
       lastQuoteJournalAppendMs = Date.now();
     },
     bestEstimateJointProbWad: (legs) => correlationWorker.bestEstimate(legs, cfg.correlations),

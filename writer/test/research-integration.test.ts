@@ -12,7 +12,7 @@ import { handleQuote, newMetrics, type QuoteDeps } from "../src/server.js";
 import { parseCorrelationArtifact, promoteCandidate } from "../src/research/artifacts.js";
 import { collectSources } from "../src/research/candles.js";
 import { runDaily } from "../src/research/daily.js";
-import { appendQuoteDecision, joinEvents, type JoinDeps } from "../src/research/journal.js";
+import { appendQuoteDecision, initializeQuoteJournal, joinEvents, type JoinDeps } from "../src/research/journal.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
 import type { CorrelationArtifact, DataManifest, JoinedEventRecord, SourceEntry, SourceRegistry } from "../src/research/types.js";
 import type { MarketInfo } from "../src/markets.js";
@@ -116,6 +116,7 @@ function artifactFixture(root: string): {
 
 function quoteDeps(root: string, artifact: ReturnType<typeof artifactFixture>): QuoteDeps {
   const parsed = parseCorrelationArtifact(artifact.candidateRaw, NOW, artifact.sources, artifact.markets);
+  const quoteJournal = initializeQuoteJournal(root);
   const cfg: QuoteDeps["cfg"] = {
     rpcUrl: "",
     parlayVault: PARLAY_VAULT,
@@ -157,7 +158,7 @@ function quoteDeps(root: string, artifact: ReturnType<typeof artifactFixture>): 
     readAllowance: async () => 1_000_000_000n,
     readSettled: async () => new Set(),
     sign: async () => "0x1234",
-    recordQuote: async (decision) => appendQuoteDecision(root, decision),
+    recordQuote: async (decision) => appendQuoteDecision(quoteJournal, decision),
     now: () => NOW,
     randomId: () => QUOTE_ID,
     metrics: newMetrics(),
