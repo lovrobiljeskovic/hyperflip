@@ -28,16 +28,18 @@ const boundStorage = (root: string) => {
   return storage;
 };
 
-async function recorded<T>(root: string, operation: Exclude<ResearchOperation, "daily">, action: () => Promise<T> | T, failure?: (value: T) => string | null): Promise<T> {
+type PublicDetail = Record<string, string | number | boolean | null>;
+
+async function recorded<T>(root: string, operation: Exclude<ResearchOperation, "daily">, action: () => Promise<T> | T, failure?: (value: T) => string | null, details?: (value: T) => PublicDetail): Promise<T> {
   const storage = boundStorage(root);
   const start = startOperation(storage, profile().profile.network, operation);
   try {
     const value = await action();
     const error = failure?.(value) ?? null;
-    finishOperation(storage, start, error ? { status: "failure", error } : { status: "success" });
+    finishOperation(storage, start, error ? { status: "failure", stage: operation, error, detail: details?.(value) } : { status: "success", stage: operation, detail: details?.(value) });
     return value;
   } catch (error) {
-    finishOperation(storage, start, { status: "failure", error: operationError(error) });
+    finishOperation(storage, start, { status: "failure", stage: operation, error: operationError(error) });
     throw error;
   }
 }
@@ -70,7 +72,7 @@ if (!commands.includes(command)) {
     console.error("RESEARCH_ROOT, RESEARCH_NETWORK_PROFILE_FILE, RESEARCH_CANDIDATE_FILE, and RESEARCH_DERIVED_MANIFEST_FILE are required");
     process.exitCode = 2;
   } else {
-    const output = await recorded(resolve(root), "report", () => generateReport(resolve(root), resolve(candidateFile), resolve(derivedManifestFile)));
+    const output = await recorded(resolve(root), "report", () => generateReport(resolve(root), resolve(candidateFile), resolve(derivedManifestFile)), undefined, (value) => ({ path: researchRelativePath(resolve(root), value.path), sha256: sha256(value.bytes) }));
     console.log(JSON.stringify({ path: output.path, sha256: sha256(output.bytes) }));
   }
 } else if (command === "backup") {
@@ -89,7 +91,7 @@ if (!commands.includes(command)) {
     if (Object.values(config).some((value) => !value)) {
       await recorded(resolve(root), "backup", () => undefined);
       console.log(JSON.stringify({ status: "disabled", reason: "backup configuration absent" }));
-    } else console.log(JSON.stringify(await recorded(resolve(root), "backup", () => backupResearch(resolve(root), config as { endpoint: string; region: string; bucket: string; accessKey: string; secret: string }))));
+    } else console.log(JSON.stringify(await recorded(resolve(root), "backup", () => backupResearch(resolve(root), config as { endpoint: string; region: string; bucket: string; accessKey: string; secret: string }), undefined, (value) => ({ uploaded: value.uploaded, skipped: value.skipped, verified: value.verified, lastVerifiedObjectHash: value.lastVerifiedObjectHash }))));
   }
 } else if (command === "collect") {
   const root = process.env.RESEARCH_ROOT;
@@ -100,7 +102,7 @@ if (!commands.includes(command)) {
     const summary = await recorded(resolve(root), "collect", () => collectSources({
       root: resolve(root),
       profile: profile(),
-    }), (value) => value.failures.length ? `${value.failures.length} collection failures` : null);
+    }), (value) => value.failures.length ? `${value.failures.length} collection failures` : null, (value) => ({ accepted: value.accepted, conflicts: value.conflicts, failures: value.failures.length }));
     console.log(JSON.stringify(summary));
     if (summary.failures.length) process.exitCode = 1;
   }
@@ -131,7 +133,7 @@ if (!commands.includes(command)) {
     const artifact = await recorded(resolvedRoot, "calibrate", () => {
       const storage = boundStorage(resolvedRoot);
       return calibrate({ root: resolvedRoot, manifest: JSON.parse(storage.readText(researchRelativePath(resolvedRoot, manifestFile))), derivedManifestPath: researchRelativePath(resolvedRoot, derivedManifestPath), profile: profile(), storage });
-    });
+    }, undefined, (value) => ({ modelVersion: value.modelVersion, dataManifestSha256: value.dataManifestSha256, candidatePath: `artifacts/candidates/${value.modelVersion}.json` }));
     console.log(JSON.stringify({ modelVersion: artifact.modelVersion, dataAsOf: artifact.dataAsOf, candidatePath: resolve(root, "artifacts", "candidates", `${artifact.modelVersion}.json`) }));
   }
 } else if (command === "replay") {
@@ -152,7 +154,7 @@ if (!commands.includes(command)) {
         root: resolvedRoot, candidate, candidateBytes, inputManifestSha256: candidate.dataManifestSha256,
         derivedManifestPath: researchRelativePath(resolvedRoot, derivedManifestFile), profile: profile(), seed, storage,
       });
-    });
+    }, undefined, (value) => ({ modelVersion: value.modelVersion, decision: value.decision, validationPath: `artifacts/candidates/${value.modelVersion}.validation.json` }));
     console.log(JSON.stringify({ modelVersion: report.modelVersion, decision: report.decision }));
   }
 } else if (command === "join") {
@@ -166,7 +168,7 @@ if (!commands.includes(command)) {
       const selected = profile();
       const summary = await recorded(resolve(root), "join", () => joinEvents(resolve(root), {
         client: createPublicClient({ transport: http(rpc) }), vault: selected.deployment.parlayVault, deployBlock: BigInt(selected.deployment.parlayDeployBlock), profile: selected,
-      }));
+      }), undefined, (value) => ({ appended: value.appended, resolutions: Object.keys(value.resolutions).length, nextBlock: value.nextBlock }));
       console.log(JSON.stringify(summary));
     } catch (error) {
       console.error(String(error));
@@ -185,7 +187,7 @@ if (!commands.includes(command)) {
       const candidate = resolve(resolvedRoot, args[1]);
       const selected = profile();
       return promoteCandidate(resolvedRoot, candidate, selected, parseMarkets(selected.marketRegistryRaw), Date.now());
-    });
+    }, undefined, (value) => ({ modelVersion: value.modelVersion, dataAgeMs: value.dataAgeMs, dataManifestSha256: value.dataManifestSha256, validationState: value.validationState, championSha256: value.championSha256 }));
     console.log(JSON.stringify({ modelVersion: receipt.modelVersion, dataAgeMs: receipt.dataAgeMs, manifestHash: receipt.dataManifestSha256, validationState: receipt.validationState, championHash: receipt.championSha256 }));
   }
 }

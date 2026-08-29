@@ -143,12 +143,14 @@ test("research report verifies every immutable reference before writing the dete
     operation({ schemaVersion: 1, network: "testnet", runId: "20260827T010000000Z-00000000-0000-4000-8000-000000000002", operation: "replay", phase: "terminal", startedAt: "2026-08-27T01:00:00.000Z", endedAt: "2026-08-27T01:01:00.000Z", status: "failure", stage: "replay", error: "replay exited 1" });
     operation({ schemaVersion: 1, network: "testnet", runId: "20260827T020000000Z-00000000-0000-4000-8000-000000000003", operation: "replay", phase: "terminal", startedAt: "2026-08-27T02:00:00.000Z", endedAt: "2026-08-27T02:01:00.000Z", status: "success" });
     operation({ schemaVersion: 1, network: "testnet", runId: "20260827T030000000Z-00000000-0000-4000-8000-000000000004", operation: "backup", phase: "terminal", startedAt: "2026-08-27T03:00:00.000Z", endedAt: "2026-08-27T03:01:00.000Z", status: "failure", error: "backup total timeout" });
+    operation({ schemaVersion: 1, network: "testnet", runId: "20260826T030000000Z-00000000-0000-4000-8000-000000000006", operation: "join", phase: "terminal", startedAt: "2026-08-26T03:00:00.000Z", endedAt: "2026-08-26T03:01:00.000Z", status: "failure", error: "expired failure" });
     operation({ schemaVersion: 1, network: "testnet", runId: "20260827T040000000Z-00000000-0000-4000-8000-000000000005", operation: "promote", phase: "start", startedAt: "2026-08-27T04:00:00.000Z" });
     mkdirSync(join(root, "state"), { recursive: true });
     writeFileSync(join(root, "state", "daily.json"), canonicalJson({ status: "failed", error: "mutable state must not be evidence" }));
 
-    const first = generateReport(root, candidatePath, derivedManifestPath);
-    const second = generateReport(root, candidatePath, derivedManifestPath);
+    const reportNow = Date.parse("2026-09-26T01:01:00.000Z");
+    const first = generateReport(root, candidatePath, derivedManifestPath, reportNow);
+    const second = generateReport(root, candidatePath, derivedManifestPath, reportNow);
     assert.equal(first.path, join(root, "reports", "2026-08-27-beta-1.html"));
     assert.equal(readFileSync(first.path, "utf8"), first.bytes);
     assert.equal(second.bytes, first.bytes);
@@ -157,6 +159,7 @@ test("research report verifies every immutable reference before writing the dete
     assert.match(first.bytes, /replay terminal: success/);
     assert.match(first.bytes, /replay failure: replay exited 1/);
     assert.match(first.bytes, /backup failure: backup total timeout/);
+    assert.doesNotMatch(first.bytes, /expired failure/);
     assert.doesNotMatch(first.bytes, /promote terminal|mutable state must not be evidence/);
     assert.match(first.bytes, /no-synchronized-peer<\/td><td>1/);
 

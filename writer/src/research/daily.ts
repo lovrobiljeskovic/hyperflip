@@ -25,12 +25,17 @@ export function runDaily(env: NodeJS.ProcessEnv, run: (step: DailyStep, env: Nod
   }
   const started = now();
   const operation = storage && network ? startOperation(storage, network, "daily", started) : null;
-  const persist = (status: "running" | "succeeded" | "failed", error: string | null, step: DailyStep | null): void => {
-    if (!root) return;
+  const persist = (status: "running" | "succeeded" | "failed", error: string | null, step: DailyStep | null): string | null => {
+    if (!root) return null;
     const at = now();
-    writeOperationState(root, "daily.json", { schemaVersion: 1, operation: "daily", status, startedAt: new Date(started).toISOString(), endedAt: status === "running" ? null : new Date(at).toISOString(), error, details: { step } }, storage!);
+    try { writeOperationState(root, "daily.json", { schemaVersion: 1, operation: "daily", status, startedAt: new Date(started).toISOString(), endedAt: status === "running" ? null : new Date(at).toISOString(), error, details: { step } }, storage!); return null; }
+    catch (error) { return operationError(error); }
   };
-  persist("running", null, null);
+  const stateFailure = persist("running", null, null);
+  if (stateFailure) {
+    if (operation) finishOperation(storage!, operation, { status: "failure", endedAt: new Date(now()).toISOString(), stage: "state", error: stateFailure });
+    return 1;
+  }
   let current = { ...env };
   let active: DailyStep | null = null;
   try {
@@ -40,8 +45,8 @@ export function runDaily(env: NodeJS.ProcessEnv, run: (step: DailyStep, env: Nod
       if (result.status !== 0) {
         const status = result.status ?? 1;
         const error = `${step} exited ${status}`;
-        persist("failed", error, step);
         if (operation) finishOperation(storage!, operation, { status: "failure", endedAt: new Date(now()).toISOString(), stage: step, error });
+        persist("failed", error, step);
         return status;
       }
       if (step === "derive") {
@@ -56,13 +61,17 @@ export function runDaily(env: NodeJS.ProcessEnv, run: (step: DailyStep, env: Nod
         current = { ...current, RESEARCH_CANDIDATE_FILE: candidatePath };
       }
     }
-    persist("succeeded", null, active);
-    if (operation) finishOperation(storage!, operation, { status: "success", endedAt: new Date(now()).toISOString(), stage: active ?? undefined });
+    const finalStateFailure = persist("succeeded", null, active);
+    if (finalStateFailure) {
+      if (operation) finishOperation(storage!, operation, { status: "failure", endedAt: new Date(now()).toISOString(), stage: "state", error: finalStateFailure });
+      return 1;
+    }
+    if (operation) finishOperation(storage!, operation, { status: "success", endedAt: new Date(now()).toISOString(), stage: active ?? "daily" });
     return 0;
   } catch (error) {
     const message = operationError(error);
-    persist("failed", message, active);
     if (operation) finishOperation(storage!, operation, { status: "failure", endedAt: new Date(now()).toISOString(), stage: active ?? "daily", error: message });
+    persist("failed", message, active);
     throw error;
   }
 }

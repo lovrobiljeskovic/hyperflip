@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { runDaily, type DailyResult } from "../src/research/daily.js";
-import { terminalOperationHistory, writeOperationRecord } from "../src/research/operations.js";
+import { finishOperation, startOperation, terminalOperationHistory, writeOperationRecord } from "../src/research/operations.js";
 import { openResearchPersistence } from "../src/research/persistence.js";
+import { operationError } from "../src/research/store.js";
+import { bindResearchRootIdentity, loadResearchNetworkProfile } from "../src/research/network.js";
 
 const cwd = resolve(import.meta.dirname, "..");
 const profileFile = new URL("../../registry/research-network.testnet.json", import.meta.url).pathname;
@@ -32,7 +34,25 @@ test("operation records reject secrets and control characters", () => {
       phase: "terminal" as const, startedAt: "2026-08-29T00:00:00.000Z", endedAt: "2026-08-29T00:01:00.000Z", status: "failure" as const,
     };
     assert.throws(() => writeOperationRecord(storage, { ...record, error: "token=secret" }), /secret/i);
-    assert.throws(() => writeOperationRecord(storage, { ...record, detail: { artifactId: "safe\nunsafe" } }), /control/i);
+    assert.throws(() => writeOperationRecord(storage, { ...record, detail: { accepted: "safe\nunsafe" } }), /control/i);
+    assert.throws(() => writeOperationRecord(storage, { ...record, network: "mainnet", error: "failed" }), /not enabled/);
+    const start = startOperation(storage, "testnet", "collect", Date.parse("2026-08-29T00:00:00.000Z"));
+    const terminal = finishOperation(storage, start, { status: "failure", error: operationError(new Error("TOKEN=abc\tAWS_SECRET=value\u0081")) });
+    assert.equal(terminal.status, "failure");
+    assert.doesNotMatch(terminal.error!, /abc|value|[\u0000-\u001f\u007f-\u009f]/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("daily preserves a failure terminal when its mutable state pointer is unsafe", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-daily-state-link-"));
+  try {
+    bindResearchRootIdentity(openResearchPersistence(root), loadResearchNetworkProfile(profileFile));
+    mkdirSync(join(root, "state"));
+    const target = join(root, "state-target.json");
+    writeFileSync(target, "{}");
+    symlinkSync(target, join(root, "state", "daily.json"));
+    assert.equal(runDaily({ RESEARCH_ROOT: root, RESEARCH_NETWORK_PROFILE_FILE: profileFile }, () => ({ status: 0, stdout: "{}\n", stderr: "" }), () => 1_725_000_000_000), 1);
+    assert.deepEqual(terminalOperationHistory(openResearchPersistence(root), "testnet").map((record) => [record.operation, record.status, record.stage]), [["daily", "failure", "state"]]);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -13,6 +13,7 @@ export interface ReportInput {
   funnel: { quotes: number; minted: number; resolved: number };
   failures: string[];
   exclusions: ExclusionRecord[];
+  nowMs?: number;
 }
 
 const MODELS = ["independence", "static-hierarchical-gaussian", "measured-hierarchical-gaussian", "signed-t-copula", "filtered-historical-simulation"] as const;
@@ -145,7 +146,7 @@ function operationalFailures(storage: ResearchPersistence, network: CorrelationA
   return [...quarantines, ...requests, ...states, ...failures];
 }
 
-export function generateReport(rootInput: string, candidateInput: string, derivedManifestInput: string): { path: string; bytes: string } {
+export function generateReport(rootInput: string, candidateInput: string, derivedManifestInput: string, nowMs = Date.now()): { path: string; bytes: string } {
   const root = resolve(rootInput);
   const storage = openResearchPersistence(root);
   const current = verified(root, candidateInput, storage);
@@ -166,7 +167,7 @@ export function generateReport(rootInput: string, candidateInput: string, derive
     if (sha256(championBytes) !== sha256(storage.read(championCandidate))) throw new Error("report champion candidate mismatch");
     champion = { modelVersion: artifact.modelVersion, sha256: sha256(championBytes) };
   }
-  const bytes = renderReport({ manifest: current.manifest, candidate: current.candidate, validation: current.validation, champion, funnel: journalFunnel(root, storage), failures: operationalFailures(storage, current.candidate.network), exclusions: derived.exclusions });
+  const bytes = renderReport({ manifest: current.manifest, candidate: current.candidate, validation: current.validation, champion, funnel: journalFunnel(root, storage), failures: operationalFailures(storage, current.candidate.network, nowMs), exclusions: derived.exclusions, nowMs });
   const date = current.candidate.dataAsOf.slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("report dataAsOf date is invalid");
   const path = `reports/${date}-${current.candidate.modelVersion}.html`;
