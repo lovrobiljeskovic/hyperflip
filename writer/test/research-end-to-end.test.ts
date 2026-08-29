@@ -9,6 +9,7 @@ import { collectSources } from "../src/research/candles.js";
 import { generateReport } from "../src/research/report.js";
 import { runReplay } from "../src/research/replay.js";
 import { deriveReturns, type ReturnRecord } from "../src/research/returns.js";
+import { loadResearchNetworkProfile } from "../src/research/network.js";
 import { canonicalJson, readCurrentManifest } from "../src/research/store.js";
 import type { SourceEntry, SourceRegistry } from "../src/research/types.js";
 
@@ -30,8 +31,16 @@ function candles(coin: string): string {
   }));
 }
 
+function profile(root: string) {
+  const value = { schemaVersion: 1, network: "testnet", infoApiUrl: "https://api.hyperliquid-testnet.xyz/info", evmChainId: 998, sourceRegistryFile: "sources.json", marketRegistryFile: "markets.json", deploymentRegistryFile: "deployment.json", baselineCorrelationFile: "correlations.json" };
+  writeFileSync(join(root, "profile.json"), JSON.stringify(value));
+  writeFileSync(join(root, "sources.json"), JSON.stringify(sources));
+  for (const name of ["markets.json", "deployment.testnet.json", "correlations.json"]) writeFileSync(join(root, name === "deployment.testnet.json" ? "deployment.json" : name), readFileSync(new URL(`../../registry/${name}`, import.meta.url)));
+  return loadResearchNetworkProfile(join(root, "profile.json"));
+}
+
 async function fixtureFlow(root: string): Promise<{ candidate: Buffer; validation: Buffer; manifest: Buffer; report: Buffer }> {
-  const collection = await collectSources({ root, registry: sources, nowMs: AS_OF, fetch: async (_url, init) => new Response(candles(JSON.parse(String(init?.body)).req.coin)) });
+  const collection = await collectSources({ root, profile: profile(root), nowMs: AS_OF, fetch: async (_url, init) => new Response(candles(JSON.parse(String(init?.body)).req.coin)) });
   assert.equal(collection.failures.length, 0);
   const current = readCurrentManifest(root);
   const manifest = current.manifest;

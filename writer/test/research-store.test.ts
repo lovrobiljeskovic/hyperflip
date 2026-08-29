@@ -60,7 +60,7 @@ test("manifest verification rederives metadata, registry content, and contained 
     writeFileSync(join(root, "facts", "source-registries", `${registryHash}.json`), registryBytes);
     writeFileSync(join(root, "state", "collector.json"), canonicalJson({ schemaVersion: 1, sourceRegistrySha256: registryHash, sources: {} }));
     writeFileSync(raw, gzipSync(""));
-    writeFileSync(`${raw}.provenance.json`, canonicalJson({ schemaVersion: 1, sourceRegistrySha256: registryHash }));
+    writeFileSync(`${raw}.provenance.json`, canonicalJson({ schemaVersion: 2, sourceRegistrySha256: registryHash, network: "testnet", profileSha256: "a".repeat(64), startTimeMs: 0, endTimeMs: 0, ignoredBefore: 0, ignoredAfter: 0 }));
     const manifest = buildDailyManifest(root, "1970-01-01");
     assert.throws(() => verifyManifest(root, { ...manifest, files: manifest.files.map((file) => file.path.endsWith(".gz") ? { ...file, rows: 99 } : file) }), /manifest file mismatch/);
 

@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { collectSources, lastClosedHour, nextCandleRequest, parseCandleSnapshot, selectClosedPage } from "../src/research/candles.js";
 import { buildDailyManifest, readCandlePartition, sha256, canonicalJson } from "../src/research/store.js";
 import type { SourceEntry } from "../src/research/types.js";
-import type { LoadedResearchNetworkProfile } from "../src/research/network.js";
+import { loadResearchNetworkProfile, type LoadedResearchNetworkProfile } from "../src/research/network.js";
 
 const source: SourceEntry = {
   schemaVersion: 1,
@@ -32,20 +32,12 @@ function shardFiles(root: string): string[] {
   return visit(raw).filter((file) => file.endsWith(".jsonl.gz"));
 }
 
-function loadedProfile(registry: { schemaVersion: 2; network: "testnet"; sources: SourceEntry[] }): LoadedResearchNetworkProfile {
+function loadedProfile(root: string, registry: { schemaVersion: 2; network: "testnet"; sources: SourceEntry[] }): LoadedResearchNetworkProfile {
   const profile = { schemaVersion: 1 as const, network: "testnet" as const, infoApiUrl: "https://api.hyperliquid-testnet.xyz/info", evmChainId: 998, sourceRegistryFile: "sources.json", marketRegistryFile: "markets.json", deploymentRegistryFile: "deployment.json", baselineCorrelationFile: "correlations.json" };
-  return {
-    profile,
-    profileSha256: sha256(canonicalJson(profile)),
-    sources: registry,
-    sourceRegistrySha256: sha256(canonicalJson(registry)),
-    marketRegistryRaw: "{}",
-    marketRegistrySha256: sha256("{}"),
-    deployment: { schemaVersion: 1, network: "testnet", evmChainId: 998, parlayVault: "0x0000000000000000000000000000000000000000", parlayDeployBlock: "0" },
-    deploymentRegistrySha256: sha256("{}"),
-    baselineCorrelationRaw: "{}",
-    baselineCorrelationSha256: sha256("{}"),
-  };
+  writeFileSync(join(root, "profile.json"), JSON.stringify(profile));
+  writeFileSync(join(root, "sources.json"), JSON.stringify(registry));
+  for (const name of ["markets.json", "deployment.testnet.json", "correlations.json"]) writeFileSync(join(root, name === "deployment.testnet.json" ? "deployment.json" : name), readFileSync(new URL(`../../registry/${name}`, import.meta.url)));
+  return loadResearchNetworkProfile(join(root, "profile.json"));
 }
 
 test("candle snapshot maps exact Hyperliquid fields", () => {
@@ -114,7 +106,7 @@ test("collector seals only the closed profile-bound page and journals boundary e
   const root = scratch();
   const nowMs = Date.UTC(2026, 7, 29, 12, 37);
   const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
-  const profile = loadedProfile(registry);
+  const profile = loadedProfile(root, registry);
   const { lastOpenTimeMs, endTimeMs } = lastClosedHour(nowMs);
   const startTimeMs = lastOpenTimeMs - (4_999 * hour);
   const row = JSON.parse(fixture("candle-snapshot.json"))[0];
@@ -135,7 +127,28 @@ test("collector seals only the closed profile-bound page and journals boundary e
     const journal = JSON.parse(readFileSync(join(root, "journal", "requests", "2026", "08", "29.jsonl"), "utf8"));
     assert.deepEqual({ network: journal.network, profileSha256: journal.profileSha256, startTimeMs: journal.startTimeMs, endTimeMs: journal.endTimeMs, ignoredBefore: journal.ignoredBefore, ignoredAfter: journal.ignoredAfter }, { network: "testnet", profileSha256: profile.profileSha256, startTimeMs, endTimeMs, ignoredBefore: 1, ignoredAfter: 0 });
     const provenance = JSON.parse(readFileSync(`${shardFiles(root)[0]}.provenance.json`, "utf8"));
-    assert.deepEqual({ network: provenance.network, profileSha256: provenance.profileSha256, startTimeMs: provenance.startTimeMs, endTimeMs: provenance.endTimeMs, ignoredBefore: provenance.ignoredBefore, ignoredAfter: provenance.ignoredAfter }, { network: "testnet", profileSha256: profile.profileSha256, startTimeMs, endTimeMs, ignoredBefore: 1, ignoredAfter: 0 });
+    assert.deepEqual({ schemaVersion: provenance.schemaVersion, network: provenance.network, profileSha256: provenance.profileSha256, startTimeMs: provenance.startTimeMs, endTimeMs: provenance.endTimeMs, ignoredBefore: provenance.ignoredBefore, ignoredAfter: provenance.ignoredAfter }, { schemaVersion: 2, network: "testnet", profileSha256: profile.profileSha256, startTimeMs, endTimeMs, ignoredBefore: 1, ignoredAfter: 0 });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("collector journals observed boundary extras when a retained row is malformed", async () => {
+  const root = scratch();
+  const nowMs = 12_000_000;
+  const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
+  const row = JSON.parse(fixture("candle-snapshot.json"))[0];
+  try {
+    const profile = loadedProfile(root, registry);
+    await collectSources({ root, profile, nowMs, sleep: async () => {}, fetch: async (_url, init) => {
+      const request = JSON.parse(String(init?.body)).req;
+      return new Response(JSON.stringify([
+        { ...row, t: request.startTime - hour, T: request.startTime - 1 },
+        { ...row, t: request.startTime, T: request.endTime, h: "99" },
+      ]));
+    } });
+    const journal = readFileSync(join(root, "journal", "requests", "1970", "01", "01.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(journal.map((entry) => [entry.ignoredBefore, entry.ignoredAfter]), [[1, 0], [1, 0], [1, 0]]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -145,11 +158,23 @@ test("collector skips sources excluded from measurement", async () => {
   const root = scratch();
   let calls = 0;
   try {
-    await collectSources({ root, registry: { schemaVersion: 2, network: "testnet", sources: [{ ...source, measurementEnabled: false }] }, nowMs: 12_000_000, sleep: async () => {}, fetch: async () => {
+    await collectSources({ root, profile: loadedProfile(root, { schemaVersion: 2, network: "testnet", sources: [{ ...source, measurementEnabled: false }] }), nowMs: 12_000_000, sleep: async () => {}, fetch: async () => {
       calls++;
       return new Response("[]");
     } });
     assert.equal(calls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("collector requires a loaded testnet profile even with an injected fetch", async () => {
+  const root = scratch();
+  try {
+    await assert.rejects(
+      collectSources({ root, registry: { schemaVersion: 2, network: "mainnet", sources: [{ ...source, sourceNetwork: "mainnet" }] }, nowMs: 12_000_000, fetch: async () => new Response("[]") } as never),
+      /loaded research network profile/,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -166,10 +191,30 @@ test("candle request recovers from a stale state file using sealed candles", asy
   const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
   const requests: { startTime: number }[] = [];
   try {
-    await collectSources({ root, registry, nowMs, fetch: async () => new Response(fixture("candle-snapshot.json")) });
+    const profile = loadedProfile(root, registry);
+    await collectSources({ root, profile, nowMs, fetch: async () => new Response(fixture("candle-snapshot.json")) });
     writeFileSync(join(root, "state", "collector.json"), JSON.stringify({ schemaVersion: 1, sourceRegistrySha256: sha256(canonicalJson(registry)), sources: { "testnet:BTC": 3_600_000 } }));
-    await collectSources({ root, registry, nowMs, fetch: async (_url, init) => {
+    await collectSources({ root, profile, nowMs, fetch: async (_url, init) => {
       requests.push(JSON.parse(init?.body as string).req);
+      return new Response("[]");
+    } });
+    assert.equal(requests[0].startTime, 10_800_000);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("collector ignores an ahead checkpoint and resumes from its sealed shard", async () => {
+  const root = scratch();
+  const nowMs = 15_000_000;
+  const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
+  const requests: { startTime: number }[] = [];
+  try {
+    const profile = loadedProfile(root, registry);
+    await collectSources({ root, profile, nowMs, fetch: async () => new Response(fixture("candle-snapshot.json")) });
+    writeFileSync(join(root, "state", "collector.json"), JSON.stringify({ schemaVersion: 2, sourceRegistrySha256: profile.sourceRegistrySha256, network: "testnet", profileSha256: profile.profileSha256, sources: { "testnet:BTC": 86_400_000 } }));
+    await collectSources({ root, profile, nowMs, fetch: async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body)).req);
       return new Response("[]");
     } });
     assert.equal(requests[0].startTime, 10_800_000);
@@ -184,8 +229,8 @@ test("daily manifest retains the registry fact that produced its sealed shard", 
   const registryA = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
   const registryB = { schemaVersion: 2 as const, network: "testnet" as const, sources: [{ ...source, underlying: "BTC-RENAMED" }] };
   try {
-    await collectSources({ root, registry: registryA, nowMs, fetch: async () => new Response(fixture("candle-snapshot.json")) });
-    await collectSources({ root, registry: registryB, nowMs: nowMs + 86_400_000, fetch: async () => new Response("[]") });
+    await collectSources({ root, profile: loadedProfile(root, registryA), nowMs, fetch: async () => new Response(fixture("candle-snapshot.json")) });
+    await collectSources({ root, profile: loadedProfile(root, registryB), nowMs: nowMs + 86_400_000, fetch: async () => new Response("[]") });
     assert.equal(buildDailyManifest(root, "1970-01-01").sourceRegistrySha256, sha256(canonicalJson(registryA)));
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -196,7 +241,7 @@ test("collector publishes a content-addressed rolling manifest and current mappi
   const root = scratch();
   const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
   try {
-    const summary = await collectSources({ root, registry, nowMs: 12_000_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
+    const summary = await collectSources({ root, profile: loadedProfile(root, registry), nowMs: 12_000_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
     assert.ok(summary.manifestPath);
     const pointer = JSON.parse(readFileSync(join(root, "manifests", "current.json"), "utf8"));
     assert.equal(pointer.sourceRegistrySha256, sha256(canonicalJson(registry)));
@@ -217,7 +262,7 @@ test("session calendars report missing expected open hours", async () => {
     { t: Date.UTC(1970, 0, 5, 11), T: Date.UTC(1970, 0, 5, 12) - 1, s: "NYSE", i: "1h", o: "1", h: "1", l: "1", c: "1", v: "1", n: 1 },
   ]);
   try {
-    await collectSources({ root, registry: { schemaVersion: 2, network: "testnet", sources: [sessionSource] }, nowMs, fetch: async () => new Response(snapshot) });
+    await collectSources({ root, profile: loadedProfile(root, { schemaVersion: 2, network: "testnet", sources: [sessionSource] }), nowMs, fetch: async () => new Response(snapshot) });
     assert.deepEqual(buildDailyManifest(root, "1970-01-05").underlyings.NYSE.missingIntervals, [Date.UTC(1970, 0, 5, 10)]);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -229,7 +274,7 @@ test("collector uses every bounded retry delay and journals HTTP failures with t
   const delays: number[] = [];
   let attempts = 0;
   try {
-    const summary = await collectSources({ root, registry: { schemaVersion: 2, network: "testnet", sources: [source] }, nowMs: 12_000_000, sleep: async (delay) => { delays.push(delay); }, fetch: async () => {
+    const summary = await collectSources({ root, profile: loadedProfile(root, { schemaVersion: 2, network: "testnet", sources: [source] }), nowMs: 12_000_000, sleep: async (delay) => { delays.push(delay); }, fetch: async () => {
       attempts++;
       return new Response("unavailable", { status: 503 });
     } });
@@ -247,7 +292,7 @@ test("a source failure preserves a sibling source's sealed shard", async () => {
   const root = scratch();
   const eth = { ...source, underlying: "ETH", sourceCoin: "ETH" };
   try {
-    const summary = await collectSources({ root, registry: { schemaVersion: 2, network: "testnet", sources: [source, eth] }, nowMs: 12_000_000, sleep: async () => {}, fetch: async (_url, init) => JSON.parse(init?.body as string).req.coin === "BTC" ? new Response(fixture("candle-snapshot.json")) : new Response("bad", { status: 500 }) });
+    const summary = await collectSources({ root, profile: loadedProfile(root, { schemaVersion: 2, network: "testnet", sources: [source, eth] }), nowMs: 12_000_000, sleep: async () => {}, fetch: async (_url, init) => JSON.parse(init?.body as string).req.coin === "BTC" ? new Response(fixture("candle-snapshot.json")) : new Response("bad", { status: 500 }) });
     assert.equal(summary.accepted, 2);
     assert.deepEqual(summary.failures.map((failure) => failure.underlying), ["ETH"]);
     assert.equal(shardFiles(root).length, 1);
@@ -261,8 +306,8 @@ test("identical fixture collections in independent roots produce identical seale
   const secondRoot = scratch();
   const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
   try {
-    await collectSources({ root: firstRoot, registry, nowMs: 12_000_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
-    await collectSources({ root: secondRoot, registry, nowMs: 12_000_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
+    await collectSources({ root: firstRoot, profile: loadedProfile(firstRoot, registry), nowMs: 12_000_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
+    await collectSources({ root: secondRoot, profile: loadedProfile(secondRoot, registry), nowMs: 12_000_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
     assert.equal(sha256(readFileSync(shardFiles(firstRoot)[0])), sha256(readFileSync(shardFiles(secondRoot)[0])));
   } finally {
     rmSync(firstRoot, { recursive: true, force: true });
@@ -289,13 +334,14 @@ test("candle snapshot collection is idempotent without replacing the accepted ca
   const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
   const response = (body: string) => async () => new Response(body, { status: 200 });
   try {
-    await collectSources({ root, registry, nowMs, fetch: response(fixture("candle-snapshot.json")) });
+    const profile = loadedProfile(root, registry);
+    await collectSources({ root, profile, nowMs, fetch: response(fixture("candle-snapshot.json")) });
     const first = shardFiles(root);
     assert.equal(first.length, 1);
     const accepted = readCandlePartition(first[0]);
     const firstHash = sha256(canonicalJson(buildDailyManifest(root, "1970-01-01")));
 
-    await collectSources({ root, registry, nowMs, fetch: response("[]") });
+    await collectSources({ root, profile, nowMs, fetch: response("[]") });
     assert.equal(shardFiles(root).length, 1);
     assert.equal(sha256(canonicalJson(buildDailyManifest(root, "1970-01-01"))), firstHash);
     assert.deepEqual(readCandlePartition(first[0]), accepted);
@@ -309,7 +355,7 @@ test("same-response conflicting duplicates are quarantined before any shard or c
   const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
   const row = JSON.parse(fixture("candle-snapshot.json"))[0];
   try {
-    const summary = await collectSources({ root, registry, nowMs: 12_000_000, sleep: async () => {}, fetch: async () => new Response(JSON.stringify([row, { ...row, h: "111" }])) });
+    const summary = await collectSources({ root, profile: loadedProfile(root, registry), nowMs: 12_000_000, sleep: async () => {}, fetch: async () => new Response(JSON.stringify([row, { ...row, h: "111" }])) });
     assert.equal(summary.accepted, 0);
     assert.equal(summary.conflicts, 1);
     assert.deepEqual(summary.failures.map((failure) => failure.underlying), ["BTC", "manifest"]);

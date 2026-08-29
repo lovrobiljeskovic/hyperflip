@@ -11,6 +11,7 @@ import { WAD } from "../src/pure.js";
 import { handleQuote, newMetrics, type QuoteDeps } from "../src/server.js";
 import { parseCorrelationArtifact, promoteCandidate } from "../src/research/artifacts.js";
 import { collectSources } from "../src/research/candles.js";
+import { loadResearchNetworkProfile } from "../src/research/network.js";
 import { runDaily } from "../src/research/daily.js";
 import { appendQuoteDecision, initializeQuoteJournal, joinEvents, type JoinDeps } from "../src/research/journal.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
@@ -34,6 +35,14 @@ const source = (underlying: string): SourceEntry => ({
   measurementEnabled: true,
   fallbackEligible: false,
 });
+
+function profile(root: string, sources: SourceRegistry) {
+  const value = { schemaVersion: 1, network: "testnet", infoApiUrl: "https://api.hyperliquid-testnet.xyz/info", evmChainId: 998, sourceRegistryFile: "sources.json", marketRegistryFile: "markets.json", deploymentRegistryFile: "deployment.json", baselineCorrelationFile: "correlations.json" };
+  writeFileSync(join(root, "profile.json"), JSON.stringify(value));
+  writeFileSync(join(root, "sources.json"), JSON.stringify(sources));
+  for (const name of ["markets.json", "deployment.testnet.json", "correlations.json"]) writeFileSync(join(root, name === "deployment.testnet.json" ? "deployment.json" : name), readFileSync(new URL(`../../registry/${name}`, import.meta.url)));
+  return loadResearchNetworkProfile(join(root, "profile.json"));
+}
 
 const fixturePartition = (price: string): Buffer => gzipSync(`${canonicalJson({
   schemaVersion: 1,
@@ -294,7 +303,8 @@ test("correlation beta acceptance is deterministic, durable, joined, isolated, a
     assert.equal(pipeline.status, 0, pipeline.stderr);
     assert.match(pipeline.stdout, /# pass 1\b/);
 
-    const collector = await collectSources({ root: roots[1], registry: { schemaVersion: 2, network: "testnet", sources: [source("BTC")] }, nowMs: NOW, sleep: async () => {}, fetch: async () => new Response("unavailable", { status: 503 }) });
+    const collectorSources = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source("BTC")] };
+    const collector = await collectSources({ root: roots[1], profile: profile(roots[1], collectorSources), nowMs: NOW, sleep: async () => {}, fetch: async () => new Response("unavailable", { status: 503 }) });
     assert.deepEqual(collector.failures.map(({ underlying }) => underlying), ["BTC", "manifest"]);
     const steps: string[] = [];
     const daily = runDaily({}, (step) => {

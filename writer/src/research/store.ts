@@ -3,7 +3,7 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path
 import { gunzipSync } from "node:zlib";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
 import { assertCandleRecord, assertDataManifest, parseSourceRegistry } from "./types.js";
-import type { CandleRecord, DataManifest, SourceRegistry } from "./types.js";
+import type { CandleRawManifest, CandleRecord, DataManifest, SourceRegistry } from "./types.js";
 
 export function canonicalJson(value: unknown): string {
   if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
@@ -114,8 +114,8 @@ export function readSourceRegistryFact(root: string, hash: string, storage = ope
 
 function sourceRegistry(root: string, rawFiles: string[], storage: ResearchPersistence): { registry: SourceRegistry; hash: string; path: string } {
   const provenanceHashes = [...new Set(rawFiles.map((file) => {
-    const provenance = JSON.parse(storage.readText(`${file}.provenance.json`)) as { schemaVersion?: unknown; sourceRegistrySha256?: unknown };
-    if (provenance.schemaVersion !== 1 || typeof provenance.sourceRegistrySha256 !== "string") throw new Error("candle shard provenance is invalid");
+    const provenance = JSON.parse(storage.readText(`${file}.provenance.json`)) as Partial<CandleRawManifest>;
+    if (provenance.schemaVersion !== 2 || typeof provenance.sourceRegistrySha256 !== "string" || provenance.network !== "testnet" || typeof provenance.profileSha256 !== "string") throw new Error("candle shard provenance is invalid");
     return provenance.sourceRegistrySha256;
   }))];
   if (provenanceHashes.length > 1) throw new Error("daily shards use multiple source registries");
@@ -178,8 +178,8 @@ export function buildDailyManifest(root: string, day: string, storage = openRese
 export function buildRollingManifest(root: string, sourceRegistrySha256: string, storage = openResearchPersistence(root)): DataManifest {
   const fact = readSourceRegistryFact(root, sourceRegistrySha256, storage);
   const rawFiles = storage.list("raw/candles").filter((file) => file.endsWith(".jsonl.gz") && (() => {
-    const provenance = JSON.parse(storage.readText(`${file}.provenance.json`)) as { schemaVersion?: unknown; sourceRegistrySha256?: unknown };
-    return provenance.schemaVersion === 1 && provenance.sourceRegistrySha256 === sourceRegistrySha256;
+    const provenance = JSON.parse(storage.readText(`${file}.provenance.json`)) as Partial<CandleRawManifest>;
+    return provenance.schemaVersion === 2 && provenance.sourceRegistrySha256 === sourceRegistrySha256 && provenance.network === "testnet" && typeof provenance.profileSha256 === "string";
   })());
   const all = rawFiles.flatMap((file) => readCandlePartition(storage, file));
   if (!all.length) throw new Error("rolling manifest requires at least one closed candle");

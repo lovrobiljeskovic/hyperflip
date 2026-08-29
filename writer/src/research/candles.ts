@@ -3,7 +3,7 @@ import { openResearchPersistence, type ResearchPersistence } from "./persistence
 import { assertCandleRecord } from "./types.js";
 import { canonicalJson, publishRollingManifest, readCandlePartition, sha256 } from "./store.js";
 import type { LoadedResearchNetworkProfile } from "./network.js";
-import type { CandleRawManifest, CandleRecord, CandleRequestJournal, SourceEntry, SourceRegistry } from "./types.js";
+import type { CandleRawManifest, CandleRecord, CandleRequestJournal, SourceEntry } from "./types.js";
 
 const HOUR_MS = 3_600_000;
 const INITIAL_RANGE_MS = 5_000 * HOUR_MS;
@@ -25,8 +25,7 @@ export interface CollectionSummary {
 
 export interface CollectionDeps {
   root: string;
-  registry?: SourceRegistry;
-  profile?: LoadedResearchNetworkProfile;
+  profile: LoadedResearchNetworkProfile;
   nowMs?: number;
   fetch?: typeof fetch;
   sleep?: (milliseconds: number) => Promise<void>;
@@ -105,7 +104,7 @@ function validateCandleSequence(candles: CandleRecord[]): void {
   for (let index = 1; index < candles.length; index++) if (candles[index].openTimeMs <= candles[index - 1].openTimeMs) throw new Error("candle snapshot must be strictly increasing");
 }
 
-export function selectClosedPage(rows: unknown[], request: ClosedPageRequest): { candles: CandleRecord[]; ignoredBefore: number; ignoredAfter: number } {
+function selectClosedRows(rows: unknown[], request: ClosedPageRequest): { retained: unknown[]; ignoredBefore: number; ignoredAfter: number } {
   if (!Number.isSafeInteger(request.startTimeMs) || !Number.isSafeInteger(request.endTimeMs) || request.startTimeMs % HOUR_MS !== 0 || request.endTimeMs - request.startTimeMs < HOUR_MS - 1 || (request.endTimeMs + 1) % HOUR_MS !== 0) throw new Error("candle request bounds are invalid");
   if (request.endTimeMs >= request.retrievedAtMs) throw new Error("candle request must be closed before retrieval");
   const retained: unknown[] = [];
@@ -122,10 +121,18 @@ export function selectClosedPage(rows: unknown[], request: ClosedPageRequest): {
       retained.push(entry);
     }
   }
-  if (retained.length > 5_000) throw new Error("candle snapshot must contain at most 5,000 retained rows");
-  const candles = retained.map((entry) => parseCandleRow(entry, request));
+  return { retained, ignoredBefore, ignoredAfter };
+}
+
+function parseClosedRows(selected: { retained: unknown[]; ignoredBefore: number; ignoredAfter: number }, request: ClosedPageRequest): { candles: CandleRecord[]; ignoredBefore: number; ignoredAfter: number } {
+  if (selected.retained.length > 5_000) throw new Error("candle snapshot must contain at most 5,000 retained rows");
+  const candles = selected.retained.map((entry) => parseCandleRow(entry, request));
   validateCandleSequence(candles);
-  return { candles, ignoredBefore, ignoredAfter };
+  return { candles, ignoredBefore: selected.ignoredBefore, ignoredAfter: selected.ignoredAfter };
+}
+
+export function selectClosedPage(rows: unknown[], request: ClosedPageRequest): { candles: CandleRecord[]; ignoredBefore: number; ignoredAfter: number } {
+  return parseClosedRows(selectClosedRows(rows, request), request);
 }
 
 export function parseCandleSnapshot(source: SourceEntry, body: string, retrievedAtMs: number, request?: { startTime: number; endTime: number }): CandleRecord[] {
@@ -162,8 +169,11 @@ function immutableObservation(candle: CandleRecord): string {
   return canonicalJson({ openTimeMs, closeTimeMs, open, high, low, close, volume, tradeCount });
 }
 
-function existingCandles(storage: ResearchPersistence, source: SourceEntry): Map<string, CandleRecord> {
-  const records = storage.list("raw/candles").filter((file) => file.endsWith(".jsonl.gz")).flatMap((file) => readCandlePartition(storage, file)).filter((candle) => candle.sourceNetwork === source.sourceNetwork && candle.sourceCoin === source.sourceCoin && candle.interval === "1h");
+function existingCandles(storage: ResearchPersistence, source: SourceEntry, identity: Pick<CandleRawManifest, "network" | "profileSha256" | "sourceRegistrySha256">): Map<string, CandleRecord> {
+  const records = storage.list("raw/candles").filter((file) => file.endsWith(".jsonl.gz") && (() => {
+    const provenance = JSON.parse(storage.readText(`${file}.provenance.json`)) as Partial<CandleRawManifest>;
+    return provenance.schemaVersion === 2 && provenance.network === identity.network && provenance.profileSha256 === identity.profileSha256 && provenance.sourceRegistrySha256 === identity.sourceRegistrySha256;
+  })()).flatMap((file) => readCandlePartition(storage, file)).filter((candle) => candle.sourceNetwork === source.sourceNetwork && candle.sourceCoin === source.sourceCoin && candle.interval === "1h");
   return new Map(records.map((candle) => [candleKey(candle), candle]));
 }
 
@@ -178,18 +188,19 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
   const storage = openResearchPersistence(deps.root);
   const nowMs = deps.nowMs ?? Date.now();
   if (!Number.isSafeInteger(nowMs)) throw new Error("nowMs must be a safe integer timestamp");
-  const registry = deps.profile?.sources ?? deps.registry;
-  if (!registry) throw new Error("loaded research network profile is required");
-  if (deps.profile && deps.registry && canonicalJson(deps.profile.sources) !== canonicalJson(deps.registry)) throw new Error("loaded profile and source registry differ");
+  if (!deps.profile) throw new Error("loaded research network profile is required");
+  const { profile } = deps;
+  if (profile.profile.network !== "testnet" || profile.sources.network !== "testnet" || profile.sources.schemaVersion !== 2) throw new Error("loaded research network profile must be testnet");
+  const registry = profile.sources;
   const requestFetch = deps.fetch ?? fetch;
-  const apiUrl = deps.profile?.profile.infoApiUrl;
-  if (!apiUrl && !deps.fetch) throw new Error("loaded research network profile is required");
+  const apiUrl = profile.profile.infoApiUrl;
   const sleep = deps.sleep ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
   const registryBytes = canonicalJson(registry);
-  const sourceRegistrySha256 = deps.profile?.sourceRegistrySha256 ?? sha256(registryBytes);
+  const sourceRegistrySha256 = profile.sourceRegistrySha256;
   if (sha256(registryBytes) !== sourceRegistrySha256) throw new Error("loaded profile source registry hash differs");
-  const network = deps.profile?.profile.network ?? registry.network;
-  const profileSha256 = deps.profile?.profileSha256 ?? null;
+  const network = profile.profile.network;
+  const profileSha256 = profile.profileSha256;
+  if (sha256(canonicalJson(profile.profile)) !== profileSha256) throw new Error("loaded profile hash differs");
   const fact = `facts/source-registries/${sourceRegistrySha256}.json`;
   if (storage.exists(fact) && storage.readText(fact) !== registryBytes) throw new Error("immutable source registry fact differs");
   if (!storage.exists(fact)) storage.writeAtomic(fact, registryBytes);
@@ -198,8 +209,8 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
   for (const source of registry.sources) {
     if (!source.measurementEnabled) continue;
     const sourceKey = `${source.sourceNetwork}:${source.sourceCoin}`;
-    const known = existingCandles(storage, source);
-    const durableLastOpenTimeMs = Math.max(state.sources[sourceKey] ?? -1, ...[...known.values()].map((candle) => candle.openTimeMs));
+    const known = existingCandles(storage, source, { network, profileSha256, sourceRegistrySha256 });
+    const durableLastOpenTimeMs = Math.max(-1, ...[...known.values()].map((candle) => candle.openTimeMs));
     const request = nextCandleRequest(source, durableLastOpenTimeMs < 0 ? null : durableLastOpenTimeMs, nowMs);
     if (request.startTimeMs > request.endTimeMs) continue;
     let candles: CandleRecord[] | undefined;
@@ -215,15 +226,16 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
         httpStatus = response.status;
         const body = await response.text();
         if (!response.ok) throw new Error(`info API ${response.status}: ${body}`);
-        const page = selectClosedPage(snapshotRows(body), { coin: source.sourceCoin, startTimeMs: request.startTimeMs, endTimeMs: request.endTimeMs, retrievedAtMs, source });
+        const selected = selectClosedRows(snapshotRows(body), { coin: source.sourceCoin, startTimeMs: request.startTimeMs, endTimeMs: request.endTimeMs, retrievedAtMs, source });
+        ignoredBefore = selected.ignoredBefore;
+        ignoredAfter = selected.ignoredAfter;
+        const page = parseClosedRows(selected, { coin: source.sourceCoin, startTimeMs: request.startTimeMs, endTimeMs: request.endTimeMs, retrievedAtMs, source });
         candles = page.candles;
-        ignoredBefore = page.ignoredBefore;
-        ignoredAfter = page.ignoredAfter;
         storage.append(`journal/requests/${dayPath(retrievedAtMs)}.jsonl`, canonicalJson({ schemaVersion: 2, sourceKey, network, profileSha256, startTimeMs: request.startTimeMs, endTimeMs: request.endTimeMs, retrievedAtMs, httpStatus: response.status, error: null, returnedRows: candles.length, ignoredBefore, ignoredAfter } satisfies CandleRequestJournal));
         break;
       } catch (error) {
         failure = error instanceof Error ? error.message : String(error);
-        storage.append(`journal/requests/${dayPath(retrievedAtMs)}.jsonl`, canonicalJson({ schemaVersion: 2, sourceKey, network, profileSha256, startTimeMs: request.startTimeMs, endTimeMs: request.endTimeMs, retrievedAtMs, httpStatus, error: failure, returnedRows: 0, ignoredBefore: 0, ignoredAfter: 0 } satisfies CandleRequestJournal));
+        storage.append(`journal/requests/${dayPath(retrievedAtMs)}.jsonl`, canonicalJson({ schemaVersion: 2, sourceKey, network, profileSha256, startTimeMs: request.startTimeMs, endTimeMs: request.endTimeMs, retrievedAtMs, httpStatus, error: failure, returnedRows: 0, ignoredBefore, ignoredAfter } satisfies CandleRequestJournal));
         if (error instanceof CandleBatchConflictError) {
           for (const candle of error.conflicts) storage.append(`quarantine/candles/${dayPath(nowMs)}.jsonl`, canonicalJson(candle));
           summary.conflicts += error.conflicts.length;
@@ -254,7 +266,7 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
     if (accepted.length) {
       const shard = `raw/candles/${dayPath(nowMs)}/${source.underlying}/${request.startTimeMs}-${request.endTimeMs}-${nowMs}.jsonl.gz`;
       const provenance = `${shard}.provenance.json`;
-      const provenanceBytes = canonicalJson({ schemaVersion: 1, sourceRegistrySha256, network, profileSha256, startTimeMs: request.startTimeMs, endTimeMs: request.endTimeMs, ignoredBefore, ignoredAfter } satisfies CandleRawManifest);
+      const provenanceBytes = canonicalJson({ schemaVersion: 2, sourceRegistrySha256, network, profileSha256, startTimeMs: request.startTimeMs, endTimeMs: request.endTimeMs, ignoredBefore, ignoredAfter } satisfies CandleRawManifest);
       const provenanceMatches = storage.exists(provenance) ? storage.readText(provenance) === provenanceBytes : storage.writeNew(provenance, provenanceBytes);
       if (!provenanceMatches) {
         for (const candle of accepted) storage.append(`quarantine/candles/${dayPath(nowMs)}.jsonl`, canonicalJson(candle));

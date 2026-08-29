@@ -60,10 +60,10 @@ export interface CandleRequestJournal {
 }
 
 export interface CandleRawManifest {
-  schemaVersion: 1;
+  schemaVersion: 2;
   sourceRegistrySha256: string;
   network: ResearchNetwork;
-  profileSha256: string | null;
+  profileSha256: string;
   startTimeMs: number;
   endTimeMs: number;
   ignoredBefore: number;
