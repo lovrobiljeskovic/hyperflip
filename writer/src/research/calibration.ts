@@ -240,7 +240,7 @@ function calibrateImpl(input: CalibrationInput): CorrelationArtifact {
   }));
   const sourceReason = new Map<string, string | null>();
   for (const source of sources) {
-    if (!source.eligible) sourceReason.set(source.underlying, "ineligible-source");
+    if (!source.measurementEnabled) sourceReason.set(source.underlying, "ineligible-source");
     else if (!trailingFresh(source, (usable.get(source.underlying) ?? []).filter((candle) => contributing.has(candleKey(candle))).map((candle) => candle.openTimeMs), derived.manifest.window.asOfMs)) sourceReason.set(source.underlying, "trailing-source-stale");
     else sourceReason.set(source.underlying, null);
   }

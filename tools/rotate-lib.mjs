@@ -186,6 +186,12 @@ export function filterMappedPicks(picks, registry, activeUnderlyings, max = 20) 
   return filtered;
 }
 
+/** Keep rotation from rewriting a testnet registry as an unbound market list. */
+export function rotatedRegistry(registry, markets, archived) {
+  if (registry.network !== "testnet") throw new Error("market registry network must be testnet");
+  return { network: registry.network, markets, archived };
+}
+
 /** Registry entry in the exact shape registry/markets.json uses.
  * Must satisfy writer/src/config.ts parseMarkets — it hard-fails on a missing
  * field, and the writer is the only consumer that validates the shape. */

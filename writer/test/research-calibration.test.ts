@@ -11,8 +11,8 @@ import type { CandleRecord, DataManifest, SourceEntry, SourceRegistry } from "..
 import type { ReturnRecord } from "../src/research/returns.js";
 
 const source = (underlying: string, cluster: SourceEntry["cluster"]): SourceEntry => ({
-  schemaVersion: 1, underlying, sourceNetwork: "mainnet", sourceCoin: underlying, cluster,
-  calendar: "continuous", eligible: true, fallbackEligible: false,
+  schemaVersion: 1, underlying, sourceNetwork: "testnet", sourceCoin: underlying, cluster,
+  calendar: "continuous", measurementEnabled: true, fallbackEligible: false,
 });
 
 test("hierarchical fit is non-negative and preserves the explained-variance ceiling", () => {
@@ -48,7 +48,8 @@ const fixtureReturns = readFileSync(new URL("./fixtures/research/returns-small.j
 function calibrationRoot(options: { staleParticipatingUnderlying?: string; constantUnderlying?: string } = {}): { root: string; input: CalibrationInput } {
   const root = mkdtempSync(join(tmpdir(), "hype-research-calibration-"));
   const sources: SourceRegistry = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    network: "testnet",
     sources: [source("A", "crypto"), source("B", "equity"), source("C", "commodity")].map((entry) => ({ ...entry, fallbackEligible: true })),
   };
   const registryBytes = canonicalJson(sources);
@@ -56,7 +57,7 @@ function calibrationRoot(options: { staleParticipatingUnderlying?: string; const
   const latest = AS_OF_MS - 6 * HOUR;
   const candleTimes = options.staleParticipatingUnderlying ? [latest - 2 * HOUR, latest - HOUR, latest] : [latest - HOUR, latest];
   const candles: CandleRecord[] = sources.sources.flatMap((entry) => candleTimes.map((openTimeMs, index) => ({
-    schemaVersion: 1, source: "hyperliquid-info", sourceNetwork: "mainnet", underlying: entry.underlying,
+    schemaVersion: 1, source: "hyperliquid-info", sourceNetwork: "testnet", underlying: entry.underlying,
     sourceCoin: entry.sourceCoin, interval: "1h", openTimeMs, closeTimeMs: openTimeMs + HOUR - 1,
     open: String(100 + index), high: String(100 + index), low: String(100 + index),
     close: String(100 + index), volume: "1", tradeCount: 1, retrievedAtMs: AS_OF_MS,
@@ -84,7 +85,7 @@ function calibrationRoot(options: { staleParticipatingUnderlying?: string; const
   const derivedText = options.staleParticipatingUnderlying || options.constantUnderlying
     ? `${fixtureReturns.trim().split("\n").map((line) => {
       const row = JSON.parse(line) as ReturnRecord;
-      if (row.underlying === options.staleParticipatingUnderlying) row.sourceKeys = [`mainnet:${row.underlying}:1h:${latest - 2 * HOUR}`];
+      if (row.underlying === options.staleParticipatingUnderlying) row.sourceKeys = [`testnet:${row.underlying}:1h:${latest - 2 * HOUR}`];
       if (row.underlying === options.constantUnderlying) row.value = 0;
       return canonicalJson(row);
     }).join("\n")}\n`
@@ -174,7 +175,7 @@ test("calibrate CLI writes the deterministic candidate from explicit immutable i
       env: { ...process.env, RESEARCH_ROOT: fixture.root, RESEARCH_MANIFEST_FILE: join(fixture.root, "manifest.json"), RESEARCH_DERIVED_MANIFEST_FILE: fixture.input.derivedManifestPath },
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /2026-08-28\.ffdb7ae7/);
+    assert.match(result.stdout, /2026-08-28\.398fc2b3/);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

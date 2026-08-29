@@ -385,7 +385,7 @@ function contradictory(legs: SyntheticLeg[]): boolean {
 
 export function syntheticEvents(originMs: number, series: ReplaySeries, future: ReturnRecord[], admittedPairs?: Set<string>): SyntheticTicket[] {
   if (!Number.isSafeInteger(originMs) || !/^[0-9a-f]{64}$/.test(series.manifestHash)) throw new Error("synthetic replay requires a safe origin and manifest hash");
-  const sources = [...series.sources].filter((source) => source.eligible).sort((left, right) => left.underlying.localeCompare(right.underlying));
+  const sources = [...series.sources].filter((source) => source.measurementEnabled).sort((left, right) => left.underlying.localeCompare(right.underlying));
   const groups: Record<TicketStratum, SourceEntry[][]> = { "same-underlying": [], "same-cluster": [], "cross-cluster": [] };
   const admitted = (selected: SourceEntry[]): boolean => {
     const underlyings = [...new Set(selected.map((source) => source.underlying))];
@@ -590,7 +590,7 @@ export function fitReplayDependence(rows: ReturnRecord[], sources: SourceEntry[]
   const causal = rows.filter((row) => observationTime(row) <= originMs && row.timestampMs >= originMs - window.lookbackMs);
   const quarantined = new Set(candidate.quality.quarantinedUnderlyings.map((entry) => entry.underlying));
   const eligible = new Set(candidate.quality.eligibleUnderlyings);
-  const sorted = sources.filter((source) => source.eligible && eligible.has(source.underlying) && !quarantined.has(source.underlying))
+  const sorted = sources.filter((source) => source.measurementEnabled && eligible.has(source.underlying) && !quarantined.has(source.underlying))
     .filter((source) => trailingFresh(source, causal.filter((row) => row.underlying === source.underlying).map((row) => row.timestampMs), originMs))
     .sort((left, right) => left.underlying < right.underlying ? -1 : left.underlying > right.underlying ? 1 : 0);
   if (sorted.length < 2) throw new Error("dependence fit requires two eligible fresh sources");

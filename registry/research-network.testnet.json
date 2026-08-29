@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "network": "testnet",
+  "infoApiUrl": "https://api.hyperliquid-testnet.xyz/info",
+  "evmChainId": 998,
+  "sourceRegistryFile": "correlation-sources.json",
+  "marketRegistryFile": "markets.json",
+  "deploymentRegistryFile": "deployment.testnet.json",
+  "baselineCorrelationFile": "correlations.json"
+}

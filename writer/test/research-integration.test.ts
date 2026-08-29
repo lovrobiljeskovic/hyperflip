@@ -27,18 +27,18 @@ const QUOTE_ID = `0x${"ab".repeat(32)}` as Hex;
 const source = (underlying: string): SourceEntry => ({
   schemaVersion: 1,
   underlying,
-  sourceNetwork: "mainnet",
+  sourceNetwork: "testnet",
   sourceCoin: underlying,
   cluster: "crypto",
   calendar: "continuous",
-  eligible: true,
+  measurementEnabled: true,
   fallbackEligible: false,
 });
 
 const fixturePartition = (price: string): Buffer => gzipSync(`${canonicalJson({
   schemaVersion: 1,
   source: "hyperliquid-info",
-  sourceNetwork: "mainnet",
+  sourceNetwork: "testnet",
   underlying: "BTC",
   sourceCoin: "BTC",
   interval: "1h",
@@ -68,7 +68,7 @@ function artifactFixture(root: string): {
   partition: string;
   sources: SourceRegistry;
 } {
-  const sources: SourceRegistry = { schemaVersion: 1, sources: [source("BTC"), source("ETH")] };
+  const sources: SourceRegistry = { schemaVersion: 2, network: "testnet", sources: [source("BTC"), source("ETH")] };
   const sourceBytes = canonicalJson(sources);
   const sourceHash = sha256(sourceBytes);
   const sourcePath = join(root, "facts", "source-registries", `${sourceHash}.json`);
@@ -293,7 +293,7 @@ test("correlation beta acceptance is deterministic, durable, joined, isolated, a
     assert.equal(pipeline.status, 0, pipeline.stderr);
     assert.match(pipeline.stdout, /# pass 1\b/);
 
-    const collector = await collectSources({ root: roots[1], registry: { schemaVersion: 1, sources: [source("BTC")] }, nowMs: NOW, sleep: async () => {}, fetch: async () => new Response("unavailable", { status: 503 }) });
+    const collector = await collectSources({ root: roots[1], registry: { schemaVersion: 2, network: "testnet", sources: [source("BTC")] }, nowMs: NOW, sleep: async () => {}, fetch: async () => new Response("unavailable", { status: 503 }) });
     assert.deepEqual(collector.failures.map(({ underlying }) => underlying), ["BTC", "manifest"]);
     const steps: string[] = [];
     const daily = runDaily({}, (step) => {

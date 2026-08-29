@@ -11,11 +11,11 @@ import type { SourceEntry } from "../src/research/types.js";
 const source: SourceEntry = {
   schemaVersion: 1,
   underlying: "BTC",
-  sourceNetwork: "mainnet",
+  sourceNetwork: "testnet",
   sourceCoin: "BTC",
   cluster: "crypto",
   calendar: "continuous",
-  eligible: true,
+  measurementEnabled: true,
   fallbackEligible: false,
 };
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/research/${name}`, import.meta.url), "utf8");
@@ -33,7 +33,7 @@ function shardFiles(root: string): string[] {
 
 test("candle snapshot maps exact Hyperliquid fields", () => {
   assert.deepEqual(parseCandleSnapshot(source, fixture("candle-snapshot.json"), 12_000_000)[0], {
-    schemaVersion: 1, source: "hyperliquid-info", sourceNetwork: "mainnet", underlying: "BTC", sourceCoin: "BTC", interval: "1h",
+    schemaVersion: 1, source: "hyperliquid-info", sourceNetwork: "testnet", underlying: "BTC", sourceCoin: "BTC", interval: "1h",
     openTimeMs: 3_600_000, closeTimeMs: 7_199_999, open: "100", high: "110", low: "90", close: "105", volume: "12.5", tradeCount: 8, retrievedAtMs: 12_000_000,
   });
 });
@@ -64,11 +64,11 @@ test("candle request uses a 5,000-hour initial range and resumes after the durab
 test("candle request recovers from a stale state file using sealed candles", async () => {
   const root = scratch();
   const nowMs = 12_000_000;
-  const registry = { schemaVersion: 1 as const, sources: [source] };
+  const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
   const requests: { startTime: number }[] = [];
   try {
     await collectSources({ root, registry, nowMs, fetch: async () => new Response(fixture("candle-snapshot.json")) });
-    writeFileSync(join(root, "state", "collector.json"), JSON.stringify({ schemaVersion: 1, sourceRegistrySha256: sha256(canonicalJson(registry)), sources: { "mainnet:BTC": 3_600_000 } }));
+    writeFileSync(join(root, "state", "collector.json"), JSON.stringify({ schemaVersion: 1, sourceRegistrySha256: sha256(canonicalJson(registry)), sources: { "testnet:BTC": 3_600_000 } }));
     await collectSources({ root, registry, nowMs, fetch: async (_url, init) => {
       requests.push(JSON.parse(init?.body as string).req);
       return new Response("[]");
@@ -82,8 +82,8 @@ test("candle request recovers from a stale state file using sealed candles", asy
 test("daily manifest retains the registry fact that produced its sealed shard", async () => {
   const root = scratch();
   const nowMs = 12_000_000;
-  const registryA = { schemaVersion: 1 as const, sources: [source] };
-  const registryB = { schemaVersion: 1 as const, sources: [{ ...source, underlying: "BTC-RENAMED" }] };
+  const registryA = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
+  const registryB = { schemaVersion: 2 as const, network: "testnet" as const, sources: [{ ...source, underlying: "BTC-RENAMED" }] };
   try {
     await collectSources({ root, registry: registryA, nowMs, fetch: async () => new Response(fixture("candle-snapshot.json")) });
     await collectSources({ root, registry: registryB, nowMs: nowMs + 86_400_000, fetch: async () => new Response("[]") });
@@ -95,7 +95,7 @@ test("daily manifest retains the registry fact that produced its sealed shard", 
 
 test("collector publishes a content-addressed rolling manifest and current mapping-epoch pointer", async () => {
   const root = scratch();
-  const registry = { schemaVersion: 1 as const, sources: [source] };
+  const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
   try {
     const summary = await collectSources({ root, registry, nowMs: 12_000_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
     assert.ok(summary.manifestPath);
@@ -118,7 +118,7 @@ test("session calendars report missing expected open hours", async () => {
     { t: Date.UTC(1970, 0, 5, 11), T: Date.UTC(1970, 0, 5, 12) - 1, s: "NYSE", i: "1h", o: "1", h: "1", l: "1", c: "1", v: "1", n: 1 },
   ]);
   try {
-    await collectSources({ root, registry: { schemaVersion: 1, sources: [sessionSource] }, nowMs, fetch: async () => new Response(snapshot) });
+    await collectSources({ root, registry: { schemaVersion: 2, network: "testnet", sources: [sessionSource] }, nowMs, fetch: async () => new Response(snapshot) });
     assert.deepEqual(buildDailyManifest(root, "1970-01-05").underlyings.NYSE.missingIntervals, [Date.UTC(1970, 0, 5, 10)]);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -130,7 +130,7 @@ test("collector uses every bounded retry delay and journals HTTP failures with t
   const delays: number[] = [];
   let attempts = 0;
   try {
-    const summary = await collectSources({ root, registry: { schemaVersion: 1, sources: [source] }, nowMs: 12_000_000, sleep: async (delay) => { delays.push(delay); }, fetch: async () => {
+    const summary = await collectSources({ root, registry: { schemaVersion: 2, network: "testnet", sources: [source] }, nowMs: 12_000_000, sleep: async (delay) => { delays.push(delay); }, fetch: async () => {
       attempts++;
       return new Response("unavailable", { status: 503 });
     } });
@@ -148,7 +148,7 @@ test("a source failure preserves a sibling source's sealed shard", async () => {
   const root = scratch();
   const eth = { ...source, underlying: "ETH", sourceCoin: "ETH" };
   try {
-    const summary = await collectSources({ root, registry: { schemaVersion: 1, sources: [source, eth] }, nowMs: 12_000_000, sleep: async () => {}, fetch: async (_url, init) => JSON.parse(init?.body as string).req.coin === "BTC" ? new Response(fixture("candle-snapshot.json")) : new Response("bad", { status: 500 }) });
+    const summary = await collectSources({ root, registry: { schemaVersion: 2, network: "testnet", sources: [source, eth] }, nowMs: 12_000_000, sleep: async () => {}, fetch: async (_url, init) => JSON.parse(init?.body as string).req.coin === "BTC" ? new Response(fixture("candle-snapshot.json")) : new Response("bad", { status: 500 }) });
     assert.equal(summary.accepted, 2);
     assert.deepEqual(summary.failures.map((failure) => failure.underlying), ["ETH"]);
     assert.equal(shardFiles(root).length, 1);
@@ -160,7 +160,7 @@ test("a source failure preserves a sibling source's sealed shard", async () => {
 test("identical fixture collections in independent roots produce identical sealed shards", async () => {
   const firstRoot = scratch();
   const secondRoot = scratch();
-  const registry = { schemaVersion: 1 as const, sources: [source] };
+  const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
   try {
     await collectSources({ root: firstRoot, registry, nowMs: 12_000_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
     await collectSources({ root: secondRoot, registry, nowMs: 12_000_000, fetch: async () => new Response(fixture("candle-snapshot.json")) });
@@ -175,7 +175,7 @@ test("collector CLI exits non-zero when every source fails", () => {
   const root = scratch();
   const sources = join(root, "sources.json");
   try {
-    writeFileSync(sources, JSON.stringify({ schemaVersion: 1, sources: [source] }));
+    writeFileSync(sources, JSON.stringify({ schemaVersion: 2, network: "testnet", sources: [source] }));
     const result = spawnSync(process.execPath, ["--import", "tsx", "src/research/cli.ts", "collect"], { cwd: resolve(import.meta.dirname, ".."), env: { ...process.env, RESEARCH_ROOT: root, CORRELATION_SOURCES_FILE: sources, RESEARCH_INFO_API_URL: "http://127.0.0.1:1" }, encoding: "utf8" });
     assert.equal(result.status, 1, result.stderr);
   } finally {
@@ -186,7 +186,7 @@ test("collector CLI exits non-zero when every source fails", () => {
 test("candle snapshot collection is idempotent without replacing the accepted candle", async () => {
   const root = scratch();
   const nowMs = 12_000_000;
-  const registry = { schemaVersion: 1 as const, sources: [source] };
+  const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
   const response = (body: string) => async () => new Response(body, { status: 200 });
   try {
     await collectSources({ root, registry, nowMs, fetch: response(fixture("candle-snapshot.json")) });
@@ -206,7 +206,7 @@ test("candle snapshot collection is idempotent without replacing the accepted ca
 
 test("same-response conflicting duplicates are quarantined before any shard or checkpoint is sealed", async () => {
   const root = scratch();
-  const registry = { schemaVersion: 1 as const, sources: [source] };
+  const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
   const row = JSON.parse(fixture("candle-snapshot.json"))[0];
   try {
     const summary = await collectSources({ root, registry, nowMs: 12_000_000, sleep: async () => {}, fetch: async () => new Response(JSON.stringify([row, { ...row, h: "111" }])) });

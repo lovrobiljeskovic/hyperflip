@@ -189,7 +189,7 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
     }
   }
   const ageMs = nowMs - dataAsOfMs;
-  const eligibleUnderlyings = new Set([...eligible].filter((underlying) => sources === undefined || sourceByUnderlying.get(underlying)?.eligible === true));
+  const eligibleUnderlyings = new Set([...eligible].filter((underlying) => sources === undefined || sourceByUnderlying.get(underlying)?.measurementEnabled === true));
   const fallbackEligible = new Set(sources?.sources.filter((entry) => entry.fallbackEligible).map((entry) => entry.underlying) ?? []);
   return { artifact, table, model: { version: modelVersion, dataAsOf: artifact.dataAsOf, dataManifestSha256, sourceRegistrySha256, ageMs, multiAssetEnabled: ageMs < CHAMPION_MAX_AGE_MS, eligibleUnderlyings, quarantinedUnderlyings: quarantined, fallbackEligible, pairEligibility: pairs } };
 }
@@ -208,7 +208,7 @@ export function validateArtifact(raw: string, context: Context, nowMs: number): 
   const sourceByUnderlying = new Map(context.sources.sources.map((entry) => [entry.underlying, entry]));
   for (const underlying of artifact.quality.eligibleUnderlyings) {
     const source = sourceByUnderlying.get(underlying)!;
-    if (!source.eligible) fail(`eligible artifact entry has ineligible source ${underlying}`);
+    if (!source.measurementEnabled) fail(`eligible artifact entry has ineligible source ${underlying}`);
     const observed = artifact.quality.lastUsableObservationMs[underlying];
     if (observed === null || !trailingFresh(source, [observed], Date.parse(artifact.dataAsOf))) fail(`trailing freshness failed for ${underlying}`);
   }

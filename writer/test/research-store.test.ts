@@ -47,7 +47,7 @@ test("sealed shard promotion never replaces a champion", () => {
 
 test("manifest verification rederives metadata, registry content, and contained paths", () => {
   const root = scratch();
-  const registry = { schemaVersion: 1, sources: [] };
+  const registry = { schemaVersion: 2, network: "testnet", sources: [] };
   const registryBytes = canonicalJson(registry);
   const registryHash = sha256(registryBytes);
   const raw = join(root, "raw", "candles", "1970", "01", "01", "BTC", "0-1-0.jsonl.gz");

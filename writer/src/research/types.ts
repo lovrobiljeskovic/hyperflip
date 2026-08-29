@@ -6,27 +6,30 @@ export interface SourceSession {
   closedDates: string[];
 }
 
+export type ResearchNetwork = "testnet" | "mainnet";
+
 export interface SourceEntry {
   schemaVersion: 1;
   underlying: string;
-  sourceNetwork: "mainnet";
+  sourceNetwork: ResearchNetwork;
   sourceCoin: string;
   cluster: "crypto" | "equity" | "commodity";
   calendar: "continuous" | "session";
   session?: SourceSession;
-  eligible: boolean;
+  measurementEnabled: boolean;
   fallbackEligible: boolean;
 }
 
 export interface SourceRegistry {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  network: ResearchNetwork;
   sources: SourceEntry[];
 }
 
 export interface CandleRecord {
   schemaVersion: 1;
   source: "hyperliquid-info";
-  sourceNetwork: "mainnet";
+  sourceNetwork: ResearchNetwork;
   underlying: string;
   sourceCoin: string;
   interval: "1h";
@@ -362,24 +365,24 @@ function parseSession(value: unknown): SourceSession {
   return { timeZone, weekdays: [...session.weekdays], openLocal, closeLocal, closedDates: [...session.closedDates] };
 }
 
-function parseSource(value: unknown): SourceEntry {
+function parseSource(value: unknown, network: ResearchNetwork): SourceEntry {
   const source = object(value, "source");
-  exactKeys(source, "source", ["schemaVersion", "underlying", "sourceNetwork", "sourceCoin", "cluster", "calendar", "session", "eligible", "fallbackEligible"]);
+  exactKeys(source, "source", ["schemaVersion", "underlying", "sourceNetwork", "sourceCoin", "cluster", "calendar", "session", "measurementEnabled", "fallbackEligible"]);
   if (source.schemaVersion !== 1) fail("source.schemaVersion must be 1");
   const underlying = text(source.underlying, "source.underlying");
   if (!SAFE_FILENAME_ID.test(underlying)) fail("source.underlying must be a safe filename ID");
   const sourceCoin = text(source.sourceCoin, "source.sourceCoin");
-  if (source.sourceNetwork !== "mainnet") fail("source.sourceNetwork must be mainnet");
+  if (source.sourceNetwork !== network) fail(`source.sourceNetwork must be ${network}`);
   if (!CLUSTERS.has(source.cluster as SourceEntry["cluster"])) fail("source.cluster is invalid");
   if (!CALENDARS.has(source.calendar as SourceEntry["calendar"])) fail("source.calendar is invalid");
-  if (typeof source.eligible !== "boolean" || typeof source.fallbackEligible !== "boolean") fail("source eligibility flags must be booleans");
+  if (typeof source.measurementEnabled !== "boolean" || typeof source.fallbackEligible !== "boolean") fail("source eligibility flags must be booleans");
   const calendar = source.calendar as SourceEntry["calendar"];
   if (calendar === "continuous") {
     if ("session" in source) fail("continuous source must omit session");
-    return { schemaVersion: 1, underlying, sourceNetwork: "mainnet", sourceCoin, cluster: source.cluster as SourceEntry["cluster"], calendar, eligible: source.eligible, fallbackEligible: source.fallbackEligible };
+    return { schemaVersion: 1, underlying, sourceNetwork: network, sourceCoin, cluster: source.cluster as SourceEntry["cluster"], calendar, measurementEnabled: source.measurementEnabled, fallbackEligible: source.fallbackEligible };
   }
   if (!("session" in source)) fail("session source requires session");
-  return { schemaVersion: 1, underlying, sourceNetwork: "mainnet", sourceCoin, cluster: source.cluster as SourceEntry["cluster"], calendar, session: parseSession(source.session), eligible: source.eligible, fallbackEligible: source.fallbackEligible };
+  return { schemaVersion: 1, underlying, sourceNetwork: network, sourceCoin, cluster: source.cluster as SourceEntry["cluster"], calendar, session: parseSession(source.session), measurementEnabled: source.measurementEnabled, fallbackEligible: source.fallbackEligible };
 }
 
 export function parseSourceRegistry(raw: string): SourceRegistry {
@@ -390,11 +393,13 @@ export function parseSourceRegistry(raw: string): SourceRegistry {
     fail("must be valid JSON");
   }
   const registry = object(value, "registry");
-  exactKeys(registry, "registry", ["schemaVersion", "sources"]);
-  if (registry.schemaVersion !== 1) fail("schemaVersion must be 1");
+  exactKeys(registry, "registry", ["schemaVersion", "network", "sources"]);
+  if (registry.schemaVersion !== 2) fail("schemaVersion must be 2");
+  if (registry.network !== "testnet" && registry.network !== "mainnet") fail("network must be testnet or mainnet");
   if (!Array.isArray(registry.sources)) fail("sources must be an array");
   if (registry.sources.length > 20) fail("at most 20 underlyings are allowed");
-  const sources = registry.sources.map(parseSource);
+  const network = registry.network;
+  const sources = registry.sources.map((source) => parseSource(source, network));
   const underlyings = new Set<string>();
   const sourceCoins = new Set<string>();
   for (const source of sources) {
@@ -404,7 +409,7 @@ export function parseSourceRegistry(raw: string): SourceRegistry {
     underlyings.add(source.underlying);
     sourceCoins.add(sourceKey);
   }
-  return { schemaVersion: 1, sources };
+  return { schemaVersion: 2, network, sources };
 }
 
 export function sourceFor(registry: SourceRegistry, underlying: string): SourceEntry | undefined {

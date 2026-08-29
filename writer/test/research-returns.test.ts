@@ -19,16 +19,16 @@ import type { CandleRecord, SourceEntry } from "../src/research/types.js";
 
 const HOUR = 3_600_000;
 const continuousSource: SourceEntry = {
-  schemaVersion: 1, underlying: "BTC", sourceNetwork: "mainnet", sourceCoin: "BTC", cluster: "crypto", calendar: "continuous", eligible: true, fallbackEligible: false,
+  schemaVersion: 1, underlying: "BTC", sourceNetwork: "testnet", sourceCoin: "BTC", cluster: "crypto", calendar: "continuous", measurementEnabled: true, fallbackEligible: false,
 };
 const sessionSource: SourceEntry = {
-  schemaVersion: 1, underlying: "NVDA", sourceNetwork: "mainnet", sourceCoin: "xyz:NVDA", cluster: "equity", calendar: "session", eligible: true, fallbackEligible: false,
+  schemaVersion: 1, underlying: "NVDA", sourceNetwork: "testnet", sourceCoin: "xyz:NVDA", cluster: "equity", calendar: "session", measurementEnabled: true, fallbackEligible: false,
   session: { timeZone: "America/New_York", weekdays: [1, 2, 3, 4, 5], openLocal: "09:30", closeLocal: "16:00", closedDates: ["2026-09-07"] },
 };
 const at = (date: string): number => Date.parse(date);
 const window = (fromMs: number, asOfMs: number) => ({ asOfMs, lookbackMs: asOfMs - fromMs });
 const candle = (openTimeMs: number, close: string, volume = "1", tradeCount = 1, underlying = "BTC", sourceCoin = "BTC"): CandleRecord => ({
-  schemaVersion: 1, source: "hyperliquid-info", sourceNetwork: "mainnet", underlying, sourceCoin, interval: "1h", openTimeMs, closeTimeMs: openTimeMs + HOUR - 1,
+  schemaVersion: 1, source: "hyperliquid-info", sourceNetwork: "testnet", underlying, sourceCoin, interval: "1h", openTimeMs, closeTimeMs: openTimeMs + HOUR - 1,
   open: close, high: close, low: close, close, volume, tradeCount, retrievedAtMs: openTimeMs + HOUR,
 });
 const fixture = (name: string): CandleRecord[] => readFileSync(new URL(`./fixtures/research/${name}`, import.meta.url), "utf8").trim().split("\n").map((line) => JSON.parse(line) as CandleRecord);
@@ -98,7 +98,7 @@ test("daily returns reject a bridge over a missing scheduled session", () => {
 
 test("derived partitions are immutable and deterministic after manifest verification", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-research-returns-"));
-  const registry = { schemaVersion: 1 as const, sources: [continuousSource] };
+  const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [continuousSource] };
   const registryBytes = canonicalJson(registry);
   const sourceHash = sha256(registryBytes);
   const raw = join(root, "raw", "candles", "1970", "01", "01", "BTC", "fixture.jsonl.gz");

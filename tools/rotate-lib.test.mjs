@@ -1,24 +1,29 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseBinary, parseRecurring, pickBinaries, registryEntry, marketSymbol, classify, filterMappedPicks } from "./rotate-lib.mjs";
+import { parseBinary, parseRecurring, pickBinaries, registryEntry, marketSymbol, classify, filterMappedPicks, rotatedRegistry } from "./rotate-lib.mjs";
 
 const NOW = Date.UTC(2026, 7, 18, 12, 0); // 2026-08-18T12:00Z
 
 const btcSource = {
   schemaVersion: 1,
   underlying: "BTC",
-  sourceNetwork: "mainnet",
+  sourceNetwork: "testnet",
   sourceCoin: "BTC",
   cluster: "crypto",
   calendar: "continuous",
-  eligible: true,
-  fallbackEligible: false,
+  measurementEnabled: true,
+  fallbackEligible: true,
 };
 
 test("rotation keeps only explicit source mappings without exceeding the active cap", () => {
-  const sources = { schemaVersion: 1, sources: [btcSource] };
+  const sources = { schemaVersion: 2, network: "testnet", sources: [btcSource] };
   assert.deepEqual(filterMappedPicks([{ perp: "BTC" }, { perp: "DOGE" }], sources, new Set(), 20), [{ perp: "BTC" }]);
   assert.throws(() => filterMappedPicks([{ perp: "BTC" }], sources, new Set(Array.from({ length: 20 }, (_, i) => `A${i}`)), 20), /at most 20/);
+});
+
+test("rotation preserves the testnet registry identity", () => {
+  assert.deepEqual(rotatedRegistry({ network: "testnet" }, [{ vault: "0x1" }], []), { network: "testnet", markets: [{ vault: "0x1" }], archived: [] });
+  assert.throws(() => rotatedRegistry({ network: "mainnet" }, [], []), /network must be testnet/);
 });
 
 test("parseBinary happy path", () => {

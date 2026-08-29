@@ -195,8 +195,8 @@ export function quality(observations: number, expected: number, mode: QualityMod
   const coverage = expected === 0 ? 0 : observations / expected;
   const minimum = mode === "hourly-within-cluster" ? 1_000 : 90;
   const result = [...exclusions];
-  if (observations < minimum) result.push(exclusion({ schemaVersion: 1, underlying: "pair", sourceNetwork: "mainnet", sourceCoin: "pair", cluster: "crypto", calendar: "continuous", eligible: true, fallbackEligible: false }, "insufficient-sample", null, []));
-  if (coverage < 0.8) result.push(exclusion({ schemaVersion: 1, underlying: "pair", sourceNetwork: "mainnet", sourceCoin: "pair", cluster: "crypto", calendar: "continuous", eligible: true, fallbackEligible: false }, "coverage-below-80pct", null, []));
+  if (observations < minimum) result.push(exclusion({ schemaVersion: 1, underlying: "pair", sourceNetwork: "testnet", sourceCoin: "pair", cluster: "crypto", calendar: "continuous", measurementEnabled: true, fallbackEligible: false }, "insufficient-sample", null, []));
+  if (coverage < 0.8) result.push(exclusion({ schemaVersion: 1, underlying: "pair", sourceNetwork: "testnet", sourceCoin: "pair", cluster: "crypto", calendar: "continuous", measurementEnabled: true, fallbackEligible: false }, "coverage-below-80pct", null, []));
   return { eligible: observations >= minimum && coverage >= 0.8, observations, expected, coverage, exclusions: result, mode };
 }
 

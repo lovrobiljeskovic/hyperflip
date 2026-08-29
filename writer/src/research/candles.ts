@@ -76,7 +76,7 @@ export function parseCandleSnapshot(source: SourceEntry, body: string, retrieved
     const volume = validNumber(row.v, "volume");
     if (Number(volume) < 0 || Number(high) < Math.max(Number(open), Number(close)) || Number(low) > Math.min(Number(open), Number(close))) throw new Error("candle snapshot has invalid OHLC ordering");
     if (!Number.isSafeInteger(row.n) || (row.n as number) < 0) throw new Error("trade count must be a non-negative safe integer");
-    const candle: CandleRecord = { schemaVersion: 1, source: "hyperliquid-info", sourceNetwork: "mainnet", underlying: source.underlying, sourceCoin: source.sourceCoin, interval: "1h", openTimeMs, closeTimeMs, open, high, low, close, volume, tradeCount: row.n as number, retrievedAtMs };
+    const candle: CandleRecord = { schemaVersion: 1, source: "hyperliquid-info", sourceNetwork: source.sourceNetwork, underlying: source.underlying, sourceCoin: source.sourceCoin, interval: "1h", openTimeMs, closeTimeMs, open, high, low, close, volume, tradeCount: row.n as number, retrievedAtMs };
     assertCandleRecord(candle);
     return candle;
   });

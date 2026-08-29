@@ -17,11 +17,11 @@ const close = (actual: number, expected: number, tolerance = 1e-12): void => {
 const source = (underlying: string, cluster: SourceEntry["cluster"]): SourceEntry => ({
   schemaVersion: 1,
   underlying,
-  sourceNetwork: "mainnet",
+  sourceNetwork: "testnet",
   sourceCoin: underlying,
   cluster,
   calendar: "continuous",
-  eligible: true,
+  measurementEnabled: true,
   fallbackEligible: false,
 });
 

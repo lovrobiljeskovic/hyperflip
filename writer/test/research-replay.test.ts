@@ -32,12 +32,12 @@ const ORIGIN = Date.parse("2026-08-01T00:00:00.000Z");
 const source = (underlying: string, cluster: SourceEntry["cluster"], calendar: SourceEntry["calendar"] = "continuous"): SourceEntry => ({
   schemaVersion: 1,
   underlying,
-  sourceNetwork: "mainnet",
+  sourceNetwork: "testnet",
   sourceCoin: underlying,
   cluster,
   calendar,
   ...(calendar === "session" ? { session: { timeZone: "UTC", weekdays: [1, 2, 3, 4, 5], openLocal: "09:00", closeLocal: "17:00", closedDates: [] } } : {}),
-  eligible: true,
+  measurementEnabled: true,
   fallbackEligible: false,
 });
 
@@ -60,14 +60,14 @@ function dailySeries(days = 130): ReplaySeries {
 }
 
 function candidateFor(series: ReplaySeries, modelVersion = "fixture", signedPsdTarget?: number[][]): CorrelationArtifact {
-  const matrixOrder = series.sources.filter((entry) => entry.eligible).map((entry) => entry.underlying);
+  const matrixOrder = series.sources.filter((entry) => entry.measurementEnabled).map((entry) => entry.underlying);
   const clusters: CorrelationArtifact["clusters"] = {};
   for (const entry of series.sources) (clusters[entry.cluster] ??= {})[entry.underlying] = { global: 0.1, cluster: 0.2, underlying: 0.3, underlyingBasis: "structural-underlying" };
   return {
     schemaVersion: 1, modelVersion, modelFamily: "hierarchical-gaussian-factor", createdAt: "2026-08-01T00:00:00.000Z", dataAsOf: "2026-07-31T00:00:00.000Z",
     dataManifestSha256: series.manifestHash, sourceRegistrySha256: "d".repeat(64),
     policy: { lookbackDays: 180, halfLifeDays: 45, diagnosticWindowsDays: [30, 90, 180], minHourly: 1000, minDaily: 90, minCoverage: 0.8, maxProjectionError: 0.10 },
-    quality: { matrixOrder, eligibleUnderlyings: matrixOrder, quarantinedUnderlyings: series.sources.filter((entry) => !entry.eligible).map((entry) => ({ underlying: entry.underlying, reason: "fixture-ineligible" })), pairEligibility: matrixOrder.flatMap((left, index) => matrixOrder.slice(index + 1).map((right) => ({ pair: [left, right] as [string, string], status: "direct" as const, reason: "fixture" }))), lastUsableObservationMs: Object.fromEntries(matrixOrder.map((underlying) => [underlying, ORIGIN - DAY])), pairDiagnostics: [], maxProjectionError: 0, highamProjectionDelta: 0, clippedNegativePairs: [], signedPsdTarget: signedPsdTarget ?? matrixOrder.map((_, row) => matrixOrder.map((__, column) => row === column ? 1 : 0)), diagnosticMatrices: { "30": [], "90": [], "180": [] } },
+    quality: { matrixOrder, eligibleUnderlyings: matrixOrder, quarantinedUnderlyings: series.sources.filter((entry) => !entry.measurementEnabled).map((entry) => ({ underlying: entry.underlying, reason: "fixture-ineligible" })), pairEligibility: matrixOrder.flatMap((left, index) => matrixOrder.slice(index + 1).map((right) => ({ pair: [left, right] as [string, string], status: "direct" as const, reason: "fixture" }))), lastUsableObservationMs: Object.fromEntries(matrixOrder.map((underlying) => [underlying, ORIGIN - DAY])), pairDiagnostics: [], maxProjectionError: 0, highamProjectionDelta: 0, clippedNegativePairs: [], signedPsdTarget: signedPsdTarget ?? matrixOrder.map((_, row) => matrixOrder.map((__, column) => row === column ? 1 : 0)), diagnosticMatrices: { "30": [], "90": [], "180": [] } },
     validation: { status: "pending" },
     clusters,
   };
@@ -105,7 +105,7 @@ test("future mutation cannot change an earlier forecast", () => {
 test("replay loads the immutable canonical source-registry fact instead of mutable pretty bytes", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-replay-source-fact-"));
   try {
-    const registry = { schemaVersion: 1 as const, sources: [source("A", "crypto"), source("B", "crypto")] };
+    const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source("A", "crypto"), source("B", "crypto")] };
     const canonical = canonicalJson(registry);
     const sourceHash = sha256(canonical);
     mkdirSync(join(root, "facts", "source-registries"), { recursive: true });

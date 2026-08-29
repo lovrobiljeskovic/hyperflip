@@ -74,7 +74,7 @@ test("research backup signs, skips verified objects, and restores the immutable 
   try {
     const address = server.address();
     assert.ok(address && typeof address === "object");
-    const sources: SourceRegistry = { schemaVersion: 1, sources: [] };
+    const sources: SourceRegistry = { schemaVersion: 2, network: "testnet", sources: [] };
     const sourceBytes = canonicalJson(sources);
     const sourceHash = sha256(sourceBytes);
     const sourcePath = `facts/source-registries/${sourceHash}.json`;

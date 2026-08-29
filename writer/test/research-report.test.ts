@@ -79,7 +79,7 @@ test("research report verifies every immutable reference before writing the dete
   const root = mkdtempSync(join(tmpdir(), "hype-report-"));
   try {
     const fixture = structuredClone(input);
-    const sourceBytes = canonicalJson({ schemaVersion: 1, sources: [] });
+    const sourceBytes = canonicalJson({ schemaVersion: 2, network: "testnet", sources: [] });
     const sourceHash = sha256(sourceBytes);
     const sourceRelative = `facts/source-registries/${sourceHash}.json`;
     mkdirSync(join(root, "facts", "source-registries"), { recursive: true });
@@ -104,9 +104,9 @@ test("research report verifies every immutable reference before writing the dete
     writeFileSync(join(root, "artifacts", "candidates", "beta-1.validation.json"), `${canonicalJson(fixture.validation)}\n`);
     writeFileSync(join(root, "artifacts", "champion.json"), candidateBytes);
     mkdirSync(join(root, "journal", "requests", "2026", "08"), { recursive: true });
-    writeFileSync(join(root, "journal", "requests", "2026", "08", "27.jsonl"), `${canonicalJson({ schemaVersion: 1, sourceKey: "mainnet:ETH", startTime: 1, endTime: 2, retrievedAtMs: 3, httpStatus: 503, error: "info API 503", returnedRows: 0 })}\n`);
+    writeFileSync(join(root, "journal", "requests", "2026", "08", "27.jsonl"), `${canonicalJson({ schemaVersion: 1, sourceKey: "testnet:ETH", startTime: 1, endTime: 2, retrievedAtMs: 3, httpStatus: 503, error: "info API 503", returnedRows: 0 })}\n`);
     mkdirSync(join(root, "state"), { recursive: true });
-    writeFileSync(join(root, "state", "collector.json"), canonicalJson({ schemaVersion: 1, sourceRegistrySha256: sourceHash, sources: { "mainnet:BTC": 1, "mainnet:ETH": 2 } }));
+    writeFileSync(join(root, "state", "collector.json"), canonicalJson({ schemaVersion: 1, sourceRegistrySha256: sourceHash, sources: { "testnet:BTC": 1, "testnet:ETH": 2 } }));
     writeFileSync(join(root, "state", "calibrator.json"), canonicalJson({ schemaVersion: 1, operation: "calibrator", status: "succeeded", startedAt: "2026-08-27T00:00:00.000Z", endedAt: "2026-08-27T00:01:00.000Z", error: null, details: { modelVersion: "beta-1" } }));
     writeFileSync(join(root, "state", "daily.json"), canonicalJson({ schemaVersion: 1, operation: "daily", status: "failed", startedAt: "2026-08-27T01:00:00.000Z", endedAt: "2026-08-27T01:01:00.000Z", error: "replay exited 1", details: {} }));
     writeFileSync(join(root, "state", "join.json"), canonicalJson({ schemaVersion: 1, operation: "join", status: "succeeded", startedAt: "2026-08-27T02:00:00.000Z", endedAt: "2026-08-27T02:01:00.000Z", error: null, details: {} }));
@@ -117,7 +117,7 @@ test("research report verifies every immutable reference before writing the dete
     assert.equal(first.path, join(root, "reports", "2026-08-27-beta-1.html"));
     assert.equal(readFileSync(first.path, "utf8"), first.bytes);
     assert.equal(second.bytes, first.bytes);
-    assert.match(first.bytes, /collector request mainnet:ETH: HTTP 503 — info API 503/);
+    assert.match(first.bytes, /collector request testnet:ETH: HTTP 503 — info API 503/);
     assert.match(first.bytes, /collector state: 2 source checkpoints/);
     assert.match(first.bytes, /calibrator state: succeeded — beta-1/);
     assert.match(first.bytes, /daily state: failed — replay exited 1/);

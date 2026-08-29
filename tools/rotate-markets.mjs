@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { filterMappedPicks, pickBinaries, registryEntry, marketSymbol } from "./rotate-lib.mjs";
+import { filterMappedPicks, pickBinaries, registryEntry, marketSymbol, rotatedRegistry } from "./rotate-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const INFO_URL = "https://api.hyperliquid-testnet.xyz/info";
@@ -84,7 +84,7 @@ for (const pick of candidates) if (!mappedUnderlyings.has(pick.perp)) console.lo
 // the keeper only read `.markets`, but the frontend still needs titles for
 // settled vaults on old tickets — without this they render as raw addresses.
 const archived = [...(registry.archived ?? []), ...expired];
-const writeRegistry = (markets) => writeFileSync(REGISTRY, JSON.stringify({ markets, archived }, null, 2) + "\n");
+const writeRegistry = (markets) => writeFileSync(REGISTRY, JSON.stringify(rotatedRegistry(registry, markets, archived), null, 2) + "\n");
 
 console.log(`registry: ${kept.length} live, ${expired.length} expired (dropped)`);
 for (const m of expired) console.log(`  drop ${m.vault} — ${m.title}`);

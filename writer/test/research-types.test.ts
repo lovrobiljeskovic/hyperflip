@@ -16,17 +16,17 @@ const fixture = (name: string) => new URL(`./fixtures/research/${name}`, import.
 const btcSource = {
   schemaVersion: 1,
   underlying: "BTC",
-  sourceNetwork: "mainnet",
+  sourceNetwork: "testnet",
   sourceCoin: "BTC",
   cluster: "crypto",
   calendar: "continuous",
-  eligible: true,
-  fallbackEligible: false,
+  measurementEnabled: true,
+  fallbackEligible: true,
 };
 
 test("source registry rejects duplicates and more than twenty underlyings", () => {
   assert.throws(() => parseSourceRegistry(readFileSync(fixture("sources-invalid-over-cap.json"), "utf8")), /at most 20/);
-  assert.throws(() => parseSourceRegistry(JSON.stringify({ schemaVersion: 1, sources: [btcSource, btcSource] })), /duplicate underlying/);
+  assert.throws(() => parseSourceRegistry(JSON.stringify({ schemaVersion: 2, network: "testnet", sources: [btcSource, btcSource] })), /duplicate underlying/);
 });
 
 test("source registry maps the active logical set and looks it up by underlying", () => {
@@ -38,18 +38,18 @@ test("source registry maps the active logical set and looks it up by underlying"
 });
 
 test("source registry rejects unknown versions, duplicate source coins, and malformed sessions", () => {
-  assert.throws(() => parseSourceRegistry(JSON.stringify({ schemaVersion: 2, sources: [btcSource] })), /schemaVersion/);
-  assert.throws(() => parseSourceRegistry(JSON.stringify({ schemaVersion: 1, sources: [{ ...btcSource, cluster: "rates" }] })), /cluster/);
+  assert.throws(() => parseSourceRegistry(JSON.stringify({ schemaVersion: 3, network: "testnet", sources: [btcSource] })), /schemaVersion/);
+  assert.throws(() => parseSourceRegistry(JSON.stringify({ schemaVersion: 2, network: "testnet", sources: [{ ...btcSource, cluster: "rates" }] })), /cluster/);
   assert.throws(
-    () => parseSourceRegistry(JSON.stringify({ schemaVersion: 1, sources: [btcSource, { ...btcSource, underlying: "WBTC" }] })),
+    () => parseSourceRegistry(JSON.stringify({ schemaVersion: 2, network: "testnet", sources: [btcSource, { ...btcSource, underlying: "WBTC" }] })),
     /duplicate source coin/,
   );
   assert.throws(
-    () => parseSourceRegistry(JSON.stringify({ schemaVersion: 1, sources: [{ ...btcSource, calendar: "session", session: { timeZone: "UTC", weekdays: [1], openLocal: "09:00", closeLocal: "09:00", closedDates: [] } }] })),
+    () => parseSourceRegistry(JSON.stringify({ schemaVersion: 2, network: "testnet", sources: [{ ...btcSource, calendar: "session", session: { timeZone: "UTC", weekdays: [1], openLocal: "09:00", closeLocal: "09:00", closedDates: [] } }] })),
     /session/,
   );
   assert.throws(
-    () => parseSourceRegistry(JSON.stringify({ schemaVersion: 1, sources: [{ ...btcSource, underlying: "../escape" }] })),
+    () => parseSourceRegistry(JSON.stringify({ schemaVersion: 2, network: "testnet", sources: [{ ...btcSource, underlying: "../escape" }] })),
     /underlying.*safe filename/i,
   );
 });

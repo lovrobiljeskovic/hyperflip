@@ -19,8 +19,9 @@ const CONFIG_NOW = Date.parse("2026-08-28T18:00:00.000Z");
 
 function writeLiveConfigFixture(root: string): { artifactFile: string; sourcesFile: string; marketsFile: string; artifact: Record<string, any> } {
   const sources = {
-    schemaVersion: 1,
-    sources: ["BTC", "ETH"].map((underlying) => ({ schemaVersion: 1, underlying, sourceNetwork: "mainnet", sourceCoin: underlying, cluster: "crypto", calendar: "continuous", eligible: true, fallbackEligible: false })),
+    schemaVersion: 2,
+    network: "testnet",
+    sources: ["BTC", "ETH"].map((underlying) => ({ schemaVersion: 1, underlying, sourceNetwork: "testnet", sourceCoin: underlying, cluster: "crypto", calendar: "continuous", measurementEnabled: true, fallbackEligible: false })),
   };
   const artifact = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-valid.json", import.meta.url), "utf8")) as Record<string, any>;
   artifact.sourceRegistrySha256 = sha256(canonicalJson(sources));

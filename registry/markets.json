@@ -1,4 +1,5 @@
 {
+  "network": "testnet",
   "markets": [
     {
       "vault": "0x91a572427334c35bbe64d0f0354bcdc161769a57",

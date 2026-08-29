@@ -16,8 +16,8 @@ const STALE = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-stal
 const VAULT = "0x1111111111111111111111111111111111111111" as const;
 
 const source = (underlying: string, fallbackEligible = false): SourceEntry => ({
-  schemaVersion: 1, underlying, sourceNetwork: "mainnet", sourceCoin: underlying, cluster: "crypto",
-  calendar: "continuous", eligible: true, fallbackEligible,
+  schemaVersion: 1, underlying, sourceNetwork: "testnet", sourceCoin: underlying, cluster: "crypto",
+  calendar: "continuous", measurementEnabled: true, fallbackEligible,
 });
 
 function setup(artifactInput: CorrelationArtifact = VALID): {
@@ -25,7 +25,7 @@ function setup(artifactInput: CorrelationArtifact = VALID): {
   sources: SourceRegistry; markets: Map<string, MarketInfo>; validation: ValidationReport;
 } {
   const root = mkdtempSync(join(tmpdir(), "hype-artifact-"));
-  const sources: SourceRegistry = { schemaVersion: 1, sources: [source("BTC"), source("ETH")] };
+  const sources: SourceRegistry = { schemaVersion: 2, network: "testnet", sources: [source("BTC"), source("ETH")] };
   const sourceBytes = canonicalJson(sources);
   const sourceRegistrySha256 = sha256(sourceBytes);
   const sourcePath = join(root, "facts", "source-registries", `${sourceRegistrySha256}.json`);

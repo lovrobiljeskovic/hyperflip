@@ -16,8 +16,9 @@ const AS_OF = Date.parse("2026-08-28T12:00:00.000Z");
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 const sources: SourceRegistry = {
-  schemaVersion: 1,
-  sources: ["BTC", "ETH", "SOL"].map((underlying): SourceEntry => ({ schemaVersion: 1, underlying, sourceNetwork: "mainnet", sourceCoin: underlying, cluster: "crypto", calendar: "continuous", eligible: true, fallbackEligible: true })),
+  schemaVersion: 2,
+  network: "testnet",
+  sources: ["BTC", "ETH", "SOL"].map((underlying): SourceEntry => ({ schemaVersion: 1, underlying, sourceNetwork: "testnet", sourceCoin: underlying, cluster: "crypto", calendar: "continuous", measurementEnabled: true, fallbackEligible: true })),
 };
 
 function candles(coin: string): string {
