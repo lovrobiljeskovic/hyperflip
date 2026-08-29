@@ -239,11 +239,17 @@ directory-file-descriptor-anchored operations, verifies type/owner/mode, and
 opens final files with `O_NOFOLLOW`. It must not validate a pathname and later
 reopen the same mutable path from the filesystem root. The service fails closed
 if the anchored primitive is unavailable. The implementation uses Node's
-standard filesystem API plus the platform descriptor namespace (`/proc/self/fd`
-on Ubuntu or the verified platform equivalent); it adds no native dependency.
+standard filesystem API plus `/proc/self/fd` on Ubuntu; it adds no native
+dependency.
 
 Local tests cover traversal, leaf symlinks, intermediate-directory replacement,
-and a destination swapped between validation and open.
+and a destination swapped between validation and open through an injectable
+filesystem boundary. macOS has no traversable directory-descriptor namespace,
+so local end-to-end fixtures may use a compatibility backend only when
+`RESEARCH_REQUIRE_ANCHORED_FS` is not `1`. Every shipped systemd research unit
+sets `RESEARCH_REQUIRE_ANCHORED_FS=1`; startup then fails outside Linux or when
+`/proc/self/fd` is unavailable. The real Linux race regression is required in
+the separately approved Ubuntu testnet acceptance run.
 
 ### 8.5 Durable operational history
 
