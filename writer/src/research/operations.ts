@@ -1,12 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { canonicalJson } from "./store.js";
+import { canonicalJson, hasUnsafeOperationText } from "./store.js";
 import type { ResearchPersistence } from "./persistence.js";
 import { assertResearchNetworkEnabled, type OperationRunRecord, type ResearchNetwork, type ResearchOperation } from "./types.js";
 
 const OPERATIONS = new Set<ResearchOperation>(["collect", "calibrate", "replay", "join", "report", "promote", "backup", "daily"]);
 const RUN_ID = /^[0-9]{8}T[0-9]{9}Z-[0-9a-f-]{36}$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
-const SECRET = /(?:api[-_ ]?key|authorization|cookie|password|private[-_ ]?key|secret|token|\b(?:env|process)\.[A-Z_]+)/i;
 const VALUE_LIMIT = 256;
 const ERROR_LIMIT = 1_000;
 const DETAIL_KEYS: Record<ResearchOperation, readonly string[]> = {
@@ -22,7 +21,7 @@ function timestamp(value: unknown, label: string): asserts value is string {
 function publicText(value: string, label: string, limit: number): void {
   if (!value || value.length > limit) throw new Error(`operation ${label} is invalid`);
   if (CONTROL.test(value)) throw new Error(`operation ${label} contains control characters`);
-  if (SECRET.test(value)) throw new Error(`operation ${label} contains a secret`);
+  if (hasUnsafeOperationText(value)) throw new Error(`operation ${label} contains a secret`);
 }
 
 function validateDetail(operation: ResearchOperation, detail: unknown): asserts detail is Record<string, string | number | boolean | null> {

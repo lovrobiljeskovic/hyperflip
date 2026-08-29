@@ -39,9 +39,13 @@ export function writeOperationState(root: string, file: string, state: Operation
   storage.writeAtomic(`state/${file}`, `${canonicalJson(state)}\n`);
 }
 
+const OPERATION_UNSAFE_TEXT = /(?:api[-_ ]?key|authorization|cookie|password|private[-_ ]?key|secret|token|\b(?:process\.)?env\.[A-Z_][A-Z0-9_]*)/i;
+
+export function hasUnsafeOperationText(value: string): boolean { return OPERATION_UNSAFE_TEXT.test(value); }
+
 export function operationError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  return (message.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/https?:\/\/\S+/gi, "[redacted-url]").replace(/\b(?:api[-_ ]?key|authorization|cookie|password|private[-_ ]?key|secret|token)\b(?:\s*[:=]\s*)?\S*/gi, "[redacted]").replace(/\b[A-Za-z_][A-Za-z0-9_]*\s*=\s*(?:\S+)/g, "[redacted-env]").replace(/\s+/g, " ").trim().slice(0, 1_000) || "operation failed");
+  return (message.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/https?:\/\/\S+/gi, "[redacted-url]").replace(/\b(?:process\.)?env\.[A-Z_][A-Z0-9_]*(?:\s*=\s*\S+)?/gi, "[redacted-env]").replace(/\b(?:api[-_ ]?key|authorization|cookie|password|private[-_ ]?key|secret|token)\b(?:\s*[:=]\s*)?\S*/gi, "[redacted]").replace(/\b[A-Za-z_][A-Za-z0-9_]*\s*=\s*(?:\S+)/g, "[redacted-env]").replace(/\s+/g, " ").trim().slice(0, 1_000) || "operation failed");
 }
 
 // Compatibility exports for callers that persist one already-resolved file.

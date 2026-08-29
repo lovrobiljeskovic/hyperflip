@@ -40,6 +40,12 @@ test("operation records reject secrets and control characters", () => {
     const terminal = finishOperation(storage, start, { status: "failure", error: operationError(new Error("TOKEN=abc\tAWS_SECRET=value\u0081")) });
     assert.equal(terminal.status, "failure");
     assert.doesNotMatch(terminal.error!, /abc|value|[\u0000-\u001f\u007f-\u009f]/);
+    for (const [index, dotted] of ["process.env.LEAK=value", "env.LEAK=value"].entries()) {
+      const run = startOperation(storage, "testnet", "collect", Date.parse("2026-08-29T00:00:00.000Z") + index + 1);
+      const failure = finishOperation(storage, run, { status: "failure", error: operationError(new Error(dotted)) });
+      assert.equal(failure.status, "failure");
+      assert.doesNotMatch(failure.error!, /LEAK|value|process\.env|env\./);
+    }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
