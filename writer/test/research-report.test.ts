@@ -46,7 +46,10 @@ const input: ReportInput = {
   champion: { modelVersion: "beta-1", sha256: "b".repeat(64) },
   funnel: { quotes: 4, minted: 3, resolved: 2 },
   failures: [],
-  exclusions: [{ schemaVersion: 1 as const, stage: "returns" as const, underlying: "<missing>", peerUnderlying: null, timestampMs: 3, reason: "missing-interval" as const, sourceKeys: [] }],
+  exclusions: [
+    { schemaVersion: 1 as const, stage: "returns" as const, underlying: "<missing>", peerUnderlying: null, timestampMs: 3, reason: "missing-interval" as const, sourceKeys: [] },
+    { schemaVersion: 1 as const, stage: "returns" as const, underlying: "BTC", peerUnderlying: "ETH", timestampMs: null, reason: "no-synchronized-peer" as const, sourceKeys: [] },
+  ],
 };
 
 test("research report renders deterministic escaped evidence with every required caveat", () => {
@@ -55,6 +58,7 @@ test("research report renders deterministic escaped evidence with every required
   for (const fragment of readFileSync(new URL("./fixtures/research/report-expected.html", import.meta.url), "utf8").trim().split("\n")) assert.ok(html.includes(fragment), `missing report fragment: ${fragment}`);
   assert.equal(html.includes("<script>"), false);
   assert.match(html, /missing-interval<\/td><td>1/);
+  assert.match(html, /no-synchronized-peer<\/td><td>1/);
   assert.equal(html.includes("<missing>"), false);
   assert.match(html, /<style>[\s\S]*<\/style>/);
   assert.equal(/<(?:link|script)\b/i.test(html), false);
@@ -103,7 +107,7 @@ test("research report verifies every immutable reference before writing the dete
     const returnsPath = "derived/returns-v2/returns/2026/08/27/report.jsonl.gz";
     const exclusionsPath = "derived/returns-v2/exclusions/2026/08/27/report.jsonl.gz";
     const returnBytes = gzipSync("");
-    const exclusionBytes = gzipSync(`${canonicalJson(fixture.exclusions[0])}\n`);
+    const exclusionBytes = gzipSync(`${fixture.exclusions.map(canonicalJson).join("\n")}\n`);
     mkdirSync(join(root, "derived", "returns-v2", "returns", "2026", "08", "27"), { recursive: true });
     mkdirSync(join(root, "derived", "returns-v2", "exclusions", "2026", "08", "27"), { recursive: true });
     writeFileSync(join(root, returnsPath), returnBytes);
@@ -111,7 +115,7 @@ test("research report verifies every immutable reference before writing the dete
     const derivedManifestPath = join(root, `${returnsPath}.manifest.json`);
     writeFileSync(derivedManifestPath, canonicalJson({
       schemaVersion: 2, network: "testnet", transformationVersion: "returns-v2", dataManifestSha256: fixture.candidate.dataManifestSha256, sourceRegistrySha256: sourceHash,
-      window: { asOfMs: 2, lookbackMs: 1 }, returns: { path: returnsPath, sha256: sha256(returnBytes), rows: 0 }, exclusions: { path: exclusionsPath, sha256: sha256(exclusionBytes), rows: 1 },
+      window: { asOfMs: 2, lookbackMs: 1 }, returns: { path: returnsPath, sha256: sha256(returnBytes), rows: 0 }, exclusions: { path: exclusionsPath, sha256: sha256(exclusionBytes), rows: fixture.exclusions.length },
     }));
     mkdirSync(join(root, "facts", "baselines"), { recursive: true });
     writeFileSync(join(root, fixture.validation.baselineSnapshotPath), baselineBytes);
@@ -140,6 +144,7 @@ test("research report verifies every immutable reference before writing the dete
     assert.match(first.bytes, /daily state: failed — replay exited 1/);
     assert.match(first.bytes, /join state: succeeded/);
     assert.match(first.bytes, /backup state: failed — backup total timeout/);
+    assert.match(first.bytes, /no-synchronized-peer<\/td><td>1/);
 
     writeFileSync(join(root, exclusionsPath), "changed");
     assert.throws(() => generateReport(root, candidatePath, derivedManifestPath), /exclusions hash mismatch/);

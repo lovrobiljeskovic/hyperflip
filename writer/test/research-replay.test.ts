@@ -144,6 +144,21 @@ test("replay dependence uses daily returns for a same-cluster session pair", () 
   assert.equal(fitReplayDependence(series.rows, series.sources, candidateFor(series, "session-mode"), ORIGIN - DAY).admittedPairs.has("C:D"), true);
 });
 
+test("replay never substitutes daily rows for policy-selected sparse hourly evidence", () => {
+  const complete = dailySeries();
+  const sources = complete.sources.filter((entry) => entry.underlying === "A" || entry.underlying === "B");
+  const daily = complete.rows.filter((row) => sources.some((entry) => entry.underlying === row.underlying));
+  const sparseHourly = Array.from({ length: 10 }, (_, index) => {
+    const timestampMs = ORIGIN - (10 - index) * 3_600_000;
+    return {
+      schemaVersion: 2 as const, transformationVersion: "returns-v2" as const, network: "testnet" as const, underlying: "A", interval: "hourly" as const,
+      timestampMs, observationCloseTimeMs: timestampMs + 3_600_000 - 1, sessionDate: new Date(timestampMs).toISOString().slice(0, 10), value: 0.001 * index, sourceKeys: [],
+    };
+  });
+  const series = { rows: [...daily, ...sparseHourly], sources, manifestHash: complete.manifestHash };
+  assert.equal(syntheticEvents(ORIGIN, series, []).some((ticket) => ticket.stratum === "same-cluster"), false);
+});
+
 test("daily replay origins stay on an exact 24-hour UTC cadence", () => {
   const complete = dailySeries();
   const missingTimestamp = ORIGIN - 20 * DAY;
@@ -218,8 +233,8 @@ test("synthetic grid caps every stratum, covers two-to-four legs, and excludes f
     "cross-cluster:3": 6,
     "cross-cluster:4": 2,
     "same-cluster:2": 12,
-    "same-underlying:2": 10,
-    "same-underlying:3": 2,
+    "same-underlying:2": 11,
+    "same-underlying:3": 1,
   });
 });
 

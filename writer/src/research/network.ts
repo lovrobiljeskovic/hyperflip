@@ -3,7 +3,7 @@ import { basename, dirname, isAbsolute, resolve, win32 } from "node:path";
 import { parseCorrelations } from "../correlation.js";
 import { parseMarkets } from "../markets.js";
 import { canonicalJson, sha256 } from "./store.js";
-import { parseSourceRegistry, type ResearchNetwork, type SourceRegistry } from "./types.js";
+import { assertResearchNetworkEnabled, parseSourceRegistry, type ResearchNetwork, type SourceRegistry } from "./types.js";
 
 export type { ResearchNetwork } from "./types.js";
 
@@ -38,8 +38,6 @@ export interface LoadedResearchNetworkProfile {
   baselineCorrelationRaw: string;
   baselineCorrelationSha256: string;
 }
-
-const ENABLED_RESEARCH_NETWORKS = new Set<ResearchNetwork>(["testnet"]);
 
 const INFO_HOSTS: Record<ResearchNetwork, string> = {
   testnet: "api.hyperliquid-testnet.xyz",
@@ -77,7 +75,7 @@ function parseProfile(raw: string): ResearchNetworkProfile {
   exactKeys(profile, "research network profile", ["schemaVersion", "network", "infoApiUrl", "evmChainId", "sourceRegistryFile", "marketRegistryFile", "deploymentRegistryFile", "baselineCorrelationFile"]);
   if (profile.schemaVersion !== 1) throw new Error("research network profile schemaVersion must be 1");
   const network = parseNetwork(profile.network, "research network profile network");
-  if (!ENABLED_RESEARCH_NETWORKS.has(network)) throw new Error(`network ${network} is not enabled`);
+  assertResearchNetworkEnabled(network);
   if (typeof profile.infoApiUrl !== "string") throw new Error("research network profile Info API URL must be a string");
   let infoUrl: URL;
   try {

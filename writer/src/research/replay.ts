@@ -347,12 +347,9 @@ function sourceFor(series: ReplaySeries, underlying: string): SourceEntry {
   return found;
 }
 
-function intervalFor(series: ReplaySeries, underlyings: string[], strict = false): ReturnMode {
+function intervalFor(series: ReplaySeries, underlyings: string[]): ReturnMode {
   const sources = underlyings.map((underlying) => sourceFor(series, underlying));
-  const hourly = sources.every((source) => returnModeFor(sources[0], source) === "hourly");
-  if (!hourly) return "daily";
-  if (strict) return "hourly";
-  return underlyings.every((underlying) => series.rows.some((row) => row.underlying === underlying && row.interval === "hourly")) ? "hourly" : "daily";
+  return sources.every((source) => returnModeFor(sources[0], source) === "hourly") ? "hourly" : "daily";
 }
 
 function cumulativeSamples(rows: ReturnRecord[], underlying: string, interval: ReturnMode, horizonHours: number, originMs: number): number[] {
@@ -420,9 +417,7 @@ export function syntheticEvents(originMs: number, series: ReplaySeries, future: 
     if (!futures.has(key)) futures.set(key, futureReturn(future, underlying, interval, horizonHours, originMs));
     return futures.get(key)!;
   };
-  const hourlyUnderlyings = new Set(series.rows.filter((row) => row.interval === "hourly").map((row) => row.underlying));
-  const intervalForAssets = (assets: SourceEntry[]): ReturnMode => assets.every((source) => returnModeFor(assets[0], source) === "hourly")
-    && assets.every((source) => hourlyUnderlyings.has(source.underlying)) ? "hourly" : "daily";
+  const intervalForAssets = (assets: SourceEntry[]): ReturnMode => assets.every((source) => returnModeFor(assets[0], source) === "hourly") ? "hourly" : "daily";
   const quantileVectors = new Map<string, number[][]>();
   const directionsBySize = new Map<number, Direction[][]>();
   for (const size of [2, 3, 4]) {
@@ -517,7 +512,7 @@ function ewStats(rows: { timestampMs: number; values: number[] }[], end: number,
 
 export function filteredHistoricalSimulation(ticket: SyntheticTicket, series: ReplaySeries): FhsResult {
   const underlyings = [...new Set(ticket.legs.map((leg) => leg.underlying))].sort();
-  const interval = intervalFor(series, underlyings, true);
+  const interval = intervalFor(series, underlyings);
   const rows = alignedRows(series, underlyings, interval, ticket.originMs);
   const originStats = underlyings.map((_, asset) => ewStats(rows, rows.length, asset));
   const empty = (reason: "insufficient-sample" | null): FhsResult => ({ available: false, probability: null, hits: 0, blocks: 0, originMean: originStats.map((stats) => stats?.mu ?? 0), originSigma: originStats.map((stats) => stats?.sigma ?? 0), reason });

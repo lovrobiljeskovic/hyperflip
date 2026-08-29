@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
 import { canonicalJson, readCandlePartition, sha256, verifyManifest } from "./store.js";
-import { parseReturnRecord, parseSourceRegistry } from "./types.js";
+import { assertResearchNetworkEnabled, parseReturnRecord, parseSourceRegistry } from "./types.js";
 import type { CandleRecord, DataManifest, DerivedManifestV2, ExclusionRecord, ReturnMode, ReturnRecord, SourceEntry } from "./types.js";
 
 export const HOUR = 3_600_000;
@@ -14,7 +14,7 @@ export type { ReturnMode, ReturnRecord } from "./types.js";
 export { parseReturnRecord } from "./types.js";
 
 export function returnModeFor(left: SourceEntry, right: SourceEntry): ReturnMode {
-  return left.calendar === "continuous" && right.calendar === "continuous" && left.cluster === right.cluster ? "hourly" : "daily";
+  return left.calendar === "continuous" && right.calendar === "continuous" && left.cluster === "crypto" && right.cluster === "crypto" ? "hourly" : "daily";
 }
 export interface QualityResult {
   eligible: boolean;
@@ -233,14 +233,24 @@ function writeImmutable(storage: ResearchPersistence, file: string, bytes: strin
 export function deriveReturns(root: string, manifest: DataManifest, window: Window, storage = openResearchPersistence(root)): DerivedOutput {
   verifyManifest(root, manifest, storage);
   const registry = parseSourceRegistry(storage.readText(`facts/source-registries/${manifest.sourceRegistrySha256}.json`));
+  assertResearchNetworkEnabled(registry.network);
   const candles = manifest.files.filter((file) => file.path.endsWith(".jsonl.gz")).flatMap((file) => readCandlePartition(storage, file.path));
-  const derived = registry.sources.flatMap((source) => {
-    const own = candles.filter((candle) => candle.underlying === source.underlying && candle.sourceNetwork === source.sourceNetwork && candle.sourceCoin === source.sourceCoin && candle.interval === "1h");
-    return [hourlySeries(own, source, window), dailySeries(own, source, window)];
-  });
   const lexical = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
+  const mapped = registry.sources.map((source) => {
+    const own = candles.filter((candle) => candle.underlying === source.underlying && candle.sourceNetwork === source.sourceNetwork && candle.sourceCoin === source.sourceCoin && candle.interval === "1h");
+    return { source, own, series: [hourlySeries(own, source, window), dailySeries(own, source, window)] };
+  }).sort((left, right) => lexical(left.source.underlying, right.source.underlying));
+  const derived = mapped.flatMap((entry) => entry.series);
+  const pairExclusions: ExclusionRecord[] = [];
+  for (let left = 0; left < mapped.length; left++) for (let right = left + 1; right < mapped.length; right++) {
+    const a = mapped[left];
+    const b = mapped[right];
+    if (alignPair(a.own, b.own, a.source, b.source, window, returnModeFor(a.source, b.source)).samples.length === 0) {
+      pairExclusions.push(exclusion(a.source, "no-synchronized-peer", null, [], b.source.underlying));
+    }
+  }
   const records = derived.flatMap((series) => series.records).sort((a, b) => lexical(a.underlying, b.underlying) || lexical(a.interval, b.interval) || a.timestampMs - b.timestampMs);
-  const exclusions = derived.flatMap((series) => series.exclusions).sort((a, b) => lexical(canonicalJson(a), canonicalJson(b)));
+  const exclusions = [...derived.flatMap((series) => series.exclusions), ...pairExclusions].sort((a, b) => lexical(canonicalJson(a), canonicalJson(b)));
   const identity = sha256(canonicalJson({ dataManifestSha256: sha256(canonicalJson(manifest)), transformationVersion: TRANSFORMATION_VERSION, window }));
   const day = new Date(window.asOfMs).toISOString().slice(0, 10).replace(/-/g, "/");
   const path = `derived/returns-v2/returns/${day}/${identity}.jsonl.gz`;

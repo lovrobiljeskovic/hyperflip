@@ -8,6 +8,12 @@ export interface SourceSession {
 
 export type ResearchNetwork = "testnet" | "mainnet";
 
+const ENABLED_RESEARCH_NETWORKS = new Set<ResearchNetwork>(["testnet"]);
+
+export function assertResearchNetworkEnabled(network: ResearchNetwork): void {
+  if (!ENABLED_RESEARCH_NETWORKS.has(network)) throw new Error(`network ${network} is not enabled`);
+}
+
 export interface SourceEntry {
   schemaVersion: 1;
   underlying: string;
@@ -282,7 +288,9 @@ export function parseReturnRecord(value: unknown, expectedNetwork?: ResearchNetw
   const keys = ["schemaVersion", "transformationVersion", "network", "underlying", "interval", "timestampMs", "observationCloseTimeMs", "sessionDate", "value", "sourceKeys"];
   for (const key of Object.keys(row)) if (!keys.includes(key)) throw new Error(`invalid returns-v2 record: unknown field ${key}`);
   if (row.schemaVersion !== 2 || row.transformationVersion !== "returns-v2") throw new Error("invalid returns-v2 record: schemaVersion and transformationVersion are required");
-  if ((row.network !== "testnet" && row.network !== "mainnet") || (expectedNetwork !== undefined && row.network !== expectedNetwork)) throw new Error("invalid returns-v2 record: network mismatch");
+  if (row.network !== "testnet" && row.network !== "mainnet") throw new Error("invalid returns-v2 record: network mismatch");
+  assertResearchNetworkEnabled(row.network);
+  if (expectedNetwork !== undefined && row.network !== expectedNetwork) throw new Error("invalid returns-v2 record: network mismatch");
   if (typeof row.underlying !== "string" || !SAFE_FILENAME_ID.test(row.underlying)) throw new Error("invalid returns-v2 record: underlying is invalid");
   if (row.interval !== "hourly" && row.interval !== "daily") throw new Error("invalid returns-v2 record: interval is invalid");
   if (!Number.isSafeInteger(row.timestampMs)) throw new Error("invalid returns-v2 record: timestampMs must be a safe integer");

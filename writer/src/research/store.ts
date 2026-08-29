@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
-import { assertCandleRecord, assertDataManifest, assertExclusionRecord, parseReturnRecord, parseSourceRegistry } from "./types.js";
+import { assertCandleRecord, assertDataManifest, assertExclusionRecord, assertResearchNetworkEnabled, parseReturnRecord, parseSourceRegistry } from "./types.js";
 import type { CandleRawManifest, CandleRecord, DataManifest, DerivedManifestV2, ExclusionRecord, ResearchNetwork, ReturnRecord, SourceRegistry } from "./types.js";
 
 export function canonicalJson(value: unknown): string {
@@ -91,6 +91,7 @@ function derivedPartition(root: string, storage: ResearchPersistence, entry: { p
   return rows.map((row) => {
     assertExclusionRecord(row as ExclusionRecord);
     if ((row as ExclusionRecord).stage !== "returns") throw new Error("derived exclusion stage mismatch");
+    if ((row as ExclusionRecord).sourceKeys.some((key) => !key.startsWith(`${network}:`))) throw new Error("derived exclusion network mismatch");
     return row as ExclusionRecord;
   });
 }
@@ -101,6 +102,7 @@ export function readDerivedDataset(root: string, manifestInput: string, storage 
   const keys = ["schemaVersion", "network", "transformationVersion", "dataManifestSha256", "sourceRegistrySha256", "window", "returns", "exclusions"];
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed) || Object.keys(parsed).some((key) => !keys.includes(key)) || parsed.schemaVersion !== 2 || parsed.transformationVersion !== "returns-v2") throw new Error("derived manifest must be schema 2 returns-v2");
   if (parsed.network !== "testnet" && parsed.network !== "mainnet") throw new Error("derived manifest network is invalid");
+  assertResearchNetworkEnabled(parsed.network);
   if (typeof parsed.dataManifestSha256 !== "string" || !/^[0-9a-f]{64}$/.test(parsed.dataManifestSha256) || typeof parsed.sourceRegistrySha256 !== "string" || !/^[0-9a-f]{64}$/.test(parsed.sourceRegistrySha256)) throw new Error("derived manifest identity is invalid");
   const window = parsed.window as Record<string, unknown> | undefined;
   if (!window || Object.keys(window).some((key) => !["asOfMs", "lookbackMs"].includes(key)) || !Number.isSafeInteger(window.asOfMs) || !Number.isSafeInteger(window.lookbackMs) || Number(window.lookbackMs) < 0) throw new Error("derived manifest window is invalid");

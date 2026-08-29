@@ -16,7 +16,7 @@ import {
   sessionDates,
   trailingFresh,
 } from "../src/research/returns.js";
-import { buildDailyManifest, canonicalJson, sha256 } from "../src/research/store.js";
+import { buildDailyManifest, canonicalJson, readDerivedDataset, sha256 } from "../src/research/store.js";
 import type { CandleRecord, SourceEntry } from "../src/research/types.js";
 
 const HOUR = 3_600_000;
@@ -40,6 +40,14 @@ test("return mode uses hourly only for a same-cluster continuous pair", () => {
   assert.equal(returnModeFor(continuousSource, { ...sessionSource, cluster: "crypto" }), "daily");
 });
 
+test("continuous equity and commodity pairs use daily returns", () => {
+  for (const cluster of ["equity", "commodity"] as const) {
+    const left = { ...continuousSource, underlying: `${cluster}-A`, sourceCoin: `${cluster}-A`, cluster };
+    const right = { ...continuousSource, underlying: `${cluster}-B`, sourceCoin: `${cluster}-B`, cluster };
+    assert.equal(returnModeFor(left, right), "daily");
+  }
+});
+
 test("return quality accepts exact hourly and daily boundaries and rejects one below", () => {
   assert.equal(quality(1_000, 1_250, "hourly").eligible, true);
   assert.equal(quality(999, 1_248, "hourly").eligible, false);
@@ -58,6 +66,7 @@ test("returns-v2 parser requires close-time causality and network identity", () 
   assert.throws(() => parseReturnRecord({ ...valid, observationCloseTimeMs: undefined }, "testnet"), /observationCloseTimeMs/);
   assert.throws(() => parseReturnRecord({ ...valid, schemaVersion: 1, transformationVersion: "returns-v1" }, "testnet"), /returns-v2|schemaVersion/);
   assert.throws(() => parseReturnRecord({ ...valid, network: "mainnet" }, "testnet"), /network/);
+  assert.throws(() => parseReturnRecord({ ...valid, network: "mainnet" }), /mainnet.*not enabled/);
 });
 
 test("missing intervals stay missing and are never forward-filled", () => {
@@ -125,7 +134,7 @@ test("daily returns reject a bridge over a missing scheduled session", () => {
 
 test("derived partitions are immutable and deterministic after manifest verification", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-research-returns-"));
-  const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [continuousSource] };
+  const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [continuousSource, { ...continuousSource, underlying: "ETH", sourceCoin: "ETH" }] };
   const registryBytes = canonicalJson(registry);
   const sourceHash = sha256(registryBytes);
   const raw = join(root, "raw", "candles", "1970", "01", "01", "BTC", "fixture.jsonl.gz");
@@ -153,6 +162,36 @@ test("derived partitions are immutable and deterministic after manifest verifica
     assert.ok(derivedManifest.exclusions.rows > 0);
     assert.match(derivedManifest.returns.path, /returns-v2/);
     assert.match(derivedManifest.exclusions.path, /returns-v2/);
+    const verified = readDerivedDataset(root, first.manifestPath);
+    assert.deepEqual(verified.exclusions.filter((row) => row.reason === "no-synchronized-peer"), [{
+      schemaVersion: 1, stage: "returns", underlying: "BTC", peerUnderlying: "ETH", timestampMs: null, reason: "no-synchronized-peer", sourceKeys: [],
+    }]);
+    const wrongNetworkExclusionPath = "derived/returns-v2/exclusions/1970/01/01/wrong-network.jsonl.gz";
+    const wrongNetworkExclusionBytes = gzipSync(`${canonicalJson({ ...verified.exclusions[0], sourceKeys: ["mainnet:BTC:1h:0"] })}\n`);
+    writeFileSync(join(root, wrongNetworkExclusionPath), wrongNetworkExclusionBytes);
+    const wrongNetworkExclusionManifestPath = join(root, "wrong-network-exclusion.manifest.json");
+    writeFileSync(wrongNetworkExclusionManifestPath, canonicalJson({
+      ...derivedManifest,
+      exclusions: { path: wrongNetworkExclusionPath, sha256: sha256(wrongNetworkExclusionBytes), rows: 1 },
+    }));
+    assert.throws(() => readDerivedDataset(root, wrongNetworkExclusionManifestPath), /exclusion.*network mismatch/);
+    const mainnetDerivedManifestPath = join(root, "mainnet-derived.manifest.json");
+    writeFileSync(mainnetDerivedManifestPath, canonicalJson({ ...derivedManifest, network: "mainnet" }));
+    assert.throws(() => readDerivedDataset(root, mainnetDerivedManifestPath), /mainnet.*not enabled/);
+
+    const mainnetRegistry = { ...registry, network: "mainnet", sources: registry.sources.map((source) => ({ ...source, sourceNetwork: "mainnet" })) };
+    const mainnetRegistryBytes = canonicalJson(mainnetRegistry);
+    const mainnetSourceHash = sha256(mainnetRegistryBytes);
+    const mainnetSourcePath = `facts/source-registries/${mainnetSourceHash}.json`;
+    writeFileSync(join(root, mainnetSourcePath), mainnetRegistryBytes);
+    const mainnetManifest = {
+      ...manifest,
+      sourceRegistrySha256: mainnetSourceHash,
+      files: manifest.files.map((file) => file.path === `facts/source-registries/${sourceHash}.json`
+        ? { ...file, path: mainnetSourcePath, bytes: Buffer.byteLength(mainnetRegistryBytes), sha256: mainnetSourceHash }
+        : file),
+    };
+    assert.throws(() => deriveReturns(root, mainnetManifest, window(0, 5 * HOUR)), /mainnet.*not enabled/);
     writeFileSync(first.path, "corrupt immutable return bytes");
     assert.throws(() => deriveReturns(root, manifest, window(0, 5 * HOUR)), /different bytes/);
     assert.throws(() => deriveReturns(root, { ...manifest, files: [] }, window(0, 5 * HOUR)), /manifest/);
