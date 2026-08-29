@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { openResearchPersistence } from "./persistence.js";
 import { operationError, writeOperationState } from "./store.js";
 import { bindResearchRootIdentity, loadResearchNetworkProfile } from "./network.js";
+import { finishOperation, startOperation } from "./operations.js";
 
 export interface DailyResult { status: number | null; stdout: string; stderr: string }
 type DailyStep = "derive" | "calibrate" | "replay" | "join" | "report";
@@ -15,11 +16,15 @@ function output(result: DailyResult): Record<string, unknown> {
 export function runDaily(env: NodeJS.ProcessEnv, run: (step: DailyStep, env: NodeJS.ProcessEnv) => DailyResult, now: () => number = Date.now): number {
   const root = env.RESEARCH_ROOT ? resolve(env.RESEARCH_ROOT) : null;
   const storage = root ? openResearchPersistence(root) : null;
+  let network: "testnet" | "mainnet" | null = null;
   if (root) {
     if (!env.RESEARCH_NETWORK_PROFILE_FILE) throw new Error("RESEARCH_NETWORK_PROFILE_FILE is required");
-    bindResearchRootIdentity(storage!, loadResearchNetworkProfile(resolve(env.RESEARCH_NETWORK_PROFILE_FILE)));
+    const profile = loadResearchNetworkProfile(resolve(env.RESEARCH_NETWORK_PROFILE_FILE));
+    bindResearchRootIdentity(storage!, profile);
+    network = profile.profile.network;
   }
   const started = now();
+  const operation = storage && network ? startOperation(storage, network, "daily", started) : null;
   const persist = (status: "running" | "succeeded" | "failed", error: string | null, step: DailyStep | null): void => {
     if (!root) return;
     const at = now();
@@ -34,7 +39,9 @@ export function runDaily(env: NodeJS.ProcessEnv, run: (step: DailyStep, env: Nod
       const result = run(step, current);
       if (result.status !== 0) {
         const status = result.status ?? 1;
-        persist("failed", `${step} exited ${status}`, step);
+        const error = `${step} exited ${status}`;
+        persist("failed", error, step);
+        if (operation) finishOperation(storage!, operation, { status: "failure", endedAt: new Date(now()).toISOString(), stage: step, error });
         return status;
       }
       if (step === "derive") {
@@ -50,9 +57,12 @@ export function runDaily(env: NodeJS.ProcessEnv, run: (step: DailyStep, env: Nod
       }
     }
     persist("succeeded", null, active);
+    if (operation) finishOperation(storage!, operation, { status: "success", endedAt: new Date(now()).toISOString(), stage: active ?? undefined });
     return 0;
   } catch (error) {
-    persist("failed", operationError(error), active);
+    const message = operationError(error);
+    persist("failed", message, active);
+    if (operation) finishOperation(storage!, operation, { status: "failure", endedAt: new Date(now()).toISOString(), stage: active ?? "daily", error: message });
     throw error;
   }
 }

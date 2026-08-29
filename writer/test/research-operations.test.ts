@@ -5,6 +5,8 @@ import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { runDaily, type DailyResult } from "../src/research/daily.js";
+import { terminalOperationHistory, writeOperationRecord } from "../src/research/operations.js";
+import { openResearchPersistence } from "../src/research/persistence.js";
 
 const cwd = resolve(import.meta.dirname, "..");
 const profileFile = new URL("../../registry/research-network.testnet.json", import.meta.url).pathname;
@@ -17,6 +19,20 @@ test("research backup exits successfully with an explicit disabled status when c
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /"status":"disabled"/);
     assert.match(result.stdout, /backup configuration absent/);
+    assert.deepEqual(terminalOperationHistory(openResearchPersistence(root), "testnet").map((record) => [record.operation, record.status]), [["backup", "success"]]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("operation records reject secrets and control characters", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-operation-record-"));
+  try {
+    const storage = openResearchPersistence(root);
+    const record = {
+      schemaVersion: 1 as const, network: "testnet" as const, runId: "20260829T000000000Z-00000000-0000-4000-8000-000000000001", operation: "collect" as const,
+      phase: "terminal" as const, startedAt: "2026-08-29T00:00:00.000Z", endedAt: "2026-08-29T00:01:00.000Z", status: "failure" as const,
+    };
+    assert.throws(() => writeOperationRecord(storage, { ...record, error: "token=secret" }), /secret/i);
+    assert.throws(() => writeOperationRecord(storage, { ...record, detail: { artifactId: "safe\nunsafe" } }), /control/i);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -29,6 +45,7 @@ test("research daily derives immutable inputs from the collector pointer without
     assert.doesNotMatch(result.stderr, /RESEARCH_MANIFEST_FILE.*RESEARCH_AS_OF_MS.*RESEARCH_LOOKBACK_MS/);
     assert.doesNotMatch(result.stderr, /RESEARCH_DERIVED_MANIFEST_FILE/);
     assert.equal(JSON.parse(readFileSync(join(root, "state", "daily.json"), "utf8")).status, "failed");
+    assert.deepEqual(terminalOperationHistory(openResearchPersistence(root), "testnet").map((record) => [record.operation, record.status, record.stage]), [["daily", "failure", "derive"]]);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

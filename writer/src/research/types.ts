@@ -8,6 +8,22 @@ export interface SourceSession {
 
 export type ResearchNetwork = "testnet" | "mainnet";
 
+export type ResearchOperation = "collect" | "calibrate" | "replay" | "join" | "report" | "promote" | "backup" | "daily";
+
+export interface OperationRunRecord {
+  schemaVersion: 1;
+  network: ResearchNetwork;
+  runId: string;
+  operation: ResearchOperation;
+  phase: "start" | "terminal";
+  startedAt: string;
+  endedAt?: string;
+  status?: "success" | "failure";
+  stage?: string;
+  detail?: Record<string, string | number | boolean | null>;
+  error?: string;
+}
+
 const ENABLED_RESEARCH_NETWORKS = new Set<ResearchNetwork>(["testnet"]);
 
 export function assertResearchNetworkEnabled(network: ResearchNetwork): void {

@@ -6,7 +6,7 @@ import { calibrate } from "./calibration.js";
 import { runReplay } from "./replay.js";
 import { deriveReturns } from "./returns.js";
 import { openResearchPersistence } from "./persistence.js";
-import { readCurrentManifest, researchRelativePath, RESEARCH_LOOKBACK_MS, sha256 } from "./store.js";
+import { operationError, readCurrentManifest, researchRelativePath, RESEARCH_LOOKBACK_MS, sha256 } from "./store.js";
 import type { CorrelationArtifact } from "./types.js";
 import { parseMarkets } from "../markets.js";
 import { promoteCandidate } from "./artifacts.js";
@@ -15,6 +15,8 @@ import { backupResearch } from "./backup.js";
 import { generateReport } from "./report.js";
 import { runDaily } from "./daily.js";
 import { bindResearchRootIdentity, loadResearchNetworkProfile, type LoadedResearchNetworkProfile } from "./network.js";
+import { finishOperation, startOperation } from "./operations.js";
+import type { ResearchOperation } from "./types.js";
 
 const command = process.argv[2];
 const commands = ["collect", "derive", "calibrate", "replay", "promote", "join", "report", "daily", "backup", "check"];
@@ -25,6 +27,20 @@ const boundStorage = (root: string) => {
   bindResearchRootIdentity(storage, profile());
   return storage;
 };
+
+async function recorded<T>(root: string, operation: Exclude<ResearchOperation, "daily">, action: () => Promise<T> | T, failure?: (value: T) => string | null): Promise<T> {
+  const storage = boundStorage(root);
+  const start = startOperation(storage, profile().profile.network, operation);
+  try {
+    const value = await action();
+    const error = failure?.(value) ?? null;
+    finishOperation(storage, start, error ? { status: "failure", error } : { status: "success" });
+    return value;
+  } catch (error) {
+    finishOperation(storage, start, { status: "failure", error: operationError(error) });
+    throw error;
+  }
+}
 
 if (!commands.includes(command)) {
   console.error(`usage: npm run research -- ${commands.join("|")}`);
@@ -54,8 +70,7 @@ if (!commands.includes(command)) {
     console.error("RESEARCH_ROOT, RESEARCH_NETWORK_PROFILE_FILE, RESEARCH_CANDIDATE_FILE, and RESEARCH_DERIVED_MANIFEST_FILE are required");
     process.exitCode = 2;
   } else {
-    boundStorage(resolve(root));
-    const output = generateReport(resolve(root), resolve(candidateFile), resolve(derivedManifestFile));
+    const output = await recorded(resolve(root), "report", () => generateReport(resolve(root), resolve(candidateFile), resolve(derivedManifestFile)));
     console.log(JSON.stringify({ path: output.path, sha256: sha256(output.bytes) }));
   }
 } else if (command === "backup") {
@@ -64,7 +79,6 @@ if (!commands.includes(command)) {
     console.error("RESEARCH_ROOT and RESEARCH_NETWORK_PROFILE_FILE are required");
     process.exitCode = 2;
   } else {
-    boundStorage(resolve(root));
     const config = {
       endpoint: process.env.RESEARCH_BACKUP_ENDPOINT,
       region: process.env.RESEARCH_BACKUP_REGION,
@@ -72,8 +86,10 @@ if (!commands.includes(command)) {
       accessKey: process.env.RESEARCH_BACKUP_ACCESS_KEY,
       secret: process.env.RESEARCH_BACKUP_SECRET_KEY,
     };
-    if (Object.values(config).some((value) => !value)) console.log(JSON.stringify({ status: "disabled", reason: "backup configuration absent" }));
-    else console.log(JSON.stringify(await backupResearch(resolve(root), config as { endpoint: string; region: string; bucket: string; accessKey: string; secret: string })));
+    if (Object.values(config).some((value) => !value)) {
+      await recorded(resolve(root), "backup", () => undefined);
+      console.log(JSON.stringify({ status: "disabled", reason: "backup configuration absent" }));
+    } else console.log(JSON.stringify(await recorded(resolve(root), "backup", () => backupResearch(resolve(root), config as { endpoint: string; region: string; bucket: string; accessKey: string; secret: string }))));
   }
 } else if (command === "collect") {
   const root = process.env.RESEARCH_ROOT;
@@ -81,10 +97,10 @@ if (!commands.includes(command)) {
     console.error("RESEARCH_ROOT and RESEARCH_NETWORK_PROFILE_FILE are required");
     process.exitCode = 2;
   } else {
-    const summary = await collectSources({
+    const summary = await recorded(resolve(root), "collect", () => collectSources({
       root: resolve(root),
       profile: profile(),
-    });
+    }), (value) => value.failures.length ? `${value.failures.length} collection failures` : null);
     console.log(JSON.stringify(summary));
     if (summary.failures.length) process.exitCode = 1;
   }
@@ -112,8 +128,10 @@ if (!commands.includes(command)) {
     process.exitCode = 2;
   } else {
     const resolvedRoot = resolve(root);
-    const storage = boundStorage(resolvedRoot);
-    const artifact = calibrate({ root: resolvedRoot, manifest: JSON.parse(storage.readText(researchRelativePath(resolvedRoot, manifestFile))), derivedManifestPath: researchRelativePath(resolvedRoot, derivedManifestPath), profile: profile(), storage });
+    const artifact = await recorded(resolvedRoot, "calibrate", () => {
+      const storage = boundStorage(resolvedRoot);
+      return calibrate({ root: resolvedRoot, manifest: JSON.parse(storage.readText(researchRelativePath(resolvedRoot, manifestFile))), derivedManifestPath: researchRelativePath(resolvedRoot, derivedManifestPath), profile: profile(), storage });
+    });
     console.log(JSON.stringify({ modelVersion: artifact.modelVersion, dataAsOf: artifact.dataAsOf, candidatePath: resolve(root, "artifacts", "candidates", `${artifact.modelVersion}.json`) }));
   }
 } else if (command === "replay") {
@@ -126,12 +144,14 @@ if (!commands.includes(command)) {
     process.exitCode = 2;
   } else {
     const resolvedRoot = resolve(root);
-    const storage = boundStorage(resolvedRoot);
-    const candidateBytes = storage.readText(researchRelativePath(resolvedRoot, candidateFile));
-    const candidate = JSON.parse(candidateBytes) as CorrelationArtifact;
-    const report = runReplay({
-      root: resolvedRoot, candidate, candidateBytes, inputManifestSha256: candidate.dataManifestSha256,
-      derivedManifestPath: researchRelativePath(resolvedRoot, derivedManifestFile), profile: profile(), seed, storage,
+    const report = await recorded(resolvedRoot, "replay", () => {
+      const storage = boundStorage(resolvedRoot);
+      const candidateBytes = storage.readText(researchRelativePath(resolvedRoot, candidateFile));
+      const candidate = JSON.parse(candidateBytes) as CorrelationArtifact;
+      return runReplay({
+        root: resolvedRoot, candidate, candidateBytes, inputManifestSha256: candidate.dataManifestSha256,
+        derivedManifestPath: researchRelativePath(resolvedRoot, derivedManifestFile), profile: profile(), seed, storage,
+      });
     });
     console.log(JSON.stringify({ modelVersion: report.modelVersion, decision: report.decision }));
   }
@@ -144,9 +164,9 @@ if (!commands.includes(command)) {
   } else {
     try {
       const selected = profile();
-      const summary = await joinEvents(resolve(root), {
+      const summary = await recorded(resolve(root), "join", () => joinEvents(resolve(root), {
         client: createPublicClient({ transport: http(rpc) }), vault: selected.deployment.parlayVault, deployBlock: BigInt(selected.deployment.parlayDeployBlock), profile: selected,
-      });
+      }));
       console.log(JSON.stringify(summary));
     } catch (error) {
       console.error(String(error));
@@ -161,10 +181,11 @@ if (!commands.includes(command)) {
     process.exitCode = 2;
   } else {
     const resolvedRoot = resolve(root);
-    const candidate = resolve(resolvedRoot, args[1]);
-    const selected = profile();
-    const markets = parseMarkets(selected.marketRegistryRaw);
-    const receipt = promoteCandidate(resolvedRoot, candidate, selected, markets, Date.now());
+    const receipt = await recorded(resolvedRoot, "promote", () => {
+      const candidate = resolve(resolvedRoot, args[1]);
+      const selected = profile();
+      return promoteCandidate(resolvedRoot, candidate, selected, parseMarkets(selected.marketRegistryRaw), Date.now());
+    });
     console.log(JSON.stringify({ modelVersion: receipt.modelVersion, dataAgeMs: receipt.dataAgeMs, manifestHash: receipt.dataManifestSha256, validationState: receipt.validationState, championHash: receipt.championSha256 }));
   }
 }

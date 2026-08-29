@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { gzipSync } from "node:zlib";
 import { generateReport, journalFunnel, renderReport, type ReportInput } from "../src/research/report.js";
+import { writeOperationRecord } from "../src/research/operations.js";
+import { openResearchPersistence } from "../src/research/persistence.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
 
 const score = {
@@ -135,12 +137,15 @@ test("research report verifies every immutable reference before writing the dete
     writeFileSync(join(root, "artifacts", "champion.json"), candidateBytes);
     mkdirSync(join(root, "journal", "requests", "2026", "08"), { recursive: true });
     writeFileSync(join(root, "journal", "requests", "2026", "08", "27.jsonl"), `${canonicalJson({ schemaVersion: 1, sourceKey: "testnet:ETH", startTime: 1, endTime: 2, retrievedAtMs: 3, httpStatus: 503, error: "info API 503", returnedRows: 0 })}\n`);
+    const storage = openResearchPersistence(root);
+    const operation = (record: Parameters<typeof writeOperationRecord>[1]) => writeOperationRecord(storage, record);
+    operation({ schemaVersion: 1, network: "testnet", runId: "20260827T000000000Z-00000000-0000-4000-8000-000000000001", operation: "calibrate", phase: "terminal", startedAt: "2026-08-27T00:00:00.000Z", endedAt: "2026-08-27T00:01:00.000Z", status: "success", detail: { modelVersion: "beta-1" } });
+    operation({ schemaVersion: 1, network: "testnet", runId: "20260827T010000000Z-00000000-0000-4000-8000-000000000002", operation: "replay", phase: "terminal", startedAt: "2026-08-27T01:00:00.000Z", endedAt: "2026-08-27T01:01:00.000Z", status: "failure", stage: "replay", error: "replay exited 1" });
+    operation({ schemaVersion: 1, network: "testnet", runId: "20260827T020000000Z-00000000-0000-4000-8000-000000000003", operation: "replay", phase: "terminal", startedAt: "2026-08-27T02:00:00.000Z", endedAt: "2026-08-27T02:01:00.000Z", status: "success" });
+    operation({ schemaVersion: 1, network: "testnet", runId: "20260827T030000000Z-00000000-0000-4000-8000-000000000004", operation: "backup", phase: "terminal", startedAt: "2026-08-27T03:00:00.000Z", endedAt: "2026-08-27T03:01:00.000Z", status: "failure", error: "backup total timeout" });
+    operation({ schemaVersion: 1, network: "testnet", runId: "20260827T040000000Z-00000000-0000-4000-8000-000000000005", operation: "promote", phase: "start", startedAt: "2026-08-27T04:00:00.000Z" });
     mkdirSync(join(root, "state"), { recursive: true });
-    writeFileSync(join(root, "state", "collector.json"), canonicalJson({ schemaVersion: 1, sourceRegistrySha256: sourceHash, sources: { "testnet:BTC": 1, "testnet:ETH": 2 } }));
-    writeFileSync(join(root, "state", "calibrator.json"), canonicalJson({ schemaVersion: 1, operation: "calibrator", status: "succeeded", startedAt: "2026-08-27T00:00:00.000Z", endedAt: "2026-08-27T00:01:00.000Z", error: null, details: { modelVersion: "beta-1" } }));
-    writeFileSync(join(root, "state", "daily.json"), canonicalJson({ schemaVersion: 1, operation: "daily", status: "failed", startedAt: "2026-08-27T01:00:00.000Z", endedAt: "2026-08-27T01:01:00.000Z", error: "replay exited 1", details: {} }));
-    writeFileSync(join(root, "state", "join.json"), canonicalJson({ schemaVersion: 1, operation: "join", status: "succeeded", startedAt: "2026-08-27T02:00:00.000Z", endedAt: "2026-08-27T02:01:00.000Z", error: null, details: {} }));
-    writeFileSync(join(root, "state", "backup.json"), canonicalJson({ schemaVersion: 1, operation: "backup", status: "failed", startedAt: "2026-08-27T03:00:00.000Z", endedAt: "2026-08-27T03:01:00.000Z", error: "backup total timeout", details: {} }));
+    writeFileSync(join(root, "state", "daily.json"), canonicalJson({ status: "failed", error: "mutable state must not be evidence" }));
 
     const first = generateReport(root, candidatePath, derivedManifestPath);
     const second = generateReport(root, candidatePath, derivedManifestPath);
@@ -148,25 +153,16 @@ test("research report verifies every immutable reference before writing the dete
     assert.equal(readFileSync(first.path, "utf8"), first.bytes);
     assert.equal(second.bytes, first.bytes);
     assert.match(first.bytes, /collector request testnet:ETH: HTTP 503 — info API 503/);
-    assert.match(first.bytes, /collector state: 2 source checkpoints/);
-    assert.match(first.bytes, /calibrator state: succeeded — beta-1/);
-    assert.match(first.bytes, /daily state: failed — replay exited 1/);
-    assert.match(first.bytes, /join state: succeeded/);
-    assert.match(first.bytes, /backup state: failed — backup total timeout/);
+    assert.match(first.bytes, /calibrate terminal: success — beta-1/);
+    assert.match(first.bytes, /replay terminal: success/);
+    assert.match(first.bytes, /replay failure: replay exited 1/);
+    assert.match(first.bytes, /backup failure: backup total timeout/);
+    assert.doesNotMatch(first.bytes, /promote terminal|mutable state must not be evidence/);
     assert.match(first.bytes, /no-synchronized-peer<\/td><td>1/);
 
     writeFileSync(join(root, exclusionsPath), "changed");
     assert.throws(() => generateReport(root, candidatePath, derivedManifestPath), /exclusions hash mismatch/);
     writeFileSync(join(root, exclusionsPath), exclusionBytes);
-
-    const stateTarget = join(root, "daily-state-target.json");
-    const dailyState = readFileSync(join(root, "state", "daily.json"));
-    writeFileSync(stateTarget, dailyState);
-    rmSync(join(root, "state", "daily.json"));
-    symlinkSync(stateTarget, join(root, "state", "daily.json"));
-    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath), /symbolic link/);
-    rmSync(join(root, "state", "daily.json"));
-    writeFileSync(join(root, "state", "daily.json"), dailyState);
 
     const unsafeCandidate = { ...fixture.candidate, modelVersion: "../../escape" };
     writeFileSync(candidatePath, `${canonicalJson(unsafeCandidate)}\n`);

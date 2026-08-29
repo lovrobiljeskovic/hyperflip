@@ -3,6 +3,7 @@ import type { ValidationReport } from "./replay.js";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
 import { canonicalJson, readDerivedDataset, readSourceRegistryFact, researchRelativePath, sha256, verifyManifest } from "./store.js";
 import type { CorrelationArtifact, DataManifest, ExclusionRecord } from "./types.js";
+import { terminalOperationHistory } from "./operations.js";
 
 export interface ReportInput {
   manifest: DataManifest;
@@ -52,8 +53,8 @@ export function renderReport(input: ReportInput): string {
   const exclusionReasons: ExclusionRecord["reason"][] = ["missing-interval", "stale-session-bar", "non-positive-close", "no-synchronized-peer"];
   const exclusions = exclusionReasons.map((reason) => [reason, input.exclusions.filter((row) => row.reason === reason).length]);
   const exclusionEvidence = [...exclusions, ...candidate.quality.quarantinedUnderlyings.map((item) => [`quarantined: ${item.underlying} (${item.reason})`, 1])];
-  const operational = [...input.failures].filter((item) => item.includes(" state:")).sort().map((item) => ["operation", item]);
-  const failures = [...input.failures].filter((item) => !item.includes(" state:")).sort().map((failure) => ["operation", failure]);
+  const operational = [...input.failures].filter((item) => item.includes(" terminal:")).sort().map((item) => ["operation", item]);
+  const failures = [...input.failures].filter((item) => !item.includes(" terminal:")).sort().map((failure) => ["operation", failure]);
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Correlation beta evidence — ${escapeHtml(candidate.modelVersion)}</title><style>:root{color-scheme:dark;font:15px system-ui;background:#0d1117;color:#e6edf3}body{max-width:1200px;margin:auto;padding:2rem}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1rem}.card{border:1px solid #30363d;border-radius:8px;padding:1rem;overflow:auto}.label{color:#7ee787;font-size:.75rem;text-transform:uppercase;letter-spacing:.08em}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #30363d;padding:.4rem;text-align:left;white-space:nowrap}.warning{color:#ffa657}</style></head><body>
 <header><p class="label">Operator decision</p><h1>Correlation beta evidence</h1><p class="warning">Testnet P&amp;L is not evidence of production expected value.</p></header>
@@ -112,7 +113,7 @@ export function journalFunnel(root: string, storage = openResearchPersistence(ro
   return { quotes: quotes.size, minted: new Set(mints.map((row) => `${String(row.quoteId)}:${String(row.parlayId)}`)).size, resolved: resolvedParlays.size };
 }
 
-function operationalFailures(storage: ResearchPersistence): string[] {
+function operationalFailures(storage: ResearchPersistence, network: CorrelationArtifact["network"], nowMs = Date.now()): string[] {
   const quarantines = storage.list("quarantine").flatMap((file) => {
     const text = storage.readText(file).trim();
     return text ? text.split("\n").map((line) => {
@@ -129,22 +130,19 @@ function operationalFailures(storage: ResearchPersistence): string[] {
       return [`collector request ${String(row.sourceKey ?? "unknown")}: ${status}${typeof row.error === "string" ? ` — ${row.error}` : ""}`];
     }) : [];
   });
-  const states: string[] = [];
-  if (storage.exists("state/collector.json")) {
-    const collector = JSON.parse(storage.readText("state/collector.json")) as { sources?: unknown };
-    if (collector.sources && typeof collector.sources === "object" && !Array.isArray(collector.sources)) states.push(`collector state: ${Object.keys(collector.sources).length} source checkpoints`);
+  const records = terminalOperationHistory(storage, network);
+  const latest = new Map<string, (typeof records)[number]>();
+  for (const record of records) {
+    const prior = latest.get(record.operation);
+    if (!prior || record.endedAt! > prior.endedAt! || (record.endedAt === prior.endedAt && record.runId > prior.runId)) latest.set(record.operation, record);
   }
-  for (const [operation, file] of [["calibrator", "calibrator.json"], ["daily", "daily.json"], ["join", "join.json"], ["backup", "backup.json"]] as const) {
-    const path = `state/${file}`;
-    if (!storage.exists(path)) continue;
-    const state = JSON.parse(storage.readText(path)) as { status?: unknown; error?: unknown; details?: { modelVersion?: unknown } };
-    if (typeof state.status !== "string") continue;
-    const detail = operation === "calibrator" && typeof state.details?.modelVersion === "string"
-      ? state.details.modelVersion
-      : typeof state.error === "string" ? state.error : null;
-    states.push(`${operation} state: ${state.status}${detail ? ` — ${detail}` : ""}`);
-  }
-  return [...quarantines, ...requests, ...states];
+  const states = [...latest.values()].map((record) => {
+    const detail = record.stage ?? (typeof record.detail?.modelVersion === "string" ? record.detail.modelVersion : null);
+    return `${record.operation} terminal: ${record.status}${detail ? ` — ${detail}` : ""}`;
+  });
+  const failures = records.filter((record) => record.status === "failure" && Date.parse(record.endedAt!) <= nowMs && Date.parse(record.endedAt!) >= nowMs - 30 * 24 * 60 * 60 * 1_000)
+    .map((record) => `${record.operation} failure: ${record.error}`);
+  return [...quarantines, ...requests, ...states, ...failures];
 }
 
 export function generateReport(rootInput: string, candidateInput: string, derivedManifestInput: string): { path: string; bytes: string } {
@@ -168,7 +166,7 @@ export function generateReport(rootInput: string, candidateInput: string, derive
     if (sha256(championBytes) !== sha256(storage.read(championCandidate))) throw new Error("report champion candidate mismatch");
     champion = { modelVersion: artifact.modelVersion, sha256: sha256(championBytes) };
   }
-  const bytes = renderReport({ manifest: current.manifest, candidate: current.candidate, validation: current.validation, champion, funnel: journalFunnel(root, storage), failures: operationalFailures(storage), exclusions: derived.exclusions });
+  const bytes = renderReport({ manifest: current.manifest, candidate: current.candidate, validation: current.validation, champion, funnel: journalFunnel(root, storage), failures: operationalFailures(storage, current.candidate.network), exclusions: derived.exclusions });
   const date = current.candidate.dataAsOf.slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("report dataAsOf date is invalid");
   const path = `reports/${date}-${current.candidate.modelVersion}.html`;

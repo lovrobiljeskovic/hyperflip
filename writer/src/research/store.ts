@@ -41,7 +41,7 @@ export function writeOperationState(root: string, file: string, state: Operation
 
 export function operationError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/https?:\/\/\S+/gi, "[redacted-url]").slice(0, 1_000);
+  return message.split(/[\r\n]/, 1)[0].replace(/https?:\/\/\S+/gi, "[redacted-url]").replace(/\b(?:api[-_ ]?key|authorization|cookie|password|private[-_ ]?key|secret|token)\b(?:\s*[:=]\s*)?\S*/gi, "[redacted]").slice(0, 1_000);
 }
 
 // Compatibility exports for callers that persist one already-resolved file.
