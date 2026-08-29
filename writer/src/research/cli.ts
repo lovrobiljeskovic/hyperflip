@@ -18,6 +18,7 @@ import { joinEvents } from "./journal.js";
 import { backupResearch } from "./backup.js";
 import { generateReport } from "./report.js";
 import { runDaily } from "./daily.js";
+import { loadResearchNetworkProfile } from "./network.js";
 
 const command = process.argv[2];
 const commands = ["collect", "derive", "calibrate", "replay", "promote", "join", "report", "daily", "backup", "check"];
@@ -64,15 +65,14 @@ if (!commands.includes(command)) {
   }
 } else if (command === "collect") {
   const root = process.env.RESEARCH_ROOT;
-  const registryFile = process.env.CORRELATION_SOURCES_FILE;
-  if (!root || !registryFile) {
-    console.error("RESEARCH_ROOT and CORRELATION_SOURCES_FILE are required");
+  const profileFile = process.env.RESEARCH_NETWORK_PROFILE;
+  if (!root || !profileFile) {
+    console.error("RESEARCH_ROOT and RESEARCH_NETWORK_PROFILE are required");
     process.exitCode = 2;
   } else {
     const summary = await collectSources({
       root: resolve(root),
-      registry: parseSourceRegistry(readFileSync(resolve(registryFile), "utf8")),
-      apiUrl: process.env.RESEARCH_INFO_API_URL,
+      profile: loadResearchNetworkProfile(resolve(profileFile)),
     });
     console.log(JSON.stringify(summary));
     if (summary.failures.length) process.exitCode = 1;

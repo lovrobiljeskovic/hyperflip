@@ -4,9 +4,10 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
-import { collectSources, nextCandleRequest, parseCandleSnapshot } from "../src/research/candles.js";
+import { collectSources, lastClosedHour, nextCandleRequest, parseCandleSnapshot, selectClosedPage } from "../src/research/candles.js";
 import { buildDailyManifest, readCandlePartition, sha256, canonicalJson } from "../src/research/store.js";
 import type { SourceEntry } from "../src/research/types.js";
+import type { LoadedResearchNetworkProfile } from "../src/research/network.js";
 
 const source: SourceEntry = {
   schemaVersion: 1,
@@ -31,6 +32,22 @@ function shardFiles(root: string): string[] {
   return visit(raw).filter((file) => file.endsWith(".jsonl.gz"));
 }
 
+function loadedProfile(registry: { schemaVersion: 2; network: "testnet"; sources: SourceEntry[] }): LoadedResearchNetworkProfile {
+  const profile = { schemaVersion: 1 as const, network: "testnet" as const, infoApiUrl: "https://api.hyperliquid-testnet.xyz/info", evmChainId: 998, sourceRegistryFile: "sources.json", marketRegistryFile: "markets.json", deploymentRegistryFile: "deployment.json", baselineCorrelationFile: "correlations.json" };
+  return {
+    profile,
+    profileSha256: sha256(canonicalJson(profile)),
+    sources: registry,
+    sourceRegistrySha256: sha256(canonicalJson(registry)),
+    marketRegistryRaw: "{}",
+    marketRegistrySha256: sha256("{}"),
+    deployment: { schemaVersion: 1, network: "testnet", evmChainId: 998, parlayVault: "0x0000000000000000000000000000000000000000", parlayDeployBlock: "0" },
+    deploymentRegistrySha256: sha256("{}"),
+    baselineCorrelationRaw: "{}",
+    baselineCorrelationSha256: sha256("{}"),
+  };
+}
+
 test("candle snapshot maps exact Hyperliquid fields", () => {
   assert.deepEqual(parseCandleSnapshot(source, fixture("candle-snapshot.json"), 12_000_000)[0], {
     schemaVersion: 1, source: "hyperliquid-info", sourceNetwork: "testnet", underlying: "BTC", sourceCoin: "BTC", interval: "1h",
@@ -52,18 +69,100 @@ test("candle snapshot rejects oversized, unordered, duplicate, non-hourly, out-o
   assert.throws(() => parseCandleSnapshot(source, JSON.stringify([later, row]), 20_000_000), /strictly increasing/);
   assert.throws(() => parseCandleSnapshot(source, JSON.stringify([row, row]), 20_000_000), /duplicate/);
   assert.throws(() => parseCandleSnapshot(source, JSON.stringify([{ ...row, T: row.T - 1 }]), 20_000_000), /one hour/);
-  assert.throws(() => parseCandleSnapshot(source, JSON.stringify([row]), 20_000_000, { startTime: row.t + hour, endTime: row.T + hour }), /request range/);
+  assert.throws(() => parseCandleSnapshot(source, JSON.stringify([row]), 20_000_000, { startTime: row.t + (2 * hour), endTime: row.T + (2 * hour) }), /non-adjacent/);
   assert.throws(() => parseCandleSnapshot(source, JSON.stringify([row]), row.T, { startTime: row.t, endTime: row.T }), /closed/);
 });
 
+test("closed candle pages retain a capped closed interval after adjacent provider extras", () => {
+  const row = JSON.parse(fixture("candle-snapshot.json"))[0];
+  const startTimeMs = hour;
+  const endTimeMs = startTimeMs + (5_000 * hour) - 1;
+  const rows = [
+    { ...row, t: startTimeMs - hour, T: startTimeMs - 1 },
+    ...Array.from({ length: 5_000 }, (_, index) => ({ ...row, t: startTimeMs + (index * hour), T: startTimeMs + ((index + 1) * hour) - 1 })),
+  ];
+  const page = selectClosedPage(rows, { coin: "BTC", startTimeMs, endTimeMs, retrievedAtMs: endTimeMs + hour });
+  assert.equal(page.ignoredBefore, 1);
+  assert.equal(page.ignoredAfter, 0);
+  assert.equal(page.candles.length, 5_000);
+  assert.equal(page.candles[0].openTimeMs, startTimeMs);
+  assert.equal(page.candles.at(-1)?.closeTimeMs, endTimeMs);
+  assert.equal(parseCandleSnapshot(source, JSON.stringify(rows), endTimeMs + hour, { startTime: startTimeMs, endTime: endTimeMs }).length, 5_000);
+});
+
+test("closed candle pages ignore only the adjacent currently open final row", () => {
+  const row = JSON.parse(fixture("candle-snapshot.json"))[0];
+  const startTimeMs = hour;
+  const endTimeMs = startTimeMs + hour - 1;
+  const page = selectClosedPage([
+    { ...row, t: startTimeMs, T: endTimeMs },
+    { ...row, t: endTimeMs + 1, T: endTimeMs + hour },
+  ], { coin: "BTC", startTimeMs, endTimeMs, retrievedAtMs: endTimeMs + 2 });
+  assert.equal(page.ignoredBefore, 0);
+  assert.equal(page.ignoredAfter, 1);
+  assert.equal(page.candles.length, 1);
+});
+
+test("closed-hour requests never include the current interval", () => {
+  assert.deepEqual(lastClosedHour(Date.UTC(2026, 7, 29, 12, 37)), {
+    lastOpenTimeMs: Date.UTC(2026, 7, 29, 11),
+    endTimeMs: Date.UTC(2026, 7, 29, 11, 59, 59, 999),
+  });
+});
+
+test("collector seals only the closed profile-bound page and journals boundary extras", async () => {
+  const root = scratch();
+  const nowMs = Date.UTC(2026, 7, 29, 12, 37);
+  const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
+  const profile = loadedProfile(registry);
+  const { lastOpenTimeMs, endTimeMs } = lastClosedHour(nowMs);
+  const startTimeMs = lastOpenTimeMs - (4_999 * hour);
+  const row = JSON.parse(fixture("candle-snapshot.json"))[0];
+  const rows = [
+    { ...row, t: startTimeMs - hour, T: startTimeMs - 1 },
+    ...Array.from({ length: 5_000 }, (_, index) => ({ ...row, t: startTimeMs + (index * hour), T: startTimeMs + ((index + 1) * hour) - 1 })),
+  ];
+  const requests: { url: string; request: { startTime: number; endTime: number } }[] = [];
+  try {
+    const summary = await collectSources({ root, profile, nowMs, sleep: async () => {}, fetch: async (url, init) => {
+      requests.push({ url: String(url), request: JSON.parse(String(init?.body)).req });
+      return new Response(JSON.stringify(rows));
+    } });
+    assert.equal(summary.accepted, 5_000);
+    assert.deepEqual(requests, [{ url: profile.profile.infoApiUrl, request: { coin: "BTC", interval: "1h", startTime: startTimeMs, endTime: endTimeMs } }]);
+    assert.equal(readCandlePartition(shardFiles(root)[0]).length, 5_000);
+    assert.equal(JSON.parse(readFileSync(join(root, "state", "collector.json"), "utf8")).sources["testnet:BTC"], lastOpenTimeMs);
+    const journal = JSON.parse(readFileSync(join(root, "journal", "requests", "2026", "08", "29.jsonl"), "utf8"));
+    assert.deepEqual({ network: journal.network, profileSha256: journal.profileSha256, startTimeMs: journal.startTimeMs, endTimeMs: journal.endTimeMs, ignoredBefore: journal.ignoredBefore, ignoredAfter: journal.ignoredAfter }, { network: "testnet", profileSha256: profile.profileSha256, startTimeMs, endTimeMs, ignoredBefore: 1, ignoredAfter: 0 });
+    const provenance = JSON.parse(readFileSync(`${shardFiles(root)[0]}.provenance.json`, "utf8"));
+    assert.deepEqual({ network: provenance.network, profileSha256: provenance.profileSha256, startTimeMs: provenance.startTimeMs, endTimeMs: provenance.endTimeMs, ignoredBefore: provenance.ignoredBefore, ignoredAfter: provenance.ignoredAfter }, { network: "testnet", profileSha256: profile.profileSha256, startTimeMs, endTimeMs, ignoredBefore: 1, ignoredAfter: 0 });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("collector skips sources excluded from measurement", async () => {
+  const root = scratch();
+  let calls = 0;
+  try {
+    await collectSources({ root, registry: { schemaVersion: 2, network: "testnet", sources: [{ ...source, measurementEnabled: false }] }, nowMs: 12_000_000, sleep: async () => {}, fetch: async () => {
+      calls++;
+      return new Response("[]");
+    } });
+    assert.equal(calls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("candle request uses a 5,000-hour initial range and resumes after the durable bar", () => {
-  assert.deepEqual(nextCandleRequest(source, null, 20_000_000_000), { source, startTime: 2_000_000_000, endTime: 20_000_000_000 });
-  assert.deepEqual(nextCandleRequest(source, 7_200_000, 20_000_000_000), { source, startTime: 10_800_000, endTime: 20_000_000_000 });
+  assert.deepEqual(nextCandleRequest(source, null, 20_000_000_000), { source, startTimeMs: 1_998_000_000, endTimeMs: 19_997_999_999 });
+  assert.deepEqual(nextCandleRequest(source, 7_200_000, 20_000_000_000), { source, startTimeMs: 10_800_000, endTimeMs: 18_010_799_999 });
 });
 
 test("candle request recovers from a stale state file using sealed candles", async () => {
   const root = scratch();
-  const nowMs = 12_000_000;
+  const nowMs = 15_000_000;
   const registry = { schemaVersion: 2 as const, network: "testnet" as const, sources: [source] };
   const requests: { startTime: number }[] = [];
   try {
@@ -171,13 +270,14 @@ test("identical fixture collections in independent roots produce identical seale
   }
 });
 
-test("collector CLI exits non-zero when every source fails", () => {
+test("collector CLI requires a loaded network profile before fetching", () => {
   const root = scratch();
   const sources = join(root, "sources.json");
   try {
     writeFileSync(sources, JSON.stringify({ schemaVersion: 2, network: "testnet", sources: [source] }));
     const result = spawnSync(process.execPath, ["--import", "tsx", "src/research/cli.ts", "collect"], { cwd: resolve(import.meta.dirname, ".."), env: { ...process.env, RESEARCH_ROOT: root, CORRELATION_SOURCES_FILE: sources, RESEARCH_INFO_API_URL: "http://127.0.0.1:1" }, encoding: "utf8" });
-    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /RESEARCH_NETWORK_PROFILE/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

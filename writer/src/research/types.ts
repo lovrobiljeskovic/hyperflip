@@ -44,6 +44,32 @@ export interface CandleRecord {
   retrievedAtMs: number;
 }
 
+export interface CandleRequestJournal {
+  schemaVersion: 2;
+  sourceKey: string;
+  network: ResearchNetwork;
+  profileSha256: string | null;
+  startTimeMs: number;
+  endTimeMs: number;
+  retrievedAtMs: number;
+  httpStatus: number | null;
+  error: string | null;
+  returnedRows: number;
+  ignoredBefore: number;
+  ignoredAfter: number;
+}
+
+export interface CandleRawManifest {
+  schemaVersion: 1;
+  sourceRegistrySha256: string;
+  network: ResearchNetwork;
+  profileSha256: string | null;
+  startTimeMs: number;
+  endTimeMs: number;
+  ignoredBefore: number;
+  ignoredAfter: number;
+}
+
 export interface ExclusionRecord {
   schemaVersion: 1;
   stage: "collect" | "returns" | "calibration" | "replay";

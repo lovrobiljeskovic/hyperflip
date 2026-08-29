@@ -2,7 +2,8 @@ import { gzipSync } from "node:zlib";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
 import { assertCandleRecord } from "./types.js";
 import { canonicalJson, publishRollingManifest, readCandlePartition, sha256 } from "./store.js";
-import type { CandleRecord, SourceEntry, SourceRegistry } from "./types.js";
+import type { LoadedResearchNetworkProfile } from "./network.js";
+import type { CandleRawManifest, CandleRecord, CandleRequestJournal, SourceEntry, SourceRegistry } from "./types.js";
 
 const HOUR_MS = 3_600_000;
 const INITIAL_RANGE_MS = 5_000 * HOUR_MS;
@@ -10,8 +11,8 @@ const RETRY_DELAYS_MS = [250, 1_000, 4_000];
 
 export interface CandleRequest {
   source: SourceEntry;
-  startTime: number;
-  endTime: number;
+  startTimeMs: number;
+  endTimeMs: number;
 }
 
 export interface CollectionSummary {
@@ -24,9 +25,9 @@ export interface CollectionSummary {
 
 export interface CollectionDeps {
   root: string;
-  registry: SourceRegistry;
+  registry?: SourceRegistry;
+  profile?: LoadedResearchNetworkProfile;
   nowMs?: number;
-  apiUrl?: string;
   fetch?: typeof fetch;
   sleep?: (milliseconds: number) => Promise<void>;
 }
@@ -47,7 +48,15 @@ export class CandleBatchConflictError extends Error {
   }
 }
 
-export function parseCandleSnapshot(source: SourceEntry, body: string, retrievedAtMs: number, request?: { startTime: number; endTime: number }): CandleRecord[] {
+type ClosedPageRequest = {
+  coin: string;
+  startTimeMs: number;
+  endTimeMs: number;
+  retrievedAtMs: number;
+  source?: SourceEntry;
+};
+
+function snapshotRows(body: string): unknown[] {
   let value: unknown;
   try {
     value = JSON.parse(body);
@@ -55,8 +64,10 @@ export function parseCandleSnapshot(source: SourceEntry, body: string, retrieved
     throw new Error("candle snapshot must be valid JSON");
   }
   if (!Array.isArray(value)) throw new Error("candle snapshot must be an array");
-  if (value.length > 5_000) throw new Error("candle snapshot must contain at most 5,000 rows");
-  const candles = value.map((entry) => {
+  return value;
+}
+
+function parseCandleRow(entry: unknown, request: ClosedPageRequest): CandleRecord {
     if (entry === null || typeof entry !== "object" || Array.isArray(entry)) throw new Error("candle snapshot row must be an object");
     const row = entry as Record<string, unknown>;
     const keys = ["t", "T", "s", "i", "o", "h", "l", "c", "v", "n"];
@@ -65,9 +76,9 @@ export function parseCandleSnapshot(source: SourceEntry, body: string, retrieved
     const closeTimeMs = validTimestamp(row.T, "close time");
     if (closeTimeMs <= openTimeMs) throw new Error("candle snapshot has reverse time");
     if (openTimeMs % HOUR_MS !== 0 || closeTimeMs - openTimeMs !== HOUR_MS - 1) throw new Error("candle snapshot row must cover exactly one hour");
-    if (request && (openTimeMs < request.startTime || closeTimeMs > request.endTime)) throw new Error("candle snapshot row is outside the request range");
-    if (closeTimeMs >= retrievedAtMs) throw new Error("candle snapshot row must be closed before retrieval");
-    if (row.s !== source.sourceCoin || row.i !== "1h") throw new Error("candle snapshot source or interval mismatch");
+    if (openTimeMs < request.startTimeMs || closeTimeMs > request.endTimeMs) throw new Error("candle snapshot row is outside the request range");
+    if (closeTimeMs >= request.retrievedAtMs) throw new Error("candle snapshot row must be closed before retrieval");
+    if (row.s !== request.coin || row.i !== "1h") throw new Error("candle snapshot source or interval mismatch");
     const open = validNumber(row.o, "open");
     const high = validNumber(row.h, "high");
     const low = validNumber(row.l, "low");
@@ -75,10 +86,13 @@ export function parseCandleSnapshot(source: SourceEntry, body: string, retrieved
     const volume = validNumber(row.v, "volume");
     if (Number(volume) < 0 || Number(high) < Math.max(Number(open), Number(close)) || Number(low) > Math.min(Number(open), Number(close))) throw new Error("candle snapshot has invalid OHLC ordering");
     if (!Number.isSafeInteger(row.n) || (row.n as number) < 0) throw new Error("trade count must be a non-negative safe integer");
-    const candle: CandleRecord = { schemaVersion: 1, source: "hyperliquid-info", sourceNetwork: source.sourceNetwork, underlying: source.underlying, sourceCoin: source.sourceCoin, interval: "1h", openTimeMs, closeTimeMs, open, high, low, close, volume, tradeCount: row.n as number, retrievedAtMs };
+    const source = request.source ?? { sourceNetwork: "testnet", underlying: request.coin, sourceCoin: request.coin };
+    const candle: CandleRecord = { schemaVersion: 1, source: "hyperliquid-info", sourceNetwork: source.sourceNetwork, underlying: source.underlying, sourceCoin: source.sourceCoin, interval: "1h", openTimeMs, closeTimeMs, open, high, low, close, volume, tradeCount: row.n as number, retrievedAtMs: request.retrievedAtMs };
     assertCandleRecord(candle);
     return candle;
-  });
+}
+
+function validateCandleSequence(candles: CandleRecord[]): void {
   const known = new Map<number, CandleRecord>();
   for (const candle of candles) {
     const prior = known.get(candle.openTimeMs);
@@ -89,11 +103,50 @@ export function parseCandleSnapshot(source: SourceEntry, body: string, retrieved
     known.set(candle.openTimeMs, candle);
   }
   for (let index = 1; index < candles.length; index++) if (candles[index].openTimeMs <= candles[index - 1].openTimeMs) throw new Error("candle snapshot must be strictly increasing");
+}
+
+export function selectClosedPage(rows: unknown[], request: ClosedPageRequest): { candles: CandleRecord[]; ignoredBefore: number; ignoredAfter: number } {
+  if (!Number.isSafeInteger(request.startTimeMs) || !Number.isSafeInteger(request.endTimeMs) || request.startTimeMs % HOUR_MS !== 0 || request.endTimeMs - request.startTimeMs < HOUR_MS - 1 || (request.endTimeMs + 1) % HOUR_MS !== 0) throw new Error("candle request bounds are invalid");
+  if (request.endTimeMs >= request.retrievedAtMs) throw new Error("candle request must be closed before retrieval");
+  const retained: unknown[] = [];
+  let ignoredBefore = 0;
+  let ignoredAfter = 0;
+  for (const entry of rows) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) throw new Error("candle snapshot row must be an object");
+    const openTimeMs = validTimestamp((entry as Record<string, unknown>).t, "open time");
+    if (openTimeMs < request.startTimeMs) {
+      if (openTimeMs !== request.startTimeMs - HOUR_MS || ++ignoredBefore > 1) throw new Error("candle snapshot has a non-adjacent row before the request");
+    } else if (openTimeMs > request.endTimeMs) {
+      if (openTimeMs !== request.endTimeMs + 1 || ++ignoredAfter > 1) throw new Error("candle snapshot has a non-adjacent row after the request");
+    } else {
+      retained.push(entry);
+    }
+  }
+  if (retained.length > 5_000) throw new Error("candle snapshot must contain at most 5,000 retained rows");
+  const candles = retained.map((entry) => parseCandleRow(entry, request));
+  validateCandleSequence(candles);
+  return { candles, ignoredBefore, ignoredAfter };
+}
+
+export function parseCandleSnapshot(source: SourceEntry, body: string, retrievedAtMs: number, request?: { startTime: number; endTime: number }): CandleRecord[] {
+  const rows = snapshotRows(body);
+  if (request) return selectClosedPage(rows, { coin: source.sourceCoin, startTimeMs: request.startTime, endTimeMs: request.endTime, retrievedAtMs, source }).candles;
+  if (rows.length > 5_000) throw new Error("candle snapshot must contain at most 5,000 rows");
+  const candles = rows.map((row) => parseCandleRow(row, { coin: source.sourceCoin, startTimeMs: 0, endTimeMs: Number.MAX_SAFE_INTEGER - 1, retrievedAtMs, source }));
+  validateCandleSequence(candles);
   return candles;
 }
 
+export function lastClosedHour(nowMs: number): { lastOpenTimeMs: number; endTimeMs: number } {
+  if (!Number.isSafeInteger(nowMs)) throw new Error("nowMs must be a safe integer timestamp");
+  const lastOpenTimeMs = (Math.floor(nowMs / HOUR_MS) * HOUR_MS) - HOUR_MS;
+  return { lastOpenTimeMs, endTimeMs: lastOpenTimeMs + HOUR_MS - 1 };
+}
+
 export function nextCandleRequest(source: SourceEntry, lastOpenTimeMs: number | null, nowMs: number): CandleRequest {
-  return { source, startTime: lastOpenTimeMs === null ? Math.max(0, nowMs - INITIAL_RANGE_MS) : lastOpenTimeMs + HOUR_MS, endTime: nowMs };
+  const closed = lastClosedHour(nowMs);
+  const startTimeMs = lastOpenTimeMs === null ? Math.max(0, closed.lastOpenTimeMs - INITIAL_RANGE_MS + HOUR_MS) : lastOpenTimeMs + HOUR_MS;
+  return { source, startTimeMs, endTimeMs: Math.min(closed.lastOpenTimeMs, startTimeMs + INITIAL_RANGE_MS - HOUR_MS) + HOUR_MS - 1 };
 }
 
 function dayPath(timestampMs: number): string {
@@ -125,39 +178,52 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
   const storage = openResearchPersistence(deps.root);
   const nowMs = deps.nowMs ?? Date.now();
   if (!Number.isSafeInteger(nowMs)) throw new Error("nowMs must be a safe integer timestamp");
-  const apiUrl = deps.apiUrl ?? "https://api.hyperliquid.xyz/info";
+  const registry = deps.profile?.sources ?? deps.registry;
+  if (!registry) throw new Error("loaded research network profile is required");
+  if (deps.profile && deps.registry && canonicalJson(deps.profile.sources) !== canonicalJson(deps.registry)) throw new Error("loaded profile and source registry differ");
   const requestFetch = deps.fetch ?? fetch;
+  const apiUrl = deps.profile?.profile.infoApiUrl;
+  if (!apiUrl && !deps.fetch) throw new Error("loaded research network profile is required");
   const sleep = deps.sleep ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
-  const registryBytes = canonicalJson(deps.registry);
-  const sourceRegistrySha256 = sha256(registryBytes);
+  const registryBytes = canonicalJson(registry);
+  const sourceRegistrySha256 = deps.profile?.sourceRegistrySha256 ?? sha256(registryBytes);
+  if (sha256(registryBytes) !== sourceRegistrySha256) throw new Error("loaded profile source registry hash differs");
+  const network = deps.profile?.profile.network ?? registry.network;
+  const profileSha256 = deps.profile?.profileSha256 ?? null;
   const fact = `facts/source-registries/${sourceRegistrySha256}.json`;
   if (storage.exists(fact) && storage.readText(fact) !== registryBytes) throw new Error("immutable source registry fact differs");
   if (!storage.exists(fact)) storage.writeAtomic(fact, registryBytes);
   const state = loadState(storage);
   const summary: CollectionSummary = { accepted: 0, conflicts: 0, failures: [] };
-  for (const source of deps.registry.sources) {
+  for (const source of registry.sources) {
+    if (!source.measurementEnabled) continue;
     const sourceKey = `${source.sourceNetwork}:${source.sourceCoin}`;
     const known = existingCandles(storage, source);
     const durableLastOpenTimeMs = Math.max(state.sources[sourceKey] ?? -1, ...[...known.values()].map((candle) => candle.openTimeMs));
     const request = nextCandleRequest(source, durableLastOpenTimeMs < 0 ? null : durableLastOpenTimeMs, nowMs);
-    if (request.startTime > request.endTime) continue;
+    if (request.startTimeMs > request.endTimeMs) continue;
     let candles: CandleRecord[] | undefined;
+    let ignoredBefore = 0;
+    let ignoredAfter = 0;
     let failure = "request failed";
     for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt++) {
       const retrievedAtMs = nowMs;
       await sleep(RETRY_DELAYS_MS[attempt]);
       let httpStatus: number | null = null;
       try {
-        const response = await requestFetch(apiUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "candleSnapshot", req: { coin: source.sourceCoin, interval: "1h", startTime: request.startTime, endTime: nowMs } }), signal: AbortSignal.timeout(10_000) });
+        const response = await requestFetch(apiUrl ?? "", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "candleSnapshot", req: { coin: source.sourceCoin, interval: "1h", startTime: request.startTimeMs, endTime: request.endTimeMs } }), signal: AbortSignal.timeout(10_000) });
         httpStatus = response.status;
         const body = await response.text();
         if (!response.ok) throw new Error(`info API ${response.status}: ${body}`);
-        candles = parseCandleSnapshot(source, body, retrievedAtMs, request);
-        storage.append(`journal/requests/${dayPath(retrievedAtMs)}.jsonl`, canonicalJson({ schemaVersion: 1, sourceKey, startTime: request.startTime, endTime: nowMs, retrievedAtMs, httpStatus: response.status, error: null, returnedRows: candles.length }));
+        const page = selectClosedPage(snapshotRows(body), { coin: source.sourceCoin, startTimeMs: request.startTimeMs, endTimeMs: request.endTimeMs, retrievedAtMs, source });
+        candles = page.candles;
+        ignoredBefore = page.ignoredBefore;
+        ignoredAfter = page.ignoredAfter;
+        storage.append(`journal/requests/${dayPath(retrievedAtMs)}.jsonl`, canonicalJson({ schemaVersion: 2, sourceKey, network, profileSha256, startTimeMs: request.startTimeMs, endTimeMs: request.endTimeMs, retrievedAtMs, httpStatus: response.status, error: null, returnedRows: candles.length, ignoredBefore, ignoredAfter } satisfies CandleRequestJournal));
         break;
       } catch (error) {
         failure = error instanceof Error ? error.message : String(error);
-        storage.append(`journal/requests/${dayPath(retrievedAtMs)}.jsonl`, canonicalJson({ schemaVersion: 1, sourceKey, startTime: request.startTime, endTime: nowMs, retrievedAtMs, httpStatus, error: failure, returnedRows: 0 }));
+        storage.append(`journal/requests/${dayPath(retrievedAtMs)}.jsonl`, canonicalJson({ schemaVersion: 2, sourceKey, network, profileSha256, startTimeMs: request.startTimeMs, endTimeMs: request.endTimeMs, retrievedAtMs, httpStatus, error: failure, returnedRows: 0, ignoredBefore: 0, ignoredAfter: 0 } satisfies CandleRequestJournal));
         if (error instanceof CandleBatchConflictError) {
           for (const candle of error.conflicts) storage.append(`quarantine/candles/${dayPath(nowMs)}.jsonl`, canonicalJson(candle));
           summary.conflicts += error.conflicts.length;
@@ -186,9 +252,9 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
       }
     }
     if (accepted.length) {
-      const shard = `raw/candles/${dayPath(nowMs)}/${source.underlying}/${request.startTime}-${request.endTime}-${nowMs}.jsonl.gz`;
+      const shard = `raw/candles/${dayPath(nowMs)}/${source.underlying}/${request.startTimeMs}-${request.endTimeMs}-${nowMs}.jsonl.gz`;
       const provenance = `${shard}.provenance.json`;
-      const provenanceBytes = canonicalJson({ schemaVersion: 1, sourceRegistrySha256 });
+      const provenanceBytes = canonicalJson({ schemaVersion: 1, sourceRegistrySha256, network, profileSha256, startTimeMs: request.startTimeMs, endTimeMs: request.endTimeMs, ignoredBefore, ignoredAfter } satisfies CandleRawManifest);
       const provenanceMatches = storage.exists(provenance) ? storage.readText(provenance) === provenanceBytes : storage.writeNew(provenance, provenanceBytes);
       if (!provenanceMatches) {
         for (const candle of accepted) storage.append(`quarantine/candles/${dayPath(nowMs)}.jsonl`, canonicalJson(candle));
@@ -211,7 +277,7 @@ export async function collectSources(deps: CollectionDeps): Promise<CollectionSu
     }
     state.sources[sourceKey] = lastDurable;
   }
-  storage.writeAtomic("state/collector.json", canonicalJson({ schemaVersion: 1, sourceRegistrySha256, sources: state.sources }));
+  storage.writeAtomic("state/collector.json", canonicalJson({ schemaVersion: 2, sourceRegistrySha256, network, profileSha256, sources: state.sources }));
   try {
     Object.assign(summary, publishRollingManifest(deps.root, sourceRegistrySha256, storage));
   } catch (error) {
