@@ -2,7 +2,7 @@ import { openResearchPersistence, type ResearchPersistence } from "./persistence
 import { pairCorrelation, parseCorrelations } from "../correlation.js";
 import { expectedIntervals, HOUR, quality, returnModeFor, sessionDates, trailingFresh, classifyCandle } from "./returns.js";
 import type { QualityMode, ReturnRecord, Window } from "./returns.js";
-import { nearestCorrelationResult, shrinkLambda, structuredTargets, weightedCorrelation } from "./matrix.js";
+import { nearestCorrelationResult, structuredTargets, weightedCorrelation } from "./matrix.js";
 import type { PairEstimate } from "./matrix.js";
 import { canonicalJson, operationError, readCandlePartition, readDerivedDataset, readSourceRegistryFact, sha256, verifyManifest, writeOperationState } from "./store.js";
 import type { CandleRecord, CorrelationArtifact, DataManifest, DerivedManifestV2, SourceEntry } from "./types.js";
@@ -279,17 +279,15 @@ function calibrateImpl(input: CalibrationInput, storage: ResearchPersistence): C
     let status: "direct" | "fallback" | "quarantined";
     let reason: string;
     let value = 0;
-    let lambda = 0;
+    const lambda = 0;
     let fallbackUsed = false;
-    if (estimate?.eligible) lambda = shrinkLambda(estimate, shrinkTarget);
-    const directCorrelation = estimate?.eligible ? (1 - lambda) * estimate.correlation + lambda * shrinkTarget : null;
+    const directCorrelation = estimate?.eligible ? estimate.correlation : null;
     const decision = admitPair(a, b, { network: derived.manifest.network, eligible: estimate?.eligible === true, correlation: directCorrelation, reason: ownReason ?? "insufficient-pair-quality" }, input.profile);
     status = decision.kind === "quarantined" ? "quarantined" : decision.kind;
     reason = decision.reason;
     if (decision.kind !== "quarantined") {
       value = decision.correlation;
       fallbackUsed = decision.kind === "fallback";
-      if (fallbackUsed) lambda = 0;
       admitted.add(key);
     }
     baseTarget[left][right] = baseTarget[right][left] = value;

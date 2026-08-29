@@ -179,6 +179,17 @@ function rewriteReturns(fixture: ReturnType<typeof calibrationRoot>, change: (ro
   writeFileSync(fixture.input.derivedManifestPath, canonicalJson(manifest));
 }
 
+function rewriteAllReturns(fixture: ReturnType<typeof calibrationRoot>, change: (row: Record<string, unknown>) => void): void {
+  const manifest = JSON.parse(readFileSync(fixture.input.derivedManifestPath, "utf8")) as { returns: { path: string; sha256: string; rows: number } };
+  const path = join(fixture.root, manifest.returns.path);
+  const rows = gunzipSync(readFileSync(path)).toString("utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+  rows.forEach(change);
+  const bytes = gzipSync(`${rows.map(canonicalJson).join("\n")}\n`);
+  writeFileSync(path, bytes);
+  manifest.returns.sha256 = sha256(bytes);
+  writeFileSync(fixture.input.derivedManifestPath, canonicalJson(manifest));
+}
+
 test("calibration uses daily settlement mode when either same-cluster source has a session", () => {
   const session = { ...source("B", "crypto"), calendar: "session" as const, session: { timeZone: "UTC", weekdays: [1, 2, 3, 4, 5], openLocal: "09:00", closeLocal: "17:00", closedDates: [] } };
   const sample = calibrationPairSample([], source("A", "crypto"), session, { asOfMs: AS_OF_MS, lookbackMs: 180 * 86_400_000 });
@@ -232,6 +243,22 @@ test("calibration preserves signed negatives and writes a byte-identical immutab
     writeFileSync(join(first.root, "artifacts", "candidates", `${artifact.modelVersion}.json`), "different");
     assert.throws(() => calibrate(first.input), /different bytes/);
     assert.equal(JSON.parse(readFileSync(join(first.root, "state", "calibrator.json"), "utf8")).status, "failed");
+  } finally {
+    rmSync(first.root, { recursive: true, force: true });
+    rmSync(second.root, { recursive: true, force: true });
+  }
+});
+
+test("an admitted direct pair is unchanged when unrelated pair evidence changes", () => {
+  const first = calibrationRoot();
+  const second = calibrationRoot();
+  try {
+    rewriteAllReturns(second, (row) => {
+      if (row.underlying === "C") row.value = -(row.value as number);
+    });
+    const original = calibrate(first.input).directPairs.find((entry) => entry.pair[0] === "A" && entry.pair[1] === "B");
+    const changed = calibrate(second.input).directPairs.find((entry) => entry.pair[0] === "A" && entry.pair[1] === "B");
+    assert.equal(changed?.correlation, original?.correlation);
   } finally {
     rmSync(first.root, { recursive: true, force: true });
     rmSync(second.root, { recursive: true, force: true });

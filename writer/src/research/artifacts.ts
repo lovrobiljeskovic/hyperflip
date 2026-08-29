@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import type { MarketInfo } from "../markets.js";
-import { parseCorrelations, type CorrelationTable } from "../correlation.js";
+import { pairCorrelation, parseCorrelations, type CorrelationTable } from "../correlation.js";
 import type { ValidationReport } from "./replay.js";
 import { trailingFresh } from "./returns.js";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
@@ -180,6 +180,7 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
   }
   if (!same(pairs.keys(), expectedPairs)) fail("pair eligibility must contain every canonical pair exactly once");
   const partitioned = new Map<string, "direct" | "fallback" | "quarantined">();
+  const fallbackRecords = new Map<string, { pair: [string, string]; correlation: number }>();
   const pairRecords = (name: "directPairs" | "fallbackPairs", status: "direct" | "fallback", expectedReason: string): void => {
     if (!Array.isArray(root[name])) fail(`${name} must be an array`);
     for (const value of root[name] as unknown[]) {
@@ -189,8 +190,9 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
       if (left >= right) fail(`canonical pair required for ${left}:${right}`);
       const key = pairKey(left, right);
       if (partitioned.has(key)) fail(`pair evidence duplicates ${key}`);
-      if (pairs.get(key)?.status !== status || entry.reason !== expectedReason) fail(`${name} disagrees with pair eligibility for ${key}`);
-      finite(entry.correlation, `${name} correlation`);
+      if (pairs.get(key)?.status !== status || pairs.get(key)?.reason !== expectedReason || entry.reason !== expectedReason) fail(`${name} disagrees with pair eligibility for ${key}`);
+      const correlation = finite(entry.correlation, `${name} correlation`);
+      if (status === "fallback") fallbackRecords.set(key, { pair: [left, right], correlation });
       partitioned.set(key, status);
     }
   };
@@ -226,6 +228,18 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
   if (profile) {
     assertLoadedResearchNetworkProfile(profile);
     if (profile.profile.network !== root.network || profile.profileSha256 !== profileSha256 || profile.sourceRegistrySha256 !== sourceRegistrySha256 || profile.marketRegistrySha256 !== marketRegistrySha256 || profile.deploymentRegistrySha256 !== deploymentRegistrySha256 || profile.baselineCorrelationSha256 !== baselineCorrelationSha256) fail("artifact profile identity mismatch");
+    const baseline = parseCorrelations(profile.baselineCorrelationRaw);
+    const profileSources = new Map(profile.sources.sources.map((source) => [source.underlying, source]));
+    for (const [key, record] of fallbackRecords) {
+      const [left, right] = record.pair;
+      const a = baseline.underlyings[left];
+      const b = baseline.underlyings[right];
+      const sourceA = profileSources.get(left);
+      const sourceB = profileSources.get(right);
+      if (a === undefined || b === undefined || sourceA === undefined || sourceB === undefined) fail(`fallback pair ${key} is missing an exact baseline entry`);
+      const expected = pairCorrelation(a, b, sourceA.cluster === sourceB.cluster, left === right);
+      if (record.correlation !== expected) fail(`fallback pair ${key} correlation differs from the exact baseline`);
+    }
   }
   const ageMs = nowMs - dataAsOfMs;
   const eligibleUnderlyings = new Set(eligible);

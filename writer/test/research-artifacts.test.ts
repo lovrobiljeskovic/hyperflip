@@ -21,12 +21,12 @@ const source = (underlying: string, fallbackEligible = false): SourceEntry => ({
   calendar: "continuous", measurementEnabled: true, fallbackEligible,
 });
 
-function setup(artifactInput: CorrelationArtifact = VALID): {
+function setup(artifactInput: CorrelationArtifact = VALID, fallbackEligible = false): {
   root: string; artifact: CorrelationArtifact; raw: string; candidate: string; manifest: DataManifest;
   sources: SourceRegistry; markets: Map<string, MarketInfo>; profile: LoadedResearchNetworkProfile; validation: ValidationReport;
 } {
   const root = mkdtempSync(join(tmpdir(), "hype-artifact-"));
-  const sources: SourceRegistry = { schemaVersion: 2, network: "testnet", sources: [source("BTC"), source("ETH")] };
+  const sources: SourceRegistry = { schemaVersion: 2, network: "testnet", sources: [source("BTC", fallbackEligible), source("ETH", fallbackEligible)] };
   const sourceBytes = canonicalJson(sources);
   const sourceRegistrySha256 = sha256(sourceBytes);
   const sourcePath = join(root, "facts", "source-registries", `${sourceRegistrySha256}.json`);
@@ -155,7 +155,7 @@ test("artifact validation requires exact eligible entries and every canonical pa
 test("artifact validation requires operator approval for fallback pairs and quarantine reasons", () => {
   const fixture = setup();
   try {
-    const fallback = structuredClone(fixture.artifact); fallback.quality.pairEligibility[0] = { pair: ["BTC", "ETH"], status: "fallback", reason: "operator-reviewed-testnet-bootstrap" }; fallback.directPairs = []; fallback.fallbackPairs = [{ pair: ["BTC", "ETH"], correlation: 0.05, reason: "operator-reviewed-testnet-bootstrap" }];
+    const fallback = structuredClone(fixture.artifact); fallback.quality.pairEligibility[0] = { pair: ["BTC", "ETH"], status: "fallback", reason: "operator-reviewed-testnet-bootstrap" }; fallback.directPairs = []; fallback.fallbackPairs = [{ pair: ["BTC", "ETH"], correlation: 0.05000000000000001, reason: "operator-reviewed-testnet-bootstrap" }];
     assert.throws(() => validate(fixture, fallback), /fallback.*operator-approved/);
     const quarantined = structuredClone(fixture.artifact); quarantined.quality.quarantinedUnderlyings = [{ underlying: "ETH", reason: "" }]; quarantined.quality.eligibleUnderlyings = ["BTC"]; delete quarantined.clusters.crypto.ETH; quarantined.quality.pairEligibility[0] = { pair: ["BTC", "ETH"], status: "quarantined", reason: "missing" }; quarantined.directPairs = []; quarantined.quarantinedPairs = [{ pair: ["BTC", "ETH"], reason: "missing" }];
     assert.throws(() => validate(fixture, quarantined), /quarantine reason/);
@@ -173,7 +173,7 @@ test("artifact validation keeps measurement eligibility independent from approve
     artifact.sourceRegistrySha256 = sourceRegistrySha256;
     artifact.quality.pairEligibility = [{ pair: ["BTC", "ETH"], status: "fallback", reason: "operator-reviewed-testnet-bootstrap" }];
     artifact.directPairs = [];
-    artifact.fallbackPairs = [{ pair: ["BTC", "ETH"], correlation: 0.05, reason: "operator-reviewed-testnet-bootstrap" }];
+    artifact.fallbackPairs = [{ pair: ["BTC", "ETH"], correlation: 0.05000000000000001, reason: "operator-reviewed-testnet-bootstrap" }];
     const manifest = { ...fixture.manifest, sourceRegistrySha256 };
     artifact.dataManifestSha256 = sha256(canonicalJson(manifest));
     const raw = `${canonicalJson(artifact)}\n`;
@@ -233,6 +233,30 @@ test("promotion refuses stale, rejected, unverified, and baseline-mismatched can
         writeFileSync(join(fixture.root, fixture.validation.baselineSnapshotPath), "changed");
       }
       assert.throws(() => promoteCandidate(fixture.root, fixture.candidate, fixture.profile, fixture.markets, NOW), new RegExp(kind === "stale" ? "30 hours" : kind, "i"));
+    } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+  }
+});
+
+test("promotion rejects fallback values and eligibility reasons that differ from the exact approved baseline", () => {
+  for (const kind of ["correlation", "reason", "missing"] as const) {
+    const fixture = setup(VALID, true);
+    try {
+      const artifact = structuredClone(fixture.artifact);
+      artifact.quality.pairEligibility = [{ pair: ["BTC", "ETH"], status: "fallback", reason: kind === "reason" ? "wrong-reason" : "operator-reviewed-testnet-bootstrap" }];
+      artifact.directPairs = [];
+      artifact.fallbackPairs = [{ pair: ["BTC", "ETH"], correlation: kind === "correlation" ? 0.7 : 0.05000000000000001, reason: "operator-reviewed-testnet-bootstrap" }];
+      let profile = fixture.profile;
+      if (kind === "missing") {
+        const baseline = JSON.parse(profile.baselineCorrelationRaw);
+        delete baseline.clusters.crypto.ETH;
+        const baselineCorrelationRaw = canonicalJson(baseline);
+        profile = { ...profile, baselineCorrelationRaw, baselineCorrelationSha256: sha256(baselineCorrelationRaw) };
+        artifact.baselineCorrelationSha256 = profile.baselineCorrelationSha256;
+      }
+      const raw = `${canonicalJson(artifact)}\n`;
+      writeFileSync(fixture.candidate, raw);
+      writeFileSync(join(fixture.root, "artifacts", "candidates", `${artifact.modelVersion}.validation.json`), `${canonicalJson({ ...fixture.validation, candidateSha256: sha256(raw) })}\n`);
+      assert.throws(() => promoteCandidate(fixture.root, fixture.candidate, profile, fixture.markets, NOW), /fallback|pair eligibility/i);
     } finally { rmSync(fixture.root, { recursive: true, force: true }); }
   }
 });
