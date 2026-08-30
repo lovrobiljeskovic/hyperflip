@@ -107,10 +107,10 @@ function validationReport(raw: string): ValidationReport {
   return report;
 }
 
-function verified(root: string, candidatePath: string, storage: ResearchPersistence, profile: LoadedResearchNetworkProfile, nowMs: number): { candidate: CorrelationArtifact; manifest: DataManifest; validation: ValidationReport; bytes: string; candidateSha256: string; validationSha256: string } {
+function verified(root: string, candidatePath: string, storage: ResearchPersistence, profile: LoadedResearchNetworkProfile, nowMs: number, options: { allowRejectedProjectionEvidence?: boolean } = {}): { candidate: CorrelationArtifact; manifest: DataManifest; validation: ValidationReport; bytes: string; candidateSha256: string; validationSha256: string } {
   const path = researchRelativePath(root, candidatePath);
   const bytes = storage.readText(path);
-  const candidate = parseCorrelationArtifact(bytes, nowMs, profile.sources, parseMarkets(profile.marketRegistryRaw), profile).artifact;
+  const candidate = parseCorrelationArtifact(bytes, nowMs, profile.sources, parseMarkets(profile.marketRegistryRaw), profile, options).artifact;
   const manifestPath = `manifests/${candidate.dataManifestSha256}.json`;
   const manifest = JSON.parse(storage.readText(manifestPath)) as DataManifest;
   assertDataManifest(manifest);
@@ -122,6 +122,7 @@ function verified(root: string, candidatePath: string, storage: ResearchPersiste
   const validationBytes = storage.readText(validationPath);
   const validation = validationReport(validationBytes);
   assertValidationArtifactIdentity(bytes, candidate, validation, profile);
+  if (candidate.quality.maxProjectionError > candidate.policy.maxProjectionError && (validation.decision !== "Rejected" || !validation.deterministicRerunMatches)) throw new Error("report rejected projection evidence is inconsistent");
   let baseline: string;
   try { baseline = researchRelativePath(root, validation.baselineSnapshotPath); } catch { throw new Error("report baseline snapshot mismatch"); }
   if (sha256(storage.read(baseline)) !== validation.baselineSha256) throw new Error("report baseline snapshot mismatch");
@@ -224,7 +225,7 @@ export function generateReport(rootInput: string, candidateInput: string, derive
   const storage = openResearchPersistence(root);
   assertLoadedResearchNetworkProfile(profile);
   assertResearchRootIdentity(storage, researchRootIdentity(profile));
-  const current = verified(root, candidateInput, storage, profile, nowMs);
+  const current = verified(root, candidateInput, storage, profile, nowMs, { allowRejectedProjectionEvidence: true });
   const derived = readDerivedDataset(root, derivedManifestInput, storage);
   if (derived.manifest.network !== profile.profile.network || derived.manifest.dataManifestSha256 !== current.candidate.dataManifestSha256 || derived.manifest.sourceRegistrySha256 !== profile.sourceRegistrySha256 || derived.manifest.sourceRegistrySha256 !== current.candidate.sourceRegistrySha256) throw new Error("report derived manifest identity mismatch");
   if (current.validation.schemaVersion !== 3 || current.validation.derivedManifestPath !== derived.manifestPath || current.validation.derivedManifestSha256 !== derived.manifestSha256

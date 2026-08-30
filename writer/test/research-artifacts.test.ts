@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import type { MarketInfo } from "../src/config.js";
-import { promoteCandidate, validateArtifact } from "../src/research/artifacts.js";
+import { parseCorrelationArtifact, promoteCandidate, validateArtifact } from "../src/research/artifacts.js";
 import type { ValidationReport } from "../src/research/replay.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
 import type { CorrelationArtifact, DataManifest, DerivedManifestV2, SourceEntry, SourceRegistry } from "../src/research/types.js";
@@ -123,6 +123,19 @@ test("artifact validation accepts the exact schema and immutable reference closu
       assert.notEqual((result.artifact as unknown as Record<string, unknown>)[key], undefined, key);
     }
     assert.deepEqual([...result.model.eligibleUnderlyings], ["BTC", "ETH"]);
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test("default parsing and promotion reject over-policy projection error", () => {
+  const fixture = setup();
+  try {
+    const artifact = structuredClone(fixture.artifact);
+    artifact.quality.maxProjectionError = 0.314324004721122;
+    const raw = `${canonicalJson(artifact)}\n`;
+    assert.throws(() => parseCorrelationArtifact(raw, NOW, fixture.sources, fixture.markets, fixture.profile), /maxProjectionError exceeds policy/);
+    writeFileSync(fixture.candidate, raw);
+    writeFileSync(join(fixture.root, "artifacts", "candidates", `${artifact.modelVersion}.validation.json`), `${canonicalJson({ ...fixture.validation, candidateSha256: sha256(raw), decision: "Rejected" })}\n`);
+    assert.throws(() => promoteCandidate(fixture.root, fixture.candidate, fixture.profile, fixture.markets, NOW), /maxProjectionError exceeds policy/);
   } finally { rmSync(fixture.root, { recursive: true, force: true }); }
 });
 

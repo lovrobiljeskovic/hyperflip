@@ -102,7 +102,7 @@ function validateMatrix(value: unknown, size: number, label: string, nullable = 
   }
 }
 
-export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), sources?: SourceRegistry, markets?: Map<string, MarketInfo>, profile?: LoadedResearchNetworkProfile): ValidatedArtifact {
+export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), sources?: SourceRegistry, markets?: Map<string, MarketInfo>, profile?: LoadedResearchNetworkProfile, options: { allowRejectedProjectionEvidence?: boolean } = {}): ValidatedArtifact {
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { fail("malformed JSON"); }
   const artifact = parsed as CorrelationArtifact;
@@ -162,7 +162,7 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
   if (!same(Object.keys(last), matrixOrder)) fail("lastUsableObservationMs must cover matrixOrder exactly");
   for (const [underlying, value] of Object.entries(last)) if (value !== null && (!Number.isSafeInteger(value) || (value as number) < 0)) fail(`lastUsableObservationMs.${underlying} must be a safe non-negative integer or null`);
   finite(quality.maxProjectionError, "maxProjectionError");
-  if ((quality.maxProjectionError as number) > 0.10) fail("maxProjectionError exceeds policy");
+  if ((quality.maxProjectionError as number) > 0.10 && !options.allowRejectedProjectionEvidence) fail("maxProjectionError exceeds policy");
   finite(quality.highamProjectionDelta, "highamProjectionDelta");
   validateMatrix(quality.signedPsdTarget, matrixOrder.length, "signedPsdTarget");
   const diagnostics = object(quality.diagnosticMatrices, "diagnosticMatrices");
