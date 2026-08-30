@@ -5,18 +5,19 @@ Evidence dates: 2026-08-28 local fixture acceptance; 2026-08-30 Ubuntu testnet o
 ## Acceptance state
 
 - Local fixture implementation: **Passed**. The final Task 8 commands are recorded below.
-- Testnet operational acceptance: **PARTIAL / Rejected**, not full Task 9 acceptance. The approved
-  Ubuntu run proved anchored Linux persistence and the live
-  collect → derive → calibrate → replay → Rejected report path. The statistical candidate was not
-  eligible for promotion.
-- Statistical decision: **Rejected**. The exact candidate projection error
-  `0.314324004721122` exceeded the `0.10` policy limit. This is not evidence about production
-  expected value.
+- Testnet operational acceptance: **PARTIAL / Supported candidate**, not full Task 9 acceptance.
+  The approved fresh Ubuntu rerun proved anchored Linux persistence and the live
+  collect → derive → calibrate → replay → Supported report path. Promotion and activation were
+  outside the approval boundary.
+- Latest statistical decision: **Supported**. Candidate `2026-08-30.6546a1af` recorded projection
+  error `1.3322676295501878e-15` under the unchanged `0.10` policy. The preceding Rejected decision
+  remains immutable historical evidence. Neither result is evidence about production expected value.
 - Mainnet: **Not authorized and not accessed**.
 
-The run deliberately did not promote a candidate, restart either service, request a runtime quote,
-or mint a parlay after the Rejected verdict. Full operational acceptance remains pending the
-criteria listed at the end of this document.
+Neither run promoted a candidate, restarted either service, requested a runtime quote, or minted a
+parlay. The first stopped at `Rejected`; the approved rerun stopped at the reviewed `Supported`
+candidate boundary. Full operational acceptance remains pending the criteria listed at the end of
+this document.
 
 ## Scope and safety boundary
 
@@ -206,6 +207,135 @@ The two negative direct targets were recorded as clipped-negative evidence. Cand
 recorded Higham delta `9.318003980283441e-11` and maximum projection error
 `0.314324004721122`.
 
+## Projection diagnosis and local corrective candidate
+
+On 2026-08-30 the rejected candidate and validation sidecar were copied read-only from the testnet
+research root into local temporary storage. Their SHA-256 values matched the immutable evidence
+above: candidate `a2aacaf6cc71c17ed0e557599cb786d433fc584c2a59f4f1c841f5c623137e9c`
+and validation `6b784000f45f2e0b3f2676d622e486ed90a6a48ec67f62024ef201192de8084c`.
+
+Reconstruction in `quality.matrixOrder` proved:
+
+| Matrix | Minimum eigenvalue | Maximum projection movement |
+|---|---:|---:|
+| Exact static fallback only | `0.06964768080441495` | numerical noise only |
+| Measured BTC/ETH/HYPE/SOL submatrix | `0.5162193766557625` | numerical noise only |
+| Six direct plus 49 fallback pairs | `-0.5758876911324072` | `0.314324004721122` |
+| Mixed matrix without ZEC | `0.20002524` | numerical noise only |
+
+All 49 fallback records matched the exact content-addressed baseline and BTC, ETH, HYPE, SOL, and
+ZEC all matched the `crypto` cluster mapping. The largest movement was `HYPE/ZEC`, from fallback
+`0.9084135227829496` to projected `0.5940895180618276`. The next three were `SOL/ZEC`
+`0.2105844168675146`, `BTC/ZEC` `0.20649640080368137`, and `ETH/ZEC`
+`0.2053094301216194`.
+
+Every three-asset principal submatrix formed from one measured crypto pair plus ZEC's two static
+fallback edges was indefinite. Their determinants ranged from `-0.09657609177145887` for
+BTC/ETH/ZEC to `-0.7018727255833137` for BTC/HYPE/ZEC. Reverting the two negative direct pairs to
+fallback still left minimum eigenvalue `-0.2827748448329695` and projection movement
+`0.18582740139388332`; therefore negative direct evidence worsened the result but was not the root
+cause. The defect was pairwise splicing of two individually valid dependence models without a
+structural compatibility admission check.
+
+The local correction preserves exact direct and exact static fallback values, then quarantines
+only fallback edges participating in an indefinite mixed direct/fallback three-asset principal
+submatrix. It does not alter the fixed `0.10` gate. A regression using the incompatible matrix was
+observed failing before the calibration change and passing afterward.
+
+The immutable manifest, derived manifest, and public registry copies matched the hashes recorded
+above. Two deterministic local calibrations produced candidate SHA-256
+`209d96f8eaea766eee935042edb023e34e17157e88ee6c11d02d5689783e21e3`. The candidate keeps all six
+direct values unchanged, quarantines only `BTC/ZEC`, `ETH/ZEC`, `HYPE/ZEC`, and `SOL/ZEC` with
+reason `structurally-incompatible-fallback`, retains the other 45 fallback pairs, and records
+maximum projection error `1.3322676295501878e-15` with policy `0.10` unchanged. This is local
+candidate evidence only; it is not promoted or testnet acceptance.
+
+The local replay used the original public seed `task9-testnet-0225c0d-20260830`, the exact copied
+derived closure, 20,000 draws, and a 24-hour origin stride. It returned `Supported` with
+`deterministicRerunMatches: true`. The validation sidecar SHA-256 is
+`c480ec7853a9e81f44b32381853802ef4dbe0a1bae150be093ca5e6063663236`; rerunning replay reused that
+sidecar and left its hash unchanged. Its identity closure includes candidate
+`209d96f8eaea766eee935042edb023e34e17157e88ee6c11d02d5689783e21e3`, manifest
+`dda295a1a802dc1eb4a0902565e1d9ba631abfe4f4685f354951bbc5ecc7b4c8`, and derived-manifest file
+`2950f8941cdfc11d47fc324bd1c4e70c561d4b142a1c5fd2d78a733afce9c00b`. The bootstrap interval was
+unchanged: point `-0.05589159529138254`, lower `-0.08873309844880416`, upper
+`-0.021856351266114092`. The `Supported` decision also confirms the replay's internal matrix and
+non-finite checks were clear. Independent local review found no remaining code or test findings
+after adding coverage that unrelated compatible fallback edges remain admitted.
+
+At that stage, the local replay did not change the live `Rejected` state or authorize shared-testnet
+mutation. It established the reviewed candidate used by the subsequently approved fresh rerun below.
+
+## Approved fresh Ubuntu rerun
+
+The operator explicitly approved a fresh bounded live rerun on 2026-08-30. The authorization
+covered `collect → derive → calibrate → replay → report`; it did not cover promotion, service
+restart, quote issuance, or minting. Mainnet remained prohibited and was not accessed.
+
+Read-only preflight re-established Ubuntu host `ubuntu-4gb-fsn1-1`, the testnet-only Info profile,
+chain `998` through the research-configured writer RPC, deployed vault code, exact registry hashes,
+`RESEARCH_REQUIRE_ANCHORED_FS=1`, `hype:hype` mode `0700` root/state, 32,893,460 KiB free, active
+keeper/writer/caddy services, inactive rotation, and no champion. The legacy `TESTNET_RPC` value
+returned HTTP 404, so it was not used; the separately configured research writer RPC returned chain
+`998`. No endpoint value was printed. Keeper PID `255151` and writer PID `255152` were unchanged
+before and after the flow.
+
+The host deployment excludes `.git`, so the staged scratch runtime was bound to local branch HEAD
+`66e58f21dd57e3df0de780e378d636cfebd76df0` plus byte hashes. Only the reviewed calibration source
+and regression test were uploaded to `/tmp/hype-correlation-rerun.4Y6iv9`; their SHA-256 values were
+`030919a12d4d22052094d448e2fb69d97a967bf85e53891a70c64a014f605870` and
+`3c53800162600d3440f5c6467e17fe5bd60ef2ed6b5353a162cb7f475f7d782d`. Package-lock SHA-256 stayed
+`29968c39a47cf085f1b9f29a0ea73fdc3252b9865f12cbc2690491b77d1c453c`. Ubuntu anchored persistence
+passed 10/10. The broad typecheck remained red because the intentionally minimal host deployment
+contains stale test copies; its reported errors were confined to `server.test.ts` and
+`spotPx.test.ts`. The pinned source-only check of `src/index.ts` and `src/research/cli.ts` exited 0.
+The within-host scratch copy inherited the deployed `waitlist.json`; cleanup detected it without
+reading or printing it, removed the complete scratch directory after the report, and left the live
+`/opt/hype/writer/waitlist.json` untouched.
+
+The first collect invocation exited 1 before CLI initialization because scratch lacked the sibling
+`out/` ABI path. It wrote no operation record or research artifact. Linking the existing deployed
+`/opt/hype/out` into scratch corrected only that runtime path. The bounded retry then succeeded:
+
+- collect run `20260830T172403471Z-f0bede65-16d8-44d8-b1f8-22ceddd5e487`, 77 accepted, zero
+  conflicts/failures, data manifest
+  `6546a1afced06ed19a894afed665097da374a9763a4bd0527365ba2b61e26c10`;
+- derived-manifest file SHA-256
+  `977108d24ff001d0e3c34f7c0041265340853d5bdd2a9994d53433ef4c8e6b8e`, containing 17,996 returns
+  (`3dd4ca57f308861b1b45e0b4556c4c38ab7036a9225c722b7b09792512d510a3`) and 19,153 exclusions
+  (`69f3372629616097a22f6aca47fc5666d38f2df60b4b006ee448a8665775779e`);
+- calibrate run `20260830T173506667Z-7f94ffc8-e317-4510-8b71-32342bb3ddc0`, candidate
+  `2026-08-30.6546a1af`, SHA-256
+  `8977a5e1dfcf19eb29a5a49d1aa83bd3a6873dd7218bca7758e0501f66a8fde2`;
+- replay run `20260830T173651725Z-e52db245-1514-4083-8df4-6b76b7da24b5`, from
+  `2026-08-30T17:36:51.725Z` through `18:32:34.176Z`, decision `Supported` and
+  `deterministicRerunMatches: true`; and
+- report run `20260830T183712915Z-1467d544-b4fe-4a58-8709-1101733be641`, report SHA-256
+  `2ea6363b6547ee8f3f795403e462d2490725a990af93ffe39e243c9a71b71216`.
+
+The exact redacted shell-command transcript and immutable terminal-record SHA-256 values for this
+fresh rerun were not carried into the handover. The run IDs and independently verified artifact
+hashes above prove the recorded candidate outcome, but this section does not claim the command-level
+audit closure required for full Task 9 acceptance.
+
+The derive process completed its atomic outputs, but the SSH transport did not close after the
+remote process disappeared. The local dead connection was interrupted, so no derive exit code is
+claimed; all three immutable outputs were then independently parsed and hash-verified before
+calibration.
+
+The fresh candidate kept the same six direct pairs, retained 45 exact static fallbacks, and
+quarantined only `BTC/ZEC`, `ETH/ZEC`, `HYPE/ZEC`, and `SOL/ZEC` as
+`structurally-incompatible-fallback`. It recorded all eleven eligible underlyings, maximum
+projection error `1.3322676295501878e-15`, Higham delta `5.257187179646951e-15`, and literal policy
+`maxProjectionError: 0.10`. Validation SHA-256 is
+`6f84eca8caba3d9ccee6d84ad2923656bbc3bb44ee58067a347fd11db0fd25b3`; its 2,000-sample, 96-hour
+bootstrap improvement was point `-0.0871509624055987`, lower `-0.15098646065688734`, upper
+`-0.018561978540711985`. Candidate, validation, and report are `hype:hype` mode `0600`.
+
+No champion exists. Neither keeper nor writer was restarted or modified, and no quote, mint,
+resolution, artificial void, rotation, or backup upload was attempted. Promotion and activation
+require a separate explicit approval after review of this Supported live evidence.
+
 ## Replay and Rejected decision
 
 The first exact replay used the same candidate, derived closure, and public seed under an
@@ -281,7 +411,7 @@ Generation exited 0 in 4.03 seconds with peak RSS 212,280 KiB. The fuller precis
 identity closure remain verified by the immutable candidate, sidecar, derived closure, and hashes
 above.
 
-## Immutable operation record summary
+## Original Rejected-run immutable operation record summary
 
 | Operation | Run ID / status | Record SHA-256 |
 |---|---|---|
@@ -298,11 +428,11 @@ above.
 Derive is a synchronous artifact-producing CLI branch rather than an operation-wrapped branch; its
 exit and content-addressed closure are recorded above.
 
-## Durability and backup boundary
+## Original Rejected-run durability and backup boundary
 
-At the final remote check, root/state remained `hype:hype` mode `0700`, device `2049`, inodes
-`414705` and `414706`; candidate and validation hashes were unchanged. No champion exists because
-the candidate is Rejected.
+At the final remote check for the original run, root/state remained `hype:hype` mode `0700`, device
+`2049`, inodes `414705` and `414706`; candidate and validation hashes were unchanged. No champion
+existed because that candidate was Rejected.
 
 Keeper PID `255151` and writer PID `255152` remained active with their original
 `2026-08-30T03:18:03Z` starts from preflight through the final report. No task command restarted,
@@ -336,19 +466,19 @@ reporting, persistence reopen, rotation with a stable root marker, and in-memory
 synthetic Supported value exists only to exercise local lifecycle code; it is not live statistical
 evidence.
 
-The following table is populated only from the fresh Task 8 rerun at final HEAD plus this document:
+The following table records the fresh final-gate rerun on the current working tree. The web gate is
+red for the exact environment failure shown below, so the matrix is not green:
 
 | Command | Exit | Exact result |
 |---|---:|---|
-| `cd writer && ./node_modules/.bin/tsx --test test/research-end-to-end.test.ts` | 0 | 1 passed, 0 failed, 0 skipped |
 | `forge build` | 0 | no files changed; compilation skipped |
 | `forge test` | 0 | 172 passed, 0 failed, 0 skipped in 7 suites |
-| `cd writer && npm run check` | 0 | typecheck passed; 353 passed, 0 failed, 0 skipped |
-| `cd writer && npm run research:check` | 0 | 166 passed, 0 failed, 0 skipped |
+| `cd writer && npm run check` | 0 | typecheck passed; 354 passed, 0 failed, 0 skipped |
+| `cd writer && npm run research:check` | 0 | 167 passed, 0 failed, 0 skipped |
 | `cd keeper && npm run check` | 0 | typecheck passed; 25 passed, 0 failed, 0 skipped |
+| `cd web && npm run check` in a clean temporary checkout with authoritative public testnet values | 1 | Turbopack failed when its PostCSS worker was denied a local port bind; standalone Vitest passed 21/21 |
 | `node --test tools/rotate-lib.test.mjs` | 0 | 15 passed, 0 failed, 0 skipped |
-| `./scripts/verify.sh` | 0 | format/build passed; 172/172 Solidity and 166/166 research tests passed |
-| forbidden-input audit | 0 | one intentional mainnet hostname literal in the exact-host validator; no deployable mainnet input |
+| `./scripts/verify.sh` | 0 | format/build passed; 172/172 Solidity and 167/167 research tests passed |
 | `git diff --check` | 0 | no whitespace errors |
 
 ## Proven and pending criteria
@@ -357,17 +487,17 @@ The following table is populated only from the fresh Task 8 rerun at final HEAD 
 |---|---|
 | Linux anchored containment, including intermediate/root/destination swap cases | **Proven**: Ubuntu 10/10, `/proc/self/fd`, compatibility not used |
 | Testnet profile/chain/deployment/root identity | **Proven**: network testnet, chain 998, exact hashes above |
-| Bounded collect → derive → calibrate → replay → report | **Proven with Rejected decision** |
-| Pair and exclusion evidence | **Proven**: 6 direct, 49 reviewed fallback, 0 quarantined; exact exclusions above |
-| Deterministic replay | **Proven for this candidate**: deterministic rerun true, but quality verdict Rejected |
+| Bounded collect → derive → calibrate → replay → report | **Proven with Supported candidate**; promotion was outside the approved boundary |
+| Pair and exclusion evidence | **Proven**: 6 direct, 45 reviewed fallback, 4 structurally quarantined; exact exclusions above |
+| Deterministic replay | **Proven for the fresh candidate**: deterministic rerun true and quality verdict Supported |
 | Chain event join scan | **Proven**: 49 appended, 0 resolutions, cursor `62923638` |
 | Incremental cost boundary | **Proven**: zero incremental spend; existing fixed-price VPS only |
-| Supported candidate | **Pending**: a fresh candidate must pass every policy gate |
-| Promotion, champion persistence, writer restart health | **Pending** and prohibited for this Rejected candidate |
-| Runtime quote and minimum testnet mint identity | **Pending** and prohibited for this Rejected candidate |
+| Supported candidate | **Proven**: `2026-08-30.6546a1af` passed every statistical policy gate |
+| Promotion, champion persistence, writer restart health | **Pending separate activation approval**; no champion exists |
+| Runtime quote and minimum testnet mint identity | **Pending separate activation approval** |
 | Post-settlement resolution join | **Deferred asynchronous observation** after a future authorized mint |
 | Natural post-root rotation durability | **Pending**; no manual rotate because it restarts keeper |
 | Off-box backup and verified object checksum | **Pending**; paid/metered upload not authorized |
 
-This record establishes partial testnet operation and a conservative statistical rejection. It is
-not full Task 9 acceptance, mainnet readiness, or profitability evidence.
+This record establishes partial testnet operation through a Supported candidate, without promotion
+or activation. It is not full Task 9 acceptance, mainnet readiness, or profitability evidence.

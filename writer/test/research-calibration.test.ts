@@ -89,16 +89,29 @@ const AS_OF_MS = Date.parse("2026-08-28T12:00:00.000Z");
 const HOUR = 3_600_000;
 const fixtureReturns = readFileSync(new URL("./fixtures/research/returns-small.jsonl", import.meta.url), "utf8");
 
-function calibrationRoot(options: { staleParticipatingUnderlying?: string; constantUnderlying?: string } = {}): { root: string; input: CalibrationInput; profileFile: string } {
+function calibrationRoot(options: { staleParticipatingUnderlying?: string; constantUnderlying?: string; structurallyIncompatibleFallback?: boolean } = {}): { root: string; input: CalibrationInput; profileFile: string } {
   const root = mkdtempSync(join(tmpdir(), "hype-research-calibration-"));
+  const fixtureSources: SourceEntry[] = options.structurallyIncompatibleFallback ? [
+    { ...source("A", "crypto"), fallbackEligible: true },
+    { ...source("B", "crypto"), measurementEnabled: false, fallbackEligible: true },
+    { ...source("C", "crypto"), calendar: "session", session: { timeZone: "UTC", weekdays: [1, 2, 3, 4, 5], openLocal: "09:00", closeLocal: "17:00", closedDates: [] }, fallbackEligible: true },
+    { ...source("D", "equity"), measurementEnabled: false, fallbackEligible: true },
+  ] : [source("A", "crypto"), source("B", "equity"), source("C", "commodity")].map((entry) => ({ ...entry, fallbackEligible: true }));
   const sources: SourceRegistry = {
     schemaVersion: 2,
     network: "testnet",
-    sources: [source("A", "crypto"), source("B", "equity"), source("C", "commodity")].map((entry) => ({ ...entry, fallbackEligible: true })),
+    sources: fixtureSources,
   };
-  const profile = baseline(sources.sources, {
+  const profile = baseline(sources.sources, options.structurallyIncompatibleFallback ? {
+    crypto: {
+      A: { global: 0.3, cluster: 0.9, underlying: 0.3 },
+      B: { global: 0.3, cluster: 0.9, underlying: 0.3 },
+      C: { global: 0.3, cluster: 0.9, underlying: 0.3 },
+    },
+    equity: { D: { global: 0.1, cluster: 0.5, underlying: 0.5 } },
+  } : {
     crypto: { A: { global: 0.3, cluster: 0.8, underlying: 0.2 } },
-    equity: { B: { global: 0.3, cluster: 0.7, underlying: 0.3 } },
+    equity: { B: { global: options.constantUnderlying === "B" ? 0 : 0.3, cluster: 0.7, underlying: 0.3 } },
     commodity: { C: { global: 0.3, cluster: 0.6, underlying: 0.4 } },
   });
   const registryBytes = canonicalJson(sources);
@@ -303,9 +316,31 @@ test("a constant synchronized pair takes the pair-local fallback instead of abor
       { pair: ["B", "C"], status: "fallback", reason: "operator-reviewed-testnet-bootstrap" },
     ]);
     assert.deepEqual(artifact.fallbackPairs, [
-      { pair: ["A", "B"], correlation: 0.09, reason: "operator-reviewed-testnet-bootstrap" },
-      { pair: ["B", "C"], correlation: 0.09, reason: "operator-reviewed-testnet-bootstrap" },
+      { pair: ["A", "B"], correlation: 0, reason: "operator-reviewed-testnet-bootstrap" },
+      { pair: ["B", "C"], correlation: 0, reason: "operator-reviewed-testnet-bootstrap" },
     ]);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("calibration quarantines exact static fallbacks that conflict with measured pair evidence", () => {
+  const fixture = calibrationRoot({ structurallyIncompatibleFallback: true });
+  try {
+    const artifact = calibrate(fixture.input);
+    assert.deepEqual(artifact.directPairs.map((entry) => entry.pair), [["A", "C"]]);
+    assert.equal(artifact.directPairs[0].correlation, -0.9915683520097484);
+    assert.deepEqual(artifact.fallbackPairs, [
+      { pair: ["A", "D"], correlation: 0.03, reason: "operator-reviewed-testnet-bootstrap" },
+      { pair: ["B", "D"], correlation: 0.03, reason: "operator-reviewed-testnet-bootstrap" },
+      { pair: ["C", "D"], correlation: 0.03, reason: "operator-reviewed-testnet-bootstrap" },
+    ]);
+    assert.deepEqual(artifact.quarantinedPairs, [
+      { pair: ["A", "B"], reason: "structurally-incompatible-fallback" },
+      { pair: ["B", "C"], reason: "structurally-incompatible-fallback" },
+    ]);
+    assert.ok(artifact.quality.maxProjectionError <= artifact.policy.maxProjectionError);
+    assert.equal(artifact.policy.maxProjectionError, 0.10);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

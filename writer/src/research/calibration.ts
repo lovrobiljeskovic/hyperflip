@@ -10,6 +10,7 @@ import { assertLoadedResearchNetworkProfile, bindResearchRootIdentity, type Load
 
 const MAX_LOADING = Math.sqrt(0.99);
 const lexical = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
+const MIXED_TRIANGLE_TOLERANCE = 1e-10;
 
 export interface CalibrationInput {
   root: string;
@@ -139,6 +140,24 @@ export interface CalibrationAlignmentCache {
 }
 
 const pairName = (left: string, right: string): string => left < right ? `${left}:${right}` : `${right}:${left}`;
+function incompatibleFallbacks(matrix: number[][], order: string[], pairs: CorrelationArtifact["quality"]["pairEligibility"]): Set<string> {
+  const status = new Map(pairs.map((pair) => [pairName(...pair.pair), pair.status]));
+  const result = new Set<string>();
+  for (let first = 0; first < order.length; first++) for (let second = first + 1; second < order.length; second++) for (let third = second + 1; third < order.length; third++) {
+    const edges = [[first, second], [first, third], [second, third]] as const;
+    const kinds = edges.map(([left, right]) => status.get(pairName(order[left], order[right]))!);
+    if (kinds.includes("quarantined") || !kinds.includes("direct") || !kinds.includes("fallback")) continue;
+    const ab = matrix[first][second];
+    const ac = matrix[first][third];
+    const bc = matrix[second][third];
+    if (1 + 2 * ab * ac * bc - ab * ab - ac * ac - bc * bc >= -MIXED_TRIANGLE_TOLERANCE) continue;
+    edges.forEach(([left, right], index) => {
+      if (kinds[index] === "fallback") result.add(pairName(order[left], order[right]));
+    });
+  }
+  return result;
+}
+
 const candleKey = (candle: CandleRecord): string => `${candle.sourceNetwork}:${candle.sourceCoin}:${candle.interval}:${candle.openTimeMs}`;
 function verifiedReturns(input: CalibrationInput, storage: ResearchPersistence): { manifest: DerivedManifestV2; rows: ReturnRecord[] } {
   const parsed = readDerivedDataset(input.root, input.derivedManifestPath, storage);
@@ -293,6 +312,18 @@ function calibrateImpl(input: CalibrationInput, storage: ResearchPersistence): C
     baseTarget[left][right] = baseTarget[right][left] = value;
     pairEligibility.push({ pair: [a.underlying, b.underlying], status, reason });
     preliminary.set(key, { mode: sample.mode, observations: sample.rows.length, expected: sample.expected, coverage: sample.coverage, effectiveN: estimate?.effectiveN ?? null, raw: estimate?.correlation ?? null, shrinkTarget, shrinkLambda: lambda, fallbackUsed });
+  }
+  const incompatible = incompatibleFallbacks(baseTarget, sources.map((source) => source.underlying), pairEligibility);
+  for (const pair of pairEligibility) {
+    const key = pairName(...pair.pair);
+    if (!incompatible.has(key)) continue;
+    pair.status = "quarantined";
+    pair.reason = "structurally-incompatible-fallback";
+    const left = sources.findIndex((source) => source.underlying === pair.pair[0]);
+    const right = sources.findIndex((source) => source.underlying === pair.pair[1]);
+    baseTarget[left][right] = baseTarget[right][left] = 0;
+    admitted.delete(key);
+    preliminary.set(key, { ...preliminary.get(key)!, fallbackUsed: false });
   }
   const admittedCount = new Map(sources.map((source) => [source.underlying, pairEligibility.filter((pair) => pair.status !== "quarantined" && pair.pair.includes(source.underlying)).length]));
   const quarantinedUnderlyings = sources.flatMap((source) => {
