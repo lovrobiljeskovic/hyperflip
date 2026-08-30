@@ -5,19 +5,18 @@ Evidence dates: 2026-08-28 local fixture acceptance; 2026-08-30 Ubuntu testnet o
 ## Acceptance state
 
 - Local fixture implementation: **Passed**. The final Task 8 commands are recorded below.
-- Testnet operational acceptance: **PARTIAL / Supported candidate**, not full Task 9 acceptance.
-  The approved fresh Ubuntu rerun proved anchored Linux persistence and the live
-  collect → derive → calibrate → replay → Supported report path. Promotion and activation were
-  outside the approval boundary.
+- Testnet runtime activation: **Passed** for promotion, writer-only restart, correlated quote,
+  minimum UI-preset mint, and immediate mint-event join. Full Task 9 closure still depends on the
+  final local gate matrix recorded below; no natural settlement, rotation, or backup wait is part
+  of this activation.
 - Latest statistical decision: **Supported**. Candidate `2026-08-30.6546a1af` recorded projection
   error `1.3322676295501878e-15` under the unchanged `0.10` policy. The preceding Rejected decision
   remains immutable historical evidence. Neither result is evidence about production expected value.
 - Mainnet: **Not authorized and not accessed**.
 
-Neither run promoted a candidate, restarted either service, requested a runtime quote, or minted a
-parlay. The first stopped at `Rejected`; the approved rerun stopped at the reviewed `Supported`
-candidate boundary. Full operational acceptance remains pending the criteria listed at the end of
-this document.
+The first two bounded runs stopped at `Rejected` and the reviewed `Supported` candidate boundary.
+After separate activation approval, only the Supported candidate was promoted, only the writer was
+restarted, and one BTC/ETH quote and mint were executed on chain `998` as recorded below.
 
 ## Scope and safety boundary
 
@@ -25,7 +24,8 @@ All SSH/SCP commands used `-o BatchMode=yes` and targeted the documented existin
 `root@91.99.94.25`. The run used only the existing fixed-price EUR 4.99/month VPS and public
 Hyperliquid testnet resources. It provisioned no resource, installed no downloaded dependency,
 called no paid backup target, and incurred **zero incremental real-money cost**. Faucet-issued
-testnet assets were authorized but were not consumed because promotion was prohibited.
+testnet assets were later separately authorized; the activation consumed `0.25` faucet testnet
+USDC plus testnet HYPE gas and incurred no real-money spend.
 
 Secret values were never printed. Checks inspected only key presence, ownership/mode, public
 deployment values, public hashes, and configuration derived without displaying the RPC endpoint.
@@ -332,9 +332,95 @@ projection error `1.3322676295501878e-15`, Higham delta `5.257187179646951e-15`,
 bootstrap improvement was point `-0.0871509624055987`, lower `-0.15098646065688734`, upper
 `-0.018561978540711985`. Candidate, validation, and report are `hype:hype` mode `0600`.
 
-No champion exists. Neither keeper nor writer was restarted or modified, and no quote, mint,
-resolution, artificial void, rotation, or backup upload was attempted. Promotion and activation
-require a separate explicit approval after review of this Supported live evidence.
+At the end of this rerun no champion existed and neither service had been restarted. That boundary
+was preserved until the separate activation approval described next.
+
+## Separately approved promotion and activation
+
+The operator separately approved promotion, deployment of reviewed commit
+`5009dc19b7ad03e611d4356905c3ca68f6c88aeb`, a writer-only restart, one BTC/ETH quote, and one
+minimum UI-preset testnet mint. Mainnet, keeper restart, settlement waiting, forced void, rotation,
+and backup upload remained prohibited.
+
+Fresh preflight on `ubuntu-4gb-fsn1-1` exited 0 and re-established chain `998`, testnet Info host,
+vault `0x407cdc0b15e8d81f4d122481ecf92dbe07dc0169`, deploy block `61906227`, `hype:hype` mode `0700`
+root/state, 32,883,256 KiB free, active keeper/writer/caddy, keeper PID `255151`, writer PID
+`255152`, anchored env/unit settings, no mainnet root, and no champion. The exact candidate and
+validation hashes were respectively
+`8977a5e1dfcf19eb29a5a49d1aa83bd3a6873dd7218bca7758e0501f66a8fde2` and
+`6f84eca8caba3d9ccee6d84ad2923656bbc3bb44ee58067a347fd11db0fd25b3`. Canonical profile, source,
+market, deployment, and baseline identities matched both artifacts. A fresh Ubuntu anchored suite
+exited 0 with `tests 10`, `pass 10`, `fail 0`; both service PIDs were unchanged afterward.
+
+Promotion used the existing manual command:
+
+```text
+cd /opt/hype/writer
+npm run research -- promote --candidate artifacts/candidates/2026-08-30.6546a1af.json
+```
+
+It exited 0 with model `2026-08-30.6546a1af`, manifest
+`6546a1afced06ed19a894afed665097da374a9763a4bd0527365ba2b61e26c10`, validation state
+`Supported`, and champion hash
+`8977a5e1dfcf19eb29a5a49d1aa83bd3a6873dd7218bca7758e0501f66a8fde2`. `cmp` proved champion
+bytes equal the immutable candidate. Keeper/writer PIDs remained `255151`/`255152`.
+
+The writer-only rsync used `--delete` with `node_modules`, `.env`, and `waitlist.json` excluded.
+The post-copy checksum dry-run emitted no differences against local HEAD. Remote `npm ls
+--depth=0` and `npm run typecheck` exited 0 without an install or download. The deployed hashes were
+package lock `29968c39a47cf085f1b9f29a0ea73fdc3252b9865f12cbc2690491b77d1c453c`, calibration source
+`030919a12d4d22052094d448e2fb69d97a967bf85e53891a70c64a014f605870`, and calibration regression
+test `a33ab929100b15089c5c21c16e1063bc68f093ccf4b4b5c22ae28652fc01cdd9`. The live waitlist file
+remained present and was never read or printed.
+
+The first writer restart was retained as RED. The process correctly failed closed because the
+documented relative profile setting resolved from `writer/src` as nonexistent
+`/opt/registry/research-network.testnet.json`; systemd reached restart counter 6. Keeper remained
+active at PID `255151`, and champion/root hashes persisted. The smallest recovery changed only the
+public setting to the unambiguous absolute path
+`RESEARCH_NETWORK_PROFILE_FILE=/opt/hype/registry/research-network.testnet.json`, preserving
+`hype:hype` mode `0600`, then restarted only writer. The recovery exited 0 with writer PID `283499`,
+keeper PID `255151`, model `2026-08-30.6546a1af`, exact manifest/source hashes,
+`identityFailureReason: null`, and `multiAssetEnabled: true`. Champion bytes remained unchanged.
+The shipped example and end-to-end configuration assertion now retain this correction.
+
+The builder backend preflight derived the approved taker address without printing its key, proved
+54.677805 testnet USDC, 1.723163092873406547 HYPE, sufficient existing allowance, chain `998`, an
+authorized invite, and writer limits `maxStake: 1000000`, `quoteTtlMs: 30000`. The UI's smallest
+25%-of-cap preset is `250000` base units (`0.25` USDC). The first quote attempt was retained as RED:
+`409 leg-settled` for a settled BTC vault; it created no transaction. A read-only settlement scan
+selected the following unsettled non-band legs:
+
+- BTC YES, `BTC above 78459 on Aug 31?`, vault
+  `0xa2920cea7829584b99039b3f2a42c8f41a048800`;
+- ETH NO, `ETH above 2000 on Aug 31?`, vault
+  `0xe983796051af586abf1c47a51890750ff2704744`.
+
+The public `https://writer.overround.xyz/quote` request used the same payload and pricing display
+math as `web/lib/writer.ts` and `web/lib/format.ts`. The accepted quote and simulated mint then
+exited 0:
+
+| Public evidence | Value |
+|---|---|
+| quote ID | `0xa911699e635a41c5d0d5d2b67374a7cc2399a26c30963e59a00b0e9ddd94a05c` |
+| premium / max payout | `250000` / `1329995` |
+| leg price WADs | `719680000000000000`, `269020000000000000` |
+| independent product | `0.19360831359999997` |
+| correlated joint probability WAD | `174046818816707456` |
+| best-estimate joint probability WAD | `168937094184951616` |
+| uncorrelated / corrected fair | `5.165067457103248x` / `5.745580452424828x` |
+| signed payout | `5.31998x` |
+| edge | `500` base bps + `300` leg bps |
+| transaction | `0xee85e972d9e13226d092474a37776fc7d2e6abc2feb0370c766c7074dae6bfda` |
+| block / parlay | `62961757` / `18` |
+
+The receipt status was `success` on chain `998`. The immediate join exited 0, scanned
+`62923628..62961793`, appended exactly one event, advanced to `62961794`, and recorded parlay `18`
+as `open` with the same quote and transaction IDs. It found zero resolutions, so no settlement was
+awaited and no void was forced. Invite code, private keys, RPC URL, and signature were redacted and
+never printed. An in-app browser was unavailable (`browsers.list()` returned empty), so no claim is
+made for an interactive browser/wallet screenshot; the public builder API, exact UI calculation
+functions, contract simulation, mined receipt, and final web tests are the recorded path evidence.
 
 ## Replay and Rejected decision
 
@@ -476,7 +562,8 @@ red for the exact environment failure shown below, so the matrix is not green:
 | `cd writer && npm run check` | 0 | typecheck passed; 354 passed, 0 failed, 0 skipped |
 | `cd writer && npm run research:check` | 0 | 167 passed, 0 failed, 0 skipped |
 | `cd keeper && npm run check` | 0 | typecheck passed; 25 passed, 0 failed, 0 skipped |
-| `cd web && npm run check` in a clean temporary checkout with authoritative public testnet values | 1 | Turbopack failed when its PostCSS worker was denied a local port bind; standalone Vitest passed 21/21 |
+| `cd web && npm run check` | 1 | Turbopack rejected the worktree's `node_modules` symlink because it points outside the filesystem root; the build stopped before Vitest |
+| `cd web && npm exec vitest -- run` | 0 | 3 files passed; 21 tests passed |
 | `node --test tools/rotate-lib.test.mjs` | 0 | 15 passed, 0 failed, 0 skipped |
 | `./scripts/verify.sh` | 0 | format/build passed; 172/172 Solidity and 167/167 research tests passed |
 | `git diff --check` | 0 | no whitespace errors |
@@ -487,17 +574,18 @@ red for the exact environment failure shown below, so the matrix is not green:
 |---|---|
 | Linux anchored containment, including intermediate/root/destination swap cases | **Proven**: Ubuntu 10/10, `/proc/self/fd`, compatibility not used |
 | Testnet profile/chain/deployment/root identity | **Proven**: network testnet, chain 998, exact hashes above |
-| Bounded collect → derive → calibrate → replay → report | **Proven with Supported candidate**; promotion was outside the approved boundary |
+| Bounded collect → derive → calibrate → replay → report | **Proven with Supported candidate**; that exact candidate was later promoted |
 | Pair and exclusion evidence | **Proven**: 6 direct, 45 reviewed fallback, 4 structurally quarantined; exact exclusions above |
 | Deterministic replay | **Proven for the fresh candidate**: deterministic rerun true and quality verdict Supported |
-| Chain event join scan | **Proven**: 49 appended, 0 resolutions, cursor `62923638` |
-| Incremental cost boundary | **Proven**: zero incremental spend; existing fixed-price VPS only |
+| Chain event join scan | **Proven**: activation join appended the parlay `18` mint, 0 resolutions, cursor `62961794` |
+| Incremental cost boundary | **Proven**: zero incremental real-money spend; 0.25 faucet testnet USDC plus testnet gas used |
 | Supported candidate | **Proven**: `2026-08-30.6546a1af` passed every statistical policy gate |
-| Promotion, champion persistence, writer restart health | **Pending separate activation approval**; no champion exists |
-| Runtime quote and minimum testnet mint identity | **Pending separate activation approval** |
-| Post-settlement resolution join | **Deferred asynchronous observation** after a future authorized mint |
+| Promotion, champion persistence, writer restart health | **Proven**: exact champion persisted; writer healthy at PID `283499`; keeper stayed PID `255151` |
+| Runtime quote and minimum testnet mint identity | **Proven**: quote ID, transaction, block, and parlay `18` recorded above |
+| Post-settlement resolution join | **Deferred asynchronous observation** after the authorized mint settles naturally |
 | Natural post-root rotation durability | **Pending**; no manual rotate because it restarts keeper |
 | Off-box backup and verified object checksum | **Pending**; paid/metered upload not authorized |
 
-This record establishes partial testnet operation through a Supported candidate, without promotion
-or activation. It is not full Task 9 acceptance, mainnet readiness, or profitability evidence.
+This record establishes live testnet activation of the exact Supported candidate. The final matrix
+remains red only at the worktree-specific Turbopack symlink build gate, so this is not full Task 9
+acceptance, mainnet readiness, or profitability evidence.

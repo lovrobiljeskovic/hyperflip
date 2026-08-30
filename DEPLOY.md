@@ -242,10 +242,11 @@ ssh -o BatchMode=yes root@91.99.94.25 'chown hype:hype /opt/hype/registry/correl
 ```
 
 `/opt/hype/research.env` is owned by `hype:hype`, mode `0600`, and contains only these public or
-read-only inputs (the profile path is relative to the units' `/opt/hype/writer` working directory):
+read-only inputs. Keep the profile path absolute because the writer runtime and research CLI resolve
+relative paths from different bases:
 
 ```dotenv
-RESEARCH_NETWORK_PROFILE_FILE=../registry/research-network.testnet.json
+RESEARCH_NETWORK_PROFILE_FILE=/opt/hype/registry/research-network.testnet.json
 RESEARCH_ROOT=/opt/hype/research/testnet
 RESEARCH_REQUIRE_ANCHORED_FS=1
 WRITER_RPC=<approved-testnet-read-endpoint>

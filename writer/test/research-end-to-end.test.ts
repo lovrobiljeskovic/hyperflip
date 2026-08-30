@@ -235,6 +235,6 @@ test("research end-to-end fixture proves the deterministic testnet-only operatio
   const roots = [mkdtempSync(join(tmpdir(), "hype-e2e-a-")), mkdtempSync(join(tmpdir(), "hype-e2e-b-"))];
   try {
     assert.deepEqual(await fixtureFlow(roots[1]), await fixtureFlow(roots[0]));
-    assert.deepEqual(shippedResearchConfiguration(), { profile: "../registry/research-network.testnet.json", root: "/opt/hype/research/testnet", legacyInfoUrl: undefined, anchoredServices: 3, testnetLocks: 3 });
+    assert.deepEqual(shippedResearchConfiguration(), { profile: "/opt/hype/registry/research-network.testnet.json", root: "/opt/hype/research/testnet", legacyInfoUrl: undefined, anchoredServices: 3, testnetLocks: 3 });
   } finally { for (const root of roots) rmSync(root, { recursive: true, force: true }); }
 });

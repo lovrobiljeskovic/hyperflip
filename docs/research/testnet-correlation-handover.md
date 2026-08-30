@@ -14,7 +14,8 @@ Implementation HEAD before this handover: `0dd4fb1277fd0419ea210bada61a53590adfe
    - `docs/research/testnet-correlation-verification.md`
    - `docs/superpowers/specs/2026-08-29-testnet-only-correlation-corrective-design.md`
    - Task 9 in `docs/superpowers/plans/2026-08-29-testnet-only-correlation-corrective-wave.md`
-4. Treat the current operational result as **PARTIAL / Supported candidate**, never as full acceptance.
+4. Treat the current result as **ACTIVATED / final web build gate red**, never as full Task 9,
+   mainnet, or profitability evidence.
 5. Do not access mainnet, lower the projection gate, promote rejected candidate
    `2026-08-30.dda295a1`, restart the keeper, print secrets, buy infrastructure, or wait
    synchronously for settlement.
@@ -23,10 +24,9 @@ Suggested new-session request:
 
 > Continue the testnet correlation handover at
 > `docs/research/testnet-correlation-handover.md` on
-> `feature/testnet-correlation-system`. Review exact Supported candidate
-> `2026-08-30.6546a1af` for separately approved activation. Keep the work testnet-only, do not
-> weaken the `0.10` gate, and do not promote, deploy, restart services, quote, or mint without my
-> explicit activation approval.
+> `feature/testnet-correlation-system`. Candidate `2026-08-30.6546a1af` is promoted and active on
+> testnet; continue from the recorded activation evidence and final gate matrix. Keep the work
+> testnet-only and do not restart keeper, wait for settlement, rotate, or upload backups.
 
 ## Executive state
 
@@ -34,19 +34,23 @@ The research and runtime plumbing is implemented and locally verified. The first
 testnet run was correctly **Rejected** because projection error `0.314324004721122` exceeded the
 fixed `0.10` policy. After diagnosis and local review, an explicitly approved fresh bounded rerun
 produced candidate `2026-08-30.6546a1af` with projection error
-`1.3322676295501878e-15` and deterministic decision **Supported**. It was not promoted or activated.
+`1.3322676295501878e-15` and deterministic decision **Supported**. Separate approval then promoted
+that exact artifact, deployed reviewed writer commit `5009dc19`, restarted only writer, and minted
+one correlated BTC/ETH testnet parlay.
 
 Consequences:
 
-- No champion exists.
-- The new writer code has not been activated on the live service.
-- No candidate was promoted.
-- No correlated runtime quote or mint was attempted.
-- The current public writer remains on pre-branch code.
-- The new correlation feature is not yet active through the UI.
+- Champion SHA-256 is `8977a5e1dfcf19eb29a5a49d1aa83bd3a6873dd7218bca7758e0501f66a8fde2`.
+- Writer PID `283499` is healthy with `identityFailureReason: null` and `multiAssetEnabled: true`.
+- Keeper stayed active at PID `255151` and was never restarted.
+- Quote `0xa911699e635a41c5d0d5d2b67374a7cc2399a26c30963e59a00b0e9ddd94a05c`
+  minted parlay `18` in transaction
+  `0xee85e972d9e13226d092474a37776fc7d2e6abc2feb0370c766c7074dae6bfda`.
+- Immediate join recorded the mint as open; no settlement was awaited.
 
-The model-quality blocker is cleared for the reviewed candidate. Promotion and live activation
-remain a separate authorization boundary.
+The model-quality and live activation boundaries are cleared for this exact testnet artifact. The
+final matrix is red only at the worktree-specific Turbopack symlink build gate; natural durability
+evidence remains non-blocking.
 
 ### Local continuation after handover
 
@@ -79,8 +83,8 @@ artifact hashes, setup failures, and report hash are in
 `docs/research/testnet-correlation-verification.md`; that record explicitly notes the missing
 command-level audit transcript and terminal-record hashes.
 
-No champion exists. Keeper PID `255151` and writer PID `255152` remained unchanged; neither service
-was restarted or modified. No quote, mint, rotation, or backup upload was attempted.
+That rerun itself stopped before promotion. The later separately approved activation is recorded in
+`docs/research/testnet-correlation-verification.md`; rotation and backup upload were not attempted.
 
 ## What is already working
 
@@ -92,32 +96,26 @@ was restarted or modified. No quote, mint, rotation, or backup upload was attemp
 | Returns derivation | Fresh closure has 17,996 returns-v2 rows and 19,153 explicit exclusions |
 | Calibration | Candidate `2026-08-30.6546a1af`; 6 direct, 45 fallback, 4 structural quarantines |
 | Deterministic replay | Fresh 20,000-draw replay completed `Supported`; deterministic rerun matched |
-| Safety decision | Projection `1.3322676295501878e-15 <= 0.10`; no promotion performed |
+| Safety decision | Projection `1.3322676295501878e-15 <= 0.10`; exact candidate promoted |
 | Reporting | Supported report rendered with immutable identity/evidence closure |
-| Chain join | 49 events appended, 0 resolutions, cursor advanced to block `62923638` |
+| Live quote/mint/join | Correlated BTC/ETH quote; parlay `18` minted; one event joined, 0 resolutions |
 | Local supported lifecycle fixture | Promotion, writer startup, quote journal, mint/join, reporting, reopen and backup-plan paths exercised without network |
-| UI compatibility | Clean production build passed and web tests passed 21/21 using authoritative testnet values |
-| Full local gates before the UI config-only commit | Forge 172/172, writer 353/353, research 166/166, keeper 25/25, rotation 15/15, end-to-end 1/1 |
+| UI compatibility | Standalone web tests passed 21/21; exact `npm run check` is red because Turbopack rejects the worktree's external `node_modules` symlink |
+| Fresh final matrix | Forge 172/172, writer 354/354, research 167/167, keeper 25/25, rotation 15/15, aggregate verifier green; web build gate red as above |
 
 The two-line UI deployment-block correction at handover HEAD changes only public testnet config:
 `web/.env.example` and `web/vitest.config.ts` now match
 `registry/deployment.testnet.json` at block `61906227`.
 
-## What is implemented but not yet proven live
+## What remains unproven live
 
-These paths exist and pass local tests, but neither the original Rejected run nor the later
-Supported-candidate rerun authorized live activation:
+Promotion, writer startup validation, correlated pricing, quote journaling, mint joining, and
+champion persistence across a writer restart are now proven live. Still pending:
 
-- Candidate promotion into `artifacts/champion.json`.
-- Writer startup validation of exact profile, registry, manifest, candidate and validation hashes.
-- Fail-closed writer fallback when no Supported champion exists.
-- Cross-underlying eligibility and direct/fallback/quarantine checks.
-- Correlated joint-probability pricing and quote evidence journaling.
-- Quote-to-mint-to-resolution joining.
-- Champion persistence across writer restart.
-- Research timers and off-box backup-plan generation.
-
-Do not describe these as live testnet acceptance until the steps below are completed.
+- an interactive browser/wallet screenshot because no browser surface was connected;
+- a natural future settlement resolution join;
+- observation across a natural nightly rotation; and
+- off-box backup configuration/upload, which remains unauthorized.
 
 ## Blocking work, in order
 
@@ -217,7 +215,12 @@ collect → derive → calibrate → replay → report
 Inspect the candidate and validation sidecar before promotion. A result other than `Supported`
 stops the flow without promotion, restart, quote, or mint.
 
-### 5. Promote and activate only after `Supported`
+### 5. Promote and activate only after `Supported` — completed
+
+The exact Supported candidate was promoted, reviewed writer commit `5009dc19` was deployed, and
+only writer was restarted. The first startup failed closed on an ambiguous relative profile path;
+the public setting was corrected to the absolute testnet profile path and the writer recovered at
+PID `283499`. Keeper remained PID `255151`; champion bytes survived unchanged.
 
 For a reviewed Supported candidate:
 
@@ -232,7 +235,13 @@ For a reviewed Supported candidate:
    - the expected chain/profile/deployment identity.
 6. Confirm the research root and champion survive the writer restart.
 
-### 6. Exercise the actual UI path
+### 6. Exercise the actual UI path — completed through public API and chain
+
+The public builder API returned the correlated BTC/ETH quote recorded above and the exact web
+display math produced `5.165067457103248x` uncorrelated fair,
+`5.745580452424828x` corrected fair, and `5.31998x` signed payout. The 0.25 USDC quote minted
+parlay `18` successfully. No browser surface was connected, so interactive browser/wallet visual
+evidence remains explicitly unavailable rather than inferred.
 
 The UI is already capable of consuming the writer's `jointProbWad` breakdown. No large UI feature
 is expected.
@@ -253,7 +262,7 @@ Required live example:
 Do not expose invite codes, private keys, signatures beyond public transaction data, RPC secrets,
 or environment contents.
 
-### 7. Finalize evidence and PR gates
+### 7. Finalize evidence and PR gates — completed with one red gate
 
 Update `docs/research/testnet-correlation-verification.md` with exact commands, exit codes, hashes,
 public IDs and redacted output. Then run at the final commit:
@@ -270,8 +279,8 @@ git diff --check
 ```
 
 For the web build, provide the authoritative public testnet environment values; a missing env is a
-real build precondition. In this worktree, `node_modules` symlinks caused a Turbopack filesystem-root
-error. A clean temporary `npm ci` checkout built successfully. Do not commit `node_modules`.
+real build precondition. In this worktree, the exact check is red because Turbopack rejects the
+external `node_modules` symlink. Standalone Vitest passes 21/21. Do not commit `node_modules`.
 
 The GitHub workflow currently runs only Forge. Before merging this large TypeScript change, add or
 require CI coverage for writer/research, keeper and web, or record an explicit repository-owner
@@ -282,7 +291,7 @@ browser was available. Open a draft PR from:
 
 `https://github.com/Pythia-Labs/hyperevm-combos/pull/new/feature/testnet-correlation-system`
 
-The PR title/body must say **PARTIAL / Supported candidate** until promotion and activation complete.
+The PR title/body must say **ACTIVATED / web build gate red** until the exact web gate passes.
 
 ## Definition of working on testnet
 
