@@ -7,7 +7,7 @@ export default defineConfig({
     // so anything importing it needs them present before the import runs.
     env: {
       NEXT_PUBLIC_PARLAY_VAULT: "0x407CDc0B15E8d81f4D122481Ecf92Dbe07DC0169",
-      NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK: "61907400",
+      NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK: "61906227",
     },
   },
 });
