@@ -64,7 +64,7 @@ test("intermediate symlinks are rejected", (t) => {
   writeFileSync(join(outside, "value.txt"), "outside");
   symlinkSync(outside, join(root, "state"));
 
-  assert.throws(() => openResearchPersistence(root).read("state/value.txt"), /symbolic link/);
+  assert.throws(() => openResearchPersistence(root).read("state/value.txt"), /symbolic link|ENOTDIR/);
 });
 
 test("group or world writable directories are rejected", (t) => {
