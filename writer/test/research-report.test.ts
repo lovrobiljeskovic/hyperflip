@@ -208,7 +208,7 @@ test("generateReport renders exact Rejected projection evidence without a champi
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("research report verifies every immutable reference before writing the deterministic path", () => {
+test("research report accepts unmapped markets while verifying every immutable reference", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-report-"));
   try {
     const fixture = structuredClone(input);
@@ -218,7 +218,10 @@ test("research report verifies every immutable reference before writing the dete
         schemaVersion: 1, underlying, sourceNetwork: "testnet", sourceCoin: underlying, cluster: "crypto", calendar: "continuous", measurementEnabled: true, fallbackEligible: true,
       })),
     };
-    const markets = { schemaVersion: 1, network: "testnet", markets: [] };
+    const markets = { schemaVersion: 1, network: "testnet", markets: [{
+      vault: "0x4444444444444444444444444444444444444444", coinYes: "+1", coinNo: "+2",
+      underlying: "XYZ100", cluster: "legacy-index", direction: "up", title: "XYZ100 above 100?", category: "index",
+    }] };
     const deployment = { schemaVersion: 1, network: "testnet", evmChainId: 998, parlayVault: "0x1111111111111111111111111111111111111111", parlayDeployBlock: "1" };
     const baseline = { network: "testnet", fallbackReason: "operator-reviewed-testnet-bootstrap", clusters: candidate.clusters };
     const profileValue = { schemaVersion: 1, network: "testnet", infoApiUrl: "https://api.hyperliquid-testnet.xyz/info", evmChainId: 998, sourceRegistryFile: "sources.json", marketRegistryFile: "markets.json", deploymentRegistryFile: "deployment.json", baselineCorrelationFile: "baseline.json" };

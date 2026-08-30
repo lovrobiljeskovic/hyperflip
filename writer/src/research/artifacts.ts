@@ -236,7 +236,7 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
     for (const [underlying, cluster] of clusterByUnderlying) if (sourceByUnderlying.get(underlying)?.cluster !== cluster) fail(`source/artifact cluster disagreement for ${underlying}`);
     for (const market of markets?.values() ?? []) {
       const source = sourceByUnderlying.get(market.underlying);
-      if (!source || source.cluster !== market.cluster) fail(`source/market cluster disagreement for ${market.underlying}`);
+      if (source && source.cluster !== market.cluster) fail(`source/market cluster disagreement for ${market.underlying}`);
       const artifactCluster = clusterByUnderlying.get(market.underlying);
       if (artifactCluster !== undefined && artifactCluster !== market.cluster) fail(`market/artifact cluster disagreement for ${market.underlying}`);
     }

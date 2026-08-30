@@ -16,6 +16,7 @@ const NOW = Date.parse("2026-08-28T18:00:00.000Z");
 const VALID = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-valid.json", import.meta.url), "utf8")) as CorrelationArtifact;
 const STALE = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-stale.json", import.meta.url), "utf8")) as CorrelationArtifact;
 const VAULT = "0x1111111111111111111111111111111111111111" as const;
+const UNMAPPED_VAULT = "0x2222222222222222222222222222222222222222" as const;
 
 const source = (underlying: string, fallbackEligible = false): SourceEntry => ({
   schemaVersion: 1, underlying, sourceNetwork: "testnet", sourceCoin: underlying, cluster: "crypto",
@@ -126,6 +127,28 @@ test("artifact validation accepts the exact schema and immutable reference closu
   } finally { rmSync(fixture.root, { recursive: true, force: true }); }
 });
 
+test("artifact validation accepts an exact market registry with an unmapped underlying", () => {
+  const fixture = setup();
+  try {
+    const markets = new Map(fixture.markets);
+    markets.set(UNMAPPED_VAULT, {
+      vault: UNMAPPED_VAULT, coinYes: "+3", coinNo: "+4", underlying: "XYZ100", cluster: "legacy-index",
+      direction: "up", title: "XYZ100 above 100?", category: "index",
+    });
+    const marketRegistryRaw = canonicalJson({ schemaVersion: 1, network: "testnet", markets: [...markets.values()] });
+    const marketRegistrySha256 = sha256(marketRegistryRaw);
+    const profile = { ...fixture.profile, marketRegistryRaw, marketRegistrySha256 };
+    const artifact = { ...fixture.artifact, marketRegistrySha256 };
+    const raw = `${canonicalJson(artifact)}\n`;
+    const validation = { ...fixture.validation, marketRegistrySha256, candidateSha256: sha256(raw) };
+
+    const result = validateArtifact(raw, { ...fixture, markets, profile, validation }, NOW);
+
+    assert.equal(result.model.marketRegistrySha256, marketRegistrySha256);
+    assert.equal(result.model.version, "fixture");
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
 test("default parsing and promotion reject over-policy projection error", () => {
   const fixture = setup();
   try {
@@ -171,7 +194,7 @@ test("artifact validation rejects manifest, source, market, and validation ident
       assert.throws(() => validate(fixture, mismatch), /profile identity mismatch/);
     }
     const badMarkets = new Map([...fixture.markets].map(([key, market]) => [key, { ...market, cluster: "equity" }]));
-    assert.throws(() => validateArtifact(fixture.raw, { ...fixture, markets: badMarkets }, NOW), /cluster disagreement/);
+    assert.throws(() => validateArtifact(fixture.raw, { ...fixture, markets: badMarkets }, NOW), /source\/market cluster disagreement for BTC/);
     assert.throws(() => validate(fixture, fixture.artifact, { ...fixture.validation, candidateSha256: "d".repeat(64) }), /candidate hash mismatch/);
     assert.throws(() => validate(fixture, fixture.artifact, { ...fixture.validation, network: "mainnet" }), /validation network mismatch/);
     assert.throws(() => validate(fixture, fixture.artifact, { ...fixture.validation, deploymentRegistrySha256: "d".repeat(64) }), /validation deployment registry mismatch/);
