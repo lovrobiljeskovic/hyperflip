@@ -1,13 +1,14 @@
 # Testnet Correlation System Handover
 
-Updated: 2026-08-30  
-Branch: `feature/testnet-correlation-system`  
-Handover HEAD: `0dd4fb1277fd0419ea210bada61a53590adfe335`
+Updated: 2026-08-30
+Branch: `feature/testnet-correlation-system`
+Implementation HEAD before this handover: `0dd4fb1277fd0419ea210bada61a53590adfe335`
 
 ## Start here in a new session
 
 1. Read the repository `AGENTS.md`.
-2. Check out or enter `feature/testnet-correlation-system` and verify the expected HEAD above.
+2. Check out or enter `feature/testnet-correlation-system` and verify it contains the implementation
+   commit above plus this handover.
 3. Read, in order:
    - `docs/research/testnet-correlation-handover.md`
    - `docs/research/testnet-correlation-verification.md`
