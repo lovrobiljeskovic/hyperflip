@@ -272,10 +272,6 @@ export default function BuildPage() {
             </div>
           )}
 
-          <p className="mt-4 rounded-[4px] border border-line bg-panel px-3 py-2 text-[11px] leading-relaxed text-dim">
-            Correlation is evaluated per quoted pair. When qualified measured evidence is unavailable, a quote may use an operator-reviewed fallback estimate.
-          </p>
-
           <div className="mt-4">
             {error ? (
               <div className="flex flex-col items-start gap-3 rounded-card border border-line bg-panel p-6">

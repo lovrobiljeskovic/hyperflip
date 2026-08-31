@@ -753,7 +753,6 @@ export function Ticket({
                           ))
                         )}
                       </div>
-                      <p className="mt-2 text-dim">Hover a badge for the evidence used in this quote.</p>
                     </div>
                   ) : (
                     <p className="border-t border-line pt-3 text-dim">Correlation evidence unavailable for this quote.</p>

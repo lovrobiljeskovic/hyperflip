@@ -43,9 +43,9 @@ const MARKET = {
   coinNo: "#101",
 } satisfies Market;
 
-test("withMarketVolumes sums both HIP-4 sides and leaves partial totals unknown", () => {
-  expect(withMarketVolumes([MARKET], { "#100": 12.5, "#101": 7.25 })[0].volume24h).toBe(19.75);
-  expect(withMarketVolumes([MARKET], { "#100": 12.5 })[0].volume24h).toBeUndefined();
+test("withMarketVolumes uses Hyperliquid's side-0 market volume", () => {
+  expect(withMarketVolumes([MARKET], { "#100": 12.5, "#101": 7.25 })[0].volume24h).toBe(12.5);
+  expect(withMarketVolumes([MARKET], { "#101": 7.25 })[0].volume24h).toBeUndefined();
 });
 
 test("compareMarketVolume sorts highest first and always sinks unknown volume", () => {
