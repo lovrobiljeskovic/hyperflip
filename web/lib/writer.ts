@@ -1,3 +1,5 @@
+import { fetchMarketVolumes } from "./info";
+
 export interface Market {
   vault: `0x${string}`;
   title: string;
@@ -8,7 +10,13 @@ export interface Market {
    * optional here for tickets naming markets from before it existed. */
   underlying?: string;
   expiryMs?: number;
+  volume24h?: number;
 }
+
+export type CorrelationPairDecision = {
+  pair: [string, string];
+  status: "direct" | "fallback";
+};
 
 export interface WriterQuote {
   taker: `0x${string}`;
@@ -28,6 +36,7 @@ export interface QuoteBreakdown {
   jointProbWad?: string;
   edgeBps: string;
   legBps?: string; // absent on writers predating leg-count-scaled edge
+  pairDecisions?: CorrelationPairDecision[];
 }
 
 export type QuoteResult =
@@ -47,6 +56,32 @@ export async function fetchMarkets(includeArchived = false): Promise<Market[]> {
   // archived = rotated-out (expired) markets — only wanted where old tickets
   // need naming; the build board must not offer them.
   return includeArchived ? [...j.markets, ...(j.archived ?? [])] : j.markets;
+}
+
+export function withMarketVolumes(markets: Market[], volumes: Record<string, number>): Market[] {
+  return markets.map((market) => {
+    const yes = volumes[market.coinYes];
+    const no = volumes[market.coinNo];
+    return { ...market, volume24h: yes === undefined || no === undefined ? undefined : yes + no };
+  });
+}
+
+export async function fetchMarketBoard(): Promise<Market[]> {
+  const [markets, volumes] = await Promise.all([fetchMarkets(), fetchMarketVolumes()]);
+  return withMarketVolumes(markets, volumes);
+}
+
+export function compareMarketVolume(left: Market, right: Market, ascending: boolean): number {
+  if (left.volume24h === undefined) return right.volume24h === undefined ? 0 : 1;
+  if (right.volume24h === undefined) return -1;
+  return (left.volume24h - right.volume24h) * (ascending ? 1 : -1);
+}
+
+export function correlationEvidence(decisions: CorrelationPairDecision[]): string {
+  if (decisions.length === 0) return "Same-underlying model";
+  return decisions
+    .map(({ pair, status }) => `${pair.join("/")} ${status === "direct" ? "measured" : "fallback estimate"}`)
+    .join(" · ");
 }
 
 export interface WriterLimits {

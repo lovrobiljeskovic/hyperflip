@@ -9,6 +9,17 @@ export function formatUsdc(v: bigint): string {
   });
 }
 
+export function formatVolume(value: number | undefined): string {
+  if (value === undefined) return "—";
+  if (value === 0) return "$0";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
 export function multiplier(premium: bigint, maxPayout: bigint): string {
   if (premium === 0n) return "—";
   return `${(Number(maxPayout) / Number(premium)).toFixed(2)}x`;

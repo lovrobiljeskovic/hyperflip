@@ -2,6 +2,7 @@ import { describe, expect, it, test, vi } from "vitest";
 import {
   WAD,
   edgeSteps,
+  formatVolume,
   formatUsdc,
   multiplier,
   impliedPct,
@@ -17,6 +18,12 @@ test("formatUsdc renders 6-decimal base units at 2dp with grouping", () => {
   expect(formatUsdc(1_000_000n)).toBe("1.00");
   expect(formatUsdc(316_200_000n)).toBe("316.20");
   expect(formatUsdc(1_234_567_890n)).toBe("1,234.57");
+});
+
+test("formatVolume renders compact 24h USDC notional", () => {
+  expect(formatVolume(0)).toBe("$0");
+  expect(formatVolume(1_234)).toBe("$1.2K");
+  expect(formatVolume(undefined)).toBe("—");
 });
 
 test("multiplier is maxPayout/premium at 2dp", () => {

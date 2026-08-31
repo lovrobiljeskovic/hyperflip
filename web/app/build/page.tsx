@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchMarkets, type Market } from "@/lib/writer";
+import { compareMarketVolume, fetchMarketBoard, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
-import { oddsLabel, pct1, until } from "@/lib/format";
+import { formatVolume, oddsLabel, pct1, until } from "@/lib/format";
 import { Ticket, type BuilderLeg } from "./ticket";
 import { AppHeader } from "../app-header";
 
@@ -119,7 +119,7 @@ function BoardRow({
   const no = midOf(mids, market.coinNo);
   return (
     <div
-      className={`border-t border-line px-4 py-3 sm:grid sm:grid-cols-[1fr_110px_110px_90px] sm:items-center sm:gap-x-3 sm:px-5 ${
+      className={`border-t border-line px-4 py-3 sm:grid sm:grid-cols-[1fr_110px_110px_100px_90px] sm:items-center sm:gap-x-3 sm:px-5 ${
         current ? "bg-accent/[0.07]" : ""
       }`}
     >
@@ -132,6 +132,8 @@ function BoardRow({
           <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">
             {market.category}
             <span className="sm:hidden">
+              {" · "}
+              {formatVolume(market.volume24h)}
               {" · "}
               {market.expiryMs ? until(market.expiryMs) : "—"}
             </span>
@@ -157,6 +159,9 @@ function BoardRow({
         />
       </div>
       <span className="mono hidden text-right text-[12px] text-dim sm:block">
+        {formatVolume(market.volume24h)}
+      </span>
+      <span className="mono hidden text-right text-[12px] text-dim sm:block">
         {market.expiryMs ? until(market.expiryMs) : "—"}
       </span>
     </div>
@@ -178,6 +183,8 @@ export default function BuildPage() {
   const [error, setError] = useState(false);
   const [legs, setLegs] = useState<BuilderLeg[]>([]);
   const [tab, setTab] = useState("all");
+  const [sort, setSort] = useState<"volume" | "expiry">("volume");
+  const [volumeAsc, setVolumeAsc] = useState(false);
   const [expiryAsc, setExpiryAsc] = useState(true);
   const mids = useMids();
 
@@ -185,7 +192,7 @@ export default function BuildPage() {
     setError(false);
     setMarkets(null);
     try {
-      setMarkets(await fetchMarkets());
+      setMarkets(await fetchMarketBoard());
     } catch {
       setError(true);
     }
@@ -201,13 +208,14 @@ export default function BuildPage() {
       // Expired-but-not-yet-rotated markets are dead weight on the board —
       // filter them out client-side rather than let a stale price look pickable.
       .filter((m) => m.expiryMs === undefined || m.expiryMs >= Date.now());
+    if (sort === "volume") return filtered.sort((a, b) => compareMarketVolume(a, b, volumeAsc));
     // Markets without an expiry sink to the bottom in either direction.
     return filtered.sort((a, b) => {
       if (a.expiryMs === undefined) return b.expiryMs === undefined ? 0 : 1;
       if (b.expiryMs === undefined) return -1;
       return (a.expiryMs - b.expiryMs) * (expiryAsc ? 1 : -1);
     });
-  }, [markets, tab, expiryAsc]);
+  }, [markets, tab, sort, volumeAsc, expiryAsc]);
 
   useEffect(() => {
     void load();
@@ -282,17 +290,37 @@ export default function BuildPage() {
               <p className="rounded-card border border-line bg-panel p-6 text-dim">No markets listed.</p>
             ) : (
               <div className="border border-line">
-                <div className="mono flex justify-between gap-x-3 bg-panel px-4 py-3 text-[9px] uppercase tracking-[0.16em] text-dim sm:grid sm:grid-cols-[1fr_110px_110px_90px] sm:px-5">
+                <div className="mono flex justify-between gap-x-3 bg-panel px-4 py-3 text-[9px] uppercase tracking-[0.16em] text-dim sm:grid sm:grid-cols-[1fr_110px_110px_100px_90px] sm:px-5">
                   <span>Market</span>
                   <span className="hidden pr-2 text-right sm:block">Yes</span>
                   <span className="hidden pr-2 text-right sm:block">No</span>
                   <button
                     type="button"
-                    onClick={() => setExpiryAsc((v) => !v)}
-                    aria-label={`Sort by expiry, ${expiryAsc ? "soonest" : "latest"} first`}
+                    onClick={() => {
+                      if (sort === "volume") setVolumeAsc((v) => !v);
+                      else {
+                        setSort("volume");
+                        setVolumeAsc(false);
+                      }
+                    }}
+                    aria-label={`Sort by 24 hour volume, ${sort === "volume" && volumeAsc ? "lowest" : "highest"} first`}
+                    className="hidden text-right uppercase tracking-[0.16em] transition-colors hover:text-fg sm:block"
+                  >
+                    24h vol {sort === "volume" ? (volumeAsc ? "↑" : "↓") : ""}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sort === "expiry") setExpiryAsc((v) => !v);
+                      else {
+                        setSort("expiry");
+                        setExpiryAsc(true);
+                      }
+                    }}
+                    aria-label={`Sort by expiry, ${sort === "expiry" && expiryAsc ? "soonest" : "latest"} first`}
                     className="text-right uppercase tracking-[0.16em] transition-colors hover:text-fg"
                   >
-                    Expires {expiryAsc ? "↑" : "↓"}
+                    Expires {sort === "expiry" ? (expiryAsc ? "↑" : "↓") : ""}
                   </button>
                 </div>
                 {board.map((m) => (

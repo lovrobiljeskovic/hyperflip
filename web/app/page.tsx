@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { fetchMarkets } from "@/lib/writer";
+import { fetchMarketBoard } from "@/lib/writer";
 import { fetchMids } from "@/lib/info";
 import { AppHeader, Mark } from "./app-header";
 import { InviteForm } from "./invite-form";
@@ -78,7 +78,7 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
    is down at render time yields a null board and the client falls back to
    fetching for itself, which is what it always did. */
 async function boardSnapshot(): Promise<BoardSnapshot> {
-  const [markets, mids] = await Promise.all([fetchMarkets().catch(() => null), fetchMids(10)]);
+  const [markets, mids] = await Promise.all([fetchMarketBoard().catch(() => null), fetchMids(10)]);
   return { markets, mids };
 }
 

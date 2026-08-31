@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { erc20Abi, formatUnits, parseUnits } from "viem";
 import { useAccount, useBalance, usePublicClient, useReadContract, useSwitchChain, useWriteContract } from "wagmi";
-import { fetchLimits, joinWaitlist, requestQuote, WAITLIST_ERRORS, type QuoteResult, type WriterQuote } from "@/lib/writer";
+import { correlationEvidence, fetchLimits, joinWaitlist, requestQuote, WAITLIST_ERRORS, type QuoteResult, type WriterQuote } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
 import {
@@ -716,6 +716,19 @@ export function Ticket({
                     <MathBreakdown legs={legs} bd={bd} />
                   ) : (
                     <p className="text-dim">Breakdown unavailable for this quote.</p>
+                  )}
+
+                  {quoteResult.breakdown?.pairDecisions ? (
+                    <div className="border-t border-line pt-3">
+                      <DetailRow label="Correlation evidence">
+                        {correlationEvidence(quoteResult.breakdown.pairDecisions)}
+                      </DetailRow>
+                      <p className="mt-1 text-dim">
+                        Measured pairs use observed returns; fallback estimates use reviewed bootstrap data. Evidence is per market pair.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="border-t border-line pt-3 text-dim">Correlation evidence unavailable for this quote.</p>
                   )}
 
                   <div className="flex flex-col gap-1.5 border-t border-line pt-3">

@@ -221,6 +221,19 @@ test("breakdown reports the joint probability, not a correlation surcharge", asy
   assert.ok(BigInt(bd.jointProbWad as string) > product, "correlated joint must exceed the naive product");
 });
 
+test("breakdown reports fallback correlation evidence to clients", async () => {
+  const model = {
+    ...MODEL,
+    fallbackEligible: new Set(["BTC", "ETH"]),
+    pairEligibility: new Map([[pair("BTC", "ETH"), { status: "fallback" as const, reason: "operator-reviewed", correlation: 0.1 }]]),
+  };
+  const res = await handleQuote(deps({ cfg: cfg({ model }) }), goodBody);
+  assert.equal(res.status, 200);
+  assert.deepEqual((res.json as { breakdown: { pairDecisions: unknown } }).breakdown.pairDecisions, [
+    { pair: ["BTC", "ETH"], status: "fallback" },
+  ]);
+});
+
 test("the same vault twice, same side, collapses to one event and prices identically to the deduplicated ticket", async () => {
   // resolveSameMarket (correlation.ts) collapses this before pricing; this
   // exercises that collapse through the whole quote path, not just the model.
