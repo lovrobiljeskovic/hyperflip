@@ -230,7 +230,7 @@ test("breakdown reports fallback correlation evidence to clients", async () => {
   const res = await handleQuote(deps({ cfg: cfg({ model }) }), goodBody);
   assert.equal(res.status, 200);
   assert.deepEqual((res.json as { breakdown: { pairDecisions: unknown } }).breakdown.pairDecisions, [
-    { pair: ["BTC", "ETH"], status: "fallback" },
+    { pair: ["BTC", "ETH"], status: "fallback", reason: "operator-reviewed" },
   ]);
 });
 

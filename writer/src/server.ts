@@ -349,7 +349,7 @@ export async function handleQuote(
         bestEstimateJointProbWad: bestEstimate.toString(),
         edgeBps: edge.baseBps.toString(),
         legBps: edge.legBps.toString(),
-        pairDecisions: decision.pairDecisions.map(({ pair, status }) => ({ pair, status })),
+        pairDecisions: decision.pairDecisions.map(({ pair, status, reason }) => ({ pair, status, reason })),
       },
     },
   };

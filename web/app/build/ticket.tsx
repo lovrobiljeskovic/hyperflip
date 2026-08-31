@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { erc20Abi, formatUnits, parseUnits } from "viem";
 import { useAccount, useBalance, usePublicClient, useReadContract, useSwitchChain, useWriteContract } from "wagmi";
-import { correlationEvidence, fetchLimits, joinWaitlist, requestQuote, WAITLIST_ERRORS, type QuoteResult, type WriterQuote } from "@/lib/writer";
+import { fetchLimits, joinWaitlist, requestQuote, WAITLIST_ERRORS, type CorrelationPairDecision, type QuoteResult, type WriterQuote } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
 import {
@@ -120,6 +120,29 @@ function DetailRow({
       <span className="text-dim">{label}</span>
       <span className={`text-right ${className}`}>{children}</span>
     </div>
+  );
+}
+
+function correlationTooltip(decision: CorrelationPairDecision): string {
+  if (decision.status === "direct") return "Measured from synchronized observed returns for this quoted pair.";
+  if (decision.reason === "operator-reviewed-testnet-bootstrap") {
+    return "No qualified direct evidence is available for this pair, so the quote uses the operator-reviewed testnet bootstrap estimate.";
+  }
+  return "No qualified direct evidence is available for this pair, so the quote uses a reviewed fallback estimate.";
+}
+
+function CorrelationBadge({ decision }: { decision: CorrelationPairDecision }) {
+  const fallback = decision.status === "fallback";
+  const label = `${decision.pair.join(" / ")} · ${fallback ? "Fallback" : "Measured"}`;
+  const tooltip = correlationTooltip(decision);
+  return (
+    <span
+      title={tooltip}
+      aria-label={`${label}. ${tooltip}`}
+      className={`cursor-help rounded-full border px-2 py-1 text-[10px] ${fallback ? "border-no/50 bg-no/10 text-no" : "border-yes/50 bg-yes/10 text-yes"}`}
+    >
+      {label}
+    </span>
   );
 }
 
@@ -720,12 +743,17 @@ export function Ticket({
 
                   {quoteResult.breakdown?.pairDecisions ? (
                     <div className="border-t border-line pt-3">
-                      <DetailRow label="Correlation evidence">
-                        {correlationEvidence(quoteResult.breakdown.pairDecisions)}
-                      </DetailRow>
-                      <p className="mt-1 text-dim">
-                        Measured pairs use observed returns; fallback estimates use reviewed bootstrap data. Evidence is per market pair.
-                      </p>
+                      <span className="text-dim">Correlation evidence</span>
+                      <div className="mt-2 flex flex-wrap justify-end gap-1.5">
+                        {quoteResult.breakdown.pairDecisions.length === 0 ? (
+                          <span>Same-underlying model</span>
+                        ) : (
+                          quoteResult.breakdown.pairDecisions.map((decision) => (
+                            <CorrelationBadge key={decision.pair.join(":")} decision={decision} />
+                          ))
+                        )}
+                      </div>
+                      <p className="mt-2 text-dim">Hover a badge for the evidence used in this quote.</p>
                     </div>
                   ) : (
                     <p className="border-t border-line pt-3 text-dim">Correlation evidence unavailable for this quote.</p>

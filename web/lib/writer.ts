@@ -16,6 +16,8 @@ export interface Market {
 export type CorrelationPairDecision = {
   pair: [string, string];
   status: "direct" | "fallback";
+  /** Returned by current writers; absent on older deployed versions. */
+  reason?: string;
 };
 
 export interface WriterQuote {
