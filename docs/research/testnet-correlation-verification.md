@@ -6,9 +6,10 @@ Evidence dates: 2026-08-28 local fixture acceptance; 2026-08-30 Ubuntu testnet o
 
 - Local fixture implementation: **Passed**. The final Task 8 commands are recorded below.
 - Testnet runtime activation: **Passed** for promotion, writer-only restart, correlated quote,
-  minimum UI-preset mint, and immediate mint-event join. Full Task 9 closure still depends on the
-  final local gate matrix recorded below; no natural settlement, rotation, or backup wait is part
-  of this activation.
+  minimum UI-preset mint, and immediate mint-event join. The final local gate matrix recorded below
+  is green. Full Task 9 audit closure still excludes the missing fresh-rerun command transcript and
+  terminal-record hashes noted below; no natural settlement, rotation, or backup wait is part of
+  this activation.
 - Latest statistical decision: **Supported**. Candidate `2026-08-30.6546a1af` recorded projection
   error `1.3322676295501878e-15` under the unchanged `0.10` policy. The preceding Rejected decision
   remains immutable historical evidence. Neither result is evidence about production expected value.
@@ -552,8 +553,9 @@ reporting, persistence reopen, rotation with a stable root marker, and in-memory
 synthetic Supported value exists only to exercise local lifecycle code; it is not live statistical
 evidence.
 
-The following table records the fresh final-gate rerun on the current working tree. The web gate is
-red for the exact environment failure shown below, so the matrix is not green:
+The following table records the fresh final-gate rerun on the current working tree. Replacing the
+untracked external `web/node_modules` symlink with a lockfile-local `npm ci` install cleared the
+Turbopack filesystem-root error; the exact matrix is green:
 
 | Command | Exit | Exact result |
 |---|---:|---|
@@ -562,8 +564,7 @@ red for the exact environment failure shown below, so the matrix is not green:
 | `cd writer && npm run check` | 0 | typecheck passed; 354 passed, 0 failed, 0 skipped |
 | `cd writer && npm run research:check` | 0 | 167 passed, 0 failed, 0 skipped |
 | `cd keeper && npm run check` | 0 | typecheck passed; 25 passed, 0 failed, 0 skipped |
-| `cd web && npm run check` | 1 | Turbopack rejected the worktree's `node_modules` symlink because it points outside the filesystem root; the build stopped before Vitest |
-| `cd web && npm exec vitest -- run` | 0 | 3 files passed; 21 tests passed |
+| `cd web && npm run check` with authoritative public testnet values | 0 | Turbopack production build, TypeScript, 6 static pages, and 21/21 Vitest tests passed |
 | `node --test tools/rotate-lib.test.mjs` | 0 | 15 passed, 0 failed, 0 skipped |
 | `./scripts/verify.sh` | 0 | format/build passed; 172/172 Solidity and 167/167 research tests passed |
 | `git diff --check` | 0 | no whitespace errors |
@@ -586,6 +587,6 @@ red for the exact environment failure shown below, so the matrix is not green:
 | Natural post-root rotation durability | **Pending**; no manual rotate because it restarts keeper |
 | Off-box backup and verified object checksum | **Pending**; paid/metered upload not authorized |
 
-This record establishes live testnet activation of the exact Supported candidate. The final matrix
-remains red only at the worktree-specific Turbopack symlink build gate, so this is not full Task 9
-acceptance, mainnet readiness, or profitability evidence.
+This record establishes live testnet activation of the exact Supported candidate and a green final
+local matrix. It does not fill the missing fresh-rerun command transcript and terminal-record hash
+audit gap noted above, and it is not mainnet readiness or profitability evidence.

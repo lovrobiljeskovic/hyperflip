@@ -14,8 +14,8 @@ Implementation HEAD before this handover: `0dd4fb1277fd0419ea210bada61a53590adfe
    - `docs/research/testnet-correlation-verification.md`
    - `docs/superpowers/specs/2026-08-29-testnet-only-correlation-corrective-design.md`
    - Task 9 in `docs/superpowers/plans/2026-08-29-testnet-only-correlation-corrective-wave.md`
-4. Treat the current result as **ACTIVATED / final web build gate red**, never as full Task 9,
-   mainnet, or profitability evidence.
+4. Treat the current result as **ACTIVATED / final gate matrix green / audit closure partial**,
+   never as mainnet or profitability evidence.
 5. Do not access mainnet, lower the projection gate, promote rejected candidate
    `2026-08-30.dda295a1`, restart the keeper, print secrets, buy infrastructure, or wait
    synchronously for settlement.
@@ -48,9 +48,9 @@ Consequences:
   `0xee85e972d9e13226d092474a37776fc7d2e6abc2feb0370c766c7074dae6bfda`.
 - Immediate join recorded the mint as open; no settlement was awaited.
 
-The model-quality and live activation boundaries are cleared for this exact testnet artifact. The
-final matrix is red only at the worktree-specific Turbopack symlink build gate; natural durability
-evidence remains non-blocking.
+The model-quality, live activation, and final local gate boundaries are cleared for this exact
+testnet artifact. The missing fresh-rerun command transcript and terminal-record hashes remain an
+audit-evidence gap; natural durability evidence remains non-blocking.
 
 ### Local continuation after handover
 
@@ -100,8 +100,8 @@ That rerun itself stopped before promotion. The later separately approved activa
 | Reporting | Supported report rendered with immutable identity/evidence closure |
 | Live quote/mint/join | Correlated BTC/ETH quote; parlay `18` minted; one event joined, 0 resolutions |
 | Local supported lifecycle fixture | Promotion, writer startup, quote journal, mint/join, reporting, reopen and backup-plan paths exercised without network |
-| UI compatibility | Standalone web tests passed 21/21; exact `npm run check` is red because Turbopack rejects the worktree's external `node_modules` symlink |
-| Fresh final matrix | Forge 172/172, writer 354/354, research 167/167, keeper 25/25, rotation 15/15, aggregate verifier green; web build gate red as above |
+| UI compatibility | Exact Turbopack production build, TypeScript, 6 static pages, and web tests 21/21 passed using authoritative public testnet values |
+| Fresh final matrix | Forge 172/172, writer 354/354, research 167/167, keeper 25/25, web 21/21 plus production build, rotation 15/15, aggregate verifier green |
 
 The two-line UI deployment-block correction at handover HEAD changes only public testnet config:
 `web/.env.example` and `web/vitest.config.ts` now match
@@ -262,7 +262,7 @@ Required live example:
 Do not expose invite codes, private keys, signatures beyond public transaction data, RPC secrets,
 or environment contents.
 
-### 7. Finalize evidence and PR gates — completed with one red gate
+### 7. Finalize evidence and PR gates — completed green
 
 Update `docs/research/testnet-correlation-verification.md` with exact commands, exit codes, hashes,
 public IDs and redacted output. Then run at the final commit:
@@ -279,8 +279,8 @@ git diff --check
 ```
 
 For the web build, provide the authoritative public testnet environment values; a missing env is a
-real build precondition. In this worktree, the exact check is red because Turbopack rejects the
-external `node_modules` symlink. Standalone Vitest passes 21/21. Do not commit `node_modules`.
+real build precondition. Turbopack rejects an external `node_modules` symlink, so this worktree uses
+a lockfile-local `npm ci` install. The exact check passes; do not commit `node_modules`.
 
 The GitHub workflow currently runs only Forge. Before merging this large TypeScript change, add or
 require CI coverage for writer/research, keeper and web, or record an explicit repository-owner
@@ -291,7 +291,9 @@ browser was available. Open a draft PR from:
 
 `https://github.com/Pythia-Labs/hyperevm-combos/pull/new/feature/testnet-correlation-system`
 
-The PR title/body must say **ACTIVATED / web build gate red** until the exact web gate passes.
+The PR title/body should say **ACTIVATED / gate matrix green / audit closure partial** until the
+missing fresh-rerun command transcript and terminal-record hashes are recovered or explicitly
+waived by the repository owner.
 
 ## Definition of working on testnet
 
