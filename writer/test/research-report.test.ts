@@ -308,6 +308,9 @@ test("research report accepts unmapped markets while verifying every immutable r
     assert.equal(first.path, join(root, "reports", "2026-08-27-beta-1.html"));
     assert.equal(readFileSync(first.path, "utf8"), first.bytes);
     assert.equal(second.bytes, first.bytes);
+    writeFileSync(join(root, "artifacts", "champion.json"), `${canonicalJson({ ...fixture.candidate, marketRegistrySha256: "0".repeat(64) })}\n`);
+    assert.match(generateReport(root, candidatePath, derivedManifestPath, profile, reportNow).bytes, /not promoted/);
+    writeFileSync(join(root, "artifacts", "champion.json"), candidateBytes);
     assert.match(first.bytes, /collector request testnet:ETH: HTTP 503 — info API 503/);
     assert.match(first.bytes, /calibrate terminal: success — beta-1/);
     assert.match(first.bytes, /replay terminal: success/);

@@ -237,12 +237,17 @@ export function generateReport(rootInput: string, candidateInput: string, derive
   let champion: ReportInput["champion"] = null;
   if (storage.exists(championPath)) {
     const championBytes = storage.readText(championPath);
-    const artifact = parseCorrelationArtifact(championBytes, nowMs, profile.sources, parseMarkets(profile.marketRegistryRaw), profile).artifact;
-    const championCandidate = `artifacts/candidates/${artifact.modelVersion}.json`;
-    const championEvidence = verified(root, championCandidate, storage, profile, nowMs);
-    if (sha256(championBytes) !== sha256(storage.read(championCandidate))) throw new Error("report champion candidate mismatch");
-    if (championEvidence.validation.decision !== "Supported" || !championEvidence.validation.deterministicRerunMatches) throw new Error("report champion validation is not Supported and deterministic");
-    champion = { modelVersion: artifact.modelVersion, sha256: sha256(championBytes) };
+    let championIdentity: Partial<CorrelationArtifact>;
+    try { championIdentity = JSON.parse(championBytes) as Partial<CorrelationArtifact>; } catch { throw new Error("report champion is malformed JSON"); }
+    const current = championIdentity.network === profile.profile.network && championIdentity.profileSha256 === profile.profileSha256 && championIdentity.sourceRegistrySha256 === profile.sourceRegistrySha256 && championIdentity.marketRegistrySha256 === profile.marketRegistrySha256 && championIdentity.deploymentRegistrySha256 === profile.deploymentRegistrySha256 && championIdentity.baselineCorrelationSha256 === profile.baselineCorrelationSha256;
+    if (current) {
+      const artifact = parseCorrelationArtifact(championBytes, nowMs, profile.sources, parseMarkets(profile.marketRegistryRaw), profile).artifact;
+      const championCandidate = `artifacts/candidates/${artifact.modelVersion}.json`;
+      const championEvidence = verified(root, championCandidate, storage, profile, nowMs);
+      if (sha256(championBytes) !== sha256(storage.read(championCandidate))) throw new Error("report champion candidate mismatch");
+      if (championEvidence.validation.decision !== "Supported" || !championEvidence.validation.deterministicRerunMatches) throw new Error("report champion validation is not Supported and deterministic");
+      champion = { modelVersion: artifact.modelVersion, sha256: sha256(championBytes) };
+    }
   }
   const bytes = renderReport({ manifest: current.manifest, candidate: current.candidate, candidateSha256: current.candidateSha256, validation: current.validation, validationSha256: current.validationSha256, champion, funnel: journalFunnel(root, profile, storage), failures: operationalFailures(storage, profile, nowMs), exclusions: derived.exclusions, nowMs });
   const date = current.candidate.dataAsOf.slice(0, 10);
