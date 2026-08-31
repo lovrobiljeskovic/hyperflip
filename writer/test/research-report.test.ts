@@ -104,11 +104,12 @@ test("journal funnel joins only quoted canonical mints to their matching parlay 
     const eventsPath = join(root, "journal", "events", "events.jsonl");
     writeFileSync(eventsPath, `${rows.map(canonicalJson).join("\n")}\n`);
     assert.deepEqual(journalFunnel(root, testnetProfile), { quotes: 1, minted: 1, resolved: 1 });
+    writeFileSync(quotesPath, `${canonicalJson(quote)}\n${canonicalJson({ ...quote, quoteId: "q2", marketRegistrySha256: "0".repeat(64) })}\n`);
+    assert.deepEqual(journalFunnel(root, testnetProfile), { quotes: 1, minted: 1, resolved: 1 });
 
     for (const mixed of [
       { ...quote, profileSha256: "0".repeat(64) },
       { ...quote, sourceRegistrySha256: "0".repeat(64) },
-      { ...quote, marketRegistrySha256: "0".repeat(64) },
       { ...quote, deploymentRegistrySha256: "0".repeat(64) },
       { ...quote, baselineCorrelationSha256: "0".repeat(64), artifactSha256: "0".repeat(64) },
     ]) {
@@ -373,7 +374,6 @@ test("research report accepts unmapped markets while verifying every immutable r
     for (const quoteMutation of [
       { ...championQuote, profileSha256: "0".repeat(64) },
       { ...championQuote, sourceRegistrySha256: "0".repeat(64) },
-      { ...championQuote, marketRegistrySha256: "0".repeat(64) },
       { ...championQuote, deploymentRegistrySha256: "0".repeat(64) },
       { ...championQuote, baselineCorrelationSha256: "0".repeat(64) },
       { ...championQuote, artifactSha256: "0".repeat(64) },

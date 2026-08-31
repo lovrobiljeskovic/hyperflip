@@ -139,14 +139,15 @@ function journalRows(storage: ResearchPersistence, directory: string): unknown[]
   });
 }
 
-function verifiedQuote(root: string, storage: ResearchPersistence, row: unknown, profile: LoadedResearchNetworkProfile): QuoteDecision {
+function verifiedQuote(root: string, storage: ResearchPersistence, row: unknown, profile: LoadedResearchNetworkProfile): QuoteDecision | null {
   try { assertQuoteDecision(row as QuoteDecision); } catch (error) { throw new Error(`report quote journal row is invalid: ${error instanceof Error ? error.message : String(error)}`); }
   const quote = row as QuoteDecision;
   assertResearchRootIdentity(storage, quote);
   if (quote.network !== profile.profile.network || quote.profileSha256 !== profile.profileSha256 || quote.sourceRegistrySha256 !== profile.sourceRegistrySha256
-    || quote.marketRegistrySha256 !== profile.marketRegistrySha256 || quote.deploymentRegistrySha256 !== profile.deploymentRegistrySha256
+    || quote.deploymentRegistrySha256 !== profile.deploymentRegistrySha256
     || quote.baselineCorrelationSha256 !== profile.baselineCorrelationSha256 || quote.chainId !== profile.profile.evmChainId
     || quote.parlayVault.toLowerCase() !== profile.deployment.parlayVault.toLowerCase()) throw new Error("report quote journal profile identity mismatch");
+  if (quote.marketRegistrySha256 !== profile.marketRegistrySha256) return null;
   if (quote.artifactKind === "profile-baseline") {
     if (quote.dataManifestSha256 !== profile.baselineCorrelationSha256 || quote.modelVersion !== "profile-baseline") throw new Error("report quote journal baseline identity mismatch");
     return quote;
@@ -169,7 +170,7 @@ function verifiedEvent(storage: ResearchPersistence, row: unknown, profile: Load
 }
 
 export function journalFunnel(root: string, profile: LoadedResearchNetworkProfile, storage = openResearchPersistence(root)): ReportInput["funnel"] {
-  const quoteRows = journalRows(storage, "quotes").map((row) => verifiedQuote(root, storage, row, profile));
+  const quoteRows = journalRows(storage, "quotes").flatMap((row) => verifiedQuote(root, storage, row, profile) ?? []);
   const quotes = new Set(quoteRows.map((row) => row.quoteId));
   const events = journalRows(storage, "events").map((row) => verifiedEvent(storage, row, profile));
   const orphaned = new Set(events.filter((row): row is OrphanCorrectionRecord => row.kind === "orphaned" && row.targetKind === "chain-log").map((row) => String(row.targetKey)));
