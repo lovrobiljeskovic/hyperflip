@@ -27,7 +27,13 @@ export function useWalletState(): {
   address?: `0x${string}`;
 } {
   const { address, isConnected } = useAccount();
-  if (!PRIVY_ENABLED) return { ready: true, isConnected, address };
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  // Wallet providers can restore synchronously in the browser, while SSR can
+  // only render the disconnected placeholder. Hold both to that placeholder
+  // through the first client render so their hydration trees stay identical.
+  if (!PRIVY_ENABLED) return { ready: mounted, isConnected, address };
   /* eslint-disable react-hooks/rules-of-hooks */
   const { ready: privyReady } = usePrivy();
   const { ready: walletsReady, wallets } = useWallets();
@@ -45,7 +51,11 @@ export function useWalletState(): {
   }, [syncing]);
   /* eslint-enable react-hooks/rules-of-hooks */
 
-  return { ready: (privyReady && walletsReady && !syncing) || timedOut, isConnected, address };
+  return {
+    ready: mounted && ((privyReady && walletsReady && !syncing) || timedOut),
+    isConnected,
+    address,
+  };
 }
 
 /** Click handler for every "Connect wallet" button.

@@ -1,386 +1,148 @@
 @import "tailwindcss";
 
 @theme {
-  --color-ink: #0b0d12;
-  --color-panel: #11141b;
-  --color-raised: #1a1f29;
-  --color-line: #262c38;
-  --color-fg: #e9edf3;
-  --color-dim: #8b94a6;
-  --color-accent: #f5a091;
-  --color-on-accent: #241512;
-  --color-yes: #35d07a;
-  --color-no: #ff4d5e;
-
-  /* The ground the mark's lens is knocked out to, and the mark's leading disc.
-     Both are re-pointed by .paper so one <Mark /> serves both surfaces. */
-  --ground: #0b0d12;
-  --mark-1: var(--color-accent);
-
+  --color-ink: #0d0f0c;
+  --color-panel: #151912;
+  --color-raised: #1d2219;
+  --color-line: #30362b;
+  --color-fg: #f1f4eb;
+  --color-dim: #9ca592;
+  --color-accent: #c8f36a;
+  --color-on-accent: #172006;
+  --color-yes: #44d17a;
+  --color-no: #ff5d6c;
   --font-sans: var(--font-instrument), ui-sans-serif, system-ui, sans-serif;
   --font-display: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
   --font-display--font-variation-settings: "opsz" 96, "wght" 800;
   --font-mono: var(--font-martian), ui-monospace, monospace;
   --font-mono--font-variation-settings: "wdth" 90;
-
-  --radius-card: 8px;
+  --radius-card: 12px;
+  --radius-control: 8px;
 }
 
-html {
-  color-scheme: dark;
-  background: var(--color-ink);
+html { color-scheme: dark; background: var(--color-ink); }
+body {
+  background: radial-gradient(circle at 74% -20%, rgb(200 243 106 / .07), transparent 34rem), var(--color-ink);
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  html {
-    scroll-behavior: smooth;
-  }
+  html { scroll-behavior: smooth; }
 }
 
-/* quote TTL drain, mirrors the 30s refresh cycle in the builder */
-@keyframes ttl {
-  from {
-    width: 100%;
-  }
-  to {
-    width: 0%;
-  }
-}
-
-/* live board: mid-change flash, 400ms decay */
-@keyframes flash-up {
-  from {
-    background: color-mix(in srgb, var(--color-yes) 18%, transparent);
-  }
-  to {
-    background: transparent;
-  }
-}
-
-@keyframes flash-down {
-  from {
-    background: color-mix(in srgb, var(--color-no) 18%, transparent);
-  }
-  to {
-    background: transparent;
-  }
-}
-
-.flash-up {
-  animation: flash-up 0.4s ease-out;
-}
-
-.flash-down {
-  animation: flash-down 0.4s ease-out;
-}
-
-.ttl-bar {
-  animation: ttl 30s linear infinite;
-}
-
-/* the board is live — a 2s breath, the only decoration that reports a fact */
-@keyframes live-dot {
-  0%,
-  100% {
-    opacity: 0.3;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-.live-dot {
-  animation: live-dot 2s ease-in-out infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .flash-up,
-  .flash-down {
-    animation: none;
-  }
-  .ttl-bar {
-    animation: none;
-    width: 63%;
-  }
-  .live-dot {
-    animation: none;
-    opacity: 1;
-  }
-}
-
-/* native accordion marker */
-details > summary {
-  list-style: none;
-  cursor: pointer;
-}
-details > summary::-webkit-details-marker {
-  display: none;
-}
-details > summary::after {
-  content: "+";
-  font-family: var(--font-mono);
-  color: var(--color-dim);
-}
-details[open] > summary::after {
-  content: "-";
-}
-
-/* ============================================================
-   Landing page: the betting-slip register.
-   Scoped to .paper so /build and /positions keep the dark app
-   theme — the overrides below re-point the shared @theme vars
-   (accent, panel, line…) only inside this subtree, which is
-   what re-skins WalletButton on the paper ground.
-   ============================================================ */
-
-.paper {
-  --paper: #fdf7f2;
-  --stock: #efb3a6;
-  --ink: #241512;
-  --graphite: #5e4038; /* 5.1:1 on the pink stock — body text sits on it */
-  --stamp: #9e2b1a;
-  --hit: #1f5c40;
-  --hair: color-mix(in srgb, var(--ink) 20%, transparent);
-
-  --color-fg: var(--ink);
-  --color-dim: var(--graphite);
-  --color-line: var(--hair);
-  --color-panel: var(--paper);
-  --color-raised: color-mix(in srgb, var(--ink) 8%, transparent);
-  --color-accent: var(--ink);
-  --color-on-accent: var(--stock);
-  --color-yes: var(--hit);
-  --color-no: var(--stamp);
-
-  /* The register is square. */
-  --radius-card: 0px;
-  --ground: var(--stock);
-  --mark-1: var(--stamp); /* rose on rose would vanish */
-
-  background: var(--stock);
-  color: var(--ink);
-}
-
-/* Focus is visible on both grounds. The paper rule below is more specific and
-   keeps its ink outline inside the landing subtree. */
-:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-
-.paper :focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: 3px;
-}
-
-.paper ::selection {
-  background: var(--ink);
-  color: var(--stock);
-}
-
-/* Layered on purpose — do not unwrap.
-   These two set a face plus sane defaults that utilities are meant to
-   override per site. Unlayered rules beat every layered Tailwind utility
-   regardless of specificity, so left bare they silently win over every
-   tracking-*, leading-* and [font-variation-settings:...] utility.
-   @layer components sorts below utilities, so the utility wins. */
 @layer components {
   .mono {
     font-family: var(--font-martian), ui-monospace, monospace;
     font-variation-settings: "wdth" 90;
-    letter-spacing: -0.02em;
+    letter-spacing: -.02em;
   }
-
   .display {
     font-family: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
     font-variation-settings: "opsz" 96, "wght" 800;
-    letter-spacing: -0.035em;
-    line-height: 0.92;
+    letter-spacing: -.04em;
+    line-height: .94;
   }
 }
 
-/* perforation: a section boundary reads as a tear line, not a rule */
-.perf {
-  height: 2px;
-  background-image: radial-gradient(circle at 2px 1px, var(--hair) 1.2px, transparent 1.4px);
-  background-size: 8px 2px;
-}
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
+::selection { background: var(--color-accent); color: var(--color-on-accent); }
+button.rounded-card, a.rounded-card { border-radius: var(--radius-control); }
 
-/* Hand-torn paper. The slip is a ripped rectangle, not a card: an irregular
-   clip on all four edges, a few px deep, so no side reads as a printed rule.
-   clip-path clips box-shadow too, so the drop is a filter — it follows the
-   torn silhouette instead of a hidden rectangle. */
-.torn {
-  clip-path: polygon(
-    0 3px, 7% 0, 14% 4px, 21% 1px, 28% 5px, 35% 1px, 42% 4px, 49% 0,
-    56% 4px, 63% 1px, 70% 5px, 77% 1px, 84% 4px, 91% 0, 100% 3px,
-    calc(100% - 4px) 7%, calc(100% - 1px) 14%, calc(100% - 5px) 21%,
-    calc(100% - 1px) 28%, calc(100% - 4px) 35%, calc(100% - 1px) 42%,
-    calc(100% - 5px) 49%, calc(100% - 2px) 56%, calc(100% - 4px) 63%,
-    calc(100% - 1px) 70%, calc(100% - 5px) 77%, calc(100% - 1px) 84%,
-    calc(100% - 4px) 91%, calc(100% - 2px) 100%,
-    91% calc(100% - 4px), 84% calc(100% - 1px), 77% calc(100% - 5px),
-    70% calc(100% - 1px), 63% calc(100% - 4px), 56% calc(100% - 1px),
-    49% calc(100% - 5px), 42% calc(100% - 2px), 35% calc(100% - 4px),
-    28% calc(100% - 1px), 21% calc(100% - 5px), 14% calc(100% - 1px),
-    7% calc(100% - 4px), 0 calc(100% - 2px),
-    4px 91%, 1px 84%, 5px 77%, 1px 70%, 4px 63%, 2px 56%, 5px 49%,
-    1px 42%, 4px 35%, 1px 28%, 5px 21%, 2px 14%, 4px 7%
-  );
-  filter: drop-shadow(10px 14px 0 rgba(36, 21, 18, 0.16));
-}
+details > summary { list-style: none; cursor: pointer; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary::after { content: "+"; font-family: var(--font-mono); color: var(--color-accent); }
+details[open] > summary::after { content: "-"; }
 
-/* The slip prints itself: one line at a time, ink settling.
+@keyframes flash-up { from { opacity: .55; transform: translateY(1px); } to { opacity: 1; transform: none; } }
+@keyframes flash-down { from { opacity: .55; transform: translateY(-1px); } to { opacity: 1; transform: none; } }
+.flash-up { animation: flash-up .4s ease-out; }
+.flash-down { animation: flash-down .4s ease-out; }
 
-   Held paused until a mount effect adds `.printing` to an ancestor. A CSS
-   animation left to start on its own begins its clock at style resolution —
-   during HTML parse, for server-rendered markup — not at first paint. The
-   cascade runs 240-1510ms and this document's parse alone takes ~1s, so any
-   slow load spends part or all of the cascade before a frame reaches the
-   screen and the slip simply appears, already printed. There is no CSS way to
-   say "start at first paint"; pausing until mount is the way to anchor it to a
-   frame the reader has actually seen.
+@keyframes live-dot { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+.live-dot { animation: live-dot 2s ease-in-out infinite; }
 
-   Without scripting the class never lands, so the animation is dropped rather
-   than leaving every line paused at opacity 0 forever. */
-@keyframes print-line {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-    filter: blur(2px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-    filter: blur(0);
-  }
-}
+@keyframes print-line { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+.print-line { animation: print-line .28s steps(4, end) both paused; }
+.printing .print-line { animation-play-state: running; }
+@media (scripting: none) { .print-line { animation: none; } }
 
-.print-line {
-  animation: print-line 0.28s steps(4, end) both paused;
-}
+@keyframes ttl { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+.ttl-bar { transform-origin: left; animation: ttl 30s linear infinite; }
 
-.printing .print-line {
-  animation-play-state: running;
-}
+@keyframes logo-plane-a { from { opacity: 0; transform: translateX(-8px) rotateY(70deg); } to { opacity: 1; transform: none; } }
+@keyframes logo-plane-b { from { opacity: 0; transform: translateX(8px) rotateY(-70deg); } to { opacity: 1; transform: none; } }
+.hyperflip-mark-animated { overflow: visible; perspective: 160px; }
+.hyperflip-mark-animated .hyperflip-plane-a,
+.hyperflip-mark-animated .hyperflip-plane-b { transform-box: fill-box; transform-origin: center; }
+.hyperflip-mark-animated .hyperflip-plane-a { animation: logo-plane-a .65s cubic-bezier(.2,.8,.2,1) both; }
+.hyperflip-mark-animated .hyperflip-plane-b { animation: logo-plane-b .65s .1s cubic-bezier(.2,.8,.2,1) both; }
 
-@media (scripting: none) {
-  .print-line {
-    animation: none;
-  }
-}
+@keyframes hero-enter { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+.hero-enter { animation: hero-enter .6s .18s cubic-bezier(.2,.8,.2,1) both; }
+.hero-enter-late { animation-delay: .32s; }
 
-/* Motif 02 turns continuously. Two rings sit on planes tilted equal and
-   opposite about Y; the pair turns about a shared 3D axis, so under perspective
-   each ring reads as sweeping against the other. No mount gate — a graphic that
-   only moves once is inert in every state a taker actually sits in.
-
-   The splay between the planes is the book's margin, so it also eases between
-   values rather than jumping when a fresh quote reprices the ticket. */
-@keyframes motif-drift {
-  from {
-    transform: rotate3d(1, 1, 0, 0deg);
-  }
-  to {
-    transform: rotate3d(1, 1, 0, 360deg);
-  }
-}
-
-.motif {
-  position: relative;
-  perspective: 200px;
-}
-
-.motif-spin {
-  position: absolute;
-  inset: 0;
-  transform-style: preserve-3d;
-  animation: motif-drift 22s linear infinite;
-}
-
-.motif-ring {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 1.5px solid;
-  /* The splay is data: when the quoted overround changes, the planes ease into
-     the new angle instead of snapping. */
-  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.motif-ring-a {
-  border-color: color-mix(in oklab, var(--color-accent) 80%, transparent);
-}
-
-.motif-ring-b {
-  border-color: color-mix(in oklab, var(--color-fg) 45%, transparent);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .motif-spin {
-    animation: none;
-  }
-  .motif-ring {
-    transition: none;
-  }
-}
-
-/* The ticket turns as the reader moves down the page and lands face-on.
-   Clamped to ±24° so the face is never near edge-on.
-
-   Driven by the document's scroll offset, not view(): the slip is above the
-   fold, so a view() timeline is already ~59% through its cover range on first
-   paint — past any entry-relative end — and the turn was finished before the
-   reader ever saw it. The turn belongs to the first 200px of scroll, which is
-   how far the hero travels before the slip starts leaving the viewport.
-
-   Scroll-driven animation is Chromium-only today; elsewhere the slip simply
-   renders static, which is the same result prefers-reduced-motion gives. */
-@keyframes slip-turn {
-  from {
-    transform: rotateY(-24deg);
-  }
-  to {
-    transform: rotateY(0deg);
-  }
-}
-
+@keyframes slip-turn { from { transform: rotateY(-20deg) rotateZ(-1.5deg); } to { transform: rotateY(0deg) rotateZ(0deg); } }
 .slip-turn {
   transform-style: preserve-3d;
   backface-visibility: hidden;
   animation: slip-turn linear both;
   animation-timeline: scroll();
-  animation-range: 0 200px;
+  animation-range: 0 240px;
 }
+
+@keyframes section-reveal { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: translateY(0); } }
+@supports (animation-timeline: view()) {
+  .section-reveal { animation: section-reveal linear both; animation-timeline: view(); animation-range: entry 5% cover 28%; }
+}
+
+@keyframes market-rail { to { transform: translateX(-50%); } }
+.market-rail-track { width: max-content; animation: market-rail 32s linear infinite; }
+.market-rail:hover .market-rail-track { animation-play-state: paused; }
+
+.ticket-shell {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  background: var(--color-panel);
+  box-shadow: 16px 18px 0 rgb(0 0 0 / .18);
+}
+.ticket-shell::before, .ticket-shell::after {
+  content: "";
+  position: absolute;
+  top: 52%;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-ink);
+  border: 1px solid var(--color-line);
+}
+.ticket-shell::before { left: -9px; }
+.ticket-shell::after { right: -9px; }
+.torn { filter: none; }
+
+@keyframes motif-drift { from { transform: rotate3d(1,1,0,0deg); } to { transform: rotate3d(1,1,0,360deg); } }
+.motif { position: relative; perspective: 200px; }
+.motif-spin { position: absolute; inset: 0; transform-style: preserve-3d; animation: motif-drift 22s linear infinite; }
+.motif-ring { position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid; transition: transform .5s cubic-bezier(.4,0,.2,1); }
+.motif-ring-a { border-color: color-mix(in oklab, var(--color-accent) 80%, transparent); }
+.motif-ring-b { border-color: color-mix(in oklab, var(--color-fg) 45%, transparent); }
+
+::view-transition-old(root), ::view-transition-new(root), ::view-transition-group(root) {
+  animation-duration: 320ms;
+  animation-timing-function: cubic-bezier(.4,0,.2,1);
+}
+::view-transition-old(root) { animation-name: route-out; }
+::view-transition-new(root) { animation-name: route-in; }
+::view-transition-group(.hyperflip-mark) { animation-duration: 360ms; }
+@keyframes route-out { to { opacity: 0; transform: translateX(-10px); } }
+@keyframes route-in { from { opacity: 0; transform: translateX(10px); } }
 
 @media (prefers-reduced-motion: reduce) {
-  .print-line,
-  .slip-turn {
-    animation: none;
-  }
-}
-
-/* Cross — marketing to app is a deliberate lights-down. The ground darkens
-   while the mark holds its position in the header. 420ms, matching the
-   handoff's motion table. */
-::view-transition-old(root),
-::view-transition-new(root),
-::view-transition-group(root) {
-  animation-duration: 420ms;
-  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-::view-transition-group(overround-mark) {
-  animation-duration: 420ms;
-}
-
-/* Every view transition, including pseudo-elements the UA generates that we
-   never named. `!important` is load-bearing: it must beat the UA's own
-   animation shorthand on these pseudo-elements. */
-@media (prefers-reduced-motion: reduce) {
-  ::view-transition-old(*),
-  ::view-transition-new(*),
-  ::view-transition-group(*) {
+  .flash-up, .flash-down, .live-dot, .print-line, .ttl-bar,
+  .hyperflip-mark-animated .hyperflip-plane-a, .hyperflip-mark-animated .hyperflip-plane-b,
+  .hero-enter, .slip-turn, .section-reveal, .market-rail-track, .motif-spin { animation: none; }
+  .motif-ring { transition: none; }
+  ::view-transition-old(*), ::view-transition-new(*), ::view-transition-group(*) {
     animation-duration: 0s !important;
     animation-delay: 0s !important;
   }

@@ -22,6 +22,7 @@ test("formatUsdc renders 6-decimal base units at 2dp with grouping", () => {
 
 test("formatVolume renders compact 24h USDC notional", () => {
   expect(formatVolume(0)).toBe("$0");
+  expect(formatVolume(218)).toBe("$218");
   expect(formatVolume(1_234)).toBe("$1.2K");
   expect(formatVolume(undefined)).toBe("—");
 });

@@ -25,7 +25,7 @@ type MarketsState =
 
 /* `initial` is the board as the server rendered it. Measured cold on Chrome:
    hydration starts the client fetch at ~1.45s and /markets answers at ~2.28s,
-   while the hero's print cascade runs 240-1510ms — so a client-only fetch
+   while the hero's print cascade runs 240-1510ms - so a client-only fetch
    guaranteed the slip printed placeholder legs and then swapped to the real
    ones after the animation was already over. Seeding from the server means
    there is one market set and one print. The fetch below is the fallback for
@@ -34,7 +34,7 @@ function useMarkets(initial: Market[] | null): { state: MarketsState; retry: () 
   const [state, setState] = useState<MarketsState>(
     initial ? { status: "live", markets: initial } : { status: "loading" },
   );
-  // Manual retry for the offline state — loadMarkets() already clears
+  // Manual retry for the offline state - loadMarkets() already clears
   // marketsCache on failure, so this just re-runs the same fetch.
   const retry = useCallback(() => {
     setState({ status: "loading" });
@@ -64,7 +64,7 @@ export interface BoardSnapshot {
 /* --- mid helpers: never fake a number, dash on missing --- */
 
 /** A coin's mid as a probability. allMids carries every coin on the venue, so
- * a mid is only meaningful here when it lands strictly inside (0, 1) — the
+ * a mid is only meaningful here when it lands strictly inside (0, 1) - the
  * same domain priceBreakdown() enforces on a signed quote's leg prices.
  * Anything else is not a probability and must not reach the board or the
  * hero, where it would print as a nonsense percentage or payout. */
@@ -75,8 +75,8 @@ function midNumber(mids: Record<string, string>, coin: string): number | null {
   return Number.isFinite(n) && n > 0 && n < 1 ? n : null;
 }
 
-/* Odds cell that flashes on mid change: up = ink green, down = stamp red,
-   400ms decay (globals.css keyframes, re-tinted by the .paper palette). */
+/* Odds cell that nudges on a mid change while the semantic YES/NO text color
+   carries direction. */
 function OddsCell({ side, mid }: { side: "YES" | "NO"; mid: number | null }) {
   const prev = useRef<number | null>(null);
   const [flash, setFlash] = useState<{ dir: "up" | "down"; seq: number } | null>(null);
@@ -101,7 +101,7 @@ function OddsCell({ side, mid }: { side: "YES" | "NO"; mid: number | null }) {
         {oddsLabel(mid)}
       </span>
       <span className="ml-2 text-[10px] text-dim">
-        {mid === null ? "—" : pct1(mid)}
+        {mid === null ? "-" : pct1(mid)}
       </span>
     </div>
   );
@@ -110,15 +110,14 @@ function OddsCell({ side, mid }: { side: "YES" | "NO"; mid: number | null }) {
 function BoardRow({ market, mids }: { market: Market; mids: Record<string, string> }) {
   const yes = midNumber(mids, market.coinYes);
   const no = midNumber(mids, market.coinNo);
-  // The leading side tints the row — the board reads as a shape before it reads
-  // as numbers. Semantic, never rose.
+  // The leading side tints the row so direction reads before the numbers.
   const lead =
     yes === null || no === null
       ? ""
       : yes > no
-        ? "bg-[rgba(31,92,64,0.08)]"
+        ? "bg-yes/[0.045]"
         : no > yes
-          ? "bg-[rgba(158,43,26,0.07)]"
+          ? "bg-no/[0.04]"
           : "";
   return (
     <div
@@ -140,7 +139,7 @@ function BoardRow({ market, mids }: { market: Market; mids: Record<string, strin
         {formatVolume(market.volume24h)}
       </div>
       <div className="mono col-span-2 text-right text-[11px] text-dim sm:col-span-1">
-        {market.expiryMs ? until(market.expiryMs) : "—"}
+        {market.expiryMs ? until(market.expiryMs) : "-"}
       </div>
     </div>
   );
@@ -148,7 +147,7 @@ function BoardRow({ market, mids }: { market: Market; mids: Record<string, strin
 
 function Slab({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mt-8 rounded-[3px] bg-[var(--paper)] shadow-[6px_8px_0_rgba(36,21,18,0.14)]">
+    <div className="mt-8 overflow-hidden rounded-[12px] border border-line bg-panel">
       {children}
     </div>
   );
@@ -239,15 +238,52 @@ export function HeroStats({ board }: { board: BoardSnapshot }) {
   );
 }
 
+/** One continuous line of actual markets. The duplicate set is hidden from
+ * assistive tech and exists only to make the native CSS loop seamless. */
+export function LiveMarketRail({ board }: { board: BoardSnapshot }) {
+  const { state } = useMarkets(board.markets);
+  const mids = useMids(board.mids);
+
+  if (state.status !== "live" || state.markets.length === 0) {
+    return (
+      <div className="border-y border-line bg-panel px-4 py-3 text-center mono text-[10px] uppercase tracking-[.12em] text-dim">
+        Live market feed reconnecting
+      </div>
+    );
+  }
+
+  const markets = [...state.markets].sort((a, b) => compareMarketVolume(a, b, false)).slice(0, 6);
+  const items = markets.map((market) => ({
+    title: market.title,
+    yes: midNumber(mids, market.coinYes),
+    no: midNumber(mids, market.coinNo),
+  }));
+
+  const set = (hidden: boolean) => (
+    <div className="flex shrink-0" aria-hidden={hidden || undefined}>
+      {items.map((item) => (
+        <div key={item.title} className="flex min-w-[310px] items-center justify-between gap-8 border-r border-line px-5 py-3">
+          <span className="max-w-[190px] truncate text-xs">{item.title}</span>
+          <span className="mono shrink-0 text-[11px]">
+            <span className="text-yes">Y {item.yes === null ? "-" : pct1(item.yes)}</span>
+            <span className="mx-2 text-line">/</span>
+            <span className="text-no">N {item.no === null ? "-" : pct1(item.no)}</span>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div className="market-rail overflow-hidden border-y border-line bg-panel" aria-label="Live market prices">
+      <div className="market-rail-track flex">{set(false)}{set(true)}</div>
+    </div>
+  );
+}
+
 /* --- the hero slip --- */
 
 type SlipLeg = { side: "YES" | "NO"; title: string; prob: number | null };
-
-const EXAMPLE_LEGS: SlipLeg[] = [
-  { side: "YES", title: "BTC above 64,000 on Aug 21?", prob: 0.85 },
-  { side: "NO", title: "HYPE above 60 by Friday?", prob: 0.57 },
-  { side: "YES", title: "ETH below 1,850 on Aug 21?", prob: 0.62 },
-];
 
 function Line({ i, children }: { i: number; children: React.ReactNode }) {
   return (
@@ -259,21 +295,13 @@ function Line({ i, children }: { i: number; children: React.ReactNode }) {
 
 /** The signature: a slip printing itself, line by line, on live odds when the
  * board is up and on the worked example when it isn't. It turns to face the
- * reader as they scroll. Every number shown is labelled for which it is —
+ * reader as they scroll. Every number shown is labelled for which it is -
  * this is fair value off the book, not a signed quote. */
 export function HeroSlip({ board }: { board: BoardSnapshot }) {
   const { state } = useMarkets(board.markets);
   const mids = useMids(board.mids);
   const printing = usePrinting();
 
-  /* Which slip this is gets decided by the board alone, not by the board plus
-     the mids. Titles are known at first paint, so the cascade never prints one
-     market set and then swaps to another under it. Prices are the only thing
-     that can still be missing, and a missing price prints an em dash rather
-     than a fabricated probability — the same rule midNumber enforces.
-
-     The worked example is the fallback for a registry we could not read at
-     all, which is exactly what its footnote already claims. */
   const listed = state.status === "live" ? state.markets.slice(0, 3) : [];
   const live = listed.length >= 2;
   const legs: SlipLeg[] = live
@@ -282,92 +310,63 @@ export function HeroSlip({ board }: { board: BoardSnapshot }) {
         title: m.title,
         prob: midNumber(mids, m.coinYes),
       }))
-    : EXAMPLE_LEGS;
+    : [];
 
   // A half-priced slip has no honest combined implied, so the payout goes
   // unavailable rather than multiplying by an assumed certainty.
-  const combined = legs.every((l) => l.prob !== null)
+  const combined = live && legs.every((l) => l.prob !== null)
     ? legs.reduce((acc, l) => acc * (l.prob as number), 1)
     : null;
-  const stake = 100;
   const fair = combined !== null && combined > 0 ? 1 / combined : null;
 
   return (
     <div className="[perspective:1200px]">
-      <div
-        className={`slip-turn mx-auto w-[280px] ${printing}`}
-      >
-        <div className="torn bg-[var(--paper)] px-6 py-7">
+      <div className={`slip-turn mx-auto w-full max-w-[390px] ${printing}`}>
+        <div className="ticket-shell px-6 py-7 sm:px-7 sm:py-8">
           <Line i={0}>
             <div className="mono flex items-baseline justify-between text-[9px] uppercase tracking-[0.14em] text-dim">
-              <span>Slip #0012</span>
+              <span>Live combination</span>
               <span>
-                {legs.length} legs · {live ? "live board" : "example"}
+                {live ? `${legs.length} legs` : "feed unavailable"}
               </span>
             </div>
           </Line>
 
           <Line i={1}>
-            <div className="my-3 h-px bg-[var(--hair)]" />
+            <div className="my-4 h-px bg-line" />
           </Line>
 
-          <ul className="flex flex-col gap-2.5">
+          {live ? <ul className="flex flex-col gap-3">
             {legs.map((leg, i) => (
               <li key={i}>
                 <Line i={2 + i}>
-                  <div className="flex items-baseline justify-between gap-3 text-[11px]">
+                  <div className="flex items-baseline justify-between gap-3 text-[12px]">
                     <span className="flex-1 truncate leading-snug">{leg.title}</span>
-                    <span
-                      className={`mono shrink-0 ${
-                        leg.side === "YES" ? "text-[var(--hit)]" : "text-[var(--stamp)]"
-                      }`}
-                    >
-                      {leg.side} {leg.prob === null ? "—" : pct1(leg.prob)}
+                    <span className={`mono shrink-0 ${leg.side === "YES" ? "text-yes" : "text-no"}`}>
+                      {leg.side} {leg.prob === null ? "-" : pct1(leg.prob)}
                     </span>
                   </div>
                 </Line>
               </li>
             ))}
-          </ul>
+          </ul> : (
+            <Line i={2}><p className="py-10 text-center text-sm text-dim">Live markets will print here when the feed reconnects.</p></Line>
+          )}
 
           <Line i={2 + legs.length}>
-            <div className="my-3 h-px bg-[var(--hair)]" />
+            <div className="my-4 h-px bg-line" />
           </Line>
 
           <Line i={3 + legs.length}>
-            <div className="mono flex items-baseline justify-between text-[11px]">
-              <span className="text-dim">Stake</span>
-              <span>{stake.toFixed(2)}</span>
+            <div className="mt-3 flex items-end justify-between">
+              <span className="mono text-[9px] uppercase tracking-[0.14em] text-dim">Combined fair odds</span>
+              <span className="mono text-[28px] leading-none text-accent">{fair === null ? "-" : `${fair.toFixed(2)}×`}</span>
             </div>
           </Line>
 
           <Line i={4 + legs.length}>
-            <div className="mt-3 flex items-end justify-between">
-              <span className="mono text-[9px] uppercase tracking-[0.14em] text-dim">
-                Fair payout {fair === null ? "—" : `${fair.toFixed(2)}×`}
-              </span>
-              <span className="mono text-[26px] leading-none">
-                {fair === null ? "—" : (stake * fair).toFixed(2)}
-              </span>
-            </div>
-          </Line>
-
-          <Line i={5 + legs.length}>
-            <div className="mt-4">
-              <div className="h-[3px] overflow-hidden bg-[rgba(36,21,18,0.14)]">
-                <div className="ttl-bar h-full bg-[var(--stamp)]" />
-              </div>
-              <p className="mono mt-2 text-[9px] uppercase tracking-[0.14em] text-dim">
-                Quote holds 30s
-              </p>
-            </div>
-          </Line>
-
-          <Line i={6 + legs.length}>
-            <p className="mono mt-4 text-[9px] leading-relaxed text-dim">
-              {live
-                ? "Odds from the live Core book, before the house spread. Your quote is signed at mint."
-                : "Worked example. Live odds print here when the board is up."}
+            <p className="mono mt-5 border-t border-line pt-4 text-[9px] leading-relaxed text-dim">
+              Live Core odds before the house spread. Build a slip to request a signed quote.
             </p>
           </Line>
         </div>
