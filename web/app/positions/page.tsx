@@ -31,7 +31,7 @@ interface Row {
   parlay: ParlayData;
   burned: boolean;
   legVerdicts: LegVerdict[]; // per-leg, in parlay.legs order
-  block: bigint; // mint block — kept so a post-claim reload doesn't rescan logs
+  block: bigint; // mint block - kept so a post-claim reload doesn't rescan logs
   mintedAtMs: number;
 }
 
@@ -88,14 +88,14 @@ type RowView = {
   action: { kind: "claim" | "resolve"; label: string } | null;
 };
 
-/** Row derivation table — task-7-brief.md §Row derivation, verbatim. */
+/** Row derivation table - task-7-brief.md §Row derivation, verbatim. */
 function deriveRow(row: Row): RowView {
   const { parlay, burned, legVerdicts } = row;
 
   if (parlay.status === STATUS.Open) {
     const verdicts = legVerdicts;
     const settledCount = verdicts.filter((v) => v !== "pending").length;
-    // A single lost leg kills the whole parlay immediately — check it before
+    // A single lost leg kills the whole parlay immediately - check it before
     // "not all settled" so a ticket doesn't sit as "n of m settled" once one
     // leg has already lost (poker sweeps the escrow regardless of the rest).
     if (verdicts.some((v) => v === "lost")) {
@@ -117,7 +117,7 @@ function deriveRow(row: Row): RowView {
         action: { kind: "claim", label: "Claim" },
       };
     }
-    // all settled, some fractional, none lost — claim() would revert NOT_WON
+    // all settled, some fractional, none lost - claim() would revert NOT_WON
     return {
       statusLabel: "Voidable",
       statusClass: "text-dim",
@@ -143,7 +143,7 @@ function deriveRow(row: Row): RowView {
   }
 
   // STATUS.Void
-  return { statusLabel: "Voided — premium refunded", statusClass: "text-dim", payoutClass: "text-dim", action: null };
+  return { statusLabel: "Voided - premium refunded", statusClass: "text-dim", payoutClass: "text-dim", action: null };
 }
 
 function shortError(err: unknown): string {
@@ -162,7 +162,7 @@ const VERDICT_STYLE: Record<LegVerdict, { label: string; className: string }> = 
 };
 
 /** The four dot states, shared by the leg dots and the legend beneath the
- * table. `fractional` is a half-filled hit dot — the retired yellow's only
+ * table. `fractional` is a half-filled hit dot - the retired yellow's only
  * remaining job, done without a third colour. */
 const DOT_CLASS: Record<LegVerdict, string> = {
   hit: "bg-yes",
@@ -180,7 +180,7 @@ function ago(ms: number): string {
   return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-/** One dot per leg, coloured by that leg's verdict — the whole ticket's
+/** One dot per leg, coloured by that leg's verdict - the whole ticket's
  * settlement progress readable without expanding the row. */
 function LegDots({ verdicts }: { verdicts: LegVerdict[] }) {
   return (
@@ -239,7 +239,7 @@ function LegTable({
         const coin = m ? (leg.isYes ? m.coinYes : m.coinNo) : undefined;
         const raw = coin === undefined ? undefined : mids[coin];
         const n = raw === undefined ? NaN : Number(raw);
-        // Only a value strictly inside (0, 1) is a probability — the same
+        // Only a value strictly inside (0, 1) is a probability - the same
         // domain priceBreakdown() enforces. allMids carries every coin on
         // the venue, so anything else is not this leg's price.
         const live = Number.isFinite(n) && n > 0 && n < 1 ? n : null;
@@ -249,7 +249,7 @@ function LegTable({
           // second row; live/expires columns only exist at sm+.
           <div key={leg.vault} className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 mono text-xs">
             <span className={`w-10 shrink-0 truncate sm:w-16 ${leg.isYes ? "text-yes" : "text-no"}`}>{sideLabel(m, leg.isYes)}</span>
-            {/* The leg is a HyperCore market — link its live order book, not the
+            {/* The leg is a HyperCore market - link its live order book, not the
                 EVM explorer. Explorer stays the fallback for archived legs whose
                 market (and coin) the registry no longer carries. */}
             <a
@@ -265,12 +265,12 @@ function LegTable({
               {m?.title ?? leg.vault}
             </a>
             <span className="hidden w-16 text-right text-dim sm:block">
-              {live === null ? "—" : pct1(live)}
+              {live === null ? "-" : pct1(live)}
             </span>
-            <span className="hidden w-16 text-right text-dim sm:block">{m?.expiryMs ? until(m.expiryMs) : "—"}</span>
+            <span className="hidden w-16 text-right text-dim sm:block">{m?.expiryMs ? until(m.expiryMs) : "-"}</span>
             <span className={`text-right sm:w-20 ${verdict.className}`}>{verdict.label}</span>
             <span className="basis-full pl-14 text-[10px] text-dim sm:hidden">
-              {live === null ? "—" : pct1(live)} live · expires {m?.expiryMs ? until(m.expiryMs) : "—"}
+              {live === null ? "-" : pct1(live)} live · expires {m?.expiryMs ? until(m.expiryMs) : "-"}
             </span>
           </div>
         );
@@ -338,11 +338,11 @@ export default function PositionsPage() {
   const [markets, setMarkets] = useState<Market[]>([]);
   const mids = useMids();
 
-  // Titles/coins/expiries live in the writer's registry, not on-chain — the
+  // Titles/coins/expiries live in the writer's registry, not on-chain - the
   // leg detail rows fall back to the raw vault address if it's unreachable.
   useEffect(() => {
     // A failed fetch here used to wipe markets to [], which turns every leg's
-    // title into its raw vault address on a transient blip — keep whatever
+    // title into its raw vault address on a transient blip - keep whatever
     // we last had instead of clobbering it.
     fetchMarkets(true)
       .then(setMarkets)
@@ -405,14 +405,14 @@ export default function PositionsPage() {
 
   return (
     <div className="min-h-screen text-[13px] text-fg">
-      <AppHeader ground="dark" />
+      <AppHeader />
 
-      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
-        <h1 className="display text-[26px] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
+      <main className="mx-auto max-w-[1280px] px-4 py-8 sm:px-6 sm:py-10">
+        <h1 className="display text-[32px] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
           Your slips
         </h1>
         <p className="mt-1 text-[15px] text-dim">
-          Read straight from chain — slip mints, leg settlement, and claims.
+          Read straight from chain - slip mints, leg settlement, and claims.
         </p>
 
         {!ready ? (
@@ -444,7 +444,7 @@ export default function PositionsPage() {
         ) : rows.length === 0 ? (
           <div className="mt-10 rounded-card border border-line bg-panel p-6">
             <p className="text-dim">
-              No slips yet —{" "}
+              No slips yet -{" "}
               <Link href="/build" className="text-accent underline underline-offset-4">
                 build one
               </Link>
@@ -618,7 +618,7 @@ export default function PositionsPage() {
                                   : view.action.label}
                               </button>
                             ) : (
-                              <span className="text-dim">—</span>
+                              <span className="text-dim">-</span>
                             )}
                             {rowError && <p className="mt-2 text-[11px] text-no">{rowError}</p>}
                           </td>

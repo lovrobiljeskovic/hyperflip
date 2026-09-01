@@ -12,12 +12,12 @@ export function formatUsdc(v: bigint): string {
 export function formatVolume(value: number | undefined): string {
   if (value === undefined) return "—";
   if (value === 0) return "$0";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(value);
+  const [divisor, suffix] =
+    value >= 999_950_000 ? [1_000_000_000, "B"] :
+    value >= 999_950 ? [1_000_000, "M"] :
+    value >= 1_000 ? [1_000, "K"] : [1, ""];
+  const rounded = Math.round((value / divisor) * 10) / 10;
+  return `$${suffix ? rounded : Math.round(rounded)}${suffix}`;
 }
 
 export function multiplier(premium: bigint, maxPayout: bigint): string {

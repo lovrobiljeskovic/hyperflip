@@ -49,9 +49,9 @@ export function InviteForm() {
 
   if (saved) {
     return (
-      <div className="bg-[var(--paper)] p-6 text-left shadow-[6px_8px_0_rgba(36,21,18,0.14)]">
-        <p className="mono text-[11px] uppercase tracking-wide text-[var(--hit)]">
-          Code saved — checked on your first quote
+      <div className="rounded-[12px] border border-yes/30 bg-panel p-6 text-left">
+        <p className="mono text-[11px] uppercase tracking-wide text-yes">
+          Code saved. Checked on your first quote
         </p>
         <p className="mt-2 text-[15px] leading-relaxed">
           It rides along with every quote you request in the builder.
@@ -68,7 +68,7 @@ export function InviteForm() {
   }
 
   return (
-    <div className="bg-[var(--paper)] p-6 text-left shadow-[6px_8px_0_rgba(36,21,18,0.14)]">
+    <div className="rounded-[12px] border border-line bg-panel p-6 text-left">
       <form onSubmit={submit} noValidate>
         <div className="flex flex-col gap-2">
           <label
@@ -88,12 +88,12 @@ export function InviteForm() {
               onChange={(e) => setCode(e.target.value)}
               aria-invalid={error ? true : undefined}
               aria-describedby={error ? "invite-error" : "invite-help"}
-              className="mono flex-1 border-b-2 border-[var(--hair)] bg-transparent px-1 py-2 text-[15px] text-fg placeholder:text-[color-mix(in_srgb,var(--ink)_30%,transparent)] focus:border-[var(--ink)]"
-              placeholder="OVR-XXXXXX"
+              className="mono flex-1 rounded-[8px] border border-line bg-raised px-3 py-2.5 text-[15px] text-fg placeholder:text-dim focus:border-accent"
+              placeholder="YOUR-CODE"
             />
             <button
               type="submit"
-              className="mono bg-[var(--ink)] px-6 py-3 text-[12px] uppercase tracking-wide text-[var(--stock)] transition-transform motion-reduce:transition-none active:scale-[0.98] hover:-translate-y-[1px]"
+              className="mono rounded-[8px] bg-accent px-6 py-3 text-[12px] uppercase tracking-wide text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98]"
             >
               Save code
             </button>
@@ -110,10 +110,10 @@ export function InviteForm() {
         </div>
       </form>
 
-      <div className="mt-6 border-t border-[var(--hair)] pt-5">
+      <div className="mt-6 border-t border-line pt-5">
         {waitState === "sent" ? (
           <>
-            <p className="mono text-[11px] uppercase tracking-wide text-[var(--hit)]">
+            <p className="mono text-[11px] uppercase tracking-wide text-yes">
               Invite sent
             </p>
             <p className="mt-2 text-[15px] leading-relaxed">
@@ -140,13 +140,13 @@ export function InviteForm() {
                   onChange={(e) => setEmail(e.target.value)}
                   aria-invalid={waitError ? true : undefined}
                   aria-describedby={waitError ? "waitlist-error" : undefined}
-                  className="mono flex-1 border-b-2 border-[var(--hair)] bg-transparent px-1 py-2 text-[15px] text-fg placeholder:text-[color-mix(in_srgb,var(--ink)_30%,transparent)] focus:border-[var(--ink)]"
+                  className="mono flex-1 rounded-[8px] border border-line bg-raised px-3 py-2.5 text-[15px] text-fg placeholder:text-dim focus:border-accent"
                   placeholder="you@example.com"
                 />
                 <button
                   type="submit"
                   disabled={waitState === "sending"}
-                  className="mono bg-[var(--ink)] px-6 py-3 text-[12px] uppercase tracking-wide text-[var(--stock)] transition-transform motion-reduce:transition-none active:scale-[0.98] hover:-translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="mono rounded-[8px] bg-accent px-6 py-3 text-[12px] uppercase tracking-wide text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {waitState === "sending" ? "Sending…" : "Get invite"}
                 </button>

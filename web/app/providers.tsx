@@ -15,7 +15,7 @@ const wagmiConfig = createConfig({
 // Fallback config for when no Privy app id is set (below): @privy-io/wagmi's
 // WagmiProvider renders a connector that calls @privy-io/react-auth hooks
 // internally, which throw without a PrivyProvider ancestor. Plain wagmi's
-// WagmiProvider needs no such ancestor — same chain, zero connectors, so
+// WagmiProvider needs no such ancestor - same chain, zero connectors, so
 // wagmi hooks (useAccount, usePublicClient, useReadContract, ...) resolve
 // instead of crashing, with wallet-connect features simply inert.
 const wagmiConfigNoPrivy = createWagmiConfigNoPrivy({
@@ -42,7 +42,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       config={{
         defaultChain: hyperEvmTestnet,
         supportedChains: [hyperEvmTestnet],
-        appearance: { theme: "dark", accentColor: "#f5a091" },
+        appearance: { theme: "dark", accentColor: "#C8F36A", logo: "/icon.svg" },
       }}
     >
       <QueryClientProvider client={queryClient}>

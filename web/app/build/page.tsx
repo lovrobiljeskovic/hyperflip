@@ -9,7 +9,7 @@ import { AppHeader } from "../app-header";
 
 /** allMids returns a mid for every coin on the venue, perps included, so a
  * stale, crossed or colliding key can hand back a non-probability. Only
- * (0, 1) is a probability — anything else must degrade to "—" rather than
+ * (0, 1) is a probability - anything else must degrade to "-" rather than
  * render as e.g. 6400000.0%. Same bound as midNumber in app/live-markets.tsx
  * and priceBreakdown in lib/format.ts. Do not widen it. */
 function midOf(mids: Record<string, string>, coin: string): number | null {
@@ -20,11 +20,11 @@ function midOf(mids: Record<string, string>, coin: string): number | null {
 }
 
 /** Matches ParlayVault.MAX_LEGS (src/ParlayVault.sol:58) and the writer's own
- * bound (writer/src/server.ts:49). Display only — the cap is enforced on-chain
+ * bound (writer/src/server.ts:49). Display only - the cap is enforced on-chain
  * and by the writer, not here. */
 const MAX_LEGS = 10;
 
-/** A price cell is the control — clicking 61.4 takes that side. It stays a
+/** A price cell is the control - clicking 61.4 takes that side. It stays a
  * <button> so the keyboard and a screen reader still have a target now that
  * the explicit Add button is gone. */
 function PriceCell({
@@ -50,7 +50,7 @@ function PriceCell({
       disabled={mid === null}
       aria-pressed={selected}
       aria-label={label}
-      className={`mono w-full rounded-[4px] border border-line px-2 py-1.5 text-center transition-colors disabled:cursor-not-allowed disabled:opacity-40 sm:rounded-none sm:border-0 sm:py-1 sm:text-right ${
+      className={`mono w-full rounded-[8px] border border-line px-2 py-1.5 text-center transition-[transform,background-color,border-color,color] active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none sm:rounded-none sm:border-0 sm:py-1 sm:text-right ${
         selected ? "border-accent bg-accent" : ""
       }`}
     >
@@ -71,13 +71,13 @@ function PriceCell({
       <span
         className={`ml-2 text-[10px] ${selected ? "text-on-accent/70" : "text-dim"}`}
       >
-        {mid === null ? "—" : pct1(mid)}
+        {mid === null ? "-" : pct1(mid)}
       </span>
     </button>
   );
 }
 
-/** The venue's own asset icon — crypto perps live at coins/SYM.svg, xyz-dex
+/** The venue's own asset icon - crypto perps live at coins/SYM.svg, xyz-dex
  * assets (equities, commodities, indices) at coins/xyz:SYM.svg. Unknown
  * symbols come back 200 with Hyperliquid's generic coin mark, so the letter
  * badge only covers a missing underlying or a network failure. */
@@ -118,7 +118,7 @@ function BoardRow({
 }) {
   const current = legs.find((l) => l.vault === market.vault);
   // aria-label overrides the button's text, so the price has to be spoken here
-  // or a screen reader never hears it — the price IS the control.
+  // or a screen reader never hears it - the price IS the control.
   const yes = midOf(mids, market.coinYes);
   const no = midOf(mids, market.coinNo);
   return (
@@ -276,7 +276,7 @@ export default function BuildPage() {
   const board = useMemo(() => {
     const filtered = (markets ?? [])
       .filter((m) => tab === "all" || m.category === tab)
-      // Expired-but-not-yet-rotated markets are dead weight on the board —
+      // Expired-but-not-yet-rotated markets are dead weight on the board -
       // filter them out client-side rather than let a stale price look pickable.
       // Same for a game past kickoff: the writer refuses it (expiry-lockout).
       .filter((m) => (m.startMs ?? m.expiryMs ?? Infinity) >= Date.now());
@@ -320,12 +320,12 @@ export default function BuildPage() {
 
   return (
     <div className="min-h-screen text-[13px] text-fg">
-      <AppHeader ground="dark" />
+      <AppHeader />
 
-      <main className="mx-auto grid max-w-6xl px-4 py-8 pb-24 sm:px-6 sm:py-10 lg:grid-cols-[1fr_380px] lg:pb-10">
+      <main className="mx-auto grid max-w-[1280px] gap-8 px-4 py-8 pb-24 sm:px-6 sm:py-10 lg:grid-cols-[1fr_400px] lg:gap-0 lg:pb-10">
         <section className="lg:border-r lg:border-line lg:pr-8">
           <div className="flex items-baseline justify-between gap-4">
-            <h1 className="display text-[26px] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
+            <h1 className="display text-[32px] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
               Build a slip
             </h1>
             <span className="mono text-[11px] text-dim">
@@ -370,7 +370,7 @@ export default function BuildPage() {
             ) : markets.length === 0 ? (
               <p className="rounded-card border border-line bg-panel p-6 text-dim">No markets listed.</p>
             ) : (
-              <div className="border border-line">
+              <div className="overflow-hidden rounded-[12px] border border-line bg-panel/30">
                 <div className="mono flex justify-between gap-x-3 bg-panel px-4 py-3 text-[9px] uppercase tracking-[0.16em] text-dim sm:grid sm:grid-cols-[1fr_110px_110px_100px_90px] sm:px-5">
                   <span>Market</span>
                   <span className="hidden pr-2 text-right sm:block">Yes</span>
@@ -416,12 +416,12 @@ export default function BuildPage() {
           </div>
         </section>
 
-        <aside id="slip" className="mt-8 scroll-mt-20 lg:mt-0 lg:sticky lg:top-24 lg:self-start lg:pl-8">
+        <aside id="slip" className="scroll-mt-20 lg:sticky lg:top-24 lg:self-start lg:pl-8">
           <Ticket legs={legs} onRemove={removeLeg} />
         </aside>
       </main>
 
-      {/* Mobile: the slip lives below the whole board — this bar keeps the
+      {/* Mobile: the slip lives below the whole board - this bar keeps the
           picked legs one tap away instead of a long scroll. */}
       {legs.length > 0 && (
         <button

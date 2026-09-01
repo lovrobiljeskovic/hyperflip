@@ -6,6 +6,7 @@ import { useAccount, useBalance, useSwitchChain } from "wagmi";
 import { hyperEvmTestnet } from "@/lib/chain";
 import { formatUsdc, shortAddress } from "@/lib/format";
 import { useConnectAction, useDisconnectAction, useUsdc, useWalletState } from "@/lib/wallet";
+import { HyperflipMark } from "./brand";
 
 const EXPLORER = hyperEvmTestnet.blockExplorers.default.url;
 
@@ -33,7 +34,7 @@ export function WalletButton() {
 
   useEffect(() => () => void (copyTimer.current && clearTimeout(copyTimer.current)), []);
 
-  // Popover only exists while connected — closing it on disconnect keeps a
+  // Popover only exists while connected - closing it on disconnect keeps a
   // stale panel from hanging over the "Connect wallet" button.
   useEffect(() => {
     if (!isConnected) setOpen(false);
@@ -67,7 +68,7 @@ export function WalletButton() {
       if (copyTimer.current) clearTimeout(copyTimer.current);
       copyTimer.current = setTimeout(() => setCopied(false), 1500);
     } catch {
-      /* clipboard blocked (insecure context / denied) — leave the label alone */
+      /* clipboard blocked (insecure context / denied) - leave the label alone */
     }
   }
 
@@ -89,7 +90,7 @@ export function WalletButton() {
 
       {open && (
         <>
-          {/* click-outside catcher — cheaper than a document listener */}
+          {/* click-outside catcher - cheaper than a document listener */}
           <button
             type="button"
             aria-label="Close wallet menu"
@@ -101,6 +102,10 @@ export function WalletButton() {
             aria-label="Wallet"
             className="absolute right-0 z-30 mt-2 w-72 rounded-card border border-line bg-panel p-4 text-xs shadow-[0_24px_60px_rgba(4,10,12,0.6)]"
           >
+            <div className="mb-3 flex items-center gap-2 border-b border-line pb-3">
+              <HyperflipMark className="size-5" />
+              <span className="display text-sm">hyperflip wallet</span>
+            </div>
             <p className="break-all mono text-[11px] leading-relaxed text-fg">{address}</p>
 
             <div className="mt-3 flex gap-2">
@@ -122,9 +127,9 @@ export function WalletButton() {
             </div>
 
             <div className="mt-4 flex flex-col gap-2 border-t border-line pt-3">
-              <Row label="USDC">{usdc === undefined ? "—" : formatUsdc(usdc)}</Row>
+              <Row label="USDC">{usdc === undefined ? "-" : formatUsdc(usdc)}</Row>
               <Row label="HYPE (gas)">
-                {native ? Number(formatUnits(native.value, native.decimals)).toFixed(4) : "—"}
+                {native ? Number(formatUnits(native.value, native.decimals)).toFixed(4) : "-"}
               </Row>
               <Row label="Network">
                 <span className={wrongChain ? "text-no" : "text-dim"}>

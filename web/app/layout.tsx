@@ -23,10 +23,24 @@ const martian = Martian_Mono({
   subsets: ["latin"],
 });
 
+const deploymentHost = process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
+
 export const metadata: Metadata = {
-  title: "Overround",
+  metadataBase: new URL(deploymentHost ? `https://${deploymentHost}` : "http://localhost:3000"),
+  title: "Hyperflip | Stack outcomes on HyperCore",
   description:
-    "Combine YES and NO legs from Hyperliquid outcome markets into one slip — one premium, one payout, settled on HyperCore.",
+    "Combine live HyperCore outcome markets into one on-chain slip with a signed price and locked payout.",
+  applicationName: "Hyperflip",
+  openGraph: {
+    title: "Hyperflip | Stack outcomes on HyperCore",
+    description: "Two to ten live outcomes. One on-chain slip. One locked payout.",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Hyperflip | Stack outcomes on HyperCore",
+    description: "Two to ten live outcomes. One on-chain slip. One locked payout.",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

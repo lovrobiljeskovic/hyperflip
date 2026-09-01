@@ -41,17 +41,17 @@ const MIN_LEGS = 2;
 const QUOTE_DEBOUNCE_MS = 400;
 /** Fallback quote lifetime until /limits answers with the writer's real one. */
 const TTL_SECONDS = 30;
-// Percent-of-cap stake chips — resolved against the writer's maxStake, or
+// Percent-of-cap stake chips - resolved against the writer's maxStake, or
 // treated as plain USDC amounts when /limits is unreachable.
 const STAKE_PRESETS = [25, 50, 100];
 
 function midPct(mids: Record<string, string>, coin: string): string {
   const raw = mids[coin];
-  if (raw === undefined) return "—";
+  if (raw === undefined) return "-";
   const n = Number(raw);
-  // Only a value strictly inside (0, 1) is a probability — the same domain
+  // Only a value strictly inside (0, 1) is a probability - the same domain
   // priceBreakdown() enforces. allMids carries every coin on the venue.
-  return Number.isFinite(n) && n > 0 && n < 1 ? impliedPct(n) : "—";
+  return Number.isFinite(n) && n > 0 && n < 1 ? impliedPct(n) : "-";
 }
 
 function tryParseStake(v: string): bigint | null {
@@ -77,40 +77,40 @@ function shortMintError(err: unknown): string {
 function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: BuilderLeg[] = []): string {
   if (res.status === 400 && res.error === "dominated") {
     // res.vault names the leg whose lone Core trade already out-pays the whole
-    // ticket — the other legs move together with it so tightly they add risk
+    // ticket - the other legs move together with it so tightly they add risk
     // without adding payout.
     const keep = legs.find((l) => l.vault.toLowerCase() === res.vault?.toLowerCase());
     return keep
-      ? `These legs move together so tightly the combo pays less than "${keep.title}" alone — drop the other legs or mix in something less correlated.`
-      : "These legs move together so tightly the combo pays less than one leg alone — drop a leg or mix in something less correlated.";
+      ? `These legs move together so tightly the combo pays less than "${keep.title}" alone - drop the other legs or mix in something less correlated.`
+      : "These legs move together so tightly the combo pays less than one leg alone - drop a leg or mix in something less correlated.";
   }
-  if (res.error === "clock-skew") return "Quote expired immediately — check your clock.";
+  if (res.error === "clock-skew") return "Quote expired immediately - check your clock.";
   // stale-book is a writer refusal (no trustworthy price for a leg right now),
-  // not an outage — "unreachable" sends people to check their connection.
-  if (res.error === "stale-book") return "No live price for one of these markets right now — try again shortly.";
-  if (res.status === 0 || res.status === 503) return "Writer unreachable — retrying.";
-  if (res.status === 429) return "Too many quotes too fast — pausing a moment.";
-  if (res.status === 403) return "Invite code rejected — enter a valid one below.";
+  // not an outage - "unreachable" sends people to check their connection.
+  if (res.error === "stale-book") return "No live price for one of these markets right now - try again shortly.";
+  if (res.status === 0 || res.status === 503) return "Writer unreachable - retrying.";
+  if (res.status === 429) return "Too many quotes too fast - pausing a moment.";
+  if (res.status === 403) return "Invite code rejected - enter a valid one below.";
   if (res.status === 409) {
-    if (res.error === "leg-settled") return "A leg just settled — remove it and requote.";
-    // quota-cap is the invite code's own reservation quota, not a stake problem —
+    if (res.error === "leg-settled") return "A leg just settled - remove it and requote.";
+    // quota-cap is the invite code's own reservation quota, not a stake problem -
     // shrinking the stake does not help, unlike the market-cap/cluster-cap case below.
     if (res.error === "quota-cap")
-      return "This invite code has hit its open-ticket quota — wait ~a minute for reservations to clear or use another code.";
+      return "This invite code has hit its open-ticket quota - wait ~a minute for reservations to clear or use another code.";
     // market-cap/cluster-cap are stake-driven, not congestion: a long-shot ticket
     // asks for a payout bigger than the house caps for those markets. Saying
     // "at capacity" sends the taker away from a ticket that fits at a lower stake.
     const fit = res.maxStake === undefined ? 0n : BigInt(res.maxStake);
-    if (fit > 0n) return `Payout too large for the house limit — stake up to ${formatUsdc(fit)} USDC on this ticket.`;
-    if (res.error === "at-capacity") return "House bankroll is fully committed — try again shortly.";
+    if (fit > 0n) return `Payout too large for the house limit - stake up to ${formatUsdc(fit)} USDC on this ticket.`;
+    if (res.error === "at-capacity") return "House bankroll is fully committed - try again shortly.";
     return "Payout too large for the house limit on one of these markets.";
   }
   if (res.status === 400 && res.error === "cannot-win")
-    return "These legs contradict each other — this ticket can never win.";
+    return "These legs contradict each other - this ticket can never win.";
   if (res.status === 400 && res.error === "same-game")
-    return "Two legs from the same game — parlays need different games. Drop one.";
+    return "Two legs from the same game - parlays need different games. Drop one.";
   if (res.status === 400 && res.error === "ticket-too-complex")
-    return "Too many correlated legs to price — drop one.";
+    return "Too many correlated legs to price - drop one.";
   return res.error;
 }
 
@@ -138,7 +138,7 @@ const signedMult = (x: number) => `${x < 0 ? "\u2212" : "+"}${Math.abs(x).toFixe
 /** How the multiplier was built: per-leg book price, then each deduction the
  * writer applies (writer/src/pricing.ts). The last row is the signed quote's
  * own ratio, so any gap against the arithmetic above is visible rather than
- * hidden — that gap is the contract's minimum-premium cap biting. */
+ * hidden - that gap is the contract's minimum-premium cap biting. */
 function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown }) {
   const { afterCorrelation, afterEdge, afterLegs, modelled } = edgeSteps(bd);
   const capped = Math.abs(bd.actualMultiplier - modelled) / modelled > 0.005;
@@ -185,15 +185,15 @@ function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown })
 type Cta =
   | { kind: "disabled"; label: string }
   | { kind: "connect"; label: string }
-  /** No saved invite code — the CTA slot renders the inline entry form. */
+  /** No saved invite code - the CTA slot renders the inline entry form. */
   | { kind: "invite" }
-  /** Off-site next step (the faucet) — opens a new tab, with a one-line hint. */
+  /** Off-site next step (the faucet) - opens a new tab, with a one-line hint. */
   | { kind: "external"; label: string; href: string; hint: string }
   | { kind: "done"; label: string; href: string }
   | { kind: "switch-chain"; label: string }
   | { kind: "mint"; label: string };
 
-/** Inline invite entry — save a code, or get one emailed via the waitlist —
+/** Inline invite entry - save a code, or get one emailed via the waitlist -
  * so a tester never has to leave the builder. */
 function InviteEntry({ onSave }: { onSave: (code: string) => void }) {
   const [code, setCode] = useState("");
@@ -223,7 +223,7 @@ function InviteEntry({ onSave }: { onSave: (code: string) => void }) {
           onChange={(e) => setCode(e.target.value)}
           autoComplete="off"
           spellCheck={false}
-          placeholder="Invite code — OVR-XXXXXX"
+          placeholder="Invite code"
           aria-label="Invite code"
           className={inputClass}
         />
@@ -231,9 +231,9 @@ function InviteEntry({ onSave }: { onSave: (code: string) => void }) {
           Save
         </button>
       </form>
-      <p className="mono text-[11px] text-dim">Saved — checked on your first quote.</p>
+      <p className="mono text-[11px] text-dim">Saved - checked on your first quote.</p>
       {waitState === "sent" ? (
-        <p className="mono text-[11px] text-yes">Invite sent — check your email, then paste the code above.</p>
+        <p className="mono text-[11px] text-yes">Invite sent - check your email, then paste the code above.</p>
       ) : (
         <form
           onSubmit={async (e) => {
@@ -302,13 +302,13 @@ export function Ticket({
   const { chainId } = useAccount();
   const { switchChain } = useSwitchChain();
   const { address: usdcAddr, balance: usdcBalance } = useUsdc();
-  // Native HYPE — a wallet without gas fails the mint with a raw RPC error,
+  // Native HYPE - a wallet without gas fails the mint with a raw RPC error,
   // so catch it in the CTA before the wallet ever opens.
   const { data: gas } = useBalance({
     address,
     query: { enabled: !display && !!address },
   });
-  // Drives the "1 tx / 2 tx" route line — the mint flow re-reads allowance
+  // Drives the "1 tx / 2 tx" route line - the mint flow re-reads allowance
   // itself, so a stale value here only ever mislabels the row, never the tx.
   const { data: allowance } = useReadContract({
     address: usdcAddr,
@@ -339,7 +339,7 @@ export function Ticket({
   const stakeBase = tryParseStake(stake);
   const requestSeq = useRef(0);
   // True once we've already auto-requoted a quote that was expired on its very first
-  // tick (client clock ahead of the writer) — caps that auto-requote at one shot so a
+  // tick (client clock ahead of the writer) - caps that auto-requote at one shot so a
   // sustained skew can't loop POSTs. Reset on a fresh ticket config and on manual Retry.
   const clockSkewRetried = useRef(false);
 
@@ -361,7 +361,7 @@ export function Ticket({
     setQuoting(false);
     setQuoteResult(res);
     // Preserve "requoted" (set by the LEG_SETTLED/QUOTE_EXPIRED mint retry)
-    // so its note stays visible alongside the refreshed CTA — but only when
+    // so its note stays visible alongside the refreshed CTA - but only when
     // the retry actually succeeded; any other trigger (or a failed retry)
     // clears it.
     setMintState((s) => (s === "requoted" && res.ok ? "requoted" : "idle"));
@@ -389,7 +389,7 @@ export function Ticket({
       setTtlLeft(0);
       return;
     }
-    if (mintState === "pending" || mintState === "done") return; // freeze — don't requote under a mint
+    if (mintState === "pending" || mintState === "done") return; // freeze - don't requote under a mint
     let firstTick = true;
     const tick = () => {
       const left = secondsLeft(BigInt(quoteResult.quote.deadline), Date.now());
@@ -449,7 +449,7 @@ export function Ticket({
       }
       // The approve (and the wallet confirm before it) may have outlived the
       // quote's TTL. Instead of sending a doomed mint, fetch a fresh quote and
-      // mint that in the same flow — same stake means same premium, so the
+      // mint that in the same flow - same stake means same premium, so the
       // approval still covers it. Buffer of 10s absorbs mining + clock lag.
       if (allowance < premium || secondsLeft(BigInt(q.deadline), Date.now()) < 10) {
         const base = tryParseStake(stake);
@@ -482,7 +482,7 @@ export function Ticket({
         sig,
       ] as const;
       // Simulate first: surfaces the actual revert reason (QUOTE_EXPIRED,
-      // exceeds balance, …) before gas is spent — a mined-but-reverted tx
+      // exceeds balance, …) before gas is spent - a mined-but-reverted tx
       // resolves without one.
       await publicClient.simulateContract({
         address: PARLAY_VAULT,
@@ -498,14 +498,14 @@ export function Ticket({
         args: mintArgs,
       });
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      // Simulation passed but the mined tx reverted — deadline raced the
+      // Simulation passed but the mined tx reverted - deadline raced the
       // wallet confirmation; treat as stale quote.
       if (receipt.status !== "success") throw new Error("QUOTE_EXPIRED (mint reverted on-chain)");
       setMintState("done");
     } catch (err) {
       const msg = String((err as Error)?.message ?? err);
       if (msg.includes("LEG_SETTLED") || msg.includes("QUOTE_EXPIRED")) {
-        void runQuote(); // stale quote — auto-requote (spec §4)
+        void runQuote(); // stale quote - auto-requote (spec §4)
         setMintState("requoted");
       } else {
         setMintErrorMsg(shortMintError(err));
@@ -522,7 +522,7 @@ export function Ticket({
     if (chainId !== undefined && chainId !== hyperEvmTestnet.id)
       return { kind: "switch-chain", label: `Switch to ${hyperEvmTestnet.name}` };
     if (!inviteCode) return { kind: "invite" };
-    // Empty wallet is a dead end without a next step — send the tester to the
+    // Empty wallet is a dead end without a next step - send the tester to the
     // faucet instead of a disabled button.
     if (usdcBalance === 0n)
       return { kind: "external", label: "Get testnet USDC →", href: HL_DRIP, hint: DRIP_HINT };
@@ -532,13 +532,13 @@ export function Ticket({
     // Checked before the quote is even shown: a stake the wallet can't cover
     // would otherwise reach the approve tx and burn gas on a doomed mint.
     if (usdcBalance !== undefined && stakeBase > usdcBalance)
-      return { kind: "disabled", label: `Insufficient USDC — ${formatUsdc(usdcBalance)} available` };
+      return { kind: "disabled", label: `Insufficient USDC - ${formatUsdc(usdcBalance)} available` };
     if (mintState === "pending") return { kind: "disabled", label: "Confirm in wallet…" };
-    if (mintState === "done") return { kind: "done", label: "Minted — view positions", href: "/positions" };
+    if (mintState === "done") return { kind: "done", label: "Minted - view positions", href: "/positions" };
     if (quoting) return { kind: "disabled", label: "Quoting…" };
     if (!quoteResult) return { kind: "disabled", label: "Waiting for quote…" };
     if (!quoteResult.ok) return { kind: "disabled", label: "Unable to quote" };
-    return { kind: "mint", label: `Mint slip — ${formatUsdc(BigInt(quoteResult.quote.premium))} USDC` };
+    return { kind: "mint", label: `Mint slip - ${formatUsdc(BigInt(quoteResult.quote.premium))} USDC` };
   }
   const cta = display ? null : computeCta();
 
@@ -559,7 +559,7 @@ export function Ticket({
       : null;
   // The motif's ring splay is the book's margin on the live quote.
   const margin = bd ? quotedOverround(bd) : null;
-  // The stake you'd need to win back exactly what you paid — the honest
+  // The stake you'd need to win back exactly what you paid - the honest
   // "how likely does this have to be" number behind the multiplier.
   const m = multiplierNum(premium, maxPayout);
   const breakEven = m > 0 ? 1 / m : null;
@@ -579,7 +579,7 @@ export function Ticket({
   );
 
   // Display-mode sample math: fair combined odds off live mids, no house edge.
-  // Every leg must carry a real probability — treating an unpriced leg as
+  // Every leg must carry a real probability - treating an unpriced leg as
   // certain would overstate the multiplier, so the figure goes unavailable
   // instead.
   const sampleProbs = legs.map((l) => {
@@ -604,7 +604,7 @@ export function Ticket({
       </div>
 
       {legs.length === 0 ? (
-        <p className="mt-4 text-dim">No legs yet — pick a side from the market list.</p>
+        <p className="mt-4 text-dim">No legs yet - pick a side from the market list.</p>
       ) : (
         <ul className="mt-4 flex flex-col gap-px bg-line">
           {legs.map((leg) => (
@@ -637,16 +637,16 @@ export function Ticket({
           </div>
           <div className="flex justify-between">
             <span className="text-dim">Combined implied</span>
-            <span>{combinedImplied > 0 ? impliedPct(combinedImplied) : "—"}</span>
+            <span>{combinedImplied > 0 ? impliedPct(combinedImplied) : "-"}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-dim">Fair</span>
-            <span className="text-dim">{sampleMultiplier === null ? "—" : mult(sampleMultiplier)}</span>
+            <span className="text-dim">{sampleMultiplier === null ? "-" : mult(sampleMultiplier)}</span>
           </div>
           <div className="mt-3 flex items-end justify-between border-t border-line pt-4">
             <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Max payout</span>
             <span className="mono text-[30px] leading-none text-accent">
-              {samplePayout === null ? "—" : samplePayout.toFixed(2)}
+              {samplePayout === null ? "-" : samplePayout.toFixed(2)}
             </span>
           </div>
         </div>
@@ -658,7 +658,7 @@ export function Ticket({
                 Stake (USDC)
               </label>
               <span className="mono text-[11px] text-dim">
-                Balance {usdcBalance === undefined ? "—" : formatUsdc(usdcBalance)}
+                Balance {usdcBalance === undefined ? "-" : formatUsdc(usdcBalance)}
               </span>
             </div>
             <input
@@ -700,9 +700,9 @@ export function Ticket({
           {quoteResult?.ok && (
             <div className="print-line mono mt-4 flex flex-col gap-2 border-t border-line pt-4 text-[12px]">
               <DetailRow label="Stake">{formatUsdc(premium)} USDC</DetailRow>
-              <DetailRow label="Combined implied">{bd ? pct(1 / bd.fairMultiplier) : "—"}</DetailRow>
+              <DetailRow label="Combined implied">{bd ? pct(1 / bd.fairMultiplier) : "-"}</DetailRow>
               <DetailRow label="Fair" className="text-dim">
-                {bd ? mult(bd.fairMultiplier) : "—"}
+                {bd ? mult(bd.fairMultiplier) : "-"}
               </DetailRow>
               <DetailRow label="Quoted" className="text-[20px] leading-none text-accent">
                 {multiplier(premium, maxPayout)}
@@ -713,7 +713,7 @@ export function Ticket({
               </div>
 
               {/* open by default: the multiplier's derivation is the point of the
-                  panel, not a footnote — collapsing it hides the one number a
+                  panel, not a footnote - collapsing it hides the one number a
                   taker most needs to trust. */}
               <details open className="mt-2 rounded-[4px] border border-line bg-raised/40 px-3 py-2">
                 <summary className="flex items-center justify-between text-[11px] text-dim">
@@ -731,7 +731,7 @@ export function Ticket({
                       +{formatUsdc(maxPayout - premium)} USDC
                     </DetailRow>
                     <DetailRow label="Break-even probability">
-                      {breakEven === null ? "—" : pct(breakEven)}
+                      {breakEven === null ? "-" : pct(breakEven)}
                     </DetailRow>
                     <DetailRow label="Max loss" className="text-no">
                       {formatUsdc(premium)} USDC
@@ -739,7 +739,7 @@ export function Ticket({
                   </div>
 
                   <div className="flex flex-col gap-1.5 border-t border-line pt-3">
-                    <DetailRow label="Price protection">Fixed — signed quote</DetailRow>
+                    <DetailRow label="Price protection">Fixed - signed quote</DetailRow>
                     <DetailRow label="Slippage">None (0%)</DetailRow>
                     <DetailRow label="Route">
                       {needsApproval ? "2 txs · Approve + Mint" : "1 tx · Mint"}
@@ -758,8 +758,8 @@ export function Ticket({
             <div className="mt-5">
               <div className="h-[3px] overflow-hidden rounded-full bg-raised">
                 <div
-                  className="h-full bg-accent transition-[width] duration-1000 ease-linear motion-reduce:transition-none"
-                  style={{ width: `${Math.max(0, Math.min(100, (ttlLeft / ttlSeconds) * 100))}%` }}
+                  className="h-full origin-left bg-accent transition-transform duration-1000 ease-linear motion-reduce:transition-none"
+                  style={{ transform: `scaleX(${Math.max(0, Math.min(1, ttlLeft / ttlSeconds))})` }}
                 />
               </div>
               <p className="mono mt-2 text-[11px] text-dim">Quote reprices in {ttlLeft}s</p>
@@ -776,7 +776,7 @@ export function Ticket({
                 <button
                   type="button"
                   onClick={() => {
-                    setMintState("idle"); // user action — clear any stale requoted/error note
+                    setMintState("idle"); // user action - clear any stale requoted/error note
                     clockSkewRetried.current = false;
                     void runQuote();
                   }}
@@ -811,7 +811,7 @@ export function Ticket({
 
       {display ? (
         <div className="mono mt-4 rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent" aria-hidden>
-          Mint slip — 100.00 USDC
+          Mint slip - 100.00 USDC
         </div>
       ) : cta ? (
         <>
@@ -875,7 +875,7 @@ export function Ticket({
             </p>
           )}
           {mintState === "requoted" && (
-            <p className="mt-3 text-center mono text-[11px] text-accent">Quote refreshed — mint again</p>
+            <p className="mt-3 text-center mono text-[11px] text-accent">Quote refreshed - mint again</p>
           )}
           {mintState === "error" && mintErrorMsg && (
             <div className="mt-3">
