@@ -9,7 +9,7 @@ import { hyperEvmTestnet } from "@/lib/chain";
 
 const wagmiConfig = createConfig({
   chains: [hyperEvmTestnet],
-  transports: { [hyperEvmTestnet.id]: http() },
+  transports: { [hyperEvmTestnet.id]: http(undefined, { retryCount: 6, retryDelay: 2_000 }) },
 });
 
 // Fallback config for when no Privy app id is set (below): @privy-io/wagmi's
@@ -20,7 +20,7 @@ const wagmiConfig = createConfig({
 // instead of crashing, with wallet-connect features simply inert.
 const wagmiConfigNoPrivy = createWagmiConfigNoPrivy({
   chains: [hyperEvmTestnet],
-  transports: { [hyperEvmTestnet.id]: http() },
+  transports: { [hyperEvmTestnet.id]: http(undefined, { retryCount: 6, retryDelay: 2_000 }) },
 });
 
 const queryClient = new QueryClient();
