@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { compareMarketVolume, fetchMarketBoard, type Market } from "@/lib/writer";
+import { compareMarketVolume, fetchMarketBoard, onlySports, sideLabel, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
 import { formatVolume, oddsLabel, pct1, until } from "@/lib/format";
@@ -11,7 +11,7 @@ import { formatVolume, oddsLabel, pct1, until } from "@/lib/format";
    revisit retries. */
 let marketsCache: Promise<Market[]> | null = null;
 function loadMarkets(): Promise<Market[]> {
-  marketsCache ??= fetchMarketBoard().catch((e) => {
+  marketsCache ??= fetchMarketBoard().then(onlySports).catch((e) => {
     marketsCache = null;
     throw e;
   });
@@ -126,7 +126,9 @@ function BoardRow({ market, mids }: { market: Market; mids: Record<string, strin
       <div className="col-span-2 sm:col-span-1">
         <p className="text-[12px] leading-snug">{market.title}</p>
         <p className="mono mt-1 text-[10px] uppercase tracking-[0.14em] text-dim">
-          {market.groupTitle ?? market.category}
+          {market.groupTitle && market.groupTitle !== market.title
+            ? market.groupTitle
+            : [market.sport ?? market.category, market.cluster].filter(Boolean).join(" · ")}
           <span className="sm:hidden">
             {" · "}
             {formatVolume(market.volume24h)}
@@ -283,7 +285,7 @@ export function LiveMarketRail({ board }: { board: BoardSnapshot }) {
 
 /* --- the hero slip --- */
 
-type SlipLeg = { side: "YES" | "NO"; title: string; prob: number | null };
+type SlipLeg = { side: "YES" | "NO"; label: string; title: string; prob: number | null };
 
 function Line({ i, children }: { i: number; children: React.ReactNode }) {
   return (
@@ -307,6 +309,7 @@ export function HeroSlip({ board }: { board: BoardSnapshot }) {
   const legs: SlipLeg[] = live
     ? listed.map((m) => ({
         side: "YES" as const,
+        label: sideLabel(m, true),
         title: m.title,
         prob: midNumber(mids, m.coinYes),
       }))
@@ -342,8 +345,8 @@ export function HeroSlip({ board }: { board: BoardSnapshot }) {
                 <Line i={2 + i}>
                   <div className="flex items-baseline justify-between gap-3 text-[12px]">
                     <span className="flex-1 truncate leading-snug">{leg.title}</span>
-                    <span className={`mono shrink-0 ${leg.side === "YES" ? "text-yes" : "text-no"}`}>
-                      {leg.side} {leg.prob === null ? "-" : pct1(leg.prob)}
+                    <span className={`mono shrink-0 uppercase ${leg.side === "YES" ? "text-yes" : "text-no"}`}>
+                      {leg.label} {leg.prob === null ? "-" : pct1(leg.prob)}
                     </span>
                   </div>
                 </Line>

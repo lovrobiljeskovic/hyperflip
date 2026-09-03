@@ -26,6 +26,11 @@ export interface Market {
   volume24h?: number;
 }
 
+/** The landing page is sports-only; the registry still lists legacy crypto vaults. */
+export function onlySports(markets: Market[]): Market[] {
+  return markets.filter((m) => m.category === "sports");
+}
+
 /** What the taker is taking on this market's side, for chips and buttons. */
 export function sideLabel(market: Pick<Market, "sideYes" | "sideNo"> | undefined, isYes: boolean): string {
   return (isYes ? market?.sideYes : market?.sideNo) ?? (isYes ? "YES" : "NO");

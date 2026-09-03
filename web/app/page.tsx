@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { fetchMids } from "@/lib/info";
-import { fetchMarketBoard } from "@/lib/writer";
+import { fetchMarketBoard, onlySports } from "@/lib/writer";
 import { AppHeader } from "./app-header";
 import { HyperflipBrand } from "./brand";
 import { InviteForm } from "./invite-form";
@@ -9,7 +9,7 @@ import { HeroSlip, LiveMarketBoard, LiveMarketRail, type BoardSnapshot } from ".
 import { PurrCoinToss } from "./purr-coin-toss";
 
 const steps = [
-  { n: "01", title: "Pick the markets", body: "Take YES or NO on two to ten live outcome markets." },
+  { n: "01", title: "Pick the markets", body: "Take a side on two to ten live sports markets." },
   { n: "02", title: "Read the quote", body: "Hyperflip prices the combination from the live Core book." },
   { n: "03", title: "Mint the slip", body: "Your premium and maximum payout lock on-chain." },
   { n: "04", title: "Claim the result", body: "Every leg your way pays USDC. One miss closes the slip." },
@@ -25,7 +25,7 @@ const settlement = [
 const faq = [
   {
     q: "How does pricing work?",
-    a: "The live market probabilities are combined, adjusted for correlation, then priced with the house margin. Fair and quoted returns are both shown before you mint.",
+    a: "The live market probabilities are multiplied together, then the house edge is applied. Fair and quoted returns are both shown before you mint.",
   },
   {
     q: "What if a leg settles while I mint?",
@@ -33,17 +33,17 @@ const faq = [
   },
   {
     q: "Which markets are available?",
-    a: "A curated registry of HIP-4 outcome markets on the HyperCore testnet book. The board grows through the beta.",
+    a: "A curated registry of HIP-4 sports markets on the HyperCore testnet book, rotated nightly. Legs from the same game cannot share a slip.",
   },
   {
     q: "What does it cost?",
-    a: "There is no platform fee during beta. The signed quote shows the full house spread before you mint.",
+    a: "No separate platform fee. The house edge is 5% on the combined odds plus 3% for every leg past the first, built into the signed quote and shown before you mint.",
   },
 ];
 
 async function boardSnapshot(): Promise<BoardSnapshot> {
   const [markets, mids] = await Promise.all([fetchMarketBoard().catch(() => null), fetchMids(10)]);
-  return { markets, mids };
+  return { markets: markets && onlySports(markets), mids };
 }
 
 export default async function Home() {
@@ -54,7 +54,9 @@ export default async function Home() {
       <AppHeader />
 
       <main>
-        <section className="mx-auto grid min-h-[calc(100dvh-4rem)] w-full max-w-[1280px] items-center gap-10 px-4 py-10 sm:px-6 lg:grid-cols-[1.08fr_.92fr] lg:gap-16 lg:py-14">
+        <LiveMarketRail board={board} />
+
+        <section className="mx-auto grid min-h-[calc(100dvh-4rem-42px)] w-full max-w-[1280px] items-center gap-10 px-4 py-10 sm:px-6 lg:grid-cols-[1.08fr_.92fr] lg:gap-16 lg:py-14">
           <div className="hero-enter">
             <PurrCoinToss />
             <h1 className="display max-w-[9ch] text-[clamp(3.25rem,7vw,6.6rem)] leading-[.86] tracking-[-.06em]">
@@ -83,12 +85,10 @@ export default async function Home() {
           </div>
         </section>
 
-        <LiveMarketRail board={board} />
-
         <section id="board" className="section-reveal mx-auto w-full max-w-[1280px] scroll-mt-20 px-4 py-20 sm:px-6 lg:py-28">
           <h2 className="display max-w-[12ch] text-[clamp(2.5rem,5vw,4.6rem)]">Markets, moving now.</h2>
           <p className="mt-5 max-w-[54ch] text-base leading-relaxed text-dim">
-            Live decimal odds and implied probability from HyperCore. The board carries no house spread.
+            Live decimal odds and implied probability for every listed sports market. The board carries no house edge.
           </p>
           <LiveMarketBoard board={board} />
         </section>
@@ -112,13 +112,16 @@ export default async function Home() {
           <div>
             <h2 className="display max-w-[9ch] text-[clamp(2.5rem,5vw,4.6rem)]">Pricing you can inspect.</h2>
             <p className="mt-5 max-w-[42ch] text-base leading-relaxed text-dim">
-              Every quote separates market probability, correlation, and house margin before your wallet opens.
+              Every quote separates market probability from house edge before your wallet opens.
             </p>
           </div>
           <dl className="grid content-start gap-px overflow-hidden rounded-[12px] border border-line bg-line sm:grid-cols-2">
             <div className="bg-panel p-7 sm:col-span-2">
-              <dt className="mono text-[10px] uppercase tracking-[.14em] text-dim">Beta platform fee</dt>
-              <dd className="display mt-5 text-5xl text-accent">None</dd>
+              <dt className="mono text-[10px] uppercase tracking-[.14em] text-dim">House edge</dt>
+              <dd className="display mt-5 text-5xl text-accent">5% + 3% a leg</dd>
+              <p className="mt-3 max-w-[46ch] text-sm leading-relaxed text-dim">
+                Five percent on the combined odds, three more for every leg past the first. No separate platform fee.
+              </p>
             </div>
             <div className="bg-raised p-7">
               <dt className="mono text-[10px] uppercase tracking-[.14em] text-dim">Before mint</dt>
