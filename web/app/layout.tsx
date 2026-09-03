@@ -23,10 +23,16 @@ const martian = Martian_Mono({
   subsets: ["latin"],
 });
 
-const deploymentHost = process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
+const deploymentHost = process.env.VERCEL_URL;
+const siteUrl =
+  process.env.VERCEL_ENV === "production"
+    ? "https://hyperflip.xyz"
+    : deploymentHost
+      ? `https://${deploymentHost}`
+      : "http://localhost:3000";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(deploymentHost ? `https://${deploymentHost}` : "http://localhost:3000"),
+  metadataBase: new URL(siteUrl),
   title: "Hyperflip | Stack outcomes on HyperCore",
   description:
     "Combine live HyperCore outcome markets into one on-chain slip with a signed price and locked payout.",
