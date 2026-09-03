@@ -146,9 +146,10 @@ export function parseInviteCodes(raw: string): Set<string> {
   return new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
 }
 
-/** CORS_ORIGINS default: the two known deployed frontends (project deploy state,
+/** CORS_ORIGINS default: the known deployed frontends (project deploy state,
  * mainnet-hardening handoff). Override via env for other environments. */
-export const DEFAULT_CORS_ORIGINS = "https://overround.xyz,https://overround-wine.vercel.app";
+export const DEFAULT_CORS_ORIGINS =
+  "https://hyperflip.xyz,https://www.hyperflip.xyz,https://overround.xyz,https://overround-wine.vercel.app";
 
 export function parseCorsOrigins(raw: string): string[] {
   return raw.split(",").map((s) => s.trim()).filter(Boolean);
