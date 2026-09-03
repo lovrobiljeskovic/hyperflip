@@ -1,23 +1,34 @@
 import { ViewTransition } from "react";
 import Link from "next/link";
 
+/* The coin: lime rim with two edge notches, face split green/white, and the
+   H as two counter-slanted slabs — one white, one ink — bridged by a chevroned
+   crossbar. icon.svg and opengraph-image.tsx carry hex copies of the same paths. */
 export function HyperflipMark({ className = "", animated = false }: { className?: string; animated?: boolean }) {
   return (
     <svg
-      viewBox="0 0 96 96"
+      viewBox="0 0 100 100"
       className={`${animated ? "hyperflip-mark-animated" : ""} ${className}`}
       aria-hidden
       focusable="false"
     >
-      <circle cx="48" cy="48" r="44" fill="var(--color-accent)" />
-      <circle cx="48" cy="48" r="40.5" fill="none" stroke="var(--color-ink)" strokeWidth="1.5" />
-      <circle cx="48" cy="48" r="37" fill="var(--color-ink)" />
-      <g transform="translate(25 23) scale(.62)">
-        <path className="hyperflip-plane-a" fill="var(--color-accent)" d="M5 16 24 5v25l32 17v14L24 45v20L5 76Z" />
-        <g className="hyperflip-plane-b" fill="var(--color-fg)">
-          <path d="M6.5 41.5 24 51v14Z" />
-          <path d="m56 16 13-7v60l-13 7Z" />
-        </g>
+      <defs>
+        <mask id="hyperflip-notch">
+          <rect width="100" height="100" fill="#fff" />
+          <circle cx="1" cy="50" r="6.5" fill="#000" />
+          <circle cx="99" cy="50" r="6.5" fill="#000" />
+        </mask>
+      </defs>
+      <g mask="url(#hyperflip-notch)">
+        <circle cx="50" cy="50" r="48" fill="var(--color-accent)" stroke="var(--color-ink)" strokeWidth="1.5" />
+        <circle cx="50" cy="50" r="44.5" fill="none" stroke="var(--color-ink)" strokeWidth="1.2" />
+      </g>
+      <path d="M50 9A41 41 0 0 0 50 91Z" fill="var(--color-accent)" stroke="var(--color-ink)" strokeWidth="1.2" />
+      <path d="M50 9A41 41 0 0 1 50 91Z" fill="var(--color-fg)" stroke="var(--color-ink)" strokeWidth="1.2" />
+      <path className="hyperflip-plane-a" d="M26 30 38 21v58L26 70Z" fill="var(--color-fg)" stroke="var(--color-ink)" strokeWidth="1.4" strokeLinejoin="round" />
+      <g className="hyperflip-plane-b" fill="var(--color-ink)">
+        <path d="M38 43h24v14H38l5-7Z" />
+        <path d="M62 21 74 30v40l-12 9Z" />
       </g>
     </svg>
   );
