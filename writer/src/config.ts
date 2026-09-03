@@ -1,4 +1,5 @@
 import { config as loadDotenv } from "dotenv";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isAddress, type Address } from "viem";
@@ -18,7 +19,15 @@ loadDotenv({ path: path.resolve(here, "../../.env") });
 export { parseMarkets } from "./markets.js";
 export type { MarketInfo } from "./markets.js";
 
+/** `correlated`: the research champion / baseline copula prices the joint
+ * probability and cross-underlying tickets need a Supported model (crypto and
+ * equities). `independent`: legs multiply, cross-game tickets always quote,
+ * legs sharing a game or question are refused — the sports beta. Boots from
+ * MARKETS_FILE alone, no research root or profile. */
+export type PricingMode = "correlated" | "independent";
+
 export interface WriterConfig {
+  pricingMode: PricingMode;
   rpcUrl: string;
   parlayVault: Address;
   /** The bankroll wallet granting the ERC-20 allowance. Read-only here; this service never spends from it. */
@@ -26,9 +35,12 @@ export interface WriterConfig {
   quoteSignerKey: `0x${string}`;
   pokerKey: `0x${string}`;
   infoApiUrl: string;
-  researchRoot: string;
-  researchProfile: LoadedResearchNetworkProfile;
-  researchPersistence: ResearchPersistence;
+  /** Research storage; absent in independent mode. */
+  researchRoot?: string;
+  researchProfile?: LoadedResearchNetworkProfile;
+  researchPersistence?: ResearchPersistence;
+  /** Independent mode's quote journal: one JSON line per signed quote. */
+  quoteJournalFile?: string;
   port: number;
   edgeBps: bigint;
   minPremiumBps: bigint;
@@ -174,10 +186,11 @@ export function profileDeploymentMismatchReason(profile: LoadedResearchNetworkPr
 }
 
 export function writerProfileIdentityFailure(config: Pick<WriterConfig, "researchProfile" | "parlayVault" | "deployBlock" | "model">, actualChainId: number): string | null {
-  try { assertProfileChain(config.researchProfile, actualChainId); } catch (error) { return (error as Error).message; }
-  const deployment = profileDeploymentMismatchReason(config.researchProfile, config.parlayVault, config.deployBlock);
-  if (deployment) return deployment;
   const profile = config.researchProfile;
+  if (!profile) return null; // independent mode: no research identity to verify
+  try { assertProfileChain(profile, actualChainId); } catch (error) { return (error as Error).message; }
+  const deployment = profileDeploymentMismatchReason(profile, config.parlayVault, config.deployBlock);
+  if (deployment) return deployment;
   const model = config.model;
   if (model.identityFailureReason) return model.identityFailureReason;
   if (model.network !== profile.profile.network) return `research champion expected network ${profile.profile.network}, got ${model.network}`;
@@ -199,7 +212,58 @@ export function applyWriterProfileIdentity(config: Pick<WriterConfig, "researchP
   return reason;
 }
 
-export function loadConfig(nowMs = Date.now()): WriterConfig {
+export function parsePricingMode(raw: string | undefined): PricingMode {
+  const mode = raw ?? "correlated";
+  if (mode !== "correlated" && mode !== "independent") throw new Error("PRICING_MODE must be correlated or independent");
+  return mode;
+}
+
+/** Everything that differs between the two pricing modes at boot. */
+interface PricingSource {
+  markets: Map<string, MarketInfo>;
+  registryJson: string;
+  correlations: CorrelationTable;
+  model: ArtifactModelMetadata;
+  parlayVault: Address;
+  deployBlock: bigint;
+  infoApiUrl: string;
+  researchRoot?: string;
+  researchProfile?: LoadedResearchNetworkProfile;
+  researchPersistence?: ResearchPersistence;
+  quoteJournalFile?: string;
+}
+
+const DEFAULT_INFO_API_URL = "https://api.hyperliquid-testnet.xyz/info";
+
+/** Independent mode has no champion; this stub keeps the /health and journal
+ * shapes intact with every research identity field zeroed. */
+export function independentModel(registryJson: string): ArtifactModelMetadata {
+  const zero = "0".repeat(64);
+  return {
+    artifactKind: "profile-baseline", network: "testnet", profileSha256: zero, version: "independent",
+    dataAsOf: new Date(0).toISOString(), dataManifestSha256: zero, sourceRegistrySha256: zero,
+    marketRegistrySha256: sha256(registryJson), deploymentRegistrySha256: zero, baselineCorrelationSha256: zero,
+    artifactSha256: zero, validationSha256: null, validationState: "Unavailable", identityFailureReason: null,
+    ageMs: 0, multiAssetEnabled: false, eligibleUnderlyings: new Set(), quarantinedUnderlyings: new Map(),
+    fallbackEligible: new Set(), pairEligibility: new Map(),
+  };
+}
+
+function loadIndependentSource(): PricingSource {
+  const registryJson = readFileSync(path.resolve(here, "../..", requireEnv("MARKETS_FILE")), "utf8");
+  return {
+    markets: parseMarkets(registryJson),
+    registryJson,
+    correlations: { underlyings: {}, fallback: {}, shrunkClusters: [] },
+    model: independentModel(registryJson),
+    parlayVault: requireAddress("PARLAY_VAULT_ADDRESS"),
+    deployBlock: BigInt(requireEnv("PARLAY_DEPLOY_BLOCK")),
+    infoApiUrl: process.env.INFO_API_URL ?? DEFAULT_INFO_API_URL,
+    quoteJournalFile: path.resolve(here, "../..", process.env.QUOTE_JOURNAL_FILE ?? "writer/quotes.jsonl"),
+  };
+}
+
+function loadCorrelatedSource(nowMs: number): PricingSource {
   const researchRoot = path.resolve(here, "../..", requireEnv("RESEARCH_ROOT"));
   const researchProfile = loadResearchNetworkProfile(path.resolve(here, "../..", requireEnv("RESEARCH_NETWORK_PROFILE_FILE")));
   const storage = openResearchPersistence(researchRoot);
@@ -264,6 +328,18 @@ export function loadConfig(nowMs = Date.now()): WriterConfig {
       }),
     );
   }
+  return {
+    markets, registryJson, correlations, model,
+    parlayVault: researchProfile.deployment.parlayVault,
+    deployBlock: BigInt(researchProfile.deployment.parlayDeployBlock),
+    infoApiUrl: researchProfile.profile.infoApiUrl,
+    researchRoot, researchProfile, researchPersistence: storage,
+  };
+}
+
+export function loadConfig(nowMs = Date.now()): WriterConfig {
+  const pricingMode = parsePricingMode(process.env.PRICING_MODE);
+  const source = pricingMode === "independent" ? loadIndependentSource() : loadCorrelatedSource(nowMs);
   const maxStake = BigInt(requireEnv("MAX_STAKE"));
   const minPremiumBps = BigInt(process.env.MIN_PREMIUM_BPS ?? 100);
   const spotPxStaleMsRaw = Number(process.env.SPOT_PX_STALE_MS ?? 60_000);
@@ -280,20 +356,17 @@ export function loadConfig(nowMs = Date.now()): WriterConfig {
   // opt out; mainnet keeps the finite default.
   const spotPxStaleMs = spotPxStaleMsRaw === 0 ? Infinity : spotPxStaleMsRaw;
   return {
+    pricingMode,
+    ...source,
     // The writer never touches the 0x814 precompile (keeper-only), which is the sole
     // reason TESTNET_RPC is pinned to the official endpoint — and that endpoint
     // rate-limits getLogs hard enough that the poker's catch-up scan cannot finish.
     // WRITER_RPC lets the writer run on a higher-throughput endpoint while the keeper
     // keeps the official one for the precompile.
     rpcUrl: process.env.WRITER_RPC ?? requireEnv("TESTNET_RPC"),
-    parlayVault: researchProfile.deployment.parlayVault,
     writerAddress: requireAddress("WRITER_ADDRESS"),
     quoteSignerKey: requireKey("QUOTE_SIGNER_PRIVATE_KEY"),
     pokerKey: requireKey("POKER_PRIVATE_KEY"),
-    infoApiUrl: researchProfile.profile.infoApiUrl,
-    researchRoot,
-    researchProfile,
-    researchPersistence: storage,
     port: Number(process.env.WRITER_PORT ?? 8787),
     edgeBps: BigInt(process.env.EDGE_BPS ?? 500),
     minPremiumBps,
@@ -304,9 +377,7 @@ export function loadConfig(nowMs = Date.now()): WriterConfig {
     perCodeReservedCap: process.env.PER_CODE_RESERVED_CAP
       ? BigInt(process.env.PER_CODE_RESERVED_CAP)
       : defaultPerCodeReservedCap(maxStake, minPremiumBps),
-    rhoBandPct: Number(process.env.RHO_BAND_PCT ?? 0.2),
-    correlations,
-    model,
+    rhoBandPct: pricingMode === "independent" ? 0 : Number(process.env.RHO_BAND_PCT ?? 0.2),
     legEdgeBps: BigInt(process.env.LEG_EDGE_BPS ?? 300),
     quoteTtlMs: Number(process.env.QUOTE_TTL_MS ?? 30_000),
     spotPxStaleMs,
@@ -315,9 +386,6 @@ export function loadConfig(nowMs = Date.now()): WriterConfig {
     minBookDepthWad: parseDecimalToUnits(process.env.MIN_BOOK_DEPTH ?? "50", 18),
     lockoutMs: Number(process.env.LOCKOUT_MS ?? 600_000),
     pokerIntervalMs: Number(process.env.POKER_INTERVAL_MS ?? 15_000),
-    deployBlock: BigInt(researchProfile.deployment.parlayDeployBlock),
-    markets,
-    registryJson,
     inviteCodes: parseInviteCodes(requireEnv("INVITE_CODES")),
     resendApiKey: process.env.RESEND_API_KEY,
     waitlistFile: path.resolve(here, "../..", process.env.WAITLIST_FILE ?? "writer/waitlist.json"),

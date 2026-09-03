@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import type { Address, Hex } from "viem";
-import { currentModelStatus, handleQuote, validateQuoteRequest, newMetrics, startServer, type QuoteDeps } from "../src/server.js";
+import { currentModelStatus, handleQuote, sameGameLeg, validateQuoteRequest, newMetrics, startServer, type QuoteDeps } from "../src/server.js";
 import { ExposureBook } from "../src/exposure.js";
 import { RateLimiter } from "../src/waitlist.js";
 import { jointProbWad, parseCorrelations } from "../src/correlation.js";
@@ -65,6 +65,7 @@ const FIXTURE_MARKETS = new Map(
 
 function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
   return {
+    pricingMode: "correlated",
     rpcUrl: "", parlayVault: V1, writerAddress: TAKER,
     quoteSignerKey: `0x${"11".repeat(32)}` as `0x${string}`,
     pokerKey: `0x${"22".repeat(32)}` as `0x${string}`,
@@ -673,4 +674,67 @@ test("HTTP smoke: oversized body rejected with 413, server keeps serving", async
   } finally {
     server.close();
   }
+});
+
+// ---------------------------------------------------------------------------
+// Independent pricing mode (sports beta): legs multiply, cross-game tickets
+// never wait on a correlation model, same-game / same-question legs refuse.
+
+const MATCH_A = "0xaaaa000000000000000000000000000000000001" as Address; // q844: Saudi Arabia
+const MATCH_DRAW = "0xaaaa000000000000000000000000000000000002" as Address; // q844: Draw
+const MATCH_B_OTHER = "0xaaaa000000000000000000000000000000000003" as Address; // q845: Iran
+const GAME_OU = "0xaaaa000000000000000000000000000000000004" as Address; // standalone O/U on the q844 game
+const GAME_STANDALONE = "0xaaaa000000000000000000000000000000000005" as Address; // MLB winner, 2-way
+
+const SPORTS_MARKETS = new Map<string, WriterConfig["markets"] extends Map<string, infer M> ? M : never>([
+  [MATCH_A.toLowerCase(), { vault: MATCH_A, coinYes: "#1", coinNo: "#2", underlying: "q844", cluster: "WC2026", direction: "up" as const, title: "Saudi Arabia", category: "sports", question: 844, group: "q844", groupTitle: "Saudi Arabia vs Uruguay", startMs: 5_000_000, expiryMs: 9_000_000 }],
+  [MATCH_DRAW.toLowerCase(), { vault: MATCH_DRAW, coinYes: "#3", coinNo: "#4", underlying: "q844", cluster: "WC2026", direction: "up" as const, title: "Draw", category: "sports", question: 844, group: "q844", groupTitle: "Saudi Arabia vs Uruguay" }],
+  [MATCH_B_OTHER.toLowerCase(), { vault: MATCH_B_OTHER, coinYes: "#5", coinNo: "#6", underlying: "q845", cluster: "WC2026", direction: "up" as const, title: "Iran", category: "sports", question: 845, group: "q845", groupTitle: "Iran vs New Zealand" }],
+  [GAME_OU.toLowerCase(), { vault: GAME_OU, coinYes: "#7", coinNo: "#8", underlying: "q844", cluster: "WC2026", direction: "up" as const, title: "Over 1.5 goals", category: "sports", sideYes: "Over", sideNo: "Under" }],
+  [GAME_STANDALONE.toLowerCase(), { vault: GAME_STANDALONE, coinYes: "#9", coinNo: "#10", underlying: "MIN-BAL-20260812", cluster: "MLB", direction: "up" as const, title: "Twins vs Orioles", category: "sports", sideYes: "Twins", sideNo: "Orioles" }],
+]);
+
+function sportsCfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
+  // Model deliberately disabled and empty: independent mode must not consult it.
+  return cfg({ pricingMode: "independent", rhoBandPct: 0, markets: SPORTS_MARKETS, model: { ...MODEL, multiAssetEnabled: false, eligibleUnderlyings: new Set(), pairEligibility: new Map() }, ...overrides });
+}
+
+test("independent mode: cross-game legs quote as the product of their prices without a correlation model", async () => {
+  const d = deps({ cfg: sportsCfg(), bestEstimateJointProbWad: async () => { throw new Error("must not be called"); } });
+  const r = await handleQuote(d, body({ legs: [legOn(MATCH_A, true), legOn(GAME_STANDALONE, false)] }));
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  const j = r.json as { quote: { maxPayout: string }; breakdown: { jointProbWad: string; bestEstimateJointProbWad: string; pairDecisions: unknown[] } };
+  // 0.5 * 0.5 = 0.25, zero edge -> 4x on a 1 USDC stake
+  assert.equal(j.breakdown.jointProbWad, (WAD / 4n).toString());
+  assert.equal(j.breakdown.bestEstimateJointProbWad, j.breakdown.jointProbWad);
+  assert.equal(j.quote.maxPayout, "4000000");
+  assert.deepEqual(j.breakdown.pairDecisions, []);
+});
+
+test("independent mode: two legs on one question (A + Draw) are refused as same-game", () => {
+  const c = sportsCfg();
+  assert.deepEqual(validateQuoteRequest(body({ legs: [legOn(MATCH_A, true), legOn(MATCH_DRAW, true)] }), c, 0), { ok: false, status: 400, reason: "same-game" });
+  // Opposite sides of two outcomes in one question are near-redundant, not independent: still refused.
+  assert.deepEqual(validateQuoteRequest(body({ legs: [legOn(MATCH_A, true), legOn(MATCH_DRAW, false)] }), c, 0), { ok: false, status: 400, reason: "same-game" });
+  assert.equal(sameGameLeg([legOn(MATCH_A, true), legOn(MATCH_DRAW, true)], c), MATCH_DRAW);
+});
+
+test("independent mode: a winner leg plus an over/under on the same game is refused as same-game", () => {
+  const c = sportsCfg();
+  assert.deepEqual(validateQuoteRequest(body({ legs: [legOn(MATCH_A, true), legOn(GAME_OU, true)] }), c, 0), { ok: false, status: 400, reason: "same-game" });
+  // Different games in the same competition are fine.
+  assert.equal(validateQuoteRequest(body({ legs: [legOn(MATCH_A, true), legOn(MATCH_B_OTHER, true)] }), c, 0).ok, true);
+});
+
+test("independent mode: quoting locks out at kickoff (startMs), not at the resolution deadline", () => {
+  const c = sportsCfg();
+  const ticket = body({ legs: [legOn(MATCH_A, true), legOn(GAME_STANDALONE, true)] });
+  // startMs 5_000_000, lockout 600_000 -> refuse from 4_400_000 even though expiryMs is 9_000_000
+  assert.equal(validateQuoteRequest(ticket, c, 4_399_999).ok, true);
+  assert.deepEqual(validateQuoteRequest(ticket, c, 4_400_000), { ok: false, status: 400, reason: "expiry-lockout" });
+});
+
+test("correlated mode still refuses cross-underlying tickets without model evidence (independence is opt-in)", () => {
+  const c = cfg({ markets: SPORTS_MARKETS, model: { ...MODEL, multiAssetEnabled: false, eligibleUnderlyings: new Set(), pairEligibility: new Map() } });
+  assert.deepEqual(validateQuoteRequest(body({ legs: [legOn(MATCH_A, true), legOn(GAME_STANDALONE, true)] }), c, 0), { ok: false, status: 400, reason: "correlation-unavailable" });
 });

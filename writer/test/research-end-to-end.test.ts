@@ -93,7 +93,7 @@ function quoteDeps(config: WriterConfig): QuoteDeps {
     readAllowance: async () => 1_000_000_000n,
     readSettled: async () => new Set(),
     sign: async () => "0x1234",
-    recordQuote: async (decision) => appendQuoteDecision(config.researchPersistence, decision),
+    recordQuote: async (decision) => appendQuoteDecision(config.researchPersistence!, decision),
     now: () => AS_OF,
     randomId: () => QUOTE_ID,
     metrics: newMetrics(),

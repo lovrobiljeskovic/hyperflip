@@ -7,9 +7,37 @@ export interface MarketInfo {
   underlying: string;
   cluster: string;
   direction: "up" | "down" | "band";
+  /** Resolution deadline. */
   expiryMs?: number;
+  /** Event start (kickoff). When set, quoting locks out from here, not from
+   * expiryMs: a game's result is known long before its resolution deadline. */
+  startMs?: number;
+  /** HIP-4 question id when this outcome is one leg of a mutually exclusive
+   * group (A / Draw / B, tournament winner). Absent for standalone binaries. */
+  question?: number;
+  /** Display labels for the two sides ("Twins"/"Orioles", "Over"/"Under").
+   * Absent means Yes/No. */
+  sideYes?: string;
+  sideNo?: string;
+  /** Vaults sharing a group render as one card in the UI. */
+  group?: string;
+  groupTitle?: string;
   title: string;
   category: string;
+}
+
+function optionalNumber(market: Record<string, unknown>, key: string): number | undefined {
+  const v = market[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`market ${market.vault} ${key} must be a number`);
+  return v;
+}
+
+function optionalString(market: Record<string, unknown>, key: string): string | undefined {
+  const v = market[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "string" || v === "") throw new Error(`market ${market.vault} ${key} must be a non-empty string`);
+  return v;
 }
 
 /** Parse the public market registry without initializing live writer config. */
@@ -33,7 +61,13 @@ export function parseMarkets(raw: string): Map<string, MarketInfo> {
       direction: market.direction,
       title: market.title,
       category: market.category,
-      expiryMs: typeof market.expiryMs === "number" ? market.expiryMs : undefined,
+      expiryMs: optionalNumber(market, "expiryMs"),
+      startMs: optionalNumber(market, "startMs"),
+      question: optionalNumber(market, "question"),
+      sideYes: optionalString(market, "sideYes"),
+      sideNo: optionalString(market, "sideNo"),
+      group: optionalString(market, "group"),
+      groupTitle: optionalString(market, "groupTitle"),
     });
   }
   return map;

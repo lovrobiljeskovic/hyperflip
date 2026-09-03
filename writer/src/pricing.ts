@@ -26,6 +26,13 @@ export function totalEdgeBps(p: EdgeParts): bigint {
   return p.baseBps + p.legBps;
 }
 
+/** Independence pricing: P(every leg wins) = product of the leg prices.
+ * Sports mode only — legs from the same game or question are refused upstream
+ * (`same-game`), so nothing here needs the copula's same-market collapse. */
+export function independentJointProbWad(legPricesWad: bigint[]): bigint {
+  return legPricesWad.reduce((acc, p) => (acc * p) / WAD, WAD);
+}
+
 export type PriceOutcome =
   | { ok: true; premium: bigint; maxPayout: bigint }
   | { ok: false; reason: string };

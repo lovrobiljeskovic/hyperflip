@@ -29,7 +29,13 @@ export interface BuilderLeg {
   isYes: boolean;
   title: string;
   coin: string;
+  /** Side label from the registry ("Twins", "Over"); YES/NO when absent. */
+  label?: string;
+  /** Question group this leg belongs to; one leg per group on a slip. */
+  group?: string;
 }
+
+const legLabel = (leg: BuilderLeg): string => leg.label ?? (leg.isYes ? "YES" : "NO");
 
 const MIN_LEGS = 2;
 const QUOTE_DEBOUNCE_MS = 400;
@@ -101,6 +107,8 @@ function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: BuilderLeg
   }
   if (res.status === 400 && res.error === "cannot-win")
     return "These legs contradict each other — this ticket can never win.";
+  if (res.status === 400 && res.error === "same-game")
+    return "Two legs from the same game — parlays need different games. Drop one.";
   if (res.status === 400 && res.error === "ticket-too-complex")
     return "Too many correlated legs to price — drop one.";
   return res.error;
@@ -138,7 +146,7 @@ function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown })
     <div className="flex flex-col gap-1.5">
       {legs.map((leg, i) => (
         <div key={leg.vault} className="flex items-baseline gap-3">
-          <span className={leg.isYes ? "text-yes" : "text-no"}>{leg.isYes ? "Y" : "N"}</span>
+          <span className={`max-w-16 truncate ${leg.isYes ? "text-yes" : "text-no"}`}>{legLabel(leg)}</span>
           <span className="flex-1 truncate text-dim">{leg.title}</span>
           <span className="w-14 text-right">{pct(bd.legProbs[i])}</span>
           <span className="w-14 text-right">{mult(bd.legOdds[i])}</span>
@@ -596,13 +604,13 @@ export function Ticket({
       </div>
 
       {legs.length === 0 ? (
-        <p className="mt-4 text-dim">No legs yet — add YES or NO from the market list.</p>
+        <p className="mt-4 text-dim">No legs yet — pick a side from the market list.</p>
       ) : (
         <ul className="mt-4 flex flex-col gap-px bg-line">
           {legs.map((leg) => (
             <li key={leg.vault} className="print-line flex items-center gap-3 bg-ink px-4 py-[13px]">
-              <span className={`mono text-[11px] ${leg.isYes ? "text-yes" : "text-no"}`}>
-                {leg.isYes ? "YES" : "NO"}
+              <span className={`mono max-w-20 truncate text-[11px] ${leg.isYes ? "text-yes" : "text-no"}`}>
+                {legLabel(leg)}
               </span>
               <span className="flex-1 truncate text-fg">{leg.title}</span>
               <span className="mono text-dim">{midPct(mids, leg.coin)}</span>

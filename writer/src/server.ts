@@ -4,7 +4,7 @@ import type { WriterConfig } from "./config.js";
 import { TooComplexError } from "./copula.js";
 import { nominalPairCorrelation, riskAdjustedJointProbWad, type CorrLeg } from "./correlation.js";
 import { ExposureBook } from "./exposure.js";
-import { dominatingLeg, edgeBreakdown, priceParlay, totalEdgeBps } from "./pricing.js";
+import { dominatingLeg, edgeBreakdown, independentJointProbWad, priceParlay, totalEdgeBps } from "./pricing.js";
 import { quoteDigest, type ParlayQuote, type QuoteLeg } from "./quotes.js";
 import type { LegPriceObservation } from "./infoApi.js";
 import type { QuoteDecision } from "./research/types.js";
@@ -77,6 +77,25 @@ export function correlationEligibility(legs: QuoteLeg[], cfg: WriterConfig, now:
   return null;
 }
 
+/** Independence pricing is only honest across games. Two legs on one game
+ * (same `underlying`) or one HIP-4 question (A / Draw / B) are either mutually
+ * exclusive or strongly correlated, and a product price is wrong either way —
+ * sportsbooks sell those as a separate SGP product. Returns the offending vault. */
+export function sameGameLeg(legs: QuoteLeg[], cfg: WriterConfig): Address | null {
+  const seenGame = new Set<string>();
+  const seenQuestion = new Set<number>();
+  for (const leg of legs) {
+    const market = cfg.markets.get(leg.vault.toLowerCase())!;
+    if (seenGame.has(market.underlying)) return leg.vault;
+    seenGame.add(market.underlying);
+    if (market.question !== undefined) {
+      if (seenQuestion.has(market.question)) return leg.vault;
+      seenQuestion.add(market.question);
+    }
+  }
+  return null;
+}
+
 export function validateQuoteRequest(
   body: unknown,
   cfg: WriterConfig,
@@ -106,13 +125,20 @@ export function validateQuoteRequest(
     const key = l.vault.toLowerCase();
     const market = cfg.markets.get(key);
     if (!market) return { ok: false, status: 400, reason: "unknown-vault" };
-    if (market.expiryMs !== undefined && now >= market.expiryMs - cfg.lockoutMs) {
+    // Lock at kickoff when the registry knows it: the result of a game is
+    // public long before its resolution deadline.
+    const lockAtMs = market.startMs ?? market.expiryMs;
+    if (lockAtMs !== undefined && now >= lockAtMs - cfg.lockoutMs) {
       return { ok: false, status: 400, reason: "expiry-lockout" };
     }
     legs.push({ vault: l.vault as Address, isYes: l.isYes });
   }
-  const correlationReason = correlationEligibility(legs, cfg, now);
-  if (correlationReason) return { ok: false, status: 400, reason: correlationReason };
+  if (cfg.pricingMode === "independent") {
+    if (sameGameLeg(legs, cfg)) return { ok: false, status: 400, reason: "same-game" };
+  } else {
+    const correlationReason = correlationEligibility(legs, cfg, now);
+    if (correlationReason) return { ok: false, status: 400, reason: correlationReason };
+  }
   let stake: bigint;
   try {
     stake = BigInt(b.stake as string);
@@ -195,28 +221,35 @@ export async function handleQuote(
     };
   });
   let joint: bigint;
-  try {
-    joint = riskAdjustedJointProbWad(corrLegs, cfg.correlations, cfg.rhoBandPct);
-  } catch (e) {
-    // The writer is single-threaded, so a ticket whose factor tree costs
-    // seconds to integrate would stall every other request and the poker with
-    // it. Refusing is the honest answer; see MAX_QUADRATURE_POINTS.
-    if (!(e instanceof TooComplexError)) throw e;
-    reject(metrics, "ticket-too-complex");
-    return { status: 400, json: { error: "ticket-too-complex" } };
-  }
   let bestEstimate: bigint;
-  try {
-    bestEstimate = new Set(corrLegs.map((leg) => leg.underlying)).size === 1
-      ? riskAdjustedJointProbWad(corrLegs, cfg.correlations, 0)
-      : await deps.bestEstimateJointProbWad(corrLegs);
-  } catch (error) {
-    if (error instanceof TooComplexError) {
+  if (cfg.pricingMode === "independent") {
+    // Sports: different games are independent, and same-game legs were refused
+    // in validation, so the joint is the plain product. No copula, no worker.
+    joint = independentJointProbWad(priceObservations.map((price) => price.priceWad));
+    bestEstimate = joint;
+  } else {
+    try {
+      joint = riskAdjustedJointProbWad(corrLegs, cfg.correlations, cfg.rhoBandPct);
+    } catch (e) {
+      // The writer is single-threaded, so a ticket whose factor tree costs
+      // seconds to integrate would stall every other request and the poker with
+      // it. Refusing is the honest answer; see MAX_QUADRATURE_POINTS.
+      if (!(e instanceof TooComplexError)) throw e;
       reject(metrics, "ticket-too-complex");
       return { status: 400, json: { error: "ticket-too-complex" } };
     }
-    reject(metrics, "pricing-unavailable");
-    return { status: 503, json: { error: "pricing-unavailable" } };
+    try {
+      bestEstimate = new Set(corrLegs.map((leg) => leg.underlying)).size === 1
+        ? riskAdjustedJointProbWad(corrLegs, cfg.correlations, 0)
+        : await deps.bestEstimateJointProbWad(corrLegs);
+    } catch (error) {
+      if (error instanceof TooComplexError) {
+        reject(metrics, "ticket-too-complex");
+        return { status: 400, json: { error: "ticket-too-complex" } };
+      }
+      reject(metrics, "pricing-unavailable");
+      return { status: 503, json: { error: "pricing-unavailable" } };
+    }
   }
 
   const edge = edgeBreakdown(v.legs.length, cfg.edgeBps, cfg.legEdgeBps);
@@ -284,7 +317,7 @@ export async function handleQuote(
     artifactSha256: cfg.model.artifactSha256,
     validationSha256: cfg.model.validationSha256,
     validationState: cfg.model.validationState,
-    pairDecisions: [...new Set(corrLegs.map((leg) => leg.underlying))].sort().flatMap((left, index, underlyings) => underlyings.slice(index + 1).map((right) => {
+    pairDecisions: cfg.pricingMode === "independent" ? [] : [...new Set(corrLegs.map((leg) => leg.underlying))].sort().flatMap((left, index, underlyings) => underlyings.slice(index + 1).map((right) => {
       const evidence = cfg.model.pairEligibility.get(pairKey(left, right))!;
       const leftLeg = corrLegs.find((leg) => leg.underlying === left)!;
       const rightLeg = corrLegs.find((leg) => leg.underlying === right)!;

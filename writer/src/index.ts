@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import { appendFileSync, mkdirSync } from "node:fs";
+import path from "node:path";
 import { createPublicClient, createWalletClient, erc20Abi, fallback, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { parlayVaultAbi } from "./abi.js";
@@ -23,7 +25,8 @@ const RECEIPT_TIMEOUT_MS = 60_000;
 async function main(): Promise<void> {
   const cfg = loadConfig();
   const quoteJournal = cfg.researchPersistence;
-  const correlationWorker = new CorrelationWorker();
+  // Independent mode never integrates a copula, so no worker thread to hold.
+  const correlationWorker = cfg.pricingMode === "correlated" ? new CorrelationWorker() : null;
   // Testnet RPCs rate-limit bursts (-32005, retryable in viem) and the poker's cold-start
   // rescan is one — deployBlock..head in 1000-block chunks, two getLogs each. Retry hard with a
   // long backoff instead of dying on the limiter, then fall through to the next endpoint.
@@ -111,10 +114,17 @@ async function main(): Promise<void> {
       return legPriceFetcher.fetch(coin);
     },
     recordQuote: async (decision) => {
-      appendQuoteDecision(quoteJournal, decision);
+      if (quoteJournal) appendQuoteDecision(quoteJournal, decision);
+      else {
+        // Independent mode: plain JSONL, one signed quote per line. Same record
+        // shape as the research journal minus its storage identity checks.
+        mkdirSync(path.dirname(cfg.quoteJournalFile!), { recursive: true });
+        appendFileSync(cfg.quoteJournalFile!, `${JSON.stringify(decision)}\n`);
+      }
       lastQuoteJournalAppendMs = Date.now();
     },
-    bestEstimateJointProbWad: (legs) => correlationWorker.bestEstimate(legs, cfg.correlations),
+    bestEstimateJointProbWad: (legs) =>
+      correlationWorker ? correlationWorker.bestEstimate(legs, cfg.correlations) : Promise.reject(new Error("no correlation worker in independent mode")),
     readAllowance: () =>
       publicClient.readContract({
         address: usdcAddress,
@@ -222,6 +232,7 @@ async function main(): Promise<void> {
     const priceFreshnessMs = buildPriceFreshness(cfg.markets.values(), (coin) => legPriceFetcher.ageMs(coin));
     return {
       ok: true,
+      pricingMode: cfg.pricingMode,
       quoteJournalLastAppendMs: lastQuoteJournalAppendMs,
       model: { version: cfg.model.version, dataAsOf: cfg.model.dataAsOf, dataManifestSha256: cfg.model.dataManifestSha256, sourceRegistrySha256: cfg.model.sourceRegistrySha256, identityFailureReason: cfg.model.identityFailureReason, ...modelStatus },
       openParlays: poker.openCount(),
@@ -231,7 +242,7 @@ async function main(): Promise<void> {
       perMarket,
     };
   });
-  console.log(JSON.stringify({ at: new Date().toISOString(), event: "writer-started", port: cfg.port, chainId, modelVersion: cfg.model.version, dataAsOf: cfg.model.dataAsOf }));
+  console.log(JSON.stringify({ at: new Date().toISOString(), event: "writer-started", port: cfg.port, chainId, pricingMode: cfg.pricingMode, modelVersion: cfg.model.version, dataAsOf: cfg.model.dataAsOf }));
 }
 
 main().catch((err) => {

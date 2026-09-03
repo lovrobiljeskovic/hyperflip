@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { compareMarketVolume, fetchMarketBoard, type Market } from "@/lib/writer";
+import { compareMarketVolume, fetchMarketBoard, groupMarkets, sideLabel, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { formatVolume, oddsLabel, pct1, until } from "@/lib/format";
 import { Ticket, type BuilderLeg } from "./ticket";
@@ -30,12 +30,15 @@ const MAX_LEGS = 10;
 function PriceCell({
   mid,
   side,
+  tone,
   selected,
   label,
   onPick,
 }: {
   mid: number | null;
-  side: "YES" | "NO";
+  /** Short text printed before the price: YES / NO, or the registry's side name. */
+  side: string;
+  tone: "yes" | "no";
   selected: boolean;
   label: string;
   onPick: () => void;
@@ -52,7 +55,7 @@ function PriceCell({
       }`}
     >
       <span
-        className={`mr-1.5 text-[10px] uppercase sm:hidden ${
+        className={`mr-1.5 max-w-24 truncate align-bottom text-[10px] uppercase ${side === "YES" || side === "NO" ? "sm:hidden" : ""} ${
           selected ? "text-on-accent/70" : "text-dim"
         }`}
       >
@@ -60,7 +63,7 @@ function PriceCell({
       </span>
       <span
         className={`text-[13px] ${
-          selected ? "text-on-accent" : side === "YES" ? "text-yes" : "text-no"
+          selected ? "text-on-accent" : tone === "yes" ? "text-yes" : "text-no"
         }`}
       >
         {oddsLabel(mid)}
@@ -78,12 +81,13 @@ function PriceCell({
  * assets (equities, commodities, indices) at coins/xyz:SYM.svg. Unknown
  * symbols come back 200 with Hyperliquid's generic coin mark, so the letter
  * badge only covers a missing underlying or a network failure. */
-function AssetIcon({ underlying, category }: { underlying?: string; category: string }) {
+function AssetIcon({ underlying, category, badge }: { underlying?: string; category: string; badge?: string }) {
   const [failed, setFailed] = useState(false);
-  if (!underlying || failed)
+  // Sports have no venue icon — the badge is the sport ("BA" for baseball).
+  if (!underlying || failed || category === "sports")
     return (
-      <span className="mono flex h-5 w-5 items-center justify-center rounded-full border border-line text-[8px] text-dim">
-        {(underlying ?? "?").slice(0, 2)}
+      <span className="mono flex h-5 w-5 items-center justify-center rounded-full border border-line text-[8px] uppercase text-dim">
+        {(badge ?? underlying ?? "?").slice(0, 2)}
       </span>
     );
   const coin = category === "crypto" ? underlying : `xyz:${underlying}`;
@@ -125,17 +129,17 @@ function BoardRow({
     >
       <div className="flex min-w-0 items-center gap-2.5">
         <span className="shrink-0">
-          <AssetIcon underlying={market.underlying} category={market.category} />
+          <AssetIcon underlying={market.underlying} category={market.category} badge={market.sport} />
         </span>
         <div className="min-w-0">
           <p className="truncate text-[13px]">{market.title}</p>
           <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">
-            {market.category}
+            {market.category === "sports" ? `${market.sport ?? market.category} · ${market.cluster ?? ""}`.replace(/ · $/, "") : market.category}
             <span className="sm:hidden">
               {" · "}
               {formatVolume(market.volume24h)}
               {" · "}
-              {market.expiryMs ? until(market.expiryMs) : "—"}
+              {closesIn(market)}
             </span>
           </p>
         </div>
@@ -145,16 +149,18 @@ function BoardRow({
       <div className="mt-2 grid grid-cols-2 gap-2 sm:contents">
         <PriceCell
           mid={yes}
-          side="YES"
+          side={sideLabel(market, true)}
+          tone="yes"
           selected={current?.isYes === true}
-          label={`Take YES on ${market.title} at ${yes === null ? "no price" : pct1(yes)}`}
+          label={`Take ${sideLabel(market, true)} on ${market.title} at ${yes === null ? "no price" : pct1(yes)}`}
           onPick={() => onPick(market, true)}
         />
         <PriceCell
           mid={no}
-          side="NO"
+          side={sideLabel(market, false)}
+          tone="no"
           selected={current?.isYes === false}
-          label={`Take NO on ${market.title} at ${no === null ? "no price" : pct1(no)}`}
+          label={`Take ${sideLabel(market, false)} on ${market.title} at ${no === null ? "no price" : pct1(no)}`}
           onPick={() => onPick(market, false)}
         />
       </div>
@@ -162,8 +168,73 @@ function BoardRow({
         {formatVolume(market.volume24h)}
       </span>
       <span className="mono hidden text-right text-[12px] text-dim sm:block">
-        {market.expiryMs ? until(market.expiryMs) : "—"}
+        {closesIn(market)}
       </span>
+    </div>
+  );
+}
+
+/** Quoting locks at kickoff when the registry knows it, else at expiry. */
+function closesIn(market: Market): string {
+  const at = market.startMs ?? market.expiryMs;
+  return at ? until(at) : "—";
+}
+
+/** One HIP-4 question (A / Draw / B, tournament winner): one card, one button
+ * per outcome, YES side only — a sportsbook card, not a Yes/No grid. The NO
+ * side of a grouped outcome is the sum of the others and stays off the board.
+ * The writer refuses two legs from one question (`same-game`), so picking a
+ * second outcome swaps the first. */
+function GroupRow({
+  title,
+  members,
+  mids,
+  legs,
+  onPick,
+}: {
+  title: string;
+  members: Market[];
+  mids: Record<string, string>;
+  legs: BuilderLeg[];
+  onPick: (market: Market, isYes: boolean) => void;
+}) {
+  const current = legs.find((l) => members.some((m) => m.vault === l.vault));
+  const head = members[0];
+  return (
+    <div className={`border-t border-line px-4 py-3 sm:px-5 ${current ? "bg-accent/[0.07]" : ""}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="shrink-0">
+            <AssetIcon underlying={head.underlying} category={head.category} badge={head.sport} />
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-[13px]">{title}</p>
+            <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">
+              {head.category}
+              {" · "}
+              {members.length} outcomes
+              {" · "}
+              {closesIn(head)}
+            </p>
+          </div>
+        </div>
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+        {members.map((m) => {
+          const mid = midOf(mids, m.coinYes);
+          return (
+            <PriceCell
+              key={m.vault}
+              mid={mid}
+              side={m.title}
+              tone="yes"
+              selected={current?.vault === m.vault}
+              label={`Take ${m.title} in ${title} at ${mid === null ? "no price" : pct1(mid)}`}
+              onPick={() => onPick(m, true)}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -207,7 +278,8 @@ export default function BuildPage() {
       .filter((m) => tab === "all" || m.category === tab)
       // Expired-but-not-yet-rotated markets are dead weight on the board —
       // filter them out client-side rather than let a stale price look pickable.
-      .filter((m) => m.expiryMs === undefined || m.expiryMs >= Date.now());
+      // Same for a game past kickoff: the writer refuses it (expiry-lockout).
+      .filter((m) => (m.startMs ?? m.expiryMs ?? Infinity) >= Date.now());
     if (sort === "volume") return filtered.sort((a, b) => compareMarketVolume(a, b, volumeAsc));
     // Markets without an expiry sink to the bottom in either direction.
     return filtered.sort((a, b) => {
@@ -223,12 +295,21 @@ export default function BuildPage() {
 
   function addLeg(market: Market, isYes: boolean) {
     setLegs((prev) => {
-      const rest = prev.filter((l) => l.vault !== market.vault);
+      // One leg per question: the writer refuses two (`same-game`), so a second
+      // outcome from the same group replaces the first instead of stacking.
+      const rest = prev.filter((l) => l.vault !== market.vault && !(market.group && l.group === market.group));
       // Clicking the already-selected side toggles the leg off; the other side swaps it.
       if (prev.some((l) => l.vault === market.vault && l.isYes === isYes)) return rest;
       return [
         ...rest,
-        { vault: market.vault, isYes, title: market.title, coin: isYes ? market.coinYes : market.coinNo },
+        {
+          vault: market.vault,
+          isYes,
+          title: market.group ? `${market.title} · ${market.groupTitle ?? market.group}` : market.title,
+          coin: isYes ? market.coinYes : market.coinNo,
+          label: market.group ? market.title : sideLabel(market, isYes),
+          group: market.group,
+        },
       ];
     });
   }
@@ -323,9 +404,13 @@ export default function BuildPage() {
                     Expires {sort === "expiry" ? (expiryAsc ? "↑" : "↓") : ""}
                   </button>
                 </div>
-                {board.map((m) => (
-                  <BoardRow key={m.vault} market={m} mids={mids} legs={legs} onPick={addLeg} />
-                ))}
+                {groupMarkets(board).map((entry) =>
+                  entry.kind === "market" ? (
+                    <BoardRow key={entry.market.vault} market={entry.market} mids={mids} legs={legs} onPick={addLeg} />
+                  ) : (
+                    <GroupRow key={entry.group} title={entry.title} members={entry.members} mids={mids} legs={legs} onPick={addLeg} />
+                  ),
+                )}
               </div>
             )}
           </div>

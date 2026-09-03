@@ -26,8 +26,18 @@ import {OutcomeVault} from "../src/OutcomeVault.sol";
 /// Run: `forge script script/Deploy.s.sol --rpc-url $TESTNET_RPC --sig
 /// "run()"` for a dry run (needs --rpc-url: the constructor checks live code
 /// at CoreConstants.CORE_DEPOSIT_WALLET, which only exists on-chain); add
-/// `--private-key $PRIVATE_KEY --broadcast` to actually deploy (Task 6).
+/// `--broadcast` with `PRIVATE_KEY` in the environment to actually deploy.
+/// The key is read from env, never passed as `--private-key`: process
+/// arguments are world-readable on the box (`ps`, /proc), environment is not.
+/// `--private-key` still works when PRIVATE_KEY is unset.
 contract Deploy is Script {
+    /// Own function so run() keeps its stack: one more local there is "stack too deep".
+    function _startBroadcast() internal {
+        uint256 deployerKey = vm.envOr("PRIVATE_KEY", uint256(0));
+        if (deployerKey != 0) vm.startBroadcast(deployerKey);
+        else vm.startBroadcast();
+    }
+
     function run() external returns (OutcomeVault vault, KeeperVerifier verifier) {
         IERC20 quoteToken = IERC20(vm.envAddress("QUOTE_TOKEN_ADDRESS"));
         address coreSystemAddress = vm.envAddress("CORE_SYSTEM_ADDRESS");
@@ -39,7 +49,7 @@ contract Deploy is Script {
         uint8 quoteDecimals = uint8(vm.envOr("QUOTE_DECIMALS", uint256(6)));
         address existingVerifier = vm.envOr("VERIFIER_ADDRESS", address(0));
 
-        vm.startBroadcast();
+        _startBroadcast();
 
         if (existingVerifier != address(0)) {
             verifier = KeeperVerifier(existingVerifier);

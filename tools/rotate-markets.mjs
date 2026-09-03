@@ -1,8 +1,12 @@
-// Rotate the testnet market board: discover fresh HIP-4 crypto binaries via
-// the info API, deploy an OutcomeVault per pick, rewrite registry/markets.json.
+// Rotate the testnet market board: discover fresh HIP-4 markets via the info
+// API, deploy an OutcomeVault per pick, rewrite registry/markets.json.
 // Run from repo root:
 //
-//   node tools/rotate-markets.mjs [--dry-run]
+//   ROTATE_MODE=sports node tools/rotate-markets.mjs [--dry-run]
+//
+// ROTATE_MODE=crypto (default) wraps price binaries and needs the correlation
+// source registry; ROTATE_MODE=sports wraps fixtures (questions whole) and is
+// what the sports beta runs with PRICING_MODE=independent on the writer.
 //
 // Needs: .env with PRIVATE_KEY + TESTNET_RPC + KEEPER_ADDRESS, forge, uv
 // (big-block toggle). Restart writer + keeper afterwards — this script does
@@ -11,13 +15,15 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { filterMappedPicks, pickBinaries, registryEntry, marketSymbol, rotatedRegistry } from "./rotate-lib.mjs";
+import { filterMappedPicks, pickBinaries, pickSports, registryEntry, sportsRegistryEntry, marketSymbol, sportsMarketSymbol, rotatedRegistry } from "./rotate-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const INFO_URL = "https://api.hyperliquid-testnet.xyz/info";
-// Both testnet RPCs flake in different ways (official rate-limits receipt
-// polling, dRPC drops upstreams) — retry each deploy alternating between them.
-const DEPLOY_RPCS = ["https://hyperliquid-testnet.drpc.org", "https://rpc.hyperliquid-testnet.xyz/evm"];
+// Deploys rotate through these per attempt. Official first: it landed all 28
+// sports vaults on 2026-09-03 within one big block each. Chainlink Labs
+// (free, no key) is great for reads but 429s forge's simulation burst; dRPC
+// drops upstreams mid-run ("failed to get account ... no available upstreams").
+const DEPLOY_RPCS = ["https://rpc.hyperliquid-testnet.xyz/evm", "https://rpcs.chain.link/hyperevm/testnet", "https://hyperliquid-testnet.drpc.org"];
 const REGISTRY = path.join(ROOT, "registry/markets.json");
 const SOURCES = path.join(ROOT, "registry/correlation-sources.json");
 const ENV_FILE = path.join(ROOT, ".env");
@@ -34,6 +40,12 @@ const DEPLOY_ENV = {
 };
 
 const dryRun = process.argv.includes("--dry-run");
+const mode = process.env.ROTATE_MODE ?? "crypto";
+if (mode !== "crypto" && mode !== "sports") {
+  console.error("ROTATE_MODE must be crypto or sports");
+  process.exit(1);
+}
+const sports = mode === "sports";
 
 process.loadEnvFile(ENV_FILE);
 for (const key of ["PRIVATE_KEY", "TESTNET_RPC", "KEEPER_ADDRESS"]) {
@@ -63,22 +75,28 @@ const [{ outcomes, questions }, mids, xyzMids] = await Promise.all([
 ]);
 Object.assign(mids, xyzMids);
 const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));
-const sources = JSON.parse(readFileSync(SOURCES, "utf8"));
 const nowMs = Date.now();
 const knownCoins = new Set(registry.markets.map((m) => m.coinYes));
 
 const expired = registry.markets.filter((m) => m.expiryMs <= nowMs);
 const kept = registry.markets.filter((m) => m.expiryMs > nowMs);
-const candidates = pickBinaries({ outcomes, mids, questions, knownCoins, nowMs });
 let picks;
-try {
-  picks = filterMappedPicks(candidates, sources, new Set(kept.map((market) => market.underlying)));
-} catch (error) {
-  console.error(error instanceof Error ? error.message : error);
-  process.exit(1);
+if (sports) {
+  picks = pickSports({ outcomes, questions, mids, knownCoins, nowMs });
+} else {
+  const sources = JSON.parse(readFileSync(SOURCES, "utf8"));
+  const candidates = pickBinaries({ outcomes, mids, questions, knownCoins, nowMs });
+  try {
+    picks = filterMappedPicks(candidates, sources, new Set(kept.map((market) => market.underlying)));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  }
+  const mappedUnderlyings = new Set(sources.sources.map((source) => source.underlying));
+  for (const pick of candidates) if (!mappedUnderlyings.has(pick.perp)) console.log(`skip unmapped ${pick.perp}`);
 }
-const mappedUnderlyings = new Set(sources.sources.map((source) => source.underlying));
-for (const pick of candidates) if (!mappedUnderlyings.has(pick.perp)) console.log(`skip unmapped ${pick.perp}`);
+const entryFor = sports ? sportsRegistryEntry : registryEntry;
+const symbolFor = sports ? sportsMarketSymbol : marketSymbol;
 
 // Expired entries move to `archived` rather than vanishing: writer quoting and
 // the keeper only read `.markets`, but the frontend still needs titles for
@@ -100,8 +118,9 @@ if (picks.length === 0) {
   process.exit(0);
 }
 for (const p of picks) {
-  const e = registryEntry(p, "?");
-  console.log(`pick: outcome ${p.outcome} — ${e.title} [${e.category}] mid ${mids[p.coinYes]} vs ${p.perp} ${mids[p.venue ? `${p.venue}:${p.perp}` : p.perp]}, ${((p.expiryMs - nowMs) / 86400_000).toFixed(1)}d left`);
+  const e = entryFor(p, "?");
+  const spot = sports ? `${e.groupTitle} (${e.cluster}${e.question !== undefined ? `, q${e.question}` : ""}), kickoff in ${((p.startMs - nowMs) / 86400_000).toFixed(1)}d` : `vs ${p.perp} ${mids[p.venue ? `${p.venue}:${p.perp}` : p.perp]}`;
+  console.log(`pick: outcome ${p.outcome} — ${e.title} [${e.category}] mid ${mids[p.coinYes]} ${spot}, ${((p.expiryMs - nowMs) / 86400_000).toFixed(1)}d left`);
 }
 if (dryRun) {
   console.log("dry run — stopping before deploys");
@@ -155,15 +174,20 @@ async function deploy(pick, attempts = 4) {
     try {
       execFileSync(
         "forge",
-        ["script", "script/Deploy.s.sol", "--rpc-url", DEPLOY_RPCS[i % DEPLOY_RPCS.length], "--private-key", process.env.PRIVATE_KEY, "--broadcast", "--legacy", "--sig", "run()", "--retries", "12", "--delay", "10"],
+        // PRIVATE_KEY reaches forge through the environment (Deploy.s.sol reads
+        // it), never argv — command lines are visible to every user on the box.
+        ["script", "script/Deploy.s.sol", "--rpc-url", DEPLOY_RPCS[i % DEPLOY_RPCS.length], "--broadcast", "--legacy", "--sig", "run()", "--retries", "12", "--delay", "10"],
         {
           cwd: ROOT,
           stdio: "inherit",
           env: {
             ...process.env,
             ...DEPLOY_ENV,
+            // A question member must settle against its real question id
+            // (OutcomeVault checks the 0x814 binding); standalone keeps the sentinel.
+            ...(pick.question != null ? { QUESTION_ID: String(pick.question) } : {}),
             OUTCOME_ID: String(pick.outcome),
-            MARKET_SYMBOL: marketSymbol(pick),
+            MARKET_SYMBOL: symbolFor(pick),
           },
         },
       );
@@ -185,7 +209,7 @@ bigBlocks("on");
 try {
   for (const pick of picks) {
     const vault = await deploy(pick);
-    deployed.push(registryEntry(pick, vault));
+    deployed.push(entryFor(pick, vault));
     console.log(`deployed ${vault} for outcome ${pick.outcome}`);
   }
 } finally {

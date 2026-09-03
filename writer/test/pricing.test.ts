@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dominatingLeg, edgeBreakdown, priceParlay, totalEdgeBps } from "../src/pricing.js";
+import { dominatingLeg, independentJointProbWad, edgeBreakdown, priceParlay, totalEdgeBps } from "../src/pricing.js";
 import { WAD } from "../src/pure.js";
 
 const QUARTER = WAD / 4n; // joint probability 0.25 — e.g. two independent 0.50 legs
@@ -68,4 +68,10 @@ test("dominatingLeg flags a quote at or below one leg's Core fair payout", () =>
 
 test("dominatingLeg ignores a zero leg price", () => {
   assert.equal(dominatingLeg([0n, WAD / 2n], 1_000_000n, 3_000_000n), -1);
+});
+
+test("independentJointProbWad multiplies leg prices", () => {
+  assert.equal(independentJointProbWad([WAD / 2n, WAD / 4n]), WAD / 8n);
+  assert.equal(independentJointProbWad([WAD]), WAD);
+  assert.equal(independentJointProbWad([WAD / 2n, 0n]), 0n);
 });

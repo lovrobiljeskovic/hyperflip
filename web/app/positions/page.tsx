@@ -9,7 +9,7 @@ import { pool } from "@/lib/pool";
 import { PARLAY_VAULT, STATUS, outcomeVaultAbi, parlayVaultAbi } from "@/lib/contracts";
 import { formatUsdc, multiplier, pct1, until } from "@/lib/format";
 import { HL_APP, hyperEvmTestnet } from "@/lib/chain";
-import { fetchMarkets, type Market } from "@/lib/writer";
+import { fetchMarkets, type Market, sideLabel } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { useConnectAction, useWalletState } from "@/lib/wallet";
 import { AppHeader } from "../app-header";
@@ -228,7 +228,7 @@ function LegTable({
   return (
     <div className="flex flex-col gap-2 border-l-2 border-line bg-raised/30 px-4 py-4 sm:px-5">
       <div className="hidden gap-4 mono text-[9px] uppercase tracking-[0.16em] text-dim sm:flex">
-        <span className="w-10">Side</span>
+        <span className="w-10 sm:w-16">Side</span>
         <span className="flex-1">Market</span>
         <span className="w-16 text-right">Live</span>
         <span className="w-16 text-right">Expires</span>
@@ -248,7 +248,7 @@ function LegTable({
           // flex-wrap: on mobile the meta line's basis-full pushes it to a
           // second row; live/expires columns only exist at sm+.
           <div key={leg.vault} className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 mono text-xs">
-            <span className={`w-10 ${leg.isYes ? "text-yes" : "text-no"}`}>{leg.isYes ? "YES" : "NO"}</span>
+            <span className={`w-10 shrink-0 truncate sm:w-16 ${leg.isYes ? "text-yes" : "text-no"}`}>{sideLabel(m, leg.isYes)}</span>
             {/* The leg is a HyperCore market — link its live order book, not the
                 EVM explorer. Explorer stays the fallback for archived legs whose
                 market (and coin) the registry no longer carries. */}

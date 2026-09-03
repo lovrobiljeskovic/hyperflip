@@ -73,7 +73,8 @@ Run `forge build` locally before deploying if these are stale.
 service uses it, and it has no business on an internet-facing box. Everything else is required:
 `TESTNET_RPC`, `KEEPER_PRIVATE_KEY`, `MARKETS_FILE`, `PARLAY_VAULT_ADDRESS`, `WRITER_ADDRESS`,
 `QUOTE_SIGNER_PRIVATE_KEY`, `POKER_PRIVATE_KEY`, `MAX_STAKE`, `PER_MARKET_CAP`,
-`PER_CLUSTER_CAP`, `INVITE_CODES`.
+`PER_CLUSTER_CAP`, `INVITE_CODES`. Sports beta adds `PRICING_MODE=independent` and
+`PARLAY_DEPLOY_BLOCK` (the `RESEARCH_*` variables are then unused by the writer).
 
 The file is mode 600, owned by `hype`. Both services load it via dotenv from the repo root.
 
@@ -176,9 +177,19 @@ invite codes (`jq length /opt/hype/writer/waitlist.json` is the signup count).
 
 `rotate.timer` on the box fires daily at 03:10 UTC (the testnet Crypto 1d board refreshes at
 03:00): `rotate.service` runs `node tools/rotate-markets.mjs` from `/opt/hype/repo`, which
-deploys vaults for fresh crypto binaries (incl. the Recurring 1d set), prunes expired entries
-into `archived`, rewrites `/opt/hype/registry/markets.json` (`/opt/hype/repo/registry` is a
-symlink to it), then restarts writer + keeper.
+deploys vaults for fresh markets, prunes expired entries into `archived`, rewrites
+`/opt/hype/registry/markets.json` (`/opt/hype/repo/registry` is a symlink to it), then
+restarts writer + keeper.
+
+`ROTATE_MODE` selects the board. `crypto` (default) wraps price binaries (incl. the Recurring
+1d set) and needs `correlation-sources.json`; the writer runs `PRICING_MODE=correlated`.
+`sports` wraps HIP-4 sports fixtures — templated questions (match A/Draw/B, tournament
+winner) whole, one vault per named outcome with the real `QUESTION_ID`, plus standalone
+winner and over/under outcomes — and the writer runs `PRICING_MODE=independent` (product of
+leg prices, legs sharing a game or question refused as `same-game`, no research root). Set
+`Environment=ROTATE_MODE=sports` in `rotate.service` and `PRICING_MODE=independent` +
+`PARLAY_VAULT_ADDRESS` + `PARLAY_DEPLOY_BLOCK` in `/opt/hype/.env` together; a sports
+registry under a correlated writer refuses every cross-game ticket (`correlation-unavailable`).
 
 The repo copy at `/opt/hype/repo` is rsynced from the laptop (same excludes as above plus
 `--exclude registry`); its `.env` holds only `PRIVATE_KEY`, `TESTNET_RPC`, `KEEPER_ADDRESS`
@@ -189,12 +200,19 @@ root. After changing rotation code:
 rsync -az --delete --exclude node_modules --exclude .git --exclude cache --exclude out \
   --exclude broadcast --exclude web --exclude '.env*' --exclude registry --exclude '*.html' \
   ./ root@91.99.94.25:/opt/hype/repo/
-ssh root@91.99.94.25 'cd /opt/hype/repo && node tools/rotate-markets.mjs --dry-run'  # sanity
+ssh root@91.99.94.25 'cd /opt/hype/repo && ROTATE_MODE=sports node tools/rotate-markets.mjs --dry-run'  # sanity
 ssh root@91.99.94.25 'systemctl start rotate.service'                                # live run
 ssh root@91.99.94.25 'journalctl -u rotate.service -n 50 --no-pager'                 # logs
 
 Note `npm ci` must install devDependencies — `npm start` runs `tsx`, which is a devDependency.
 Do not set `NODE_ENV=production`.
+
+## Writer drop-ins
+
+`/etc/systemd/system/writer.service.d/research.conf` adds the research env; a `rollback.conf`
+that pinned the unit to an old checkout was removed on 2026-09-03 (kept at
+`/opt/hype/backups/`). If `/health` ever reports a stale build, check `systemctl cat writer`
+for a `WorkingDirectory` override before anything else.
 
 ## Verifying
 

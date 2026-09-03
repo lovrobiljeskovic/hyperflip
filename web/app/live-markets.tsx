@@ -127,7 +127,7 @@ function BoardRow({ market, mids }: { market: Market; mids: Record<string, strin
       <div className="col-span-2 sm:col-span-1">
         <p className="text-[12px] leading-snug">{market.title}</p>
         <p className="mono mt-1 text-[10px] uppercase tracking-[0.14em] text-dim">
-          {market.category}
+          {market.groupTitle ?? market.category}
           <span className="sm:hidden">
             {" · "}
             {formatVolume(market.volume24h)}

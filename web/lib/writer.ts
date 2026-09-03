@@ -10,15 +10,49 @@ export interface Market {
    * optional here for tickets naming markets from before it existed. */
   underlying?: string;
   expiryMs?: number;
+  /** Kickoff; quoting locks here. Sports registries only. */
+  startMs?: number;
+  /** Side labels ("Twins"/"Orioles", "Over"/"Under"); absent means Yes/No. */
+  sideYes?: string;
+  sideNo?: string;
+  /** Vaults sharing a group are one mutually exclusive question (A / Draw / B,
+   * tournament winner) and render as one card. */
+  group?: string;
+  groupTitle?: string;
+  question?: number;
+  sport?: string;
+  /** Competition (MLB, UEFA Champions League); the writer's exposure cluster. */
+  cluster?: string;
   volume24h?: number;
 }
 
-export type CorrelationPairDecision = {
-  pair: [string, string];
-  status: "direct" | "fallback";
-  /** Returned by current writers; absent on older deployed versions. */
-  reason?: string;
-};
+/** What the taker is taking on this market's side, for chips and buttons. */
+export function sideLabel(market: Pick<Market, "sideYes" | "sideNo"> | undefined, isYes: boolean): string {
+  return (isYes ? market?.sideYes : market?.sideNo) ?? (isYes ? "YES" : "NO");
+}
+
+/** Board rows: grouped markets collapse into one entry keyed by `group`,
+ * keeping the first member's position in the sort order. */
+export type BoardEntry = { kind: "market"; market: Market } | { kind: "group"; group: string; title: string; members: Market[] };
+
+export function groupMarkets(markets: Market[]): BoardEntry[] {
+  const entries: BoardEntry[] = [];
+  const groups = new Map<string, Extract<BoardEntry, { kind: "group" }>>();
+  for (const market of markets) {
+    if (!market.group) {
+      entries.push({ kind: "market", market });
+      continue;
+    }
+    let entry = groups.get(market.group);
+    if (!entry) {
+      entry = { kind: "group", group: market.group, title: market.groupTitle ?? market.group, members: [] };
+      groups.set(market.group, entry);
+      entries.push(entry);
+    }
+    entry.members.push(market);
+  }
+  return entries;
+}
 
 export interface WriterQuote {
   taker: `0x${string}`;
@@ -38,7 +72,7 @@ export interface QuoteBreakdown {
   jointProbWad?: string;
   edgeBps: string;
   legBps?: string; // absent on writers predating leg-count-scaled edge
-  pairDecisions?: CorrelationPairDecision[];
+  pairDecisions?: { pair: [string, string]; status: string; reason?: string }[];
 }
 
 export type QuoteResult =
@@ -73,13 +107,6 @@ export function compareMarketVolume(left: Market, right: Market, ascending: bool
   if (left.volume24h === undefined) return right.volume24h === undefined ? 0 : 1;
   if (right.volume24h === undefined) return -1;
   return (left.volume24h - right.volume24h) * (ascending ? 1 : -1);
-}
-
-export function correlationEvidence(decisions: CorrelationPairDecision[]): string {
-  if (decisions.length === 0) return "Same-underlying model";
-  return decisions
-    .map(({ pair, status }) => `${pair.join("/")} ${status === "direct" ? "measured" : "fallback estimate"}`)
-    .join(" · ");
 }
 
 export interface WriterLimits {

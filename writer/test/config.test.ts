@@ -403,3 +403,55 @@ test("the coverage assertion fails a market whose cluster the table does not kno
   assert.ok(table.underlyings.BTC !== undefined);
   assert.equal(table.fallback.btc, undefined);
 });
+
+test("parseMarkets accepts sports fields: question, startMs, side labels, group", () => {
+  const raw = JSON.stringify({ markets: [
+    { vault: VAULT, coinYes: "#1", coinNo: "#2", underlying: "q844", cluster: "WC2026", direction: "up", title: "Draw", category: "sports", question: 844, startMs: 1, expiryMs: 2, sideYes: "Draw", sideNo: "No draw", group: "q844", groupTitle: "Saudi Arabia vs Uruguay" },
+  ] });
+  const info = parseMarkets(raw).get(VAULT)!;
+  assert.equal(info.question, 844);
+  assert.equal(info.startMs, 1);
+  assert.equal(info.sideYes, "Draw");
+  assert.equal(info.group, "q844");
+  assert.equal(info.groupTitle, "Saudi Arabia vs Uruguay");
+  assert.throws(() => parseMarkets(JSON.stringify([{ vault: VAULT, coinYes: "#1", coinNo: "#2", underlying: "x", cluster: "y", direction: "up", title: "t", category: "c", question: "844" }])), /question must be a number/);
+});
+
+test("loadConfig in independent mode boots from MARKETS_FILE alone, no research root or profile", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-config-independent-"));
+  try {
+    const marketsFile = join(root, "markets.json");
+    writeFileSync(marketsFile, JSON.stringify({ network: "testnet", markets: [
+      { vault: VAULT, coinYes: "#1", coinNo: "#2", underlying: "q844", cluster: "WC2026", direction: "up", title: "Draw", category: "sports", question: 844 },
+    ] }));
+    const values: Record<string, string> = {
+      PRICING_MODE: "independent", MARKETS_FILE: marketsFile,
+      PARLAY_VAULT_ADDRESS: "0x9999999999999999999999999999999999999999", PARLAY_DEPLOY_BLOCK: "999",
+      MAX_STAKE: "1000000", PER_MARKET_CAP: "1000000", PER_CLUSTER_CAP: "1000000", INVITE_CODES: "test",
+      WRITER_ADDRESS: "0x2222222222222222222222222222222222222222",
+      QUOTE_SIGNER_PRIVATE_KEY: `0x${"11".repeat(32)}`, POKER_PRIVATE_KEY: `0x${"22".repeat(32)}`, TESTNET_RPC: "http://localhost:1",
+    };
+    const saved = new Map(["RESEARCH_ROOT", "RESEARCH_NETWORK_PROFILE_FILE", ...Object.keys(values)].map((key) => [key, process.env[key]]));
+    try {
+      delete process.env.RESEARCH_ROOT;
+      delete process.env.RESEARCH_NETWORK_PROFILE_FILE;
+      Object.assign(process.env, values);
+      const config = loadConfig(CONFIG_NOW);
+      assert.equal(config.pricingMode, "independent");
+      assert.equal(config.parlayVault, "0x9999999999999999999999999999999999999999");
+      assert.equal(config.deployBlock, 999n);
+      assert.equal(config.researchProfile, undefined);
+      assert.equal(config.researchPersistence, undefined);
+      assert.equal(config.rhoBandPct, 0);
+      assert.equal(config.markets.get(VAULT)?.question, 844);
+      assert.equal(config.model.version, "independent");
+      assert.equal(config.model.multiAssetEnabled, false);
+      assert.equal(Object.keys(config.correlations.underlyings).length, 0);
+      assert.equal(applyWriterProfileIdentity(config, 31337), null);
+      process.env.PRICING_MODE = "sideways";
+      assert.throws(() => loadConfig(CONFIG_NOW), /PRICING_MODE/);
+    } finally {
+      for (const [key, value] of saved) value === undefined ? delete process.env[key] : process.env[key] = value;
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

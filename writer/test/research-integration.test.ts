@@ -154,6 +154,7 @@ function quoteDeps(root: string, artifact: ReturnType<typeof artifactFixture>): 
   parsed.model.validationState = "Supported";
   const quoteJournal = initializeQuoteJournal(root, artifact.profile);
   const cfg: QuoteDeps["cfg"] = {
+    pricingMode: "correlated",
     rpcUrl: "",
     parlayVault: PARLAY_VAULT,
     writerAddress: TAKER,

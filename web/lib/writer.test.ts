@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { compareMarketVolume, correlationEvidence, requestQuote, withMarketVolumes, type Market } from "./writer";
+import { compareMarketVolume, groupMarkets, requestQuote, sideLabel, withMarketVolumes, type Market } from "./writer";
 
 const REQ = {
   taker: "0x1111111111111111111111111111111111111111" as const,
@@ -58,12 +58,24 @@ test("compareMarketVolume sorts highest first and always sinks unknown volume", 
   expect([...markets].sort((a, b) => compareMarketVolume(a, b, true)).map((m) => m.volume24h)).toEqual([4, 9, undefined]);
 });
 
-test("correlationEvidence names measured and fallback pairs", () => {
-  expect(
-    correlationEvidence([
-      { pair: ["BTC", "ETH"], status: "direct" },
-      { pair: ["BTC", "ZEC"], status: "fallback" },
-    ]),
-  ).toBe("BTC/ETH measured · BTC/ZEC fallback estimate");
-  expect(correlationEvidence([])).toBe("Same-underlying model");
+test("sideLabel uses registry side names and falls back to YES/NO", () => {
+  expect(sideLabel({ sideYes: "Twins", sideNo: "Orioles" }, true)).toBe("Twins");
+  expect(sideLabel({ sideYes: "Twins", sideNo: "Orioles" }, false)).toBe("Orioles");
+  expect(sideLabel({}, true)).toBe("YES");
+  expect(sideLabel(undefined, false)).toBe("NO");
+});
+
+test("groupMarkets collapses a question's vaults into one entry at the first member's position", () => {
+  const m = (vault: string, extra: Partial<Market> = {}): Market =>
+    ({ vault: vault as `0x${string}`, title: vault, category: "sports", coinYes: "#1", coinNo: "#2", ...extra });
+  const entries = groupMarkets([
+    m("0xa", { group: "q844", groupTitle: "Saudi Arabia vs Uruguay" }),
+    m("0xb"),
+    m("0xc", { group: "q844", groupTitle: "Saudi Arabia vs Uruguay" }),
+  ]);
+  expect(entries.map((e) => e.kind)).toEqual(["group", "market"]);
+  const group = entries[0];
+  if (group.kind !== "group") throw new Error("expected group");
+  expect(group.title).toBe("Saudi Arabia vs Uruguay");
+  expect(group.members.map((x) => x.vault)).toEqual(["0xa", "0xc"]);
 });
