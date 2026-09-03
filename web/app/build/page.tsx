@@ -34,6 +34,7 @@ function PriceCell({
   selected,
   label,
   onPick,
+  chip = false,
 }: {
   mid: number | null;
   /** Short text printed before the price: YES / NO, or the registry's side name. */
@@ -42,6 +43,9 @@ function PriceCell({
   selected: boolean;
   label: string;
   onPick: () => void;
+  /** Bordered, label-left / price-right, at every breakpoint. For a grouped
+   * question's outcome grid, where a bare table cell has no column to sit in. */
+  chip?: boolean;
 }) {
   return (
     <button
@@ -50,26 +54,27 @@ function PriceCell({
       disabled={mid === null}
       aria-pressed={selected}
       aria-label={label}
-      className={`mono w-full rounded-[8px] border border-line px-2 py-1.5 text-center transition-[transform,background-color,border-color,color] active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none sm:rounded-none sm:border-0 sm:py-1 sm:text-right ${
-        selected ? "border-accent bg-accent" : ""
-      }`}
+      className={`mono flex w-full items-baseline rounded-[8px] border border-line px-2 py-1.5 transition-[transform,background-color,border-color,color] active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none ${
+        chip ? "min-w-0 justify-between gap-3 px-3 py-2" : "justify-center sm:justify-end sm:rounded-none sm:border-0 sm:py-1"
+      } ${selected ? "border-accent bg-accent" : ""}`}
     >
       <span
-        className={`mr-1.5 max-w-24 truncate align-bottom text-[10px] uppercase ${side === "YES" || side === "NO" ? "sm:hidden" : ""} ${
+        title={chip ? side : undefined}
+        className={`text-[10px] ${chip ? "min-w-0 flex-1 truncate text-left text-[11px]" : "mr-1.5 shrink-0 uppercase"} ${
           selected ? "text-on-accent/70" : "text-dim"
         }`}
       >
         {side}
       </span>
       <span
-        className={`text-[13px] ${
+        className={`shrink-0 text-[13px] ${
           selected ? "text-on-accent" : tone === "yes" ? "text-yes" : "text-no"
         }`}
       >
         {oddsLabel(mid)}
       </span>
       <span
-        className={`ml-2 text-[10px] ${selected ? "text-on-accent/70" : "text-dim"}`}
+        className={`ml-2 shrink-0 text-[10px] ${selected ? "text-on-accent/70" : "text-dim"}`}
       >
         {mid === null ? "-" : pct1(mid)}
       </span>
@@ -83,7 +88,7 @@ function PriceCell({
  * badge only covers a missing underlying or a network failure. */
 function AssetIcon({ underlying, category, badge }: { underlying?: string; category: string; badge?: string }) {
   const [failed, setFailed] = useState(false);
-  // Sports have no venue icon — the badge is the sport ("BA" for baseball).
+  // Sports have no venue icon - the badge is the sport ("BA" for baseball).
   if (!underlying || failed || category === "sports")
     return (
       <span className="mono flex h-5 w-5 items-center justify-center rounded-full border border-line text-[8px] uppercase text-dim">
@@ -123,7 +128,7 @@ function BoardRow({
   const no = midOf(mids, market.coinNo);
   return (
     <div
-      className={`border-t border-line px-4 py-3 sm:grid sm:grid-cols-[1fr_110px_110px_100px_90px] sm:items-center sm:gap-x-3 sm:px-5 ${
+      className={`border-t border-line px-4 py-3 sm:grid sm:grid-cols-[1fr_124px_124px_84px_76px] sm:items-center sm:gap-x-3 sm:px-5 ${
         current ? "bg-accent/[0.07]" : ""
       }`}
     >
@@ -134,7 +139,7 @@ function BoardRow({
         <div className="min-w-0">
           <p className="truncate text-[13px]">{market.title}</p>
           <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">
-            {market.category === "sports" ? `${market.sport ?? market.category} · ${market.cluster ?? ""}`.replace(/ · $/, "") : market.category}
+            {categoryLine(market)}
             <span className="sm:hidden">
               {" · "}
               {formatVolume(market.volume24h)}
@@ -174,14 +179,20 @@ function BoardRow({
   );
 }
 
+/** "Baseball · MLB" for sports, the bare category otherwise. */
+function categoryLine(market: Market): string {
+  if (market.category !== "sports") return market.category;
+  return [market.sport ?? market.category, market.cluster].filter(Boolean).join(" · ");
+}
+
 /** Quoting locks at kickoff when the registry knows it, else at expiry. */
 function closesIn(market: Market): string {
   const at = market.startMs ?? market.expiryMs;
-  return at ? until(at) : "—";
+  return at ? until(at) : "-";
 }
 
 /** One HIP-4 question (A / Draw / B, tournament winner): one card, one button
- * per outcome, YES side only — a sportsbook card, not a Yes/No grid. The NO
+ * per outcome, YES side only - a sportsbook card, not a Yes/No grid. The NO
  * side of a grouped outcome is the sum of the others and stays off the board.
  * The writer refuses two legs from one question (`same-game`), so picking a
  * second outcome swaps the first. */
@@ -200,6 +211,11 @@ function GroupRow({
 }) {
   const current = legs.find((l) => members.some((m) => m.vault === l.vault));
   const head = members[0];
+  // Favourite first, unpriced last: the eye lands on the short-priced outcome.
+  const priced = members
+    .map((m) => ({ m, mid: midOf(mids, m.coinYes) }))
+    .sort((a, b) => (b.mid ?? -1) - (a.mid ?? -1));
+  const volume = members.reduce((acc, m) => acc + (m.volume24h ?? 0), 0);
   return (
     <div className={`border-t border-line px-4 py-3 sm:px-5 ${current ? "bg-accent/[0.07]" : ""}`}>
       <div className="flex items-center justify-between gap-3">
@@ -210,30 +226,30 @@ function GroupRow({
           <div className="min-w-0">
             <p className="truncate text-[13px]">{title}</p>
             <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">
-              {head.category}
+              {categoryLine(head)}
               {" · "}
               {members.length} outcomes
+              {" · "}
+              {formatVolume(volume)}
               {" · "}
               {closesIn(head)}
             </p>
           </div>
         </div>
       </div>
-      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-        {members.map((m) => {
-          const mid = midOf(mids, m.coinYes);
-          return (
-            <PriceCell
-              key={m.vault}
-              mid={mid}
-              side={m.title}
-              tone="yes"
-              selected={current?.vault === m.vault}
-              label={`Take ${m.title} in ${title} at ${mid === null ? "no price" : pct1(mid)}`}
-              onPick={() => onPick(m, true)}
-            />
-          );
-        })}
+      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {priced.map(({ m, mid }) => (
+          <PriceCell
+            key={m.vault}
+            chip
+            mid={mid}
+            side={m.title}
+            tone="yes"
+            selected={current?.vault === m.vault}
+            label={`Take ${m.title} in ${title} at ${mid === null ? "no price" : pct1(mid)}`}
+            onPick={() => onPick(m, true)}
+          />
+        ))}
       </div>
     </div>
   );
@@ -305,7 +321,8 @@ export default function BuildPage() {
         {
           vault: market.vault,
           isYes,
-          title: market.group ? `${market.title} · ${market.groupTitle ?? market.group}` : market.title,
+          // Grouped leg: the outcome is the label, the question is the title.
+          title: market.group ? (market.groupTitle ?? market.group) : market.title,
           coin: isYes ? market.coinYes : market.coinNo,
           label: market.group ? market.title : sideLabel(market, isYes),
           group: market.group,
@@ -371,10 +388,9 @@ export default function BuildPage() {
               <p className="rounded-card border border-line bg-panel p-6 text-dim">No markets listed.</p>
             ) : (
               <div className="overflow-hidden rounded-[12px] border border-line bg-panel/30">
-                <div className="mono flex justify-between gap-x-3 bg-panel px-4 py-3 text-[9px] uppercase tracking-[0.16em] text-dim sm:grid sm:grid-cols-[1fr_110px_110px_100px_90px] sm:px-5">
+                <div className="mono flex justify-between gap-x-3 bg-panel px-4 py-3 text-[9px] uppercase tracking-[0.16em] text-dim sm:grid sm:grid-cols-[1fr_124px_124px_84px_76px] sm:px-5">
                   <span>Market</span>
-                  <span className="hidden pr-2 text-right sm:block">Yes</span>
-                  <span className="hidden pr-2 text-right sm:block">No</span>
+                  <span className="col-span-2 hidden pr-2 text-right sm:block">Sides</span>
                   <button
                     type="button"
                     onClick={() => {

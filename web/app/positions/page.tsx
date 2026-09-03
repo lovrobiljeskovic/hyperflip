@@ -248,7 +248,7 @@ function LegTable({
           // flex-wrap: on mobile the meta line's basis-full pushes it to a
           // second row; live/expires columns only exist at sm+.
           <div key={leg.vault} className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 mono text-xs">
-            <span className={`w-10 shrink-0 truncate sm:w-16 ${leg.isYes ? "text-yes" : "text-no"}`}>{sideLabel(m, leg.isYes)}</span>
+            <span className={`w-10 shrink-0 truncate sm:w-16 ${m?.group ? "" : "uppercase"} ${leg.isYes ? "text-yes" : "text-no"}`}>{sideLabel(m, leg.isYes)}</span>
             {/* The leg is a HyperCore market - link its live order book, not the
                 EVM explorer. Explorer stays the fallback for archived legs whose
                 market (and coin) the registry no longer carries. */}

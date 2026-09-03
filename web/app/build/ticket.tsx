@@ -146,7 +146,7 @@ function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown })
     <div className="flex flex-col gap-1.5">
       {legs.map((leg, i) => (
         <div key={leg.vault} className="flex items-baseline gap-3">
-          <span className={`max-w-16 truncate ${leg.isYes ? "text-yes" : "text-no"}`}>{legLabel(leg)}</span>
+          <span className={`max-w-24 truncate ${leg.group ? "" : "uppercase"} ${leg.isYes ? "text-yes" : "text-no"}`}>{legLabel(leg)}</span>
           <span className="flex-1 truncate text-dim">{leg.title}</span>
           <span className="w-14 text-right">{pct(bd.legProbs[i])}</span>
           <span className="w-14 text-right">{mult(bd.legOdds[i])}</span>
@@ -609,10 +609,10 @@ export function Ticket({
         <ul className="mt-4 flex flex-col gap-px bg-line">
           {legs.map((leg) => (
             <li key={leg.vault} className="print-line flex items-center gap-3 bg-ink px-4 py-[13px]">
-              <span className={`mono max-w-20 truncate text-[11px] ${leg.isYes ? "text-yes" : "text-no"}`}>
+              <span title={legLabel(leg)} className={`mono max-w-36 truncate text-[11px] ${leg.group ? "" : "uppercase"} ${leg.isYes ? "text-yes" : "text-no"}`}>
                 {legLabel(leg)}
               </span>
-              <span className="flex-1 truncate text-fg">{leg.title}</span>
+              <span title={leg.title} className="flex-1 truncate text-fg">{leg.title}</span>
               <span className="mono text-dim">{midPct(mids, leg.coin)}</span>
               {!display && (
                 <button
