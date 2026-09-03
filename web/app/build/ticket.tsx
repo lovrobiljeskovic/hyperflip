@@ -4,7 +4,14 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { erc20Abi, formatUnits, parseUnits } from "viem";
 import { useAccount, useBalance, usePublicClient, useReadContract, useSwitchChain, useWriteContract } from "wagmi";
-import { fetchLimits, joinWaitlist, requestQuote, WAITLIST_ERRORS, type QuoteResult, type WriterQuote } from "@/lib/writer";
+import {
+  fetchLimits,
+  joinWaitlist,
+  requestQuote,
+  WAITLIST_ERRORS,
+  type QuoteResult,
+  type WriterQuote,
+} from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
 import {
@@ -109,8 +116,7 @@ function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: BuilderLeg
     return "These legs contradict each other - this ticket can never win.";
   if (res.status === 400 && res.error === "same-game")
     return "Two legs from the same game - parlays need different games. Drop one.";
-  if (res.status === 400 && res.error === "ticket-too-complex")
-    return "Too many correlated legs to price - drop one.";
+  if (res.status === 400 && res.error === "ticket-too-complex") return "Too many correlated legs to price - drop one.";
   return res.error;
 }
 
@@ -146,7 +152,9 @@ function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown })
     <div className="flex flex-col gap-1.5">
       {legs.map((leg, i) => (
         <div key={leg.vault} className="flex items-baseline gap-3">
-          <span className={`max-w-24 truncate ${leg.group ? "" : "uppercase"} ${leg.isYes ? "text-yes" : "text-no"}`}>{legLabel(leg)}</span>
+          <span className={`max-w-24 truncate ${leg.group ? "" : "uppercase"} ${leg.isYes ? "text-yes" : "text-no"}`}>
+            {legLabel(leg)}
+          </span>
           <span className="flex-1 truncate text-dim">{leg.title}</span>
           <span className="w-14 text-right">{pct(bd.legProbs[i])}</span>
           <span className="w-14 text-right">{mult(bd.legOdds[i])}</span>
@@ -155,10 +163,7 @@ function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown })
       <div className="mt-1 border-t border-line pt-1.5" />
       <DetailRow label="Fair combined odds">{mult(bd.fairMultiplier)}</DetailRow>
       {Math.abs(afterCorrelation - bd.fairMultiplier) > 0.005 && (
-        <DetailRow
-          label="Correlation"
-          className={afterCorrelation > bd.fairMultiplier ? "text-yes" : "text-no"}
-        >
+        <DetailRow label="Correlation" className={afterCorrelation > bd.fairMultiplier ? "text-yes" : "text-no"}>
           {signedMult(afterCorrelation - bd.fairMultiplier)}
         </DetailRow>
       )}
@@ -231,7 +236,6 @@ function InviteEntry({ onSave }: { onSave: (code: string) => void }) {
           Save
         </button>
       </form>
-      <p className="mono text-[11px] text-dim">Saved - checked on your first quote.</p>
       {waitState === "sent" ? (
         <p className="mono text-[11px] text-yes">Invite sent - check your email, then paste the code above.</p>
       ) : (
@@ -272,7 +276,8 @@ function InviteEntry({ onSave }: { onSave: (code: string) => void }) {
   );
 }
 
-const DRIP_HINT = "Claim testnet USDC at the Hyperliquid drip, then transfer it (and some HYPE for gas) from Core to EVM.";
+const DRIP_HINT =
+  "Claim testnet USDC at the Hyperliquid drip, then transfer it (and some HYPE for gas) from Core to EVM.";
 
 export function Ticket({
   legs,
@@ -524,8 +529,7 @@ export function Ticket({
     if (!inviteCode) return { kind: "invite" };
     // Empty wallet is a dead end without a next step - send the tester to the
     // faucet instead of a disabled button.
-    if (usdcBalance === 0n)
-      return { kind: "external", label: "Get testnet USDC →", href: HL_DRIP, hint: DRIP_HINT };
+    if (usdcBalance === 0n) return { kind: "external", label: "Get testnet USDC →", href: HL_DRIP, hint: DRIP_HINT };
     if (gas !== undefined && gas.value === 0n)
       return { kind: "external", label: "Get HYPE for gas →", href: HL_DRIP, hint: DRIP_HINT };
     if (stakeBase === null) return { kind: "disabled", label: "Enter a stake to quote" };
@@ -588,9 +592,7 @@ export function Ticket({
     return Number.isFinite(n) && n > 0 && n < 1 ? n : null;
   });
   const combinedImplied =
-    legs.length && sampleProbs.every((p) => p !== null)
-      ? (sampleProbs as number[]).reduce((acc, p) => acc * p, 1)
-      : 0;
+    legs.length && sampleProbs.every((p) => p !== null) ? (sampleProbs as number[]).reduce((acc, p) => acc * p, 1) : 0;
   const sampleMultiplier = combinedImplied > 0 ? 1 / combinedImplied : null;
   const samplePayout = sampleMultiplier === null ? null : 100 * sampleMultiplier;
 
@@ -609,10 +611,15 @@ export function Ticket({
         <ul className="mt-4 flex flex-col gap-px bg-line">
           {legs.map((leg) => (
             <li key={leg.vault} className="print-line flex items-center gap-3 bg-ink px-4 py-[13px]">
-              <span title={legLabel(leg)} className={`mono max-w-36 truncate text-[11px] ${leg.group ? "" : "uppercase"} ${leg.isYes ? "text-yes" : "text-no"}`}>
+              <span
+                title={legLabel(leg)}
+                className={`mono max-w-36 truncate text-[11px] ${leg.group ? "" : "uppercase"} ${leg.isYes ? "text-yes" : "text-no"}`}
+              >
                 {legLabel(leg)}
               </span>
-              <span title={leg.title} className="flex-1 truncate text-fg">{leg.title}</span>
+              <span title={leg.title} className="flex-1 truncate text-fg">
+                {leg.title}
+              </span>
               <span className="mono text-dim">{midPct(mids, leg.coin)}</span>
               {!display && (
                 <button
@@ -691,9 +698,7 @@ export function Ticket({
               </button>
             </div>
             {maxStake !== null && (
-              <p className="mt-1 mono text-[11px] text-dim">
-                House limit {formatUsdc(maxStake)} USDC per ticket
-              </p>
+              <p className="mt-1 mono text-[11px] text-dim">House limit {formatUsdc(maxStake)} USDC per ticket</p>
             )}
           </div>
 
@@ -716,9 +721,7 @@ export function Ticket({
                   panel, not a footnote - collapsing it hides the one number a
                   taker most needs to trust. */}
               <details open className="mt-2 rounded-[4px] border border-line bg-raised/40 px-3 py-2">
-                <summary className="flex items-center justify-between text-[11px] text-dim">
-                  Quote details
-                </summary>
+                <summary className="flex items-center justify-between text-[11px] text-dim">Quote details</summary>
                 <div className="mt-3 flex flex-col gap-3 text-[11px]">
                   {bd && bd.legProbs.length === legs.length ? (
                     <MathBreakdown legs={legs} bd={bd} />
@@ -730,9 +733,7 @@ export function Ticket({
                     <DetailRow label="Profit if won" className="text-yes">
                       +{formatUsdc(maxPayout - premium)} USDC
                     </DetailRow>
-                    <DetailRow label="Break-even probability">
-                      {breakEven === null ? "-" : pct(breakEven)}
-                    </DetailRow>
+                    <DetailRow label="Break-even probability">{breakEven === null ? "-" : pct(breakEven)}</DetailRow>
                     <DetailRow label="Max loss" className="text-no">
                       {formatUsdc(premium)} USDC
                     </DetailRow>
@@ -741,9 +742,7 @@ export function Ticket({
                   <div className="flex flex-col gap-1.5 border-t border-line pt-3">
                     <DetailRow label="Price protection">Fixed - signed quote</DetailRow>
                     <DetailRow label="Slippage">None (0%)</DetailRow>
-                    <DetailRow label="Route">
-                      {needsApproval ? "2 txs · Approve + Mint" : "1 tx · Mint"}
-                    </DetailRow>
+                    <DetailRow label="Route">{needsApproval ? "2 txs · Approve + Mint" : "1 tx · Mint"}</DetailRow>
                     <DetailRow label="Platform fee">0.00 USDC</DetailRow>
                     <DetailRow label="Network">{hyperEvmTestnet.name}</DetailRow>
                     <DetailRow label="Gas token">{hyperEvmTestnet.nativeCurrency.symbol}</DetailRow>
@@ -810,7 +809,10 @@ export function Ticket({
       )}
 
       {display ? (
-        <div className="mono mt-4 rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent" aria-hidden>
+        <div
+          className="mono mt-4 rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent"
+          aria-hidden
+        >
           Mint slip - 100.00 USDC
         </div>
       ) : cta ? (
@@ -882,9 +884,7 @@ export function Ticket({
               <p className="text-center text-xs text-no">{mintErrorMsg}</p>
               {mintErrorDetail && mintErrorDetail !== mintErrorMsg && (
                 <details className="mt-2 rounded-[4px] border border-no/30 bg-no/5 p-2">
-                  <summary className="cursor-pointer mono text-[11px] text-no/70">
-                    Full error
-                  </summary>
+                  <summary className="cursor-pointer mono text-[11px] text-no/70">Full error</summary>
                   <pre className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-all mono text-[11px] leading-relaxed text-no/80">
                     {mintErrorDetail}
                   </pre>
