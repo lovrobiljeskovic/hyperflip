@@ -6,10 +6,11 @@ import {
   assertDataManifest,
   assertJoinedEventRecord,
   assertQuoteDecision,
+  liveMarketRegistrySha256,
   parseSourceRegistry,
   sourceFor,
 } from "../src/research/types.js";
-import type { CandleRecord, DataManifest, JoinedEventRecord, SourceEntry } from "../src/research/types.js";
+import type { CandleRecord, DataManifest, JoinedEventRecord, QuoteDecision, SourceEntry } from "../src/research/types.js";
 
 const fixture = (name: string) => new URL(`./fixtures/research/${name}`, import.meta.url);
 
@@ -156,4 +157,31 @@ test("JoinedEventRecord validation requires the exact persisted union wire shape
   delete withoutEventKey.eventKey;
   assert.throws(() => assertJoinedEventRecord(withoutEventKey as unknown as JoinedEventRecord), /eventKey/);
   assert.throws(() => assertJoinedEventRecord({ ...observation, extra: true } as unknown as JoinedEventRecord), /unknown field/);
+});
+
+test("QuoteDecision v4 records champion and live registry identities with an explicit point-model mode", () => {
+  const legacy = {
+    schemaVersion: 3 as const, network: "testnet" as const, profileSha256: "a".repeat(64), marketRegistrySha256: "b".repeat(64), deploymentRegistrySha256: "a".repeat(64),
+    baselineCorrelationSha256: "f".repeat(64), artifactKind: "champion" as const, artifactSha256: "a".repeat(64), validationSha256: "a".repeat(64), validationState: "Supported" as const,
+    pairDecisions: [], recordedAtMs: 0, quoteId: "quote-1", quoteDigest: "digest", chainId: 1, parlayVault: "vault", taker: "taker", legs: [], bookInputs: [],
+    modelVersion: "model-1", dataAsOf: "2026-08-28T00:00:00.000Z", dataManifestSha256: "a".repeat(64), sourceRegistrySha256: "a".repeat(64),
+    bestEstimateJointProbWad: "1", riskAdjustedJointProbWad: "1", rhoBandPct: 0, edge: { baseBps: "0", legBps: "0", totalBps: "0" }, premium: "1", maxPayout: "1", deadline: "1", signatureHash: "c".repeat(64),
+  };
+  const { marketRegistrySha256, ...common } = legacy;
+  const pointModel = { ...common, schemaVersion: 4 as const, championMarketRegistrySha256: "b".repeat(64), liveMarketRegistrySha256: "d".repeat(64), pricingMode: "point-model" as const };
+  assertQuoteDecision(legacy);
+  assertQuoteDecision(pointModel);
+  assert.equal(liveMarketRegistrySha256(legacy), marketRegistrySha256);
+  assert.equal(liveMarketRegistrySha256(pointModel), "d".repeat(64));
+  const invalid = (value: unknown): QuoteDecision => value as QuoteDecision;
+  assert.throws(() => assertQuoteDecision(invalid({ ...pointModel, marketRegistrySha256 })), /invalid fields/);
+  assert.throws(() => assertQuoteDecision(invalid({ ...legacy, championMarketRegistrySha256: "b".repeat(64) })), /invalid fields/);
+  const { liveMarketRegistrySha256: _live, ...missingLive } = pointModel;
+  assert.throws(() => assertQuoteDecision(invalid(missingLive)), /invalid fields/);
+  assert.throws(() => assertQuoteDecision(invalid({ ...pointModel, pricingMode: "correlation-band" })), /pricingMode/);
+  assert.throws(() => assertQuoteDecision(invalid({ ...pointModel, rhoBandPct: 0.2 })), /rhoBandPct/);
+  assert.throws(() => assertQuoteDecision(invalid({ ...pointModel, championMarketRegistrySha256: "zz" })), /championMarketRegistrySha256/);
+  assert.throws(() => assertQuoteDecision(invalid({ ...pointModel, schemaVersion: 5 })), /schemaVersion/);
+  assert.throws(() => assertQuoteDecision(invalid({ ...pointModel, artifactKind: "profile-baseline", validationSha256: null, validationState: "Unavailable", artifactSha256: "f".repeat(64) })), /profile baseline/);
+  assertQuoteDecision(invalid({ ...pointModel, artifactKind: "profile-baseline", validationSha256: null, validationState: "Unavailable", artifactSha256: "f".repeat(64), championMarketRegistrySha256: "d".repeat(64) }));
 });

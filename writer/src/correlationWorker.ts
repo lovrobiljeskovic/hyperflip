@@ -1,5 +1,5 @@
 import { isMainThread, parentPort, Worker } from "node:worker_threads";
-import { riskAdjustedJointProbWad, type CorrLeg, type CorrelationTable } from "./correlation.js";
+import { jointProbWad, type CorrLeg, type CorrelationTable } from "./correlation.js";
 import { TooComplexError } from "./copula.js";
 
 const MAX_QUEUE = 16;
@@ -64,7 +64,10 @@ export class CorrelationWorker {
     });
   }
 
-  bestEstimate(legs: CorrLeg[], table: CorrelationTable): Promise<bigint> {
+  /** The live joint probability, integrated off the event loop. Every ticket
+   * shape goes through here — including one-underlying and repeated-underlying
+   * trees — so a slow integral can only time out, never stall /health. */
+  jointProbWad(legs: CorrLeg[], table: CorrelationTable): Promise<bigint> {
     if (this.cleaning) return Promise.reject(new PricingUnavailableError("worker cleanup pending"));
     if (this.pending.size >= MAX_QUEUE) return Promise.reject(new PricingUnavailableError("worker queue full"));
     const id = this.nextId++;
@@ -85,7 +88,7 @@ export class CorrelationWorker {
 
 if (!isMainThread) parentPort!.on("message", (request: Request) => {
   let response: Response;
-  try { response = { id: request.id, value: riskAdjustedJointProbWad(request.legs, request.table, 0).toString() }; }
+  try { response = { id: request.id, value: jointProbWad(request.legs, request.table).toString() }; }
   catch (error) {
     response = error instanceof TooComplexError
       ? { id: request.id, error: "too-complex", cost: error.cost }

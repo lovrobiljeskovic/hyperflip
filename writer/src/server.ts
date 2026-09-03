@@ -2,7 +2,7 @@ import http from "node:http";
 import { isAddress, keccak256, type Address, type Hex } from "viem";
 import type { WriterConfig } from "./config.js";
 import { TooComplexError } from "./copula.js";
-import { nominalPairCorrelation, riskAdjustedJointProbWad, type CorrLeg } from "./correlation.js";
+import { nominalPairCorrelation, type CorrLeg } from "./correlation.js";
 import { ExposureBook } from "./exposure.js";
 import { dominatingLeg, edgeBreakdown, priceParlay, totalEdgeBps } from "./pricing.js";
 import { quoteDigest, type ParlayQuote, type QuoteLeg } from "./quotes.js";
@@ -29,7 +29,10 @@ export interface QuoteDeps {
   exposure: ExposureBook;
   chainId: number;
   fetchLegPrice(leg: QuoteLeg): Promise<LegPriceObservation>;
-  bestEstimateJointProbWad(legs: CorrLeg[]): Promise<bigint>;
+  /** P(every leg wins) under the point model, integrated in CorrelationWorker.
+   * Rejects with TooComplexError past the quadrature budget and with any other
+   * error when the worker is down, full, or timed out. */
+  jointProbWad(legs: CorrLeg[]): Promise<bigint>;
   readAllowance(): Promise<bigint>;
   /** Lowercase vault addresses of legs already settled. */
   readSettled(vaults: Address[]): Promise<Set<string>>;
@@ -68,6 +71,9 @@ export function correlationEligibility(legs: QuoteLeg[], cfg: WriterConfig, now:
   const underlyings = [...new Set(markets.map((market) => market.underlying))].sort();
   if (underlyings.length <= 1) return null;
   if (!currentModelStatus(cfg.model, now).multiAssetEnabled || markets.some((market) => market.direction === "band")) return "correlation-unavailable";
+  // A live market outside the champion taxonomy (R6 registryCompatibility) fails only its own
+  // cross-underlying tickets; the champion keeps pricing every compatible market.
+  if (markets.some((market) => cfg.model.incompatibleMarkets.has(market.vault.toLowerCase()))) return "correlation-unavailable";
   for (const underlying of underlyings) if (!cfg.model.eligibleUnderlyings.has(underlying) || cfg.model.quarantinedUnderlyings.has(underlying)) return "correlation-unavailable";
   for (let left = 0; left < underlyings.length; left++) for (let right = left + 1; right < underlyings.length; right++) {
     const entry = cfg.model.pairEligibility.get(pairKey(underlyings[left], underlyings[right]));
@@ -180,9 +186,8 @@ export async function handleQuote(
 
   // Correlation lives in the probability, not the edge: legs that comove make
   // the joint probability higher than the product of the marginals, and legs
-  // that oppose make it lower. jointProbWad returns the house-favorable end of
-  // the rho band, so a hand-set loading being optimistic costs the house less
-  // than it otherwise would.
+  // that oppose make it lower. One validated point model prices every ticket;
+  // edge and exposure caps are the risk margin, not a correlation band.
   const corrLegs: CorrLeg[] = v.legs.map((l, i) => {
     const m = cfg.markets.get(l.vault.toLowerCase())!;
     return {
@@ -194,22 +199,12 @@ export async function handleQuote(
       bullish: m.direction === "band" ? null : (m.direction === "up") === l.isYes,
     };
   });
+  // Every integration — same-underlying tickets included — runs in the worker,
+  // so this event loop (HTTP, poker, /health) never integrates. A ticket past
+  // the quadrature budget is refused before any integration starts.
   let joint: bigint;
   try {
-    joint = riskAdjustedJointProbWad(corrLegs, cfg.correlations, cfg.rhoBandPct);
-  } catch (e) {
-    // The writer is single-threaded, so a ticket whose factor tree costs
-    // seconds to integrate would stall every other request and the poker with
-    // it. Refusing is the honest answer; see MAX_QUADRATURE_POINTS.
-    if (!(e instanceof TooComplexError)) throw e;
-    reject(metrics, "ticket-too-complex");
-    return { status: 400, json: { error: "ticket-too-complex" } };
-  }
-  let bestEstimate: bigint;
-  try {
-    bestEstimate = new Set(corrLegs.map((leg) => leg.underlying)).size === 1
-      ? riskAdjustedJointProbWad(corrLegs, cfg.correlations, 0)
-      : await deps.bestEstimateJointProbWad(corrLegs);
+    joint = await deps.jointProbWad(corrLegs);
   } catch (error) {
     if (error instanceof TooComplexError) {
       reject(metrics, "ticket-too-complex");
@@ -274,10 +269,15 @@ export async function handleQuote(
     return { status: 503, json: { error: "sign-failed" } };
   }
   const decision: QuoteDecision = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     network: cfg.model.network,
     profileSha256: cfg.model.profileSha256,
-    marketRegistrySha256: cfg.model.marketRegistrySha256,
+    // The champion's candidate-time registry and the registry this process
+    // booted with, kept apart so a nightly rotation never makes the quote
+    // ambiguous about which markets the model was fitted against.
+    championMarketRegistrySha256: cfg.model.marketRegistrySha256,
+    liveMarketRegistrySha256: cfg.researchProfile.marketRegistrySha256,
+    pricingMode: "point-model",
     deploymentRegistrySha256: cfg.model.deploymentRegistrySha256,
     baselineCorrelationSha256: cfg.model.baselineCorrelationSha256,
     artifactKind: cfg.model.artifactKind,
@@ -311,9 +311,10 @@ export async function handleQuote(
     dataAsOf: cfg.model.dataAsOf,
     dataManifestSha256: cfg.model.dataManifestSha256,
     sourceRegistrySha256: cfg.model.sourceRegistrySha256,
-    bestEstimateJointProbWad: bestEstimate.toString(),
+    // One point-model probability drives both pricing and evidence.
+    bestEstimateJointProbWad: joint.toString(),
     riskAdjustedJointProbWad: joint.toString(),
-    rhoBandPct: cfg.rhoBandPct,
+    rhoBandPct: 0,
     edge: { baseBps: edge.baseBps.toString(), legBps: edge.legBps.toString(), totalBps: totalEdgeBps(edge).toString() },
     premium: quote.premium.toString(),
     maxPayout: quote.maxPayout.toString(),
@@ -346,7 +347,6 @@ export async function handleQuote(
       breakdown: {
         legPricesWad: priceObservations.map((price) => price.priceWad.toString()),
         jointProbWad: joint.toString(),
-        bestEstimateJointProbWad: bestEstimate.toString(),
         edgeBps: edge.baseBps.toString(),
         legBps: edge.legBps.toString(),
         pairDecisions: decision.pairDecisions.map(({ pair, status, reason }) => ({ pair, status, reason })),

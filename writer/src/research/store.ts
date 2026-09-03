@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { gunzipSync } from "node:zlib";
+import { parseMarkets } from "../markets.js";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
 import { assertCandleRecord, assertDataManifest, assertExclusionRecord, assertResearchNetworkEnabled, parseReturnRecord, parseSourceRegistry } from "./types.js";
 import type { CandleRawManifest, CandleRecord, DataManifest, DerivedManifestV2, ExclusionRecord, ResearchNetwork, ReturnRecord, SourceRegistry } from "./types.js";
@@ -157,6 +158,36 @@ export function readSourceRegistryFact(root: string, hash: string, storage = ope
   const registry = parseSourceRegistry(bytes);
   assertResearchNetworkEnabled(registry.network);
   return { registry, hash, path: resolve(root, relativePath) };
+}
+
+const marketRegistryFactPath = (hash: string): string => `facts/market-registries/${hash}.json`;
+
+/** Stores the candidate-time market registry once by content hash. Existing bytes are never
+ * rewritten; a different registry with the same hash is a corruption signal, not an update. */
+export function recordMarketRegistryFact(storage: ResearchPersistence, raw: string): string {
+  const path = marketRegistryFactPath(sha256(raw));
+  if (!storage.exists(path) && storage.writeNew(path, raw)) return path;
+  if (storage.readText(path) !== raw) throw new Error("immutable market registry fact differs");
+  return path;
+}
+
+export function readMarketRegistryFact(root: string, hash: string, storage = openResearchPersistence(root)): { raw: string; hash: string; path: string } {
+  if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error("market registry fact hash is invalid");
+  const relativePath = marketRegistryFactPath(hash);
+  const raw = storage.readText(relativePath);
+  if (sha256(raw) !== hash) throw new Error("market registry fact hash mismatch");
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { throw new Error("market registry fact is malformed"); }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed) || (parsed as Record<string, unknown>).network !== "testnet") throw new Error("market registry fact must be a testnet registry");
+  parseMarkets(raw);
+  return { raw, hash, path: resolve(root, relativePath) };
+}
+
+/** Shared by replay, promotion, startup, and reporting: the snapshot a fitted candidate was
+ * calibrated against must still exist byte-for-byte. */
+export function assertMarketRegistrySnapshot(root: string, storage: ResearchPersistence, hash: string): void {
+  try { readMarketRegistryFact(root, hash, storage); }
+  catch (error) { throw new Error(`market registry snapshot mismatch: ${error instanceof Error ? error.message : String(error)}`); }
 }
 
 type RootProfileIdentity = { network: ResearchNetwork; profileSha256: string };

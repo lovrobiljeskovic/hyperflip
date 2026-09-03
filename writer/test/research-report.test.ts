@@ -80,6 +80,8 @@ test("journal funnel joins only quoted canonical mints to their matching parlay 
   const root = mkdtempSync(join(tmpdir(), "hype-report-funnel-"));
   try {
     writeFileSync(join(root, "network-profile.json"), `${canonicalJson(researchRootIdentity(testnetProfile))}\n`);
+    mkdirSync(join(root, "facts", "market-registries"), { recursive: true });
+    writeFileSync(join(root, "facts", "market-registries", `${testnetProfile.marketRegistrySha256}.json`), testnetProfile.marketRegistryRaw);
     const quote: QuoteDecision = {
       schemaVersion: 3, network: "testnet", profileSha256: testnetProfile.profileSha256, marketRegistrySha256: testnetProfile.marketRegistrySha256,
       deploymentRegistrySha256: testnetProfile.deploymentRegistrySha256, baselineCorrelationSha256: testnetProfile.baselineCorrelationSha256,
@@ -104,8 +106,16 @@ test("journal funnel joins only quoted canonical mints to their matching parlay 
     const eventsPath = join(root, "journal", "events", "events.jsonl");
     writeFileSync(eventsPath, `${rows.map(canonicalJson).join("\n")}\n`);
     assert.deepEqual(journalFunnel(root, testnetProfile), { quotes: 1, minted: 1, resolved: 1 });
+    // R6: a quote is verified against its own immutable live-registry snapshot, not the registry
+    // current at report time. A quote from an earlier registry counts once its snapshot exists;
+    // a quote naming a registry with no snapshot is unverifiable evidence and fails the report.
     writeFileSync(quotesPath, `${canonicalJson(quote)}\n${canonicalJson({ ...quote, quoteId: "q2", marketRegistrySha256: "0".repeat(64) })}\n`);
-    assert.deepEqual(journalFunnel(root, testnetProfile), { quotes: 1, minted: 1, resolved: 1 });
+    assert.throws(() => journalFunnel(root, testnetProfile), /market registry snapshot/);
+    const earlierRegistry = canonicalJson({ schemaVersion: 1, network: "testnet", markets: [] });
+    writeFileSync(join(root, "facts", "market-registries", `${sha256(earlierRegistry)}.json`), earlierRegistry);
+    writeFileSync(quotesPath, `${canonicalJson(quote)}\n${canonicalJson({ ...quote, quoteId: "q2", marketRegistrySha256: sha256(earlierRegistry) })}\n`);
+    assert.deepEqual(journalFunnel(root, testnetProfile), { quotes: 2, minted: 1, resolved: 1 });
+    writeFileSync(quotesPath, `${canonicalJson(quote)}\n`);
 
     for (const mixed of [
       { ...quote, profileSha256: "0".repeat(64) },
@@ -229,6 +239,8 @@ test("research report accepts unmapped markets while verifying every immutable r
     for (const [file, value] of [["sources.json", sources], ["markets.json", markets], ["deployment.json", deployment], ["baseline.json", baseline], ["profile.json", profileValue]] as const) writeFileSync(join(root, file), canonicalJson(value));
     const profile = loadResearchNetworkProfile(join(root, "profile.json"));
     writeFileSync(join(root, "network-profile.json"), `${canonicalJson(researchRootIdentity(profile))}\n`);
+    mkdirSync(join(root, "facts", "market-registries"), { recursive: true });
+    writeFileSync(join(root, "facts", "market-registries", `${profile.marketRegistrySha256}.json`), profile.marketRegistryRaw);
     const sourceBytes = canonicalJson(sources);
     const sourceHash = sha256(sourceBytes);
     const sourceRelative = `facts/source-registries/${sourceHash}.json`;
@@ -309,8 +321,12 @@ test("research report accepts unmapped markets while verifying every immutable r
     assert.equal(first.path, join(root, "reports", "2026-08-27-beta-1.html"));
     assert.equal(readFileSync(first.path, "utf8"), first.bytes);
     assert.equal(second.bytes, first.bytes);
-    writeFileSync(join(root, "artifacts", "champion.json"), `${canonicalJson({ ...fixture.candidate, marketRegistrySha256: "0".repeat(64) })}\n`);
+    // R6: a champion from another baseline is not current; a champion whose market registry hash
+    // differs from its own candidate is corrupt evidence, not a rotated registry.
+    writeFileSync(join(root, "artifacts", "champion.json"), `${canonicalJson({ ...fixture.candidate, baselineCorrelationSha256: "0".repeat(64) })}\n`);
     assert.match(generateReport(root, candidatePath, derivedManifestPath, profile, reportNow).bytes, /not promoted/);
+    writeFileSync(join(root, "artifacts", "champion.json"), `${canonicalJson({ ...fixture.candidate, marketRegistrySha256: "0".repeat(64) })}\n`);
+    assert.throws(() => generateReport(root, candidatePath, derivedManifestPath, profile, reportNow), /champion candidate mismatch/);
     writeFileSync(join(root, "artifacts", "champion.json"), candidateBytes);
     assert.match(first.bytes, /collector request testnet:ETH: HTTP 503 — info API 503/);
     assert.match(first.bytes, /calibrate terminal: success — beta-1/);
@@ -383,6 +399,10 @@ test("research report accepts unmapped markets while verifying every immutable r
       writeFileSync(reportQuotes, `${canonicalJson(championQuote)}\n${canonicalJson(quoteMutation)}\n`);
       assert.throws(() => journalFunnel(root, profile), /mismatch/);
     }
+    const { marketRegistrySha256: _legacyRegistry, ...pointModelBase } = championQuote;
+    const pointModelQuote: QuoteDecision = { ...pointModelBase, schemaVersion: 4, championMarketRegistrySha256: profile.marketRegistrySha256, liveMarketRegistrySha256: profile.marketRegistrySha256, pricingMode: "point-model" };
+    writeFileSync(reportQuotes, `${canonicalJson(pointModelQuote)}\n`);
+    assert.throws(() => journalFunnel(root, profile), /schema and candidate model version disagree/);
     writeFileSync(reportQuotes, "");
 
     writeFileSync(join(root, exclusionsPath), "changed");

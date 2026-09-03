@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { gzipSync } from "node:zlib";
-import { atomicWrite, atomicWriteNew, buildDailyManifest, buildRollingManifest, canonicalJson, sha256, verifyManifest } from "../src/research/store.js";
+import { openResearchPersistence } from "../src/research/persistence.js";
+import { atomicWrite, atomicWriteNew, buildDailyManifest, buildRollingManifest, canonicalJson, readMarketRegistryFact, recordMarketRegistryFact, sha256, verifyManifest } from "../src/research/store.js";
 
 function scratch(): string {
   return mkdtempSync(join(tmpdir(), "hype-research-store-"));
@@ -126,4 +127,27 @@ test("daily, rolling, and verification reject a foreign candle under testnet pro
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("market registry facts are content-addressed, write-once, and fail closed on rewritten or foreign bytes", () => {
+  const root = scratch();
+  try {
+    const storage = openResearchPersistence(root);
+    const raw = canonicalJson({ schemaVersion: 1, network: "testnet", markets: [] });
+    const hash = sha256(raw);
+    assert.equal(recordMarketRegistryFact(storage, raw), `facts/market-registries/${hash}.json`);
+    assert.equal(recordMarketRegistryFact(storage, raw), `facts/market-registries/${hash}.json`);
+    assert.equal(readMarketRegistryFact(root, hash, storage).raw, raw);
+    writeFileSync(join(root, "facts", "market-registries", `${hash}.json`), canonicalJson({ schemaVersion: 1, network: "testnet", markets: [], rewritten: true }));
+    assert.throws(() => readMarketRegistryFact(root, hash, storage), /hash mismatch/);
+    assert.throws(() => recordMarketRegistryFact(storage, raw), /differs/);
+    const foreign = canonicalJson({ schemaVersion: 1, network: "mainnet", markets: [] });
+    writeFileSync(join(root, "facts", "market-registries", `${sha256(foreign)}.json`), foreign);
+    assert.throws(() => readMarketRegistryFact(root, sha256(foreign), storage), /testnet/);
+    const malformed = "{not json";
+    writeFileSync(join(root, "facts", "market-registries", `${sha256(malformed)}.json`), malformed);
+    assert.throws(() => readMarketRegistryFact(root, sha256(malformed), storage), /malformed/);
+    assert.throws(() => readMarketRegistryFact(root, "not-a-hash", storage), /invalid/);
+    assert.throws(() => readMarketRegistryFact(root, "0".repeat(64), storage));
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

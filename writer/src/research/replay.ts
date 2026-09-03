@@ -1,11 +1,11 @@
 import { createHash, hash } from "node:crypto";
 import { resolve } from "node:path";
 import { jointProbWad, parseCorrelations, type CorrLeg, type CorrelationTable } from "../correlation.js";
-import { calibrationPairSample, fitHierarchical, type CalibrationAlignmentCache } from "./calibration.js";
-import { cholesky, nearestCorrelation, shrinkPair, structuredTargets, weightedCorrelation, type PairEstimate } from "./matrix.js";
+import { calibrationPairSample, type CalibrationAlignmentCache } from "./calibration.js";
+import { cholesky, fitSignedFactors, weightedCorrelation, type FitEvidenceInput } from "./matrix.js";
 import { returnModeFor, trailingFresh, type ReturnMode, type ReturnRecord } from "./returns.js";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
-import { canonicalJson, readDerivedDataset, readSourceRegistryFact, sha256 } from "./store.js";
+import { assertMarketRegistrySnapshot, canonicalJson, readDerivedDataset, readSourceRegistryFact, sha256 } from "./store.js";
 import { assertExclusionRecord, parseReturnRecord } from "./types.js";
 import type { CorrelationArtifact, ExclusionRecord, ResearchNetwork, SourceEntry } from "./types.js";
 import { assertLoadedResearchNetworkProfile, bindResearchRootIdentity, type LoadedResearchNetworkProfile } from "./network.js";
@@ -564,44 +564,54 @@ export function filteredHistoricalSimulation(ticket: SyntheticTicket, series: Re
   return { available: true, probability: (hits + 1) / (blocks + 2), hits, blocks, originMean: originStats.map((stats) => stats!.mu), originSigma: originStats.map((stats) => stats!.sigma), reason: null };
 }
 
-function fittedMatrix(rows: ReturnRecord[], sources: SourceEntry[], originMs = Number.POSITIVE_INFINITY): { matrix: number[][]; values: number[][]; observationTimes: number[]; sources: SourceEntry[] } {
+/** Direct evidence for the shared fitter, or null when the estimate has no Fisher interval (rail
+ * correlation or effective sample at or below 3) and so cannot be admitted as direct. */
+function directEvidence(pair: [string, string], mode: ReturnMode, estimate: { correlation: number; effectiveN: number }): FitEvidenceInput | null {
+  return estimate.effectiveN > 3 && Math.abs(estimate.correlation) < 1 ? { evidence: "direct", pair, mode, target: estimate.correlation, effectiveN: estimate.effectiveN } : null;
+}
+
+function nonConstantOnly(error: unknown): void {
+  if (!(error instanceof Error) || error.message !== "weighted correlation requires non-constant series") throw error;
+}
+
+function trainingRows(series: ReplaySeries, asOfMs: number): { values: number[][]; observationTimes: number[] } {
+  const underlyings = series.sources.map((source) => source.underlying);
+  const daily = alignedRows(series, underlyings, "daily", asOfMs);
+  const base = daily.length >= 3 ? daily : alignedRows(series, underlyings, "hourly", asOfMs);
+  if (base.length < 3) throw new Error("dependence fit requires at least three complete rows");
+  return { values: base.map((row) => row.values), observationTimes: base.map((row) => row.timestampMs) };
+}
+
+function fittedMatrix(rows: ReturnRecord[], sources: SourceEntry[], originMs = Number.POSITIVE_INFINITY): Omit<ReplayDependenceFit, "admittedPairs"> {
   const sorted = [...sources].sort((left, right) => left.underlying.localeCompare(right.underlying));
   const asOfMs = Number.isSafeInteger(originMs) ? originMs : Math.max(...rows.map((row) => row.timestampMs));
-  const series: ReplaySeries = { network: "testnet", rows, exclusions: [], sources: sorted, manifestHash: "0".repeat(64) };
-  const estimates: PairEstimate[] = [];
+  const evidence: FitEvidenceInput[] = [];
   for (let left = 0; left < sorted.length; left++) for (let right = left + 1; right < sorted.length; right++) {
     const sample = calibrationPairSample(rows, sorted[left], sorted[right], { asOfMs, lookbackMs: 180 * DAY });
-    if (sample.rows.length < 2) continue;
+    if (!sample.eligible || sample.rows.length < 2) continue;
     try {
-      const estimate = weightedCorrelation(sample.rows, 45, asOfMs);
-      estimates.push({ pair: [sorted[left].underlying, sorted[right].underlying], ...estimate, eligible: sample.eligible });
-    } catch (error) {
-      if (!(error instanceof Error) || error.message !== "weighted correlation requires non-constant series") throw error;
-    }
+      const direct = directEvidence([sorted[left].underlying, sorted[right].underlying], sample.mode, weightedCorrelation(sample.rows, 45, asOfMs));
+      if (direct) evidence.push(direct);
+    } catch (error) { nonConstantOnly(error); }
   }
-  const targets = structuredTargets(estimates, sorted);
-  const byPair = new Map(estimates.map((estimate) => [estimate.pair.join(":"), estimate]));
-  const raw = sorted.map((left, row) => sorted.map((right, column) => {
-    if (row === column) return 1;
-    const key = left.underlying < right.underlying ? `${left.underlying}:${right.underlying}` : `${right.underlying}:${left.underlying}`;
-    const estimate = byPair.get(key);
-    const target = left.cluster === right.cluster ? targets.clusters[left.cluster] : targets.global;
-    return estimate?.eligible ? shrinkPair(estimate, target) : target;
-  }));
-  const daily = alignedRows(series, sorted.map((source) => source.underlying), "daily", asOfMs);
-  const base = daily.length >= 3 ? daily : alignedRows(series, sorted.map((source) => source.underlying), "hourly", asOfMs);
-  if (base.length < 3) throw new Error("dependence fit requires at least three complete rows");
-  return { matrix: nearestCorrelation(raw), values: base.map((row) => row.values), observationTimes: base.map((row) => row.timestampMs), sources: sorted };
+  const fit = fitSignedFactors(sorted, evidence);
+  return { matrix: fit.matrix, loadings: fit.loadings, ...trainingRows({ network: "testnet", rows, exclusions: [], sources: sorted, manifestHash: "0".repeat(64) }, asOfMs), sources: sorted };
 }
 
 export interface ReplayDependenceFit {
+  /** `R = B * transpose(B) + D` from the shared signed fitter over `sources`. */
   matrix: number[][];
+  /** The same loadings the calibrator would emit, in artifact `clusters` shape. */
+  loadings: CorrelationArtifact["clusters"];
   values: number[][];
   observationTimes: number[];
   sources: SourceEntry[];
   admittedPairs: Set<string>;
 }
 
+/** Re-estimates the candidate's admitted pairs causally at `originMs` and fits them with the same
+ * signed factor fitter as calibration: direct pairs from the weighted estimator, fallback pairs as
+ * the candidate's recorded labeled priors, everything else unconstrained. */
 export function fitReplayDependence(rows: ReturnRecord[], sources: SourceEntry[], candidate: CorrelationArtifact, originMs: number, fits?: Map<number, ReplayDependenceFit>): ReplayDependenceFit {
   const cached = fits?.get(originMs);
   if (cached) return cached;
@@ -614,46 +624,35 @@ export function fitReplayDependence(rows: ReturnRecord[], sources: SourceEntry[]
     .sort((left, right) => left.underlying < right.underlying ? -1 : left.underlying > right.underlying ? 1 : 0);
   if (sorted.length < 2) throw new Error("dependence fit requires two eligible fresh sources");
   const policy = new Map(candidate.quality.pairEligibility.map((entry) => [pairName(...entry.pair), entry.status]));
-  const estimates: PairEstimate[] = [];
-  const samples = new Map<string, ReturnType<typeof calibrationPairSample>>();
+  const fallbackTargets = new Map(candidate.fallbackPairs.map((entry) => [pairName(...entry.pair), entry.correlation]));
+  const evidence: FitEvidenceInput[] = [];
+  const admittedPairs = new Set<string>();
   const alignment: CalibrationAlignmentCache = { possible: new Map(), returns: new Map() };
   for (let left = 0; left < sorted.length; left++) for (let right = left + 1; right < sorted.length; right++) {
     const a = sorted[left];
     const b = sorted[right];
-    const key = pairName(a.underlying, b.underlying);
-    const sample = calibrationPairSample(causal, a, b, window, alignment);
-    samples.set(key, sample);
-    if (policy.get(key) !== "direct" || !sample.eligible || sample.rows.length < 2) continue;
-    try {
-      estimates.push({ pair: [a.underlying, b.underlying], ...weightedCorrelation(sample.rows, 45, originMs), eligible: true });
-    } catch (error) {
-      if (!(error instanceof Error) || error.message !== "weighted correlation requires non-constant series") throw error;
+    const pair: [string, string] = [a.underlying, b.underlying];
+    const key = pairName(...pair);
+    const status = policy.get(key);
+    if (status === "direct") {
+      const sample = calibrationPairSample(causal, a, b, window, alignment);
+      if (!sample.eligible || sample.rows.length < 2) continue;
+      try {
+        const direct = directEvidence(pair, sample.mode, weightedCorrelation(sample.rows, 45, originMs));
+        if (!direct) continue;
+        evidence.push(direct);
+        admittedPairs.add(key);
+      } catch (error) { nonConstantOnly(error); }
+    } else if (status === "fallback" && a.fallbackEligible && b.fallbackEligible) {
+      const target = fallbackTargets.get(key);
+      if (target === undefined) throw new Error(`candidate fallback pair ${key} has no recorded correlation`);
+      evidence.push({ evidence: "fallback", pair, target });
+      admittedPairs.add(key);
     }
   }
-  const targets = structuredTargets(estimates, sorted);
-  const estimatesByPair = new Map(estimates.map((estimate) => [pairName(...estimate.pair), estimate]));
-  const admittedPairs = new Set<string>();
-  const raw = sorted.map((left, row) => sorted.map((right, column) => {
-    if (row === column) return 1;
-    const key = pairName(left.underlying, right.underlying);
-    const status = policy.get(key);
-    const target = left.cluster === right.cluster ? targets.clusters[left.cluster] : targets.global;
-    const estimate = estimatesByPair.get(key);
-    if (status === "direct" && estimate && samples.get(key)?.eligible) {
-      admittedPairs.add(key);
-      return shrinkPair(estimate, target);
-    }
-    if (status === "fallback" && left.fallbackEligible && right.fallbackEligible) {
-      admittedPairs.add(key);
-      return target;
-    }
-    return 0;
-  }));
+  const fit = fitSignedFactors(sorted, evidence);
   const series: ReplaySeries = { network: "testnet", rows: causal, exclusions: [], sources: sorted, manifestHash: "0".repeat(64) };
-  const daily = alignedRows(series, sorted.map((source) => source.underlying), "daily", originMs);
-  const base = daily.length >= 3 ? daily : alignedRows(series, sorted.map((source) => source.underlying), "hourly", originMs);
-  if (base.length < 3) throw new Error("dependence fit requires at least three complete rows");
-  const result = { matrix: nearestCorrelation(raw), values: base.map((row) => row.values), observationTimes: base.map((row) => row.timestampMs), sources: sorted, admittedPairs };
+  const result = { matrix: fit.matrix, loadings: fit.loadings, ...trainingRows(series, originMs), sources: sorted, admittedPairs };
   fits?.set(originMs, result);
   return result;
 }
@@ -745,7 +744,7 @@ function gaussianProbability(ticket: SyntheticTicket, table: CorrelationTable): 
     underlying: leg.underlying,
     bullish: leg.direction === "up",
   }));
-  return clampProbability(Number(jointProbWad(legs, table, 0)) / Number(WAD));
+  return clampProbability(Number(jointProbWad(legs, table)) / Number(WAD));
 }
 
 function measuredTable(clusters: CorrelationArtifact["clusters"]): CorrelationTable {
@@ -868,6 +867,7 @@ export function runReplay(input: ReplayInput): ValidationReport {
   const dataset = readDerivedDataset(root, input.derivedManifestPath, storage);
   const manifest = dataset.manifest;
   assertReplayProfileIdentity(input.profile, input.candidate, manifest.network);
+  if (input.candidate.schemaVersion === 3) assertMarketRegistrySnapshot(root, storage, input.candidate.marketRegistrySha256);
   if (input.inputManifestSha256 !== input.candidate.dataManifestSha256 || manifest.dataManifestSha256 !== input.inputManifestSha256) throw new Error("replay immutable input identities differ");
   if (manifest.sourceRegistrySha256 !== input.profile.sourceRegistrySha256) throw new Error("replay source registry identity mismatch");
   const sources = loadReplaySourceRegistry(root, manifest.sourceRegistrySha256, storage);
@@ -937,7 +937,7 @@ export function runReplay(input: ReplayInput): ValidationReport {
     degreeOfFreedomSelections.push({ originMs, df });
     const order = fitted?.sources.map((source) => source.underlying) ?? [];
     const generated = fitted && !matrixFailure ? tDraws(fitted.matrix, df, draws, `${input.seed}:${originMs}:${df}`) : [];
-    const measuredCorrelation = fitted ? measuredTable(fitHierarchical(fitted.matrix, fitted.sources, fitted.admittedPairs).loadings) : null;
+    const measuredCorrelation = fitted ? measuredTable(fitted.loadings) : null;
     const tThresholds = new Map<number, number>();
     const tThreshold = (probability: number): number => {
       const bounded = Math.min(1 - 1e-12, Math.max(1e-12, probability));

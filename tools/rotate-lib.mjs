@@ -1,5 +1,8 @@
 // Pure logic for market rotation — no I/O, tested by rotate-lib.test.mjs.
 
+// One compatibility verdict for rotation preflight and writer startup alike (R6).
+export { registryCompatibility } from "./registry-compat.mjs";
+
 // Tokenized non-crypto perps are venue-prefixed (`perp:xyz:NVDA`). Only the
 // `xyz` venue trades — `pew:` deployments are junk with dead 0.5 books.
 const TRADED_VENUES = new Set(["xyz"]);

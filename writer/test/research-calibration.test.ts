@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { gunzipSync, gzipSync } from "node:zlib";
-import { admitPair, calibrate, calibrationPairSample, fitHierarchical, type CalibrationInput } from "../src/research/calibration.js";
+import { admitPair, calibrate, calibrationPairSample, type CalibrationInput } from "../src/research/calibration.js";
+import { pairCorrelation } from "../src/correlation.js";
 import { researchRootIdentity, type LoadedResearchNetworkProfile } from "../src/research/network.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
 import type { CandleRecord, DataManifest, SourceEntry, SourceRegistry } from "../src/research/types.js";
@@ -57,32 +58,6 @@ test("pair admission rejects mixed baseline identity and never admits wrong-netw
   assert.throws(() => admitPair(zec, btc, null, { ...admissionBaseline, baselineCorrelationSha256: "0".repeat(64) }), /baseline correlation hash/);
   assert.throws(() => admitPair(zec, btc, null, { ...admissionBaseline, profile: { ...admissionBaseline.profile, network: "mainnet" } }), /testnet/);
   assert.deepEqual(admitPair(zec, btc, { network: "mainnet", eligible: true, correlation: 0.99, reason: null }, admissionBaseline), { kind: "fallback", correlation: 0.81, reason: "operator-reviewed-testnet-bootstrap" });
-});
-
-test("hierarchical fit is non-negative and preserves the explained-variance ceiling", () => {
-  const fit = fitHierarchical([
-    [1, 0.5, -0.2],
-    [0.5, 1, 0.2],
-    [-0.2, 0.2, 1],
-  ], [source("B", "crypto"), source("A", "crypto"), source("C", "equity")]);
-  assert.deepEqual(Object.keys(fit.loadings.crypto), ["A", "B"]);
-  for (const cluster of Object.values(fit.loadings)) {
-    for (const loading of Object.values(cluster)) {
-      assert.ok(loading.global >= 0 && loading.cluster >= 0 && loading.underlying >= 0);
-      assert.ok(loading.global ** 2 + loading.cluster ** 2 + loading.underlying ** 2 <= 0.99 + 1e-12);
-      assert.equal(loading.underlyingBasis, "structural-underlying");
-    }
-  }
-  assert.ok(fit.implied.flat().every((value) => value >= 0));
-});
-
-test("hierarchical fit jointly caps global and cluster explained variance", () => {
-  const fit = fitHierarchical([
-    [1, 1, 0.5],
-    [1, 1, 0.5],
-    [0.5, 0.5, 1],
-  ], [source("A", "crypto"), source("B", "crypto"), source("C", "equity")]);
-  for (const loading of Object.values(fit.loadings.crypto)) assert.ok(loading.global ** 2 + loading.cluster ** 2 <= 0.99 + 1e-12);
 });
 
 const AS_OF_MS = Date.parse("2026-08-28T12:00:00.000Z");
@@ -254,9 +229,21 @@ test("calibration preserves signed negatives and writes a byte-identical immutab
     assert.deepEqual(rerun, artifact);
     assert.equal(firstBytes.equals(secondBytes), true);
     assert.equal(firstBytes.toString("utf8"), readFileSync(new URL("./fixtures/research/expected-candidate.json", import.meta.url), "utf8"));
-    assert.ok(artifact.quality.clippedNegativePairs.length > 0);
+    assert.equal(artifact.schemaVersion, 3);
+    assert.equal(artifact.modelFamily, "signed-asset-factor");
+    assert.deepEqual(artifact.quality.clippedNegativePairs, []);
     assert.ok(artifact.quality.signedPsdTarget.flat().some((value) => value < 0));
     assert.ok(artifact.quality.pairEligibility.every((pair) => pair.status === "direct"));
+    assert.equal(artifact.schemaVersion === 3 && artifact.pairEvidence.length, 3);
+    if (artifact.schemaVersion !== 3) throw new Error("unreachable");
+    assert.ok(artifact.pairEvidence.every((record) => record.evidence === "direct" && record.gate.passed && record.interval?.m === 3));
+    const negative = artifact.pairEvidence.find((record) => record.pair.join(":") === "A:C")!;
+    assert.ok(negative.target! < -0.9 && negative.fitted! < -0.9, canonicalJson(negative));
+    for (const record of artifact.pairEvidence) {
+      const [left, right] = record.pair.map((underlying) => Object.values(artifact.clusters).find((entries) => underlying in entries)![underlying]);
+      assert.ok(Math.abs(pairCorrelation(left, right, false, false) - record.fitted!) <= 1e-12);
+      assert.ok(Math.abs(artifact.quality.pairDiagnostics.find((row) => row.pair.join(":") === record.pair.join(":"))!.implied - record.fitted!) <= 1e-12);
+    }
     assert.deepEqual(Object.keys(artifact.quality.diagnosticMatrices), ["30", "90", "180"]);
     assert.equal(JSON.parse(readFileSync(join(first.root, "state", "calibrator.json"), "utf8")).status, "succeeded");
     writeFileSync(join(first.root, "artifacts", "candidates", `${artifact.modelVersion}.json`), "different");
@@ -341,6 +328,47 @@ test("calibration quarantines exact static fallbacks that conflict with measured
     ]);
     assert.ok(artifact.quality.maxProjectionError <= artifact.policy.maxProjectionError);
     assert.equal(artifact.policy.maxProjectionError, 0.10);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("calibration quarantines a rail direct correlation before fitting", () => {
+  const fixture = calibrationRoot();
+  try {
+    const byTime = new Map<number, number>();
+    rewriteAllReturns(fixture, (row) => {
+      if (row.underlying === "A") byTime.set(row.timestampMs as number, row.value as number);
+    });
+    rewriteAllReturns(fixture, (row) => {
+      if (row.underlying === "C") row.value = byTime.get(row.timestampMs as number);
+    });
+    const artifact = calibrate(fixture.input);
+    assert.deepEqual(artifact.quality.pairEligibility, [
+      { pair: ["A", "B"], status: "direct", reason: "testnet-quality-passed" },
+      { pair: ["A", "C"], status: "quarantined", reason: "insufficient-effective-sample" },
+      { pair: ["B", "C"], status: "direct", reason: "testnet-quality-passed" },
+    ]);
+    assert.deepEqual(artifact.quarantinedPairs, [{ pair: ["A", "C"], reason: "insufficient-effective-sample" }]);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("calibration rejects a candidate whose direct evidence the signed factor model cannot reproduce", () => {
+  const fixture = calibrationRoot();
+  try {
+    // B and C share A's common factor but carry opposite idiosyncratic noise: corr(A,B) = corr(A,C) ~ 0.9
+    // while corr(B,C) ~ 0.6, which no bounded one-factor cross-cluster model reproduces within 0.05.
+    rewriteAllReturns(fixture, (row) => {
+      const index = Math.round((row.timestampMs as number) / 86_400_000);
+      const common = Math.sin(index / 3.7) + Math.cos(index / 11.3);
+      const noise = 0.5 * (Math.sin(index / 1.9) - Math.cos(index / 5.1));
+      row.value = row.underlying === "A" ? common : row.underlying === "B" ? common + noise : common - noise;
+    });
+    assert.throws(() => calibrate(fixture.input), /direct pair gate failed: .*B:C direct-residual-out-of-range/);
+    assert.equal(JSON.parse(readFileSync(join(fixture.root, "state", "calibrator.json"), "utf8")).status, "failed");
+    assert.equal(existsSync(join(fixture.root, "artifacts", "candidates")), false);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

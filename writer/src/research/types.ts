@@ -166,12 +166,50 @@ export interface QuarantinedPairRecord {
   reason: string;
 }
 
-export interface CorrelationArtifact {
-  schemaVersion: 2;
+export interface LegacyFitPolicy {
+  lookbackDays: 180;
+  halfLifeDays: 45;
+  diagnosticWindowsDays: [30, 90, 180];
+  minHourly: 1000;
+  minDaily: 90;
+  minCoverage: 0.8;
+  maxProjectionError: 0.10;
+}
+
+/** Fixed candidate policy approved by the repository owner on 2026-09-03 (R0). Immutable artifact
+ * evidence, not a runtime switch: changing any value requires fresh approval and a new candidate. */
+export interface ApprovedFitPolicy extends LegacyFitPolicy {
+  maxDirectResidual: 0.05;
+  fisherCoverage: 0.95;
+  fisherAdjustment: "bonferroni";
+  omegaFallback: 30;
+  fallbackResidualRange: 0.15;
+  vMax: 0.99;
+  underlyingBasis: "structural-underlying";
+}
+
+export const LEGACY_FIT_POLICY: LegacyFitPolicy = { lookbackDays: 180, halfLifeDays: 45, diagnosticWindowsDays: [30, 90, 180], minHourly: 1000, minDaily: 90, minCoverage: 0.8, maxProjectionError: 0.10 };
+export const APPROVED_FIT_POLICY: ApprovedFitPolicy = { ...LEGACY_FIT_POLICY, maxDirectResidual: 0.05, fisherCoverage: 0.95, fisherAdjustment: "bonferroni", omegaFallback: 30, fallbackResidualRange: 0.15, vMax: 0.99, underlyingBasis: "structural-underlying" };
+
+/** Per-pair immutable evidence for a fitted candidate: what the fit targeted, how much it was
+ * trusted, the Fisher interval it had to land in, what it produced, and the gate verdict. */
+export interface PairEvidenceRecord {
+  pair: [string, string];
+  evidence: "direct" | "fallback" | "quarantined";
+  mode: ReturnMode | null;
+  effectiveN: number | null;
+  weight: number;
+  target: number | null;
+  interval: { lower: number; upper: number; adjustedLower: number; adjustedUpper: number; m: number } | null;
+  fitted: number | null;
+  residual: number | null;
+  gate: { passed: boolean; reason: string };
+}
+
+interface CorrelationArtifactBase {
   network: ResearchNetwork;
   profileSha256: string;
   modelVersion: string;
-  modelFamily: "hierarchical-gaussian-factor";
   createdAt: string;
   dataAsOf: string;
   dataManifestSha256: string;
@@ -182,15 +220,6 @@ export interface CorrelationArtifact {
   directPairs: PairRecord[];
   fallbackPairs: PairRecord[];
   quarantinedPairs: QuarantinedPairRecord[];
-  policy: {
-    lookbackDays: 180;
-    halfLifeDays: 45;
-    diagnosticWindowsDays: [30, 90, 180];
-    minHourly: 1000;
-    minDaily: 90;
-    minCoverage: 0.8;
-    maxProjectionError: 0.10;
-  };
   quality: {
     matrixOrder: string[];
     eligibleUnderlyings: string[];
@@ -218,11 +247,26 @@ export interface CorrelationArtifact {
   }>>;
 }
 
-export interface QuoteDecision {
+/** Read-only historical evidence. Parses and reports, never activates. */
+export interface LegacyCorrelationArtifact extends CorrelationArtifactBase {
+  schemaVersion: 2;
+  modelFamily: "hierarchical-gaussian-factor";
+  policy: LegacyFitPolicy;
+}
+
+/** The only activation-eligible model. Signed loading ranges land with the R3 fitter. */
+export interface FittedCorrelationArtifact extends CorrelationArtifactBase {
   schemaVersion: 3;
+  modelFamily: "signed-asset-factor";
+  policy: ApprovedFitPolicy;
+  pairEvidence: PairEvidenceRecord[];
+}
+
+export type CorrelationArtifact = LegacyCorrelationArtifact | FittedCorrelationArtifact;
+
+interface QuoteDecisionBase {
   network: ResearchNetwork;
   profileSha256: string;
-  marketRegistrySha256: string;
   deploymentRegistrySha256: string;
   baselineCorrelationSha256: string;
   artifactKind: "champion" | "profile-baseline";
@@ -257,6 +301,27 @@ export interface QuoteDecision {
   maxPayout: string;
   deadline: string;
   signatureHash: string;
+}
+
+/** Quote written by the correlation-band runtime against one registry hash. */
+export interface LegacyQuoteDecision extends QuoteDecisionBase {
+  schemaVersion: 3;
+  marketRegistrySha256: string;
+}
+
+/** Quote written by the point-model runtime (R5): records the champion's candidate-time registry
+ * and the live registry separately so a later rotation never makes the quote ambiguous. */
+export interface PointModelQuoteDecision extends QuoteDecisionBase {
+  schemaVersion: 4;
+  championMarketRegistrySha256: string;
+  liveMarketRegistrySha256: string;
+  pricingMode: "point-model";
+}
+
+export type QuoteDecision = LegacyQuoteDecision | PointModelQuoteDecision;
+
+export function liveMarketRegistrySha256(quote: QuoteDecision): string {
+  return quote.schemaVersion === 4 ? quote.liveMarketRegistrySha256 : quote.marketRegistrySha256;
 }
 
 export interface ChainLogRecord {
@@ -423,9 +488,10 @@ export function assertQuoteDecision(record: QuoteDecision): void {
   const value = record as unknown;
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("quote decision must be an object");
   const object = value as Record<string, unknown>;
-  const keys = ["schemaVersion", "network", "profileSha256", "marketRegistrySha256", "deploymentRegistrySha256", "baselineCorrelationSha256", "artifactKind", "artifactSha256", "validationSha256", "validationState", "pairDecisions", "recordedAtMs", "quoteId", "quoteDigest", "chainId", "parlayVault", "taker", "legs", "bookInputs", "modelVersion", "dataAsOf", "dataManifestSha256", "sourceRegistrySha256", "bestEstimateJointProbWad", "riskAdjustedJointProbWad", "rhoBandPct", "edge", "premium", "maxPayout", "deadline", "signatureHash"];
+  if (object.schemaVersion !== 3 && object.schemaVersion !== 4) throw new Error("quote decision schemaVersion must be 3 (legacy) or 4");
+  const keys = ["schemaVersion", "network", "profileSha256", "deploymentRegistrySha256", "baselineCorrelationSha256", "artifactKind", "artifactSha256", "validationSha256", "validationState", "pairDecisions", "recordedAtMs", "quoteId", "quoteDigest", "chainId", "parlayVault", "taker", "legs", "bookInputs", "modelVersion", "dataAsOf", "dataManifestSha256", "sourceRegistrySha256", "bestEstimateJointProbWad", "riskAdjustedJointProbWad", "rhoBandPct", "edge", "premium", "maxPayout", "deadline", "signatureHash",
+    ...(object.schemaVersion === 4 ? ["championMarketRegistrySha256", "liveMarketRegistrySha256", "pricingMode"] : ["marketRegistrySha256"])];
   if (Object.keys(object).length !== keys.length || keys.some((key) => !(key in object))) throw new Error("quote decision has invalid fields");
-  if (record.schemaVersion !== 3) throw new Error("quote decision schemaVersion must be 3");
   assertResearchNetworkEnabled(record.network);
   if (record.network !== "testnet") throw new Error("quote decision network must be testnet");
   assertSafeIntegerTimestamp(record.recordedAtMs, "recordedAtMs");
@@ -458,7 +524,14 @@ export function assertQuoteDecision(record: QuoteDecision): void {
   assertSha256(record.profileSha256, "profileSha256");
   assertSha256(record.dataManifestSha256, "dataManifestSha256");
   assertSha256(record.sourceRegistrySha256, "sourceRegistrySha256");
-  assertSha256(record.marketRegistrySha256, "marketRegistrySha256");
+  if (record.schemaVersion === 4) {
+    assertSha256(record.championMarketRegistrySha256, "championMarketRegistrySha256");
+    assertSha256(record.liveMarketRegistrySha256, "liveMarketRegistrySha256");
+    if (record.pricingMode !== "point-model") throw new Error("pricingMode must be point-model");
+    if (record.rhoBandPct !== 0) throw new Error("point-model rhoBandPct must be 0");
+  } else {
+    assertSha256(record.marketRegistrySha256, "marketRegistrySha256");
+  }
   assertSha256(record.deploymentRegistrySha256, "deploymentRegistrySha256");
   assertSha256(record.baselineCorrelationSha256, "baselineCorrelationSha256");
   if (record.artifactKind !== "champion" && record.artifactKind !== "profile-baseline") throw new Error("artifactKind is invalid");
@@ -466,7 +539,8 @@ export function assertQuoteDecision(record: QuoteDecision): void {
   if (record.artifactKind === "champion") {
     if (record.validationState !== "Supported" || record.validationSha256 === null) throw new Error("champion validationState must be Supported");
     assertSha256(record.validationSha256, "validationSha256");
-  } else if (record.validationState !== "Unavailable" || record.validationSha256 !== null || record.artifactSha256 !== record.baselineCorrelationSha256) {
+  } else if (record.validationState !== "Unavailable" || record.validationSha256 !== null || record.artifactSha256 !== record.baselineCorrelationSha256
+    || (record.schemaVersion === 4 && record.championMarketRegistrySha256 !== record.liveMarketRegistrySha256)) {
     throw new Error("profile baseline decision identity is invalid");
   }
   const expectedPairs: string[] = [];

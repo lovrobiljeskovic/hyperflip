@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
+import { fittedArtifact } from "./fixtures/research/fitted.js";
 import {
   brier,
   blockBootstrap,
@@ -26,6 +27,7 @@ import {
   type ReplaySeries,
 } from "../src/research/replay.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
+import { pairCorrelation } from "../src/correlation.js";
 import type { CorrelationArtifact, DerivedManifestV2, SourceEntry } from "../src/research/types.js";
 import { researchRootIdentity, type LoadedResearchNetworkProfile } from "../src/research/network.js";
 
@@ -203,7 +205,30 @@ test("historical dependence enforces candidate quarantine, pair quality, and exp
   const fallbackSeries = { ...sparse, sources: fallbackSources };
   const fallback = candidateFor(fallbackSeries, "fallback");
   fallback.quality.pairEligibility = [{ pair: ["A", "B"], status: "fallback", reason: "operator-reviewed" }];
-  assert.equal(fitReplayDependence(sparse.rows, fallbackSources, fallback, ORIGIN - DAY).admittedPairs.has("A:B"), true);
+  fallback.directPairs = [];
+  fallback.fallbackPairs = [{ pair: ["A", "B"], correlation: 0.25, reason: "operator-reviewed-testnet-bootstrap" }];
+  const fallbackFit = fitReplayDependence(sparse.rows, fallbackSources, fallback, ORIGIN - DAY);
+  assert.equal(fallbackFit.admittedPairs.has("A:B"), true);
+  assert.ok(Math.abs(fallbackFit.matrix[0][1] - 0.25) <= 1e-9, String(fallbackFit.matrix[0][1]));
+});
+
+test("replay dependence fits the calibrator's signed factor model and keeps negative cross-cluster loadings", () => {
+  const sources = [source("A", "crypto"), source("B", "equity")];
+  const rows = sources.flatMap((entry, asset) => Array.from({ length: 170 }, (_, index) => {
+    const timestampMs = ORIGIN - (170 - index) * DAY;
+    const common = Math.sin(index / 4.3) + Math.cos(index / 9.7);
+    return {
+      schemaVersion: 2 as const, transformationVersion: "returns-v2" as const, network: "testnet" as const, underlying: entry.underlying, interval: "daily" as const,
+      timestampMs, observationCloseTimeMs: timestampMs + DAY - 1, sessionDate: new Date(timestampMs).toISOString().slice(0, 10),
+      value: (asset === 0 ? common : -common) * 0.02 + 0.002 * Math.sin(index / (1.3 + asset)), sourceKeys: [],
+    };
+  }));
+  const series = { network: "testnet" as const, rows, exclusions: [], sources, manifestHash: "a".repeat(64) };
+  const fit = fitReplayDependence(series.rows, series.sources, candidateFor(series, "signed"), ORIGIN - DAY);
+  assert.ok(fit.matrix[0][1] < -0.9, String(fit.matrix[0][1]));
+  const loadings = fit.sources.map((entry) => fit.loadings[entry.cluster][entry.underlying]);
+  assert.ok(Math.abs(pairCorrelation(loadings[0], loadings[1], false, false) - fit.matrix[0][1]) <= 1e-12);
+  assert.ok(loadings.every((loading) => loading.underlyingBasis === "structural-underlying"));
 });
 
 test("replay dependence uses daily returns for a same-cluster session pair", () => {
@@ -614,4 +639,21 @@ test("representative 20-underlying replay fixture is deterministic within local 
     rmSync(root, { recursive: true, force: true });
     rmSync(branchRoot, { recursive: true, force: true });
   }
+});
+
+test("replay verifies the candidate-time market registry snapshot for fitted candidates only", () => {
+  const root = mkdtempSync(join(tmpdir(), "hype-replay-snapshot-"));
+  try {
+    const series = dailySeries();
+    const legacy = replayInput(root, candidateFor(series, "legacy"), series, "legacy");
+    runReplay(legacy);
+    const fitted = replayInput(root, fittedArtifact(candidateFor(series, "fitted")), series, "fitted");
+    assert.throws(() => runReplay(fitted), /market registry snapshot/);
+    const snapshot = join(root, "facts", "market-registries", `${fitted.profile.marketRegistrySha256}.json`);
+    mkdirSync(join(root, "facts", "market-registries"), { recursive: true });
+    writeFileSync(snapshot, canonicalJson({ schemaVersion: 1, network: "testnet", markets: [], rewritten: true }));
+    assert.throws(() => runReplay(fitted), /market registry snapshot/);
+    writeFileSync(snapshot, fitted.profile.marketRegistryRaw);
+    assert.equal(runReplay(fitted).candidateSha256, sha256(canonicalJson(fitted.candidate)));
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

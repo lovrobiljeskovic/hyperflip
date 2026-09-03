@@ -2,13 +2,13 @@ import { openResearchPersistence, type ResearchPersistence } from "./persistence
 import { pairCorrelation, parseCorrelations } from "../correlation.js";
 import { expectedIntervals, HOUR, quality, returnModeFor, sessionDates, trailingFresh, classifyCandle } from "./returns.js";
 import type { QualityMode, ReturnRecord, Window } from "./returns.js";
-import { nearestCorrelationResult, structuredTargets, weightedCorrelation } from "./matrix.js";
-import type { PairEstimate } from "./matrix.js";
-import { canonicalJson, operationError, readCandlePartition, readDerivedDataset, readSourceRegistryFact, sha256, verifyManifest, writeOperationState } from "./store.js";
+import { fitSignedFactors, nearestCorrelationResult, structuredTargets, weightedCorrelation } from "./matrix.js";
+import type { FitEvidenceInput, PairEstimate } from "./matrix.js";
+import { canonicalJson, operationError, readCandlePartition, readDerivedDataset, readSourceRegistryFact, recordMarketRegistryFact, sha256, verifyManifest, writeOperationState } from "./store.js";
+import { APPROVED_FIT_POLICY } from "./types.js";
 import type { CandleRecord, CorrelationArtifact, DataManifest, DerivedManifestV2, SourceEntry } from "./types.js";
 import { assertLoadedResearchNetworkProfile, bindResearchRootIdentity, type LoadedResearchNetworkProfile } from "./network.js";
 
-const MAX_LOADING = Math.sqrt(0.99);
 const lexical = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
 const MIXED_TRIANGLE_TOLERANCE = 1e-10;
 
@@ -47,84 +47,6 @@ export function admitPair(left: SourceEntry, right: SourceEntry, direct: DirectP
   const ineligible = !left.measurementEnabled || !right.measurementEnabled || !left.fallbackEligible || !right.fallbackEligible;
   return { kind: "quarantined", reason: direct?.reason ?? (ineligible ? "ineligible-source" : "insufficient-pair-quality") };
 }
-
-export interface FactorFit {
-  global: number;
-  clusters: Record<string, number>;
-  loadings: CorrelationArtifact["clusters"];
-  implied: number[][];
-  objective: number;
-}
-
-interface PairTarget { left: number; right: number; target: number }
-
-function grid(lower: number, upper: number, step: number, current?: number): number[] {
-  const values: number[] = [];
-  for (let value = lower; value <= upper + 1e-15; value += step) values.push(Math.min(upper, value));
-  values.push(upper);
-  if (current !== undefined) values.push(current);
-  return [...new Set(values)].sort((a, b) => a - b);
-}
-
-function fit(target: number[][], sources: SourceEntry[], admitted?: Set<string>): FactorFit {
-  if (target.length !== sources.length || target.some((row) => row.length !== sources.length)) throw new Error("target matrix and sources must have matching dimensions");
-  const indexed = sources.map((source, index) => ({ source, index })).sort((a, b) => lexical(a.source.underlying, b.source.underlying));
-  const sorted = indexed.map(({ source }) => source);
-  const pairs: PairTarget[] = [];
-  for (let left = 0; left < sorted.length; left++) for (let right = left + 1; right < sorted.length; right++) {
-    const pair = `${sorted[left].underlying}:${sorted[right].underlying}`;
-    const value = target[indexed[left].index][indexed[right].index];
-    if (Number.isFinite(value) && (!admitted || admitted.has(pair))) pairs.push({ left, right, target: Math.max(0, value) });
-  }
-  const clusterNames = [...new Set(sorted.map((source) => source.cluster))].sort();
-  const values: Record<string, number> = Object.fromEntries(["global", ...clusterNames].map((name) => [name, 0]));
-  const objective = (): number => pairs.reduce((sum, pair) => {
-    const sameCluster = sorted[pair.left].cluster === sorted[pair.right].cluster;
-    const implied = values.global ** 2 + (sameCluster ? values[sorted[pair.left].cluster] ** 2 : 0);
-    return sum + (implied - pair.target) ** 2;
-  }, 0);
-  const optimize = (candidates: (name: string) => number[]): void => {
-    for (let sweep = 0; sweep < 1_000; sweep++) {
-      let changed = false;
-      for (const name of ["global", ...clusterNames]) {
-        const prior = values[name];
-        let best = prior;
-        let bestObjective = Number.POSITIVE_INFINITY;
-        for (const candidate of candidates(name)) {
-          if (name === "global" ? clusterNames.some((cluster) => candidate ** 2 + values[cluster] ** 2 > 0.99) : candidate ** 2 + values.global ** 2 > 0.99) continue;
-          values[name] = candidate;
-          const score = objective();
-          if (score < bestObjective - 1e-15 || (Math.abs(score - bestObjective) <= 1e-15 && candidate < best)) {
-            best = candidate;
-            bestObjective = score;
-          }
-        }
-        values[name] = best;
-        changed ||= best !== prior;
-      }
-      if (!changed) return;
-    }
-    throw new Error("hierarchical coordinate descent did not converge after 1000 sweeps");
-  };
-  optimize(() => grid(0, MAX_LOADING, 0.01));
-  const coarse = { ...values };
-  optimize((name) => grid(Math.max(0, coarse[name] - 0.01), Math.min(MAX_LOADING, coarse[name] + 0.01), 0.001, values[name]));
-  const loadings: CorrelationArtifact["clusters"] = {};
-  for (const source of sorted) {
-    const global = values.global;
-    const cluster = values[source.cluster];
-    (loadings[source.cluster] ??= {})[source.underlying] = {
-      global,
-      cluster,
-      underlying: Math.sqrt(Math.max(0, 0.99 - global ** 2 - cluster ** 2)),
-      underlyingBasis: "structural-underlying",
-    };
-  }
-  const implied = sorted.map((left, row) => sorted.map((right, column) => row === column ? 1 : values.global ** 2 + (left.cluster === right.cluster ? values[left.cluster] ** 2 : 0)));
-  return { global: values.global, clusters: Object.fromEntries(clusterNames.map((name) => [name, values[name]])), loadings, implied, objective: objective() };
-}
-
-export function fitHierarchical(target: number[][], sources: SourceEntry[], admitted?: Set<string>): FactorFit { return fit(target, sources, admitted); }
 
 export interface AlignedPair {
   rows: { timestampMs: number; a: number; b: number }[];
@@ -301,7 +223,9 @@ function calibrateImpl(input: CalibrationInput, storage: ResearchPersistence): C
     const lambda = 0;
     let fallbackUsed = false;
     const directCorrelation = estimate?.eligible ? estimate.correlation : null;
-    const decision = admitPair(a, b, { network: derived.manifest.network, eligible: estimate?.eligible === true, correlation: directCorrelation, reason: ownReason ?? "insufficient-pair-quality" }, input.profile);
+    const admission = admitPair(a, b, { network: derived.manifest.network, eligible: estimate?.eligible === true, correlation: directCorrelation, reason: ownReason ?? "insufficient-pair-quality" }, input.profile);
+    // A rail correlation or an effective sample at or below 3 has no Fisher interval, so it cannot be direct evidence.
+    const decision: PairAdmission = admission.kind === "direct" && (!(estimate!.effectiveN > 3) || Math.abs(admission.correlation) >= 1) ? { kind: "quarantined", reason: "insufficient-effective-sample" } : admission;
     status = decision.kind === "quarantined" ? "quarantined" : decision.kind;
     reason = decision.reason;
     if (decision.kind !== "quarantined") {
@@ -325,28 +249,50 @@ function calibrateImpl(input: CalibrationInput, storage: ResearchPersistence): C
     admitted.delete(key);
     preliminary.set(key, { ...preliminary.get(key)!, fallbackUsed: false });
   }
+  const indexOf = (underlying: string): number => sources.findIndex((source) => source.underlying === underlying);
+  const evidence: FitEvidenceInput[] = pairEligibility.map(({ pair, status, reason }) => {
+    const data = preliminary.get(pairName(...pair))!;
+    const target = baseTarget[indexOf(pair[0])][indexOf(pair[1])];
+    if (status === "direct") return { evidence: "direct", pair, mode: data.mode, target, effectiveN: data.effectiveN! };
+    if (status === "fallback") return { evidence: "fallback", pair, target };
+    return { evidence: "quarantined", pair, reason };
+  });
+  const fitted = fitSignedFactors(sources, evidence);
+  if (canonicalJson(fitSignedFactors(sources, evidence)) !== canonicalJson(fitted)) throw new Error("signed factor fit is not deterministic");
+  const failedDirect = fitted.pairEvidence.filter((record) => record.evidence === "direct" && !record.gate.passed);
+  if (failedDirect.length) throw new Error(`direct pair gate failed: ${failedDirect.map((record) => `${record.pair.join(":")} ${record.gate.reason}`).join(", ")}`);
+  for (const record of fitted.pairEvidence) {
+    const key = pairName(...record.pair);
+    const entry = pairEligibility.find((pair) => pairName(...pair.pair) === key)!;
+    if (record.evidence !== "quarantined" || entry.status === "quarantined") continue;
+    entry.status = "quarantined";
+    entry.reason = record.gate.reason;
+    baseTarget[indexOf(record.pair[0])][indexOf(record.pair[1])] = baseTarget[indexOf(record.pair[1])][indexOf(record.pair[0])] = 0;
+    admitted.delete(key);
+    preliminary.set(key, { ...preliminary.get(key)!, fallbackUsed: false });
+  }
   const admittedCount = new Map(sources.map((source) => [source.underlying, pairEligibility.filter((pair) => pair.status !== "quarantined" && pair.pair.includes(source.underlying)).length]));
   const quarantinedUnderlyings = sources.flatMap((source) => {
     const reason = admittedCount.get(source.underlying) === 0 ? sourceReason.get(source.underlying) ?? "no-admissible-pair" : null;
     return reason ? [{ underlying: source.underlying, reason }] : [];
   });
   const eligibleUnderlyings = sources.map((source) => source.underlying).filter((underlying) => !quarantinedUnderlyings.some((entry) => entry.underlying === underlying));
+  // Higham projection of the admitted targets stays a diagnostic (maxProjectionError gate); the runtime model is the fitter's R = BB^T + D.
   const projection = nearestCorrelationResult(baseTarget);
   let maxProjectionError = 0;
   for (let row = 0; row < sources.length; row++) for (let column = 0; column < sources.length; column++) maxProjectionError = Math.max(maxProjectionError, Math.abs(projection.matrix[row][column] - baseTarget[row][column]));
-  const fitted = fit(projection.matrix, sources, admitted);
   const clusters: CorrelationArtifact["clusters"] = {};
   for (const [cluster, entries] of Object.entries(fitted.loadings)) {
     const included = Object.fromEntries(Object.entries(entries).filter(([underlying]) => eligibleUnderlyings.includes(underlying)));
     if (Object.keys(included).length) clusters[cluster] = included;
   }
   const pairDiagnostics: CorrelationArtifact["quality"]["pairDiagnostics"] = pairEligibility.map(({ pair }) => {
-    const left = sources.findIndex((source) => source.underlying === pair[0]);
-    const right = sources.findIndex((source) => source.underlying === pair[1]);
+    const left = indexOf(pair[0]);
+    const right = indexOf(pair[1]);
     const data = preliminary.get(pairName(...pair))!;
-    const target = projection.matrix[left][right];
-    const implied = fitted.implied[left][right];
-    return { pair, ...data, mode: data.mode, target, implied, residual: Math.max(0, target) - implied };
+    const target = baseTarget[left][right];
+    const implied = fitted.matrix[left][right];
+    return { pair, ...data, mode: data.mode, target, implied, residual: implied - target };
   });
   const diagnosticMatrices = Object.fromEntries(([30, 90, 180] as const).map((days) => {
     const window = { asOfMs: derived.manifest.window.asOfMs, lookbackMs: days * 86_400_000 };
@@ -356,29 +302,27 @@ function calibrateImpl(input: CalibrationInput, storage: ResearchPersistence): C
   })) as CorrelationArtifact["quality"]["diagnosticMatrices"];
   const dataAsOf = new Date(dataAsOfMs).toISOString();
   const modelVersion = `${dataAsOf.slice(0, 10)}.${dataManifestSha256.slice(0, 8)}`;
-  const directPairs = pairEligibility.flatMap(({ pair, status, reason }) => status === "direct" ? [{ pair, correlation: baseTarget[sources.findIndex((source) => source.underlying === pair[0])][sources.findIndex((source) => source.underlying === pair[1])], reason: reason as "testnet-quality-passed" }] : []);
-  const fallbackPairs = pairEligibility.flatMap(({ pair, status, reason }) => status === "fallback" ? [{ pair, correlation: baseTarget[sources.findIndex((source) => source.underlying === pair[0])][sources.findIndex((source) => source.underlying === pair[1])], reason: reason as "operator-reviewed-testnet-bootstrap" }] : []);
+  const directPairs = pairEligibility.flatMap(({ pair, status, reason }) => status === "direct" ? [{ pair, correlation: baseTarget[indexOf(pair[0])][indexOf(pair[1])], reason: reason as "testnet-quality-passed" }] : []);
+  const fallbackPairs = pairEligibility.flatMap(({ pair, status, reason }) => status === "fallback" ? [{ pair, correlation: baseTarget[indexOf(pair[0])][indexOf(pair[1])], reason: reason as "operator-reviewed-testnet-bootstrap" }] : []);
   const quarantinedPairs = pairEligibility.flatMap(({ pair, status, reason }) => status === "quarantined" ? [{ pair, reason }] : []);
   const artifact: CorrelationArtifact = {
-    schemaVersion: 2, network: input.profile.profile.network, profileSha256: input.profile.profileSha256,
-    modelVersion, modelFamily: "hierarchical-gaussian-factor", createdAt: input.manifest.createdAt, dataAsOf,
+    schemaVersion: 3, network: input.profile.profile.network, profileSha256: input.profile.profileSha256,
+    modelVersion, modelFamily: "signed-asset-factor", createdAt: input.manifest.createdAt, dataAsOf,
     dataManifestSha256, sourceRegistrySha256: input.manifest.sourceRegistrySha256, marketRegistrySha256: input.profile.marketRegistrySha256,
     deploymentRegistrySha256: input.profile.deploymentRegistrySha256, baselineCorrelationSha256: input.profile.baselineCorrelationSha256,
     directPairs, fallbackPairs, quarantinedPairs,
-    policy: { lookbackDays: 180, halfLifeDays: 45, diagnosticWindowsDays: [30, 90, 180], minHourly: 1000, minDaily: 90, minCoverage: 0.8, maxProjectionError: 0.10 },
+    policy: { ...APPROVED_FIT_POLICY },
     quality: {
       matrixOrder: sources.map((source) => source.underlying), eligibleUnderlyings, quarantinedUnderlyings, pairEligibility,
       lastUsableObservationMs, pairDiagnostics, maxProjectionError, highamProjectionDelta: projection.delta,
-      clippedNegativePairs: pairEligibility.flatMap(({ pair }) => {
-        const left = sources.findIndex((source) => source.underlying === pair[0]);
-        const right = sources.findIndex((source) => source.underlying === pair[1]);
-        return baseTarget[left][right] < 0 ? [{ pair, target: baseTarget[left][right] }] : [];
-      }),
+      clippedNegativePairs: [],
       signedPsdTarget: projection.matrix, diagnosticMatrices,
     },
-    validation: { status: "pending" }, clusters,
+    validation: { status: "pending" }, clusters, pairEvidence: fitted.pairEvidence,
   };
   const bytes = `${canonicalJson(artifact)}\n`;
+  if (sha256(input.profile.marketRegistryRaw) !== artifact.marketRegistrySha256) throw new Error("loaded profile market registry hash differs");
+  recordMarketRegistryFact(storage, input.profile.marketRegistryRaw);
   const candidate = `artifacts/candidates/${modelVersion}.json`;
   if (storage.exists(candidate)) {
     if (storage.readText(candidate) !== bytes) throw new Error("candidate already exists with different bytes");

@@ -1,12 +1,11 @@
 import { resolve } from "node:path";
 import type { ValidationReport } from "./replay.js";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
-import { canonicalJson, readDerivedDataset, readSourceRegistryFact, researchRelativePath, sha256, verifyManifest } from "./store.js";
-import { assertDataManifest, assertJoinedEventRecord, assertQuoteDecision } from "./types.js";
+import { assertMarketRegistrySnapshot, canonicalJson, readDerivedDataset, readSourceRegistryFact, researchRelativePath, sha256, verifyManifest } from "./store.js";
+import { assertDataManifest, assertJoinedEventRecord, assertQuoteDecision, liveMarketRegistrySha256 } from "./types.js";
 import type { ChainLogRecord, CorrelationArtifact, DataManifest, ExclusionRecord, JoinedEventRecord, OrphanCorrectionRecord, QuoteDecision } from "./types.js";
 import { terminalOperationHistory } from "./operations.js";
 import { assertValidationArtifactIdentity, assertValidationDerivedIdentity, parseCorrelationArtifact } from "./artifacts.js";
-import { parseMarkets } from "../markets.js";
 import { assertLoadedResearchNetworkProfile, assertResearchRootIdentity, researchRootIdentity, type LoadedResearchNetworkProfile } from "./network.js";
 
 export interface ReportInput {
@@ -110,7 +109,9 @@ function validationReport(raw: string): ValidationReport {
 function verified(root: string, candidatePath: string, storage: ResearchPersistence, profile: LoadedResearchNetworkProfile, nowMs: number, options: { allowRejectedProjectionEvidence?: boolean } = {}): { candidate: CorrelationArtifact; manifest: DataManifest; validation: ValidationReport; bytes: string; candidateSha256: string; validationSha256: string } {
   const path = researchRelativePath(root, candidatePath);
   const bytes = storage.readText(path);
-  const candidate = parseCorrelationArtifact(bytes, nowMs, profile.sources, parseMarkets(profile.marketRegistryRaw), profile, options).artifact;
+  // Live markets are not passed: the candidate is immutable evidence verified against its own
+  // registry snapshot below, not against whatever registry is current at report time (R6).
+  const candidate = parseCorrelationArtifact(bytes, nowMs, profile.sources, undefined, profile, options).artifact;
   const manifestPath = `manifests/${candidate.dataManifestSha256}.json`;
   const manifest = JSON.parse(storage.readText(manifestPath)) as DataManifest;
   assertDataManifest(manifest);
@@ -126,6 +127,7 @@ function verified(root: string, candidatePath: string, storage: ResearchPersiste
   let baseline: string;
   try { baseline = researchRelativePath(root, validation.baselineSnapshotPath); } catch { throw new Error("report baseline snapshot mismatch"); }
   if (sha256(storage.read(baseline)) !== validation.baselineSha256) throw new Error("report baseline snapshot mismatch");
+  if (candidate.schemaVersion === 3) assertMarketRegistrySnapshot(root, storage, candidate.marketRegistrySha256);
   return { candidate, manifest, validation, bytes, candidateSha256: sha256(bytes), validationSha256: sha256(validationBytes) };
 }
 
@@ -139,7 +141,7 @@ function journalRows(storage: ResearchPersistence, directory: string): unknown[]
   });
 }
 
-function verifiedQuote(root: string, storage: ResearchPersistence, row: unknown, profile: LoadedResearchNetworkProfile): QuoteDecision | null {
+function verifiedQuote(root: string, storage: ResearchPersistence, row: unknown, profile: LoadedResearchNetworkProfile): QuoteDecision {
   try { assertQuoteDecision(row as QuoteDecision); } catch (error) { throw new Error(`report quote journal row is invalid: ${error instanceof Error ? error.message : String(error)}`); }
   const quote = row as QuoteDecision;
   assertResearchRootIdentity(storage, quote);
@@ -147,7 +149,9 @@ function verifiedQuote(root: string, storage: ResearchPersistence, row: unknown,
     || quote.deploymentRegistrySha256 !== profile.deploymentRegistrySha256
     || quote.baselineCorrelationSha256 !== profile.baselineCorrelationSha256 || quote.chainId !== profile.profile.evmChainId
     || quote.parlayVault.toLowerCase() !== profile.deployment.parlayVault.toLowerCase()) throw new Error("report quote journal profile identity mismatch");
-  if (quote.marketRegistrySha256 !== profile.marketRegistrySha256) return null;
+  // R6: the quote's own live-registry snapshot is the evidence; a quote from an earlier registry
+  // counts once that snapshot exists, and one naming a registry with no snapshot fails the report.
+  assertMarketRegistrySnapshot(root, storage, liveMarketRegistrySha256(quote));
   if (quote.artifactKind === "profile-baseline") {
     if (quote.dataManifestSha256 !== profile.baselineCorrelationSha256 || quote.modelVersion !== "profile-baseline") throw new Error("report quote journal baseline identity mismatch");
     return quote;
@@ -156,6 +160,10 @@ function verifiedQuote(root: string, storage: ResearchPersistence, row: unknown,
   const candidatePath = `artifacts/candidates/${quote.modelVersion}.json`;
   const evidence = verified(root, candidatePath, storage, profile, Number.MAX_SAFE_INTEGER);
   if (evidence.candidateSha256 !== quote.artifactSha256 || evidence.candidate.dataManifestSha256 !== quote.dataManifestSha256 || evidence.candidate.sourceRegistrySha256 !== quote.sourceRegistrySha256) throw new Error("report quote journal candidate identity mismatch");
+  // A signed-factor (schemaVersion 3) candidate is quoted only by the point-model runtime
+  // (schemaVersion 4); a legacy candidate is quoted only by the band-era runtime.
+  if ((quote.schemaVersion === 4) !== (evidence.candidate.schemaVersion === 3)) throw new Error("report quote journal schema and candidate model version disagree");
+  if (quote.schemaVersion === 4 && quote.championMarketRegistrySha256 !== evidence.candidate.marketRegistrySha256) throw new Error("report quote journal champion registry identity mismatch");
   assertValidationDerivedIdentity(root, storage, evidence.candidate, evidence.validation, profile);
   if (evidence.validationSha256 !== quote.validationSha256 || evidence.validation.decision !== "Supported" || !evidence.validation.deterministicRerunMatches) throw new Error("report quote journal validation identity mismatch");
   return quote;
@@ -170,7 +178,7 @@ function verifiedEvent(storage: ResearchPersistence, row: unknown, profile: Load
 }
 
 export function journalFunnel(root: string, profile: LoadedResearchNetworkProfile, storage = openResearchPersistence(root)): ReportInput["funnel"] {
-  const quoteRows = journalRows(storage, "quotes").flatMap((row) => verifiedQuote(root, storage, row, profile) ?? []);
+  const quoteRows = journalRows(storage, "quotes").map((row) => verifiedQuote(root, storage, row, profile));
   const quotes = new Set(quoteRows.map((row) => row.quoteId));
   const events = journalRows(storage, "events").map((row) => verifiedEvent(storage, row, profile));
   const orphaned = new Set(events.filter((row): row is OrphanCorrectionRecord => row.kind === "orphaned" && row.targetKind === "chain-log").map((row) => String(row.targetKey)));
@@ -240,9 +248,9 @@ export function generateReport(rootInput: string, candidateInput: string, derive
     const championBytes = storage.readText(championPath);
     let championIdentity: Partial<CorrelationArtifact>;
     try { championIdentity = JSON.parse(championBytes) as Partial<CorrelationArtifact>; } catch { throw new Error("report champion is malformed JSON"); }
-    const current = championIdentity.network === profile.profile.network && championIdentity.profileSha256 === profile.profileSha256 && championIdentity.sourceRegistrySha256 === profile.sourceRegistrySha256 && championIdentity.marketRegistrySha256 === profile.marketRegistrySha256 && championIdentity.deploymentRegistrySha256 === profile.deploymentRegistrySha256 && championIdentity.baselineCorrelationSha256 === profile.baselineCorrelationSha256;
+    const current = championIdentity.network === profile.profile.network && championIdentity.profileSha256 === profile.profileSha256 && championIdentity.sourceRegistrySha256 === profile.sourceRegistrySha256 && championIdentity.deploymentRegistrySha256 === profile.deploymentRegistrySha256 && championIdentity.baselineCorrelationSha256 === profile.baselineCorrelationSha256;
     if (current) {
-      const artifact = parseCorrelationArtifact(championBytes, nowMs, profile.sources, parseMarkets(profile.marketRegistryRaw), profile).artifact;
+      const artifact = parseCorrelationArtifact(championBytes, nowMs, profile.sources, undefined, profile).artifact;
       const championCandidate = `artifacts/candidates/${artifact.modelVersion}.json`;
       const championEvidence = verified(root, championCandidate, storage, profile, nowMs);
       if (sha256(championBytes) !== sha256(storage.read(championCandidate))) throw new Error("report champion candidate mismatch");

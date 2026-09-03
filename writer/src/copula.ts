@@ -222,21 +222,19 @@ function quadratureCost(node: FactorNode, depth: number, outer: number): number 
   return node.children.reduce((sum, c) => sum + quadratureCost(c, depth + 1, here), here);
 }
 
-/** Ceiling on quadratureCost. The writer is single-threaded — the HTTP server,
- * the poker's timer and /health all share this event loop — so a ticket whose
- * integral costs seconds does not price slowly, it stalls the process. A
- * ticket the house cannot price in bounded time is refused instead.
+/** Ceiling on quadratureCost. The integral runs in CorrelationWorker under a
+ * one-second task timeout, so a ticket past this budget would not price
+ * slowly, it would time out and take the worker's queue with it. A ticket the
+ * house cannot price in bounded time is refused up front instead.
  *
- * Measured here at ~45ns per point, so 4e6 is ~180ms per call and ~360ms per
- * quote (jointProbWad integrates both ends of the rho band). That admits every
- * shape the current registry can build — the most expensive is all seven live
- * markets with BTC, BTC and ETH in one cluster, at 3.17e6 — and refuses the
- * ten-leg two-per-underlying tickets that cost 1.6e7 and seconds of wall clock.
+ * Measured here at ~45ns per point, so 4e6 is ~180ms per quote (one point-
+ * model integration). That admits every shape the current registry can build
+ * — the most expensive is all seven live markets with BTC, BTC and ETH in one
+ * cluster, at 3.17e6 — and refuses the ten-leg two-per-underlying tickets that
+ * cost 1.6e7 and seconds of wall clock.
  *
  * ponytail: a flat budget with a hard refusal, not an adaptive coarsening.
- * Coarsening silently trades accuracy on a money path. If these tickets ever
- * need to be quotable, move the integral off the event loop (worker thread)
- * rather than loosening the quadrature. */
+ * Coarsening silently trades accuracy on a money path. */
 const MAX_QUADRATURE_POINTS = 4_000_000;
 
 /** Thrown when the factor tree would cost more than MAX_QUADRATURE_POINTS. */

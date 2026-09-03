@@ -114,7 +114,7 @@ async function main(): Promise<void> {
       appendQuoteDecision(quoteJournal, decision);
       lastQuoteJournalAppendMs = Date.now();
     },
-    bestEstimateJointProbWad: (legs) => correlationWorker.bestEstimate(legs, cfg.correlations),
+    jointProbWad: (legs) => correlationWorker.jointProbWad(legs, cfg.correlations),
     readAllowance: () =>
       publicClient.readContract({
         address: usdcAddress,
@@ -223,7 +223,13 @@ async function main(): Promise<void> {
     return {
       ok: true,
       quoteJournalLastAppendMs: lastQuoteJournalAppendMs,
-      model: { version: cfg.model.version, dataAsOf: cfg.model.dataAsOf, dataManifestSha256: cfg.model.dataManifestSha256, sourceRegistrySha256: cfg.model.sourceRegistrySha256, identityFailureReason: cfg.model.identityFailureReason, ...modelStatus },
+      // Champion and live registry hashes are reported separately (R6): a rotation changes the
+      // live hash and never the champion's, and activation smoke checks expect both.
+      model: {
+        version: cfg.model.version, dataAsOf: cfg.model.dataAsOf, dataManifestSha256: cfg.model.dataManifestSha256, sourceRegistrySha256: cfg.model.sourceRegistrySha256,
+        championMarketRegistrySha256: cfg.model.marketRegistrySha256, liveMarketRegistrySha256: cfg.researchProfile.marketRegistrySha256,
+        incompatibleMarkets: Object.fromEntries(cfg.model.incompatibleMarkets), identityFailureReason: cfg.model.identityFailureReason, ...modelStatus,
+      },
       openParlays: poker.openCount(),
       priceFreshnessMs,
       perMarketCap: cfg.perMarketCap.toString(),

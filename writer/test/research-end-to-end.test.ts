@@ -89,7 +89,7 @@ function quoteDeps(config: WriterConfig): QuoteDeps {
     exposure: new ExposureBook((vault) => config.markets.get(vault)?.cluster),
     chainId: 998,
     fetchLegPrice: async () => ({ priceWad: WAD / 2n, source: "l2Book", observedAtMs: AS_OF, depthWad: WAD, vwapWad: WAD / 2n, freshnessMs: null }),
-    bestEstimateJointProbWad: async () => WAD / 4n,
+    jointProbWad: async () => WAD / 4n,
     readAllowance: async () => 1_000_000_000n,
     readSettled: async () => new Set(),
     sign: async () => "0x1234",
@@ -161,6 +161,10 @@ async function fixtureFlow(root: string): Promise<Record<string, Buffer>> {
   const candidate = calibrate({ root, manifest, derivedManifestPath: derived.manifestPath, profile: selected.loaded, now: () => AS_OF });
   assert.deepEqual(candidate.quality.pairEligibility.map(({ pair, status, reason }) => [pair.join(":"), status, reason]), [["BTC:ETH", "direct", "testnet-quality-passed"], ["BTC:SOL", "fallback", "operator-reviewed-testnet-bootstrap"], ["ETH:SOL", "quarantined", "ineligible-source"]]);
   const candidatePath = join(root, "artifacts", "candidates", `${candidate.modelVersion}.json`);
+  assert.equal(candidate.schemaVersion, 3);
+  if (candidate.schemaVersion !== 3) throw new Error("unreachable");
+  assert.deepEqual(candidate.pairEvidence.map(({ pair, evidence, gate }) => [pair.join(":"), evidence, gate.passed]), [["BTC:ETH", "direct", true], ["BTC:SOL", "fallback", true], ["ETH:SOL", "quarantined", false]]);
+  assert.equal(readFileSync(join(root, "facts", "market-registries", `${selected.loaded.marketRegistrySha256}.json`), "utf8"), selected.loaded.marketRegistryRaw);
   const validation = runReplay({ root, profile: selected.loaded, candidate, candidateBytes: readFileSync(candidatePath, "utf8"), inputManifestSha256: current.manifestSha256, derivedManifestPath: derived.manifestPath, seed: "end-to-end" });
   assert.equal(validation.decision, "Supported", canonicalJson({ bootstrap: validation.bootstrap, deterministicRerunMatches: validation.deterministicRerunMatches, maxProjectionError: candidate.quality.maxProjectionError, exclusions: validation.exclusions }));
   const receipt = promoteCandidate(root, candidatePath, selected.loaded, parseMarkets(selected.loaded.marketRegistryRaw), AS_OF);
@@ -192,6 +196,18 @@ async function fixtureFlow(root: string): Promise<Record<string, Buffer>> {
   const report = generateReport(root, candidatePath, derived.manifestPath, selected.loaded, AS_OF);
   assert.match(report.bytes, /collect terminal: success/);
   assert.match(report.bytes, /collect failure: fixture collector failed/);
+  // R5: a schemaVersion 3 candidate is quoted only by the point-model runtime.
+  // The quote journal must say so, and the report must refuse a band-era
+  // schemaVersion 3 quote against this candidate.
+  const quotePath = filesBelow(join(root, "journal", "quotes"))[0];
+  assert.equal(quoteRecord.schemaVersion, 4);
+  assert.deepEqual({ pricingMode: quoteRecord.pricingMode, rhoBandPct: quoteRecord.rhoBandPct, champion: quoteRecord.championMarketRegistrySha256, live: quoteRecord.liveMarketRegistrySha256 },
+    { pricingMode: "point-model", rhoBandPct: 0, champion: candidate.marketRegistrySha256, live: selected.loaded.marketRegistrySha256 });
+  const { championMarketRegistrySha256: _champion, liveMarketRegistrySha256: legacyRegistry, pricingMode: _mode, ...legacyBase } = quoteRecord;
+  const journalBytes = readFileSync(quotePath);
+  writeFileSync(quotePath, `${canonicalJson({ ...legacyBase, schemaVersion: 3, marketRegistrySha256: legacyRegistry })}\n`);
+  assert.throws(() => generateReport(root, candidatePath, derived.manifestPath, selected.loaded, AS_OF), /schema and candidate model version disagree/);
+  writeFileSync(quotePath, journalBytes);
   const backup = await backUpFixture(root);
   assert.ok(backup.objects.has(`artifacts/candidates/${candidate.modelVersion}.json`));
   assert.ok(backup.objects.has(report.path.slice(root.length + 1)));
@@ -206,9 +222,42 @@ async function fixtureFlow(root: string): Promise<Record<string, Buffer>> {
   const rotated = loadResearchNetworkProfile(selected.file);
   bindResearchRootIdentity(openResearchPersistence(root), rotated);
   assert.deepEqual(readFileSync(join(root, "network-profile.json")), marker);
+  // R6: a cosmetic rotation keeps the champion. The writer snapshots the rotated registry,
+  // quotes against it, and the join and report verify both registries independently.
   const afterRotation = withWriterEnv(root, selected.file, () => loadConfig(AS_OF));
-  assert.equal(afterRotation.model.multiAssetEnabled, false);
-  assert.match(afterRotation.model.identityFailureReason!, /artifact profile identity mismatch/);
+  assert.equal(applyWriterProfileIdentity(afterRotation, 998), null);
+  assert.equal(afterRotation.model.multiAssetEnabled, true);
+  assert.deepEqual([...afterRotation.model.incompatibleMarkets], []);
+  assert.notEqual(rotated.marketRegistrySha256, selected.loaded.marketRegistrySha256);
+  assert.equal(readFileSync(join(root, "facts", "market-registries", `${rotated.marketRegistrySha256}.json`), "utf8"), rotated.marketRegistryRaw);
+  const rotatedQuoteId = `0x${"cd".repeat(32)}` as Hex;
+  const rotatedResponse = await handleQuote({ ...quoteDeps(afterRotation), randomId: () => rotatedQuoteId, now: () => AS_OF + HOUR }, { taker: TAKER, legs: [{ vault: btc, isYes: true }, { vault: eth, isYes: false }], stake: "1000000", inviteCode: "fixture" });
+  assert.equal(rotatedResponse.status, 200, canonicalJson(rotatedResponse.json));
+  const rotatedRecord = JSON.parse(readFileSync(quotePath, "utf8").trim().split("\n").at(-1)!);
+  assert.deepEqual({ quoteId: rotatedRecord.quoteId, champion: rotatedRecord.championMarketRegistrySha256, live: rotatedRecord.liveMarketRegistrySha256 },
+    { quoteId: rotatedQuoteId, champion: candidate.marketRegistrySha256, live: rotated.marketRegistrySha256 });
+  const rejoined = await joinEvents(root, { client: new FixtureChain(quote, deployBlock) as unknown as JoinDeps["client"], vault: rotated.deployment.parlayVault, deployBlock, profile: rotated, now: () => AS_OF + HOUR });
+  assert.deepEqual(rejoined.resolutions[quote.quoteId], { status: "void", allLegsFinal: true });
+  const rotatedReport = generateReport(root, candidatePath, derived.manifestPath, rotated, AS_OF + HOUR);
+  assert.match(rotatedReport.bytes, /quotes: 2 · minted: 1 · resolved: 1/);
+  assert.ok(rotatedReport.bytes.includes(receipt.championSha256));
+
+  // An incompatible rotation fails closed at the affected market only: the remapped ETH
+  // market is refused on cross-underlying tickets while BTC+SOL (operator-approved fallback)
+  // still prices and the champion stays enabled.
+  markets.markets.find((market: { underlying: string }) => market.underlying === "ETH").cluster = "crypto";
+  writeFileSync(join(root, "markets.json"), canonicalJson(markets));
+  const remappedProfile = loadResearchNetworkProfile(selected.file);
+  const remapped = withWriterEnv(root, selected.file, () => loadConfig(AS_OF));
+  assert.equal(applyWriterProfileIdentity(remapped, 998), null);
+  assert.equal(remapped.model.multiAssetEnabled, true);
+  assert.deepEqual([...remapped.model.incompatibleMarkets], [[eth.toLowerCase(), "cluster-remapped"]]);
+  const sol = [...remapped.markets.values()].find((market) => market.underlying === "SOL")!.vault;
+  const refused = await handleQuote({ ...quoteDeps(remapped), randomId: () => `0x${"ef".repeat(32)}`, now: () => AS_OF + 2 * HOUR }, { taker: TAKER, legs: [{ vault: btc, isYes: true }, { vault: eth, isYes: false }], stake: "1000000", inviteCode: "fixture" });
+  assert.deepEqual({ status: refused.status, error: (refused.json as { error: string }).error }, { status: 400, error: "correlation-unavailable" });
+  const priced = await handleQuote({ ...quoteDeps(remapped), randomId: () => `0x${"ef".repeat(32)}`, now: () => AS_OF + 2 * HOUR }, { taker: TAKER, legs: [{ vault: btc, isYes: true }, { vault: sol, isYes: true }], stake: "1000000", inviteCode: "fixture" });
+  assert.equal(priced.status, 200, canonicalJson(priced.json));
+  assert.equal(JSON.parse(readFileSync(quotePath, "utf8").trim().split("\n").at(-1)!).liveMarketRegistrySha256, remappedProfile.marketRegistrySha256);
 
   const allOutput = filesBelow(root).flatMap((file) => [file.slice(root.length + 1), file.endsWith(".gz") ? gunzipSync(readFileSync(file)).toString("utf8") : readFileSync(file, "utf8")]).join("\n");
   for (const forbidden of ["api.hyperliquid.xyz", '"network":"mainnet"', "returns-v1"]) assert.doesNotMatch(allOutput, new RegExp(forbidden.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));

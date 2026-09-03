@@ -1,8 +1,129 @@
 # Testnet Correlation System Handover
 
-Updated: 2026-08-30
+Updated: 2026-09-01
 Branch: `feature/testnet-correlation-system`
 Implementation HEAD before this handover: `0dd4fb1277fd0419ea210bada61a53590adfe335`
+
+## 2026-09-01 production incident and temporary rollback
+
+Status: **ROLLBACK ACTIVE / NEW CHAMPION PATH DISABLED UNTIL ROTATION COMPATIBILITY IS FIXED**.
+The activation narrative below is historical evidence for the first successful champion, not the
+current production state.
+
+At the 2026-09-01 03:10 UTC market rotation, `rotate.service` deployed six markets, pruned fourteen,
+rewrote the box-authoritative market registry, and restarted writer. Writer then rejected champion
+`2026-08-31.2270db3d` with `artifact profile identity mismatch`, fell back to `profile-baseline`,
+and set `multiAssetEnabled: false`. The public metrics endpoint subsequently recorded every quote
+rejection as `correlation-unavailable`. This is fail-closed behavior, but it makes normal nightly
+vault rotation an availability event.
+
+The coupling is too strict at runtime: a champion is bound to the exact `marketRegistrySha256`,
+even though nightly rotation normally changes volatile vault addresses, outcome coin IDs, expiries,
+and titles without changing the correlation taxonomy. Under the current implementation every such
+change requires a new candidate, review, manual promotion, and writer restart. The collector,
+daily, and backup timers are also not installed on the box; installing them alone would not solve
+activation because daily processing deliberately never promotes.
+
+The durable fix must preserve immutable artifact and validation identities while introducing a
+separate runtime-compatibility decision:
+
+- Keep the artifact's exact market-registry hash as provenance; do not rewrite or weaken historical
+  candidate/validation identity checks.
+- Permit activation against a rotated live registry only when every market maps to an allowed
+  underlying and the same cluster/direction taxonomy, and every requested underlying/pair remains
+  eligible in the champion. Unknown or remapped inputs must still fail closed locally rather than
+  disabling unrelated pairs.
+- Record both the champion registry snapshot and the live registry snapshot in quote/report evidence.
+- Stage registry rotation and compatible champion activation atomically so a restart cannot expose
+  a half-transition.
+- Retain the existing seven-day model-age limit. Removing daily registry coupling removes the daily
+  promotion burden, but a fresh Supported champion is still required at least weekly unless that
+  separate policy is deliberately changed.
+
+### Required unattended operating model
+
+Routine candidate production, promotion, activation, and recovery must be automated. Human approval
+is reserved for changes to model code, policy or quality thresholds, data sources, enabled networks,
+or the underlying/cluster/direction taxonomy; it is not required for each fresh candidate that passes
+the already-approved deterministic gates.
+
+The scheduled path is:
+
+```text
+collect -> derive -> calibrate -> replay
+                                |
+                         all fixed gates pass?
+                           yes        no
+                            |          |
+                    atomic promotion  retain current valid champion + alert
+                            |
+                     activate writer
+                            |
+              health, identity, and cross-underlying quote check
+                            |
+                      keep or auto-rollback
+```
+
+Automation requirements:
+
+- Promote only a fresh `Supported` candidate with deterministic rerun matching, projection error at
+  or below `0.10`, and exact immutable candidate, validation, manifest, returns, exclusions, profile,
+  source, deployment, and baseline identities. `Rejected`, `Inconclusive`, stale, mismatched, or
+  incomplete candidates must never replace the current champion.
+- Write the existing verification and promotion receipts, preserve the displaced champion/release,
+  and switch the champion and writer atomically. Never restart keeper for a correlation activation.
+- After activation require healthy writer/caddy/keeper state, the expected champion hash/version,
+  `multiAssetEnabled: true`, current `/markets`, and a successful controlled cross-underlying quote
+  without minting. Restore the prior champion/release automatically if any check fails.
+- Keep the current valid champion live when a scheduled research run fails and emit an actionable
+  alert with the failed stage and immutable operation record. If no valid champion remains before
+  the seven-day age limit, retain the existing fail-closed behavior.
+- Treat market rotation as a separate runtime-compatibility transaction. A compatible change to
+  vault addresses, coin IDs, expiries, or titles must not require recalibration or promotion. Stage
+  registry rotation and compatibility activation together; reject only unknown or remapped
+  underlyings/pairs, without disabling unrelated eligible pairs.
+- Install and monitor the collector, daily pipeline, and backup timers. The daily pipeline must own
+  gated automatic promotion and activation rather than stopping after candidate generation.
+
+Temporary recovery uses writer commit
+`11b202ffcc5ebbb3ab88c6aa5c13accaed6b4bf0` (`docs(research): design correlation beta`). This is
+the last commit before the new research implementation begins and retains the previous static
+correlation-table pricing path. Deploy writer only; do not roll back web, keeper, contracts, the
+box-authoritative registry, waitlist data, or `/opt/hype/research/testnet`. Preserve the displaced
+writer source as the immediate rollback path. After deployment, require writer/caddy/keeper active,
+healthy `/health`, current `/markets`, and a successful cross-underlying quote before calling the
+temporary recovery live.
+
+The rollback was activated at `2026-09-01T16:47:50Z`:
+
+- Local rollback artifact SHA-256:
+  `662b9fd97f549551b8d0d539b67da191cd39209b9e93b1fb67861eb3c8e8f5f9`.
+- Exact historical writer check: TypeScript passed and tests passed `155/155`.
+- Server-side typecheck passed. A preflight against the newer live `correlations.json` correctly
+  caught an old-parser floating-point boundary failure before restart, so the rollback release uses
+  commit `11b202f`'s matching historical static table. That table covers all nine markets in the
+  current box-authoritative registry.
+- The current champion writer remains untouched at `/opt/hype/writer`. The rollback is staged at
+  `/opt/hype/writer-rollback-11b202f`; `/opt/hype/research/testnet`, waitlist data, registry, keeper,
+  contracts, and web were not changed.
+- `/etc/systemd/system/writer.service.d/rollback.conf` points writer at the staged directory and sets
+  its historical table path. Writer restarted at PID `352619`; writer, keeper, and caddy all reported
+  `active`. Health reported six open parlays and nine markets without the champion-model fields,
+  proving the old path is running.
+- A public BTC/ETH quote returned HTTP `200`, a signed quote, and
+  `jointProbWad=31217082190008632`. No mint was submitted.
+
+After the rotation-compatible champion writer is fixed, verified, and deployed to `/opt/hype/writer`,
+restore it by removing only `/etc/systemd/system/writer.service.d/rollback.conf`, then run
+`systemctl daemon-reload` and restart only writer. Require healthy champion identity,
+`multiAssetEnabled: true`, and a successful cross-underlying public quote before deleting the staged
+rollback release. If activation fails, recreate/retain the override and restart writer to return to
+the static release.
+
+Separate positions finding: Vercel production uses parlay deploy block `61907400`, while the
+authoritative deployment registry says `61906227`. That skips position ID 1, and the localStorage
+checkpoint key is not bound to the deploy block. Correct the environment and invalidate/bump the
+checkpoint in a separate web change; it is unrelated to writer rollback.
 
 ## Start here in a new session
 
@@ -14,8 +135,9 @@ Implementation HEAD before this handover: `0dd4fb1277fd0419ea210bada61a53590adfe
    - `docs/research/testnet-correlation-verification.md`
    - `docs/superpowers/specs/2026-08-29-testnet-only-correlation-corrective-design.md`
    - Task 9 in `docs/superpowers/plans/2026-08-29-testnet-only-correlation-corrective-wave.md`
-4. Treat the current result as **ACTIVATED / final gate matrix green / audit closure partial**,
-   never as mainnet or profitability evidence.
+4. Treat the current production state as **ROLLBACK ACTIVE**. The prior activation and green gate
+   matrix are historical evidence for the displaced champion, never current production, mainnet, or
+   profitability evidence.
 5. Do not access mainnet, lower the projection gate, promote rejected candidate
    `2026-08-30.dda295a1`, restart the keeper, print secrets, buy infrastructure, or wait
    synchronously for settlement.
@@ -24,11 +146,12 @@ Suggested new-session request:
 
 > Continue the testnet correlation handover at
 > `docs/research/testnet-correlation-handover.md` on
-> `feature/testnet-correlation-system`. Candidate `2026-08-30.6546a1af` is promoted and active on
-> testnet; continue from the recorded activation evidence and final gate matrix. Keep the work
-> testnet-only and do not restart keeper, wait for settlement, rotate, or upload backups.
+> `feature/testnet-correlation-system`. Production is temporarily running the static rollback.
+> Implement rotation-compatible champion activation and the recorded unattended gated promotion,
+> activation, smoke-check, and rollback flow. Preserve immutable evidence, keep the work testnet-only,
+> and do not restart keeper, wait for settlement, rotate, or upload backups.
 
-## Executive state
+## Historical champion activation state
 
 The research and runtime plumbing is implemented and locally verified. The first live Ubuntu
 testnet run was correctly **Rejected** because projection error `0.314324004721122` exceeded the

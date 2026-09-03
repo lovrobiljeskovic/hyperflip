@@ -8,7 +8,7 @@ import type { Address } from "viem";
 import { appendQuoteDecision, initializeQuoteJournal, joinEvents, type JoinDeps } from "../src/research/journal.js";
 import type { QuoteDecision } from "../src/research/types.js";
 import { loadResearchNetworkProfile } from "../src/research/network.js";
-import { canonicalJson } from "../src/research/store.js";
+import { canonicalJson, recordMarketRegistryFact } from "../src/research/store.js";
 
 const VAULT = "0x9999999999999999999999999999999999999999" as Address;
 const TAKER = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as Address;
@@ -20,6 +20,14 @@ writeFileSync(join(PROFILE_ROOT, "deployment.json"), canonicalJson({ schemaVersi
 writeFileSync(join(PROFILE_ROOT, "correlations.json"), canonicalJson({ network: "testnet", fallbackReason: "operator-reviewed-testnet-bootstrap", clusters: { crypto: { BTC: { global: 0.1, cluster: 0.2, underlying: 0.3 } } } }));
 writeFileSync(join(PROFILE_ROOT, "profile.json"), canonicalJson({ schemaVersion: 1, network: "testnet", infoApiUrl: "https://api.hyperliquid-testnet.xyz/info", evmChainId: 998, sourceRegistryFile: "sources.json", marketRegistryFile: "markets.json", deploymentRegistryFile: "deployment.json", baselineCorrelationFile: "correlations.json" }));
 const PROFILE = loadResearchNetworkProfile(join(PROFILE_ROOT, "profile.json"));
+
+// R6: a join verifies each quote against its immutable live-registry snapshot, which the writer
+// records at boot; the fixture journal does the same.
+const journal = (root: string) => {
+  const storage = initializeQuoteJournal(root, PROFILE);
+  recordMarketRegistryFact(storage, PROFILE.marketRegistryRaw);
+  return storage;
+};
 test.after(() => rmSync(PROFILE_ROOT, { recursive: true, force: true }));
 
 type FakeLog = { blockNumber: bigint; blockHash: `0x${string}`; transactionHash: `0x${string}`; logIndex: number; args: Record<string, bigint | string> };
@@ -88,7 +96,7 @@ test("event resume: checkpoints an inclusive 1,001-block scan before a later RPC
   const chain = new FakeChain();
   addMint(chain, 1n, "0x01", 1n);
   chain.logs.resolved.push({ blockNumber: 2n, blockHash: hash(2n), transactionHash: tx(2), logIndex: 1, args: { id: 1n, status: 2n } });
-  appendQuoteDecision(initializeQuoteJournal(root, PROFILE), quote("0x01"));
+  appendQuoteDecision(journal(root), quote("0x01"));
   chain.failFrom = 1000n;
 
   await assert.rejects(joinEvents(root, deps(chain)), /simulated RPC failure/);
@@ -119,7 +127,7 @@ test("event join: preserves confirmed canonical records when rerun", async () =>
   const root = mkdtempSync(join(tmpdir(), "hype-event-idempotent-"));
   const chain = new FakeChain();
   addMint(chain, 1n, "0x01", 1n);
-  appendQuoteDecision(initializeQuoteJournal(root, PROFILE), quote("0x01"));
+  appendQuoteDecision(journal(root), quote("0x01"));
   await joinEvents(root, deps(chain));
   const file = join(root, "journal", "events", "2024", "08", "30.jsonl");
   const first = readFileSync(file, "utf8");
@@ -132,7 +140,7 @@ test("event join rejects persisted wrong network, profile, and deployment identi
     const root = mkdtempSync(join(tmpdir(), `hype-event-wrong-${kind}-`));
     const chain = new FakeChain();
     try {
-      initializeQuoteJournal(root, PROFILE);
+      journal(root);
       const record = {
         schemaVersion: 2, network: "testnet", profileSha256: PROFILE.profileSha256, deploymentRegistrySha256: PROFILE.deploymentRegistrySha256,
         kind: "orphaned", targetKind: "chain-log", targetKey: `${tx(1)}:0:${hash(1n)}`,
@@ -155,7 +163,7 @@ test("orphaning one physical chain log permits the same transaction/log identity
   const chain = new FakeChain();
   chain.head = 12n;
   addMint(chain, 1n, "0x01", 1n);
-  appendQuoteDecision(initializeQuoteJournal(root, PROFILE), quote("0x01"));
+  appendQuoteDecision(journal(root), quote("0x01"));
   await joinEvents(root, deps(chain));
 
   chain.hashes.set(1n, `0x${"f".repeat(64)}` as `0x${string}`);
@@ -174,7 +182,7 @@ test("orphaning one physical chain log permits the same transaction/log identity
 test("void outcome: reads each leg at one confirmed block, delays detail, and restores orphaned observations to pending", async () => {
   const root = mkdtempSync(join(tmpdir(), "hype-event-outcome-"));
   const chain = new FakeChain();
-  const storage = initializeQuoteJournal(root, PROFILE);
+  const storage = journal(root);
   const fixture = JSON.parse(readFileSync(new URL("./fixtures/research/parlay-events.json", import.meta.url), "utf8")) as { parlays: { id: string; quoteId: string; status: "won" | "dead" | "void"; legs: { vault: Address; isYes: boolean; fraction: string | null }[] }[] };
   for (const [index, p] of fixture.parlays.entries()) {
     const id = BigInt(p.id);

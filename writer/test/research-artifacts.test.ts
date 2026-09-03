@@ -11,6 +11,7 @@ import type { ValidationReport } from "../src/research/replay.js";
 import { canonicalJson, sha256 } from "../src/research/store.js";
 import type { CorrelationArtifact, DataManifest, DerivedManifestV2, SourceEntry, SourceRegistry } from "../src/research/types.js";
 import { researchRootIdentity, type LoadedResearchNetworkProfile } from "../src/research/network.js";
+import { fittedArtifact } from "./fixtures/research/fitted.js";
 
 const NOW = Date.parse("2026-08-28T18:00:00.000Z");
 const VALID = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-valid.json", import.meta.url), "utf8")) as CorrelationArtifact;
@@ -23,7 +24,7 @@ const source = (underlying: string, fallbackEligible = false): SourceEntry => ({
   calendar: "continuous", measurementEnabled: true, fallbackEligible,
 });
 
-function setup(artifactInput: CorrelationArtifact = VALID, fallbackEligible = false): {
+function setup(artifactInput: CorrelationArtifact = VALID, fallbackEligible = false, legacy = false): {
   root: string; artifact: CorrelationArtifact; raw: string; candidate: string; manifest: DataManifest;
   sources: SourceRegistry; markets: Map<string, MarketInfo>; profile: LoadedResearchNetworkProfile; validation: ValidationReport; derivedManifestPath: string;
 } {
@@ -34,8 +35,9 @@ function setup(artifactInput: CorrelationArtifact = VALID, fallbackEligible = fa
   const sourcePath = join(root, "facts", "source-registries", `${sourceRegistrySha256}.json`);
   mkdirSync(join(root, "facts", "source-registries"), { recursive: true });
   writeFileSync(sourcePath, sourceBytes);
-  const artifact = structuredClone(artifactInput);
-  artifact.schemaVersion = 2;
+  const legacyArtifact = structuredClone(artifactInput);
+  (legacyArtifact as unknown as Record<string, unknown>).schemaVersion = 2;
+  const artifact = legacy ? legacyArtifact : fittedArtifact(legacyArtifact);
   artifact.quality.pairEligibility = artifact.quality.pairEligibility.map((entry) => entry.status === "direct" ? { ...entry, reason: "testnet-quality-passed" } : entry);
   artifact.directPairs = artifact.quality.pairEligibility.flatMap((entry) => entry.status === "direct" ? [{ pair: entry.pair, correlation: 0.05, reason: "testnet-quality-passed" as const }] : []);
   artifact.fallbackPairs = [];
@@ -51,6 +53,8 @@ function setup(artifactInput: CorrelationArtifact = VALID, fallbackEligible = fa
     baselineCorrelationRaw, baselineCorrelationSha256: sha256(baselineCorrelationRaw),
   };
   writeFileSync(join(root, "network-profile.json"), `${canonicalJson(researchRootIdentity(profile))}\n`);
+  mkdirSync(join(root, "facts", "market-registries"), { recursive: true });
+  writeFileSync(join(root, "facts", "market-registries", `${profile.marketRegistrySha256}.json`), profile.marketRegistryRaw);
   artifact.network = "testnet";
   artifact.profileSha256 = profile.profileSha256;
   artifact.marketRegistrySha256 = profile.marketRegistrySha256;
@@ -119,7 +123,7 @@ test("artifact validation accepts the exact schema and immutable reference closu
   try {
     const result = validateArtifact(fixture.raw, fixture, NOW);
     assert.equal(result.artifact.modelVersion, "fixture");
-    assert.equal((result.artifact as unknown as Record<string, unknown>).schemaVersion, 2);
+    assert.equal((result.artifact as unknown as Record<string, unknown>).schemaVersion, 3);
     for (const key of ["network", "profileSha256", "marketRegistrySha256", "deploymentRegistrySha256", "baselineCorrelationSha256", "directPairs", "fallbackPairs", "quarantinedPairs"]) {
       assert.notEqual((result.artifact as unknown as Record<string, unknown>)[key], undefined, key);
     }
@@ -173,6 +177,7 @@ test("artifact validation rejects malformed schema, model family, hashes, timest
       ["policy", (a) => { a.policy.halfLifeDays = 44; }],
       ["finite", (a) => { a.quality.maxProjectionError = null; }],
       ["loadings explain", (a) => { a.clusters.crypto.BTC = { global: 0.8, cluster: 0.8, underlying: 0.1, underlyingBasis: "structural-underlying" }; }],
+      ["inside \\[-1, 1\\]", (a) => { a.clusters.crypto.BTC.global = 1.5; }],
     ];
     for (const [message, mutate] of cases) {
       const artifact = structuredClone(fixture.artifact) as unknown as Record<string, any>;
@@ -247,9 +252,9 @@ test("artifact validation requires operator approval for fallback pairs and quar
   const fixture = setup();
   try {
     const fallback = structuredClone(fixture.artifact); fallback.quality.pairEligibility[0] = { pair: ["BTC", "ETH"], status: "fallback", reason: "operator-reviewed-testnet-bootstrap" }; fallback.directPairs = []; fallback.fallbackPairs = [{ pair: ["BTC", "ETH"], correlation: 0.05000000000000001, reason: "operator-reviewed-testnet-bootstrap" }];
-    assert.throws(() => validate(fixture, fallback), /fallback.*operator-approved/);
+    assert.throws(() => validate(fixture, fittedArtifact(fallback)), /fallback.*operator-approved/);
     const quarantined = structuredClone(fixture.artifact); quarantined.quality.quarantinedUnderlyings = [{ underlying: "ETH", reason: "" }]; quarantined.quality.eligibleUnderlyings = ["BTC"]; delete quarantined.clusters.crypto.ETH; quarantined.quality.pairEligibility[0] = { pair: ["BTC", "ETH"], status: "quarantined", reason: "missing" }; quarantined.directPairs = []; quarantined.quarantinedPairs = [{ pair: ["BTC", "ETH"], reason: "missing" }];
-    assert.throws(() => validate(fixture, quarantined), /quarantine reason/);
+    assert.throws(() => validate(fixture, fittedArtifact(quarantined)), /quarantine reason/);
   } finally { rmSync(fixture.root, { recursive: true, force: true }); }
 });
 
@@ -265,6 +270,7 @@ test("artifact validation keeps measurement eligibility independent from approve
     artifact.quality.pairEligibility = [{ pair: ["BTC", "ETH"], status: "fallback", reason: "operator-reviewed-testnet-bootstrap" }];
     artifact.directPairs = [];
     artifact.fallbackPairs = [{ pair: ["BTC", "ETH"], correlation: 0.05000000000000001, reason: "operator-reviewed-testnet-bootstrap" }];
+    Object.assign(artifact, fittedArtifact(artifact));
     const manifest = { ...fixture.manifest, sourceRegistrySha256 };
     artifact.dataManifestSha256 = sha256(canonicalJson(manifest));
     const raw = `${canonicalJson(artifact)}\n`;
@@ -394,4 +400,75 @@ test("research CLI never loads a working-directory dotenv file", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("legacy schemaVersion 2 artifacts stay readable but are never activation-eligible", () => {
+  const fixture = setup(VALID, false, true);
+  try {
+    const parsed = parseCorrelationArtifact(fixture.raw, NOW, fixture.sources, fixture.markets, fixture.profile);
+    assert.equal(parsed.artifact.schemaVersion, 2);
+    assert.equal(parsed.model.multiAssetEnabled, false);
+    assert.equal(parsed.model.version, "fixture");
+    assert.throws(() => validateArtifact(fixture.raw, fixture, NOW), /not activation-eligible/);
+    const champion = join(fixture.root, "artifacts", "champion.json");
+    writeFileSync(champion, "historical champion\n");
+    assert.throws(() => promoteCandidate(fixture.root, fixture.candidate, fixture.profile, fixture.markets, NOW), /not activation-eligible/);
+    assert.equal(readFileSync(champion, "utf8"), "historical champion\n");
+    assert.equal(readFileSync(fixture.candidate, "utf8"), fixture.raw);
+    const ambiguous = { ...structuredClone(fixture.artifact), pairEvidence: [] };
+    assert.throws(() => parseCorrelationArtifact(`${canonicalJson(ambiguous)}\n`, NOW), /legacy artifacts must not carry pairEvidence/);
+    const negative = structuredClone(fixture.artifact); negative.clusters.crypto.BTC.global = -0.1;
+    assert.throws(() => parseCorrelationArtifact(`${canonicalJson(negative)}\n`, NOW), /inside \[0, 1\]/, "legacy loadings stay unsigned");
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test("fitted artifacts fail closed on policy drift, rewritten evidence, and inconsistent gates", () => {
+  const fixture = setup();
+  try {
+    const cases: [string, (artifact: Record<string, any>) => void][] = [
+      ["modelFamily must be signed-asset-factor", (a) => { a.modelFamily = "hierarchical-gaussian-factor"; }],
+      ["approved fit policy", (a) => { a.policy.maxDirectResidual = 0.1; }],
+      ["approved fit policy", (a) => { delete a.policy.omegaFallback; }],
+      ["pairEvidence must be an array", (a) => { delete a.pairEvidence; }],
+      ["every canonical pair exactly once", (a) => { a.pairEvidence = []; }],
+      ["duplicates", (a) => { a.pairEvidence.push(structuredClone(a.pairEvidence[0])); }],
+      ["unknown pair", (a) => { a.pairEvidence[0].pair = ["BTC", "SOL"]; }],
+      ["disagrees with pair eligibility", (a) => { a.pairEvidence[0].evidence = "fallback"; a.pairEvidence[0].weight = 30; a.pairEvidence[0].mode = null; a.pairEvidence[0].effectiveN = null; a.pairEvidence[0].interval = null; }],
+      ["residual is inconsistent", (a) => { a.pairEvidence[0].fitted += 0.2; }],
+      ["gate result disagrees", (a) => { a.pairEvidence[0].fitted += 0.2; a.pairEvidence[0].residual = 0.2; }],
+      ["fails its residual gate", (a) => { a.pairEvidence[0].fitted += 0.2; a.pairEvidence[0].residual = 0.2; a.pairEvidence[0].gate = { passed: false, reason: "direct-residual-out-of-range" }; }],
+      ["gate result disagrees", (a) => { a.pairEvidence[0].gate.passed = false; }],
+      ["gate result disagrees", (a) => { a.pairEvidence[0].gate.reason = "relabeled"; }],
+      ["target differs", (a) => { a.pairEvidence[0].target = 0.06; a.pairEvidence[0].fitted = 0.06; }],
+      ["interval m must equal", (a) => { a.pairEvidence[0].interval.m = 6; }],
+      ["nest around the target", (a) => { a.pairEvidence[0].interval.lower = 0.06; }],
+      ["positive effectiveN", (a) => { a.pairEvidence[0].effectiveN = 0; }],
+      ["invalid fields", (a) => { a.pairEvidence[0].extra = 1; }],
+      ["structural residual", (a) => { a.clusters.crypto.BTC.underlying = 0.3; }],
+      ["inside \\[-1, 1\\]", (a) => { a.clusters.crypto.BTC.global = -1.2; }],
+    ];
+    for (const [message, mutate] of cases) {
+      const artifact = structuredClone(fixture.artifact) as unknown as Record<string, any>;
+      mutate(artifact);
+      assert.throws(() => validate(fixture, artifact as unknown as CorrelationArtifact), new RegExp(message), message);
+    }
+    // R3: signed loadings are valid schemaVersion 3 evidence when the structural residual still matches.
+    const signed = structuredClone(fixture.artifact) as unknown as Record<string, any>;
+    signed.clusters.crypto.BTC.global = -0.1;
+    signed.clusters.crypto.BTC.cluster = -0.2;
+    assert.equal(parseCorrelationArtifact(`${canonicalJson(signed)}\n`, NOW, fixture.sources, fixture.markets, fixture.profile).artifact.clusters.crypto.BTC.global, -0.1);
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test("promotion verifies the candidate-time market registry snapshot bytes", () => {
+  const fixture = setup();
+  try {
+    const snapshot = join(fixture.root, "facts", "market-registries", `${fixture.profile.marketRegistrySha256}.json`);
+    rmSync(snapshot, { force: true });
+    assert.throws(() => promoteCandidate(fixture.root, fixture.candidate, fixture.profile, fixture.markets, NOW), /market registry snapshot/);
+    writeFileSync(snapshot, canonicalJson({ schemaVersion: 1, network: "testnet", markets: [], rewritten: true }));
+    assert.throws(() => promoteCandidate(fixture.root, fixture.candidate, fixture.profile, fixture.markets, NOW), /market registry snapshot/);
+    writeFileSync(snapshot, fixture.profile.marketRegistryRaw);
+    assert.equal(promoteCandidate(fixture.root, fixture.candidate, fixture.profile, fixture.markets, NOW).marketRegistrySha256, fixture.profile.marketRegistrySha256);
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
 });

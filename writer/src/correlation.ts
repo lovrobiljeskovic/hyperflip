@@ -50,8 +50,8 @@ function parseLoadings(what: string, v: unknown): Loadings {
   const o = v as Record<string, unknown>;
   const read = (k: string) => {
     const x = o?.[k];
-    if (typeof x !== "number" || !Number.isFinite(x) || x < 0 || x > 1) {
-      throw new Error(`correlations: ${what}.${k} must be a number in [0,1], got ${String(x)}`);
+    if (typeof x !== "number" || !Number.isFinite(x) || x < -1 || x > 1) {
+      throw new Error(`correlations: ${what}.${k} must be a number in [-1,1], got ${String(x)}`);
     }
     return x;
   };
@@ -64,18 +64,21 @@ function parseLoadings(what: string, v: unknown): Loadings {
 }
 
 /** The most conservative loadings a cluster's members justify: the
- * component-wise maximum, shrunk to MAX_EXPLAINED if that combination
- * over-explains. Component-wise max is what the fallback invariant needs —
- * using it can never yield a lower pairwise correlation than any single
- * member would have. When the shrink bites, the fallback is no longer a
- * strict bound on every axis; the caller (parseCorrelations) records that in
- * shrunkClusters rather than this function logging it — parsing stays pure. */
+ * component-wise maximum by magnitude, keeping the sign of the member that
+ * set it, shrunk to MAX_EXPLAINED if that combination over-explains.
+ * Magnitude domination is what the fallback invariant needs: a same-
+ * underlying pair's correlation is a sum of squares, so the fallback can never
+ * yield a lower one than any single member would have, whatever the signs.
+ * When the shrink bites, the fallback is no longer a strict bound on every
+ * axis; the caller (parseCorrelations) records that in shrunkClusters rather
+ * than this function logging it — parsing stays pure. */
 function computeFallback(members: Loadings[]): { loadings: Loadings; shrunk: boolean } {
+  const dominant = (a: number, b: number) => (Math.abs(b) > Math.abs(a) ? b : a);
   const max = members.reduce(
     (m, l) => ({
-      global: Math.max(m.global, l.global),
-      cluster: Math.max(m.cluster, l.cluster),
-      underlying: Math.max(m.underlying, l.underlying),
+      global: dominant(m.global, l.global),
+      cluster: dominant(m.cluster, l.cluster),
+      underlying: dominant(m.underlying, l.underlying),
     }),
     { global: 0, cluster: 0, underlying: 0 },
   );
@@ -140,25 +143,12 @@ function loadingsFor(leg: CorrLeg, table: CorrelationTable): Loadings {
   );
 }
 
-/** Nominal pair correlation implied by the same loaded factors used by live
- * pricing before the uncertainty band is applied. */
+/** Pair correlation implied by the same loaded factors live pricing uses. */
 export function nominalPairCorrelation(left: CorrLeg, right: CorrLeg, table: CorrelationTable): number {
   const zero = { global: 0, cluster: 0, underlying: 0 };
   const a = left.bullish === null ? zero : loadingsFor(left, table);
   const b = right.bullish === null ? zero : loadingsFor(right, table);
   return pairCorrelation(a, b, left.cluster === right.cluster, left.underlying === right.underlying);
-}
-
-/** Multiplying each loading by sqrt(scale) multiplies every pairwise
- * correlation by exactly scale, since each correlation term is a product of
- * two loadings. Clamped so explained variance stays under MAX_EXPLAINED. */
-function scaleLoadings(l: Loadings, scale: number): Loadings {
-  const k = Math.sqrt(scale);
-  const s = { global: l.global * k, cluster: l.cluster * k, underlying: l.underlying * k };
-  const explained = s.global ** 2 + s.cluster ** 2 + s.underlying ** 2;
-  if (explained <= MAX_EXPLAINED) return s;
-  const shrink = Math.sqrt(MAX_EXPLAINED / explained);
-  return { global: s.global * shrink, cluster: s.cluster * shrink, underlying: s.underlying * shrink };
 }
 
 function thresholdOf(probWad: bigint): number {
@@ -170,7 +160,7 @@ function thresholdOf(probWad: bigint): number {
  * underlyings. A leg hangs off the deepest node it shares with another leg;
  * deeper loadings fold into its idiosyncratic term, which is exact — a factor
  * only one leg loads on is indistinguishable from that leg's own noise. */
-export function buildTree(legs: CorrLeg[], table: CorrelationTable, scale: number): FactorNode {
+export function buildTree(legs: CorrLeg[], table: CorrelationTable): FactorNode {
   const byCluster = new Map<string, CorrLeg[]>();
   for (const l of legs) {
     const list = byCluster.get(l.cluster);
@@ -182,9 +172,7 @@ export function buildTree(legs: CorrLeg[], table: CorrelationTable, scale: numbe
   // everything. Upgrade to a second latent (level, and dispersion) if band
   // markets ever ship.
   const loadingsOf = (leg: CorrLeg): Loadings =>
-    leg.bullish === null
-      ? { global: 0, cluster: 0, underlying: 0 }
-      : scaleLoadings(loadingsFor(leg, table), scale);
+    leg.bullish === null ? { global: 0, cluster: 0, underlying: 0 } : loadingsFor(leg, table);
   const fl = (leg: CorrLeg, loadings: number[]): FactorLeg => ({
     threshold: thresholdOf(leg.probWad),
     sign: leg.bullish === false ? -1 : 1,
@@ -243,9 +231,9 @@ export function buildTree(legs: CorrLeg[], table: CorrelationTable, scale: numbe
 
 /** Two legs on the SAME market are one random variable, not two correlated
  * ones, and the copula cannot express that: MAX_EXPLAINED caps every modelled
- * correlation strictly below 1, and the rho band then quotes the loosest end.
- * Left to the model, a YES and a NO on one vault come out at a joint of ~0.106
- * — an 8.8x payout on a ticket that can never win. So exact duplicates are
+ * correlation strictly below 1. Left to the model, a YES and a NO on one vault
+ * come out at a joint near 0.1 — a ~9x payout on a ticket that can never win.
+ * So exact duplicates are
  * resolved here, before any modelling: opposite sides on one vault is
  * impossible, and the same side twice is a single event whose duplicate
  * carries no information.
@@ -282,32 +270,24 @@ function resolveSameMarket(legs: CorrLeg[]): CorrLeg[] | null {
   return [...seen.values()];
 }
 
-/** P(every leg wins), as WAD, at the house-favorable end of the rho band.
- *
- * House-favorable is always the higher joint probability: a higher joint means
- * a lower payout. Taking the max over both ends therefore needs no sign
- * special-case — it raises assumed correlation on same-direction tickets and
- * lowers it on anti-correlated ones in a single rule.
- *
- * `bandPct` is clamped here rather than trusted from the caller: every caller
- * routes through this function, and a value at or above 1 would make
- * scaleLoadings take the square root of a negative number, quietly producing
- * NaN loadings and a meaningless price. */
-export function riskAdjustedJointProbWad(legs: CorrLeg[], table: CorrelationTable, bandPct: number): bigint {
-  const resolved = resolveSameMarket(legs);
-  if (resolved === null) return 0n;
-  const band = Number.isFinite(bandPct) ? Math.min(Math.max(bandPct, 0), 0.99) : 0;
-  // Widest scale first: its tree is the most expensive to integrate, so a
-  // ticket over the quadrature budget throws before the cheap end is spent.
-  // Only an optimisation — the result is the max either way.
-  const scales = band > 0 ? [1 + band, 1 - band] : [1];
-  let best = 0;
-  for (const s of scales) {
-    const p = jointProbability(buildTree(resolved, table, s));
-    if (p > best) best = p;
-  }
-  return BigInt(Math.round(best * Number(WAD)));
+/** Canonical leg order: by underlying, then vault, then side. Fixes the
+ * factor-tree shape and the floating-point evaluation order, so a permuted
+ * ticket prices to the same WAD rather than the same value up to rounding. */
+function canonicalOrder(legs: CorrLeg[]): CorrLeg[] {
+  const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  return [...legs].sort((a, b) => cmp(a.underlying, b.underlying) || cmp(a.vault.toLowerCase(), b.vault.toLowerCase()) || Number(a.isYes) - Number(b.isYes));
 }
 
-/** Backwards-compatible name for the live, risk-adjusted price path. */
-export const jointProbWad = riskAdjustedJointProbWad;
+/** P(every leg wins), as WAD, under the one validated point factor model.
+ *
+ * There is deliberately no uncertainty band here. Evaluating two loading
+ * scales and quoting the larger joint is a bound only for two legs; for three
+ * or more mixed-direction legs an interior scale can beat both endpoints (see
+ * the counterexample in correlation.test.ts), so the band could overpay while
+ * claiming to be house-favorable. Edge and exposure caps are the live risk
+ * margin instead. Throws TooComplexError past the quadrature budget. */
+export function jointProbWad(legs: CorrLeg[], table: CorrelationTable): bigint {
+  const resolved = resolveSameMarket(legs);
+  if (resolved === null) return 0n;
+  return BigInt(Math.round(jointProbability(buildTree(canonicalOrder(resolved), table)) * Number(WAD)));
+}

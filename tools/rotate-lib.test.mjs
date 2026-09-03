@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseBinary, parseRecurring, pickBinaries, registryEntry, marketSymbol, classify, filterMappedPicks, rotatedRegistry } from "./rotate-lib.mjs";
+import { parseBinary, parseRecurring, pickBinaries, registryEntry, marketSymbol, classify, filterMappedPicks, rotatedRegistry, registryCompatibility } from "./rotate-lib.mjs";
 
 const NOW = Date.UTC(2026, 7, 18, 12, 0); // 2026-08-18T12:00Z
 
@@ -230,4 +230,37 @@ test("registryEntry and marketSymbol shape", () => {
   });
   assert.equal(marketSymbol(pick), "BTC0820");
   assert.equal(registryEntry({ ...pick, perp: "NVDA", venue: "xyz", threshold: 218.18 }, "0xdef").cluster, "equity");
+});
+
+// R6: rotation preflight and writer startup share one compatibility verdict. Address, coin,
+// title, strike, and expiry may rotate freely; taxonomy changes are refused per market, never
+// by disabling the whole champion.
+test("registryCompatibility accepts cosmetic rotation and rejects taxonomy changes per market", () => {
+  const champion = {
+    clusters: { crypto: { BTC: {}, ETH: {} }, equity: { NVDA: {} } },
+    quality: { quarantinedUnderlyings: [{ underlying: "SOL", reason: "stale-source" }] },
+  };
+  const sources = { sources: [
+    { underlying: "BTC", cluster: "crypto" }, { underlying: "ETH", cluster: "crypto" },
+    { underlying: "NVDA", cluster: "equity" }, { underlying: "SOL", cluster: "crypto" },
+  ] };
+  const rotated = [
+    registryEntry({ outcome: 900, coinYes: "#9000", coinNo: "#9001", perp: "BTC", venue: null, threshold: 70000, expiryMs: Date.UTC(2026, 8, 5, 2, 0) }, "0xNewBtc"),
+    { vault: "0xEth", underlying: "ETH", cluster: "equity", direction: "up" },
+    { vault: "0xDoge", underlying: "DOGE", cluster: "crypto", direction: "up" },
+    { vault: "0xSol", underlying: "SOL", cluster: "crypto", direction: "up" },
+    { vault: "0xNvdaBand", underlying: "NVDA", cluster: "equity", direction: "band" },
+    { vault: "0xNvdaDown", underlying: "NVDA", cluster: "equity", direction: "down" },
+  ];
+  assert.deepEqual(registryCompatibility(champion, sources, rotated).map((v) => [v.vault, v.compatible, v.reason]), [
+    ["0xNewBtc", true, null],
+    ["0xEth", false, "cluster-remapped"],
+    ["0xDoge", false, "unknown-underlying"],
+    ["0xSol", false, "quarantined-underlying"],
+    ["0xNvdaBand", false, "direction-unsupported"],
+    ["0xNvdaDown", true, null],
+  ]);
+  // A source registry that disagrees with the champion's cluster is a remap even when the
+  // market copies the source: the champion taxonomy is the reference.
+  assert.equal(registryCompatibility(champion, { sources: [{ underlying: "BTC", cluster: "equity" }] }, [{ vault: "0xBtc", underlying: "BTC", cluster: "equity", direction: "up" }])[0].reason, "cluster-remapped");
 });

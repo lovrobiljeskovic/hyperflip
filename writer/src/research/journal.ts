@@ -3,12 +3,14 @@ import { parseAbiItem, type Address, type PublicClient } from "viem";
 import { parlayVaultAbi, outcomeVaultAbi } from "../abi.js";
 import { WAD, blockRanges } from "../pure.js";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
-import { canonicalJson, operationError, writeOperationState } from "./store.js";
-import { assertJoinedEventRecord, assertQuoteDecision } from "./types.js";
+import { assertMarketRegistrySnapshot, canonicalJson, operationError, writeOperationState } from "./store.js";
+import { assertJoinedEventRecord, assertQuoteDecision, liveMarketRegistrySha256 } from "./types.js";
 import type { ChainLogRecord, JoinedEventRecord, OrphanCorrectionRecord, QuoteDecision, StateObservationRecord } from "./types.js";
 import { assertResearchRootIdentity, bindResearchRootIdentity, type LoadedResearchNetworkProfile } from "./network.js";
 
-export interface PublicQuoteDecision extends Omit<QuoteDecision, "taker" | "quoteDigest" | "signatureHash" | "bookInputs" | "modelVersion" | "dataAsOf" | "dataManifestSha256" | "sourceRegistrySha256" | "bestEstimateJointProbWad" | "riskAdjustedJointProbWad" | "rhoBandPct" | "edge"> {
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
+export type PublicQuoteDecision = DistributiveOmit<QuoteDecision, "taker" | "quoteDigest" | "signatureHash" | "bookInputs" | "modelVersion" | "dataAsOf" | "dataManifestSha256" | "sourceRegistrySha256" | "bestEstimateJointProbWad" | "riskAdjustedJointProbWad" | "rhoBandPct" | "edge"> & {
   taker: string;
   resolution: { status: "open" | "won" | "dead" | "void"; allLegsFinal: boolean };
   quoteDigest?: string;
@@ -22,7 +24,7 @@ export interface PublicQuoteDecision extends Omit<QuoteDecision, "taker" | "quot
   riskAdjustedJointProbWad?: string;
   rhoBandPct?: number;
   edge?: QuoteDecision["edge"];
-}
+};
 
 export function initializeQuoteJournal(root: string, profile: LoadedResearchNetworkProfile): ResearchPersistence {
   const storage = openResearchPersistence(root);
@@ -249,7 +251,7 @@ function pendingAndResolutions(records: JoinedEventRecord[], knownQuoteIds: Set<
 }
 
 /** Appends canonical chain facts and resumable state without rewriting prior history. */
-async function joinEventsImpl(storage: ResearchPersistence, deps: JoinDeps): Promise<JoinSummary> {
+async function joinEventsImpl(root: string, storage: ResearchPersistence, deps: JoinDeps): Promise<JoinSummary> {
   const now = (deps.now ?? Date.now)();
   const identity = { network: deps.profile.profile.network, profileSha256: deps.profile.profileSha256, deploymentRegistrySha256: deps.profile.deploymentRegistrySha256 } as const;
   const state = readState(storage, deps.deployBlock);
@@ -267,10 +269,19 @@ async function joinEventsImpl(storage: ResearchPersistence, deps: JoinDeps): Pro
     if (record.deploymentRegistrySha256 !== identity.deploymentRegistrySha256) throw new Error("joined event deployment identity mismatch");
   });
   const quotes = readJsonl<QuoteDecision>(storage, "journal/quotes");
+  const verifiedRegistries = new Set<string>();
   quotes.forEach((quote) => {
     assertResearchRootIdentity(storage, quote);
     assertQuoteDecision(quote);
-    if (quote.marketRegistrySha256 !== deps.profile.marketRegistrySha256 || quote.deploymentRegistrySha256 !== deps.profile.deploymentRegistrySha256 || quote.baselineCorrelationSha256 !== deps.profile.baselineCorrelationSha256) throw new Error("quote decision profile identity mismatch");
+    if (quote.deploymentRegistrySha256 !== deps.profile.deploymentRegistrySha256 || quote.baselineCorrelationSha256 !== deps.profile.baselineCorrelationSha256) throw new Error("quote decision profile identity mismatch");
+    // A quote names the registries it was priced against; each must survive as an immutable
+    // snapshot so history stays joinable after every later rotation (R6). The registry current
+    // at join time is irrelevant.
+    for (const hash of quote.schemaVersion === 4 ? [quote.championMarketRegistrySha256, quote.liveMarketRegistrySha256] : [liveMarketRegistrySha256(quote)]) {
+      if (verifiedRegistries.has(hash)) continue;
+      assertMarketRegistrySnapshot(root, storage, hash);
+      verifiedRegistries.add(hash);
+    }
   });
   const quoteIds = new Set(quotes.map((quote) => quote.quoteId));
   for (const range of blockRanges(from, confirmed, CHUNK_SIZE)) {
@@ -346,7 +357,7 @@ export async function joinEvents(root: string, deps: JoinDeps): Promise<JoinSumm
   };
   persist("running", null);
   try {
-    const summary = await joinEventsImpl(storage, { ...deps, now: () => started });
+    const summary = await joinEventsImpl(root, storage, { ...deps, now: () => started });
     persist("succeeded", null, { appended: summary.appended, nextBlock: summary.nextBlock });
     return summary;
   } catch (error) {

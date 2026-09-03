@@ -10,6 +10,7 @@ import { ExposureBook } from "../src/exposure.js";
 import { WAD } from "../src/pure.js";
 import { handleQuote, newMetrics, type QuoteDeps } from "../src/server.js";
 import { parseCorrelationArtifact, promoteCandidate } from "../src/research/artifacts.js";
+import { fittedArtifact } from "./fixtures/research/fitted.js";
 import { collectSources } from "../src/research/candles.js";
 import { bindResearchRootIdentity, loadResearchNetworkProfile } from "../src/research/network.js";
 import { openResearchPersistence } from "../src/research/persistence.js";
@@ -120,20 +121,23 @@ function artifactFixture(root: string): {
   writeFileSync(`${partition}.provenance.json`, provenanceBytes);
   writeFileSync(join(root, "manifests", `${manifestHash}.json`), canonicalJson(manifest));
 
-  const artifact = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-valid.json", import.meta.url), "utf8")) as CorrelationArtifact;
-  artifact.schemaVersion = 2;
-  artifact.network = "testnet";
-  artifact.profileSha256 = loadedProfile.profileSha256;
-  artifact.marketRegistrySha256 = loadedProfile.marketRegistrySha256;
-  artifact.deploymentRegistrySha256 = loadedProfile.deploymentRegistrySha256;
-  artifact.baselineCorrelationSha256 = loadedProfile.baselineCorrelationSha256;
-  artifact.quality.pairEligibility = artifact.quality.pairEligibility.map((entry) => ({ ...entry, reason: "testnet-quality-passed" }));
-  artifact.directPairs = [{ pair: ["BTC", "ETH"], correlation: 0.05, reason: "testnet-quality-passed" }];
-  artifact.fallbackPairs = [];
-  artifact.quarantinedPairs = [];
-  artifact.modelVersion = "acceptance-fixture";
-  artifact.dataManifestSha256 = manifestHash;
-  artifact.sourceRegistrySha256 = sourceHash;
+  const legacyArtifact = JSON.parse(readFileSync(new URL("./fixtures/research/artifact-valid.json", import.meta.url), "utf8")) as CorrelationArtifact;
+  (legacyArtifact as unknown as Record<string, unknown>).schemaVersion = 2;
+  legacyArtifact.network = "testnet";
+  legacyArtifact.profileSha256 = loadedProfile.profileSha256;
+  legacyArtifact.marketRegistrySha256 = loadedProfile.marketRegistrySha256;
+  legacyArtifact.deploymentRegistrySha256 = loadedProfile.deploymentRegistrySha256;
+  legacyArtifact.baselineCorrelationSha256 = loadedProfile.baselineCorrelationSha256;
+  legacyArtifact.quality.pairEligibility = legacyArtifact.quality.pairEligibility.map((entry) => ({ ...entry, reason: "testnet-quality-passed" }));
+  legacyArtifact.directPairs = [{ pair: ["BTC", "ETH"], correlation: 0.05, reason: "testnet-quality-passed" }];
+  legacyArtifact.fallbackPairs = [];
+  legacyArtifact.quarantinedPairs = [];
+  legacyArtifact.modelVersion = "acceptance-fixture";
+  legacyArtifact.dataManifestSha256 = manifestHash;
+  legacyArtifact.sourceRegistrySha256 = sourceHash;
+  const artifact: CorrelationArtifact = fittedArtifact(legacyArtifact);
+  mkdirSync(join(root, "facts", "market-registries"), { recursive: true });
+  writeFileSync(join(root, "facts", "market-registries", `${loadedProfile.marketRegistrySha256}.json`), loadedProfile.marketRegistryRaw);
   const candidateRaw = `${canonicalJson(artifact)}\n`;
   mkdirSync(join(root, "artifacts", "candidates"), { recursive: true });
   const candidate = join(root, "artifacts", "candidates", `${artifact.modelVersion}.json`);
@@ -171,7 +175,6 @@ function quoteDeps(root: string, artifact: ReturnType<typeof artifactFixture>): 
     perMarketCap: 1_000_000_000n,
     perClusterCap: 1_000_000_000n,
     perCodeReservedCap: 1_000_000_000n,
-    rhoBandPct: 0.2,
     correlations: parsed.table,
     model: parsed.model,
     legEdgeBps: 0n,
@@ -192,7 +195,7 @@ function quoteDeps(root: string, artifact: ReturnType<typeof artifactFixture>): 
     exposure: new ExposureBook((vault) => cfg.markets.get(vault)?.cluster),
     chainId: 31337,
     fetchLegPrice: async () => ({ priceWad: WAD / 2n, source: "l2Book", observedAtMs: NOW, depthWad: WAD, vwapWad: WAD / 2n, freshnessMs: null }),
-    bestEstimateJointProbWad: async () => WAD / 4n,
+    jointProbWad: async () => WAD / 4n,
     readAllowance: async () => 1_000_000_000n,
     readSettled: async () => new Set(),
     sign: async () => "0x1234",

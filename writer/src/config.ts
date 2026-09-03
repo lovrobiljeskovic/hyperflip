@@ -5,11 +5,12 @@ import { isAddress, type Address } from "viem";
 import { parseCorrelations, type CorrelationTable } from "./correlation.js";
 import { parseMarkets, type MarketInfo } from "./markets.js";
 import { BPS, parseDecimalToUnits } from "./pure.js";
-import { assertValidationArtifactIdentity, assertValidationDerivedIdentity, parseCorrelationArtifact, type ArtifactModelMetadata } from "./research/artifacts.js";
+import { assertActivationEligible, assertValidationArtifactIdentity, assertValidationDerivedIdentity, parseCorrelationArtifact, type ArtifactModelMetadata } from "./research/artifacts.js";
 import { bindResearchRootIdentity, loadResearchNetworkProfile, type LoadedResearchNetworkProfile } from "./research/network.js";
 import { openResearchPersistence, type ResearchPersistence } from "./research/persistence.js";
-import { sha256 } from "./research/store.js";
+import { assertMarketRegistrySnapshot, recordMarketRegistryFact, sha256 } from "./research/store.js";
 import type { ValidationReport } from "./research/replay.js";
+import { registryCompatibility } from "../../tools/registry-compat.mjs";
 
 // .env lives at the repo root, one level above writer/ — same pattern as keeper/config.ts.
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -61,11 +62,6 @@ export interface WriterConfig {
    * for ~3 such reservations while still bounding a single code to a small
    * slice of a real bankroll's allowance/perMarketCap. */
   perCodeReservedCap: bigint;
-  /** Multiplicative half-width of the correlation uncertainty band. The pricer
-   * evaluates the joint probability at (1 - x) and (1 + x) times every pairwise
-   * rho and quotes the house-favorable end, so the house is paid for the fact
-   * that the loadings table is hand-set rather than measured. */
-  rhoBandPct: number;
   /** Factor loadings from the profile-bound champion (or the profile baseline
    * for same-underlying-only degraded service). Writer-only. */
   correlations: CorrelationTable;
@@ -181,10 +177,11 @@ export function writerProfileIdentityFailure(config: Pick<WriterConfig, "researc
   const model = config.model;
   if (model.identityFailureReason) return model.identityFailureReason;
   if (model.network !== profile.profile.network) return `research champion expected network ${profile.profile.network}, got ${model.network}`;
+  // The champion's market registry hash is candidate-time provenance (snapshot verified at
+  // load); the live registry is compared per market by registryCompatibility instead (R6).
   for (const [label, actual, expected] of [
     ["profile", model.profileSha256, profile.profileSha256],
     ["source registry", model.sourceRegistrySha256, profile.sourceRegistrySha256],
-    ["market registry", model.marketRegistrySha256, profile.marketRegistrySha256],
     ["deployment registry", model.deploymentRegistrySha256, profile.deploymentRegistrySha256],
     ["baseline correlation", model.baselineCorrelationSha256, profile.baselineCorrelationSha256],
   ]) if (actual !== expected) return `research champion ${label} hash mismatch`;
@@ -209,8 +206,18 @@ export function loadConfig(nowMs = Date.now()): WriterConfig {
   let correlations: CorrelationTable;
   let model: ArtifactModelMetadata;
   try {
+    // The registry this process quotes against becomes immutable evidence now: quote decisions
+    // name it by hash, and a join or report after later rotations verifies that snapshot rather
+    // than whatever registry is current then (R6). A fact that already exists with other bytes
+    // is a corrupt evidence store, so the champion degrades like any other identity failure.
+    recordMarketRegistryFact(storage, registryJson);
     const championRaw = storage.readText("artifacts/champion.json");
-    const champion = parseCorrelationArtifact(championRaw, nowMs, researchProfile.sources, markets, researchProfile);
+    // Live markets are not passed here: the champion is verified against its own candidate-time
+    // snapshot, then the live registry is compared per market so a rotation that only touches
+    // addresses, coins, titles, strikes, or expiries keeps multi-asset pricing.
+    const champion = parseCorrelationArtifact(championRaw, nowMs, researchProfile.sources, undefined, researchProfile);
+    assertActivationEligible(champion.artifact);
+    assertMarketRegistrySnapshot(researchRoot, storage, champion.artifact.marketRegistrySha256);
     const validationBytes = storage.readText(`artifacts/candidates/${champion.artifact.modelVersion}.validation.json`);
     const validation = JSON.parse(validationBytes) as ValidationReport;
     assertValidationArtifactIdentity(championRaw, champion.artifact, validation, researchProfile);
@@ -219,10 +226,12 @@ export function loadConfig(nowMs = Date.now()): WriterConfig {
     ({ table: correlations, model } = champion);
     model.validationSha256 = sha256(validationBytes);
     model.validationState = "Supported";
+    model.incompatibleMarkets = new Map(registryCompatibility(champion.artifact, researchProfile.sources, [...markets.values()])
+      .filter((verdict) => !verdict.compatible).map((verdict) => [verdict.vault.toLowerCase(), verdict.reason!]));
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     const profileIdentityFailure = (error as NodeJS.ErrnoException).code === "ENOENT"
-      || /network|profile identity|registry hash mismatch|source\/market cluster disagreement|validation.*mismatch|derived manifest|requires Supported validation/.test(reason);
+      || /network|profile identity|registry hash mismatch|source\/market cluster disagreement|validation.*mismatch|derived manifest|requires Supported validation|not activation-eligible|market registry snapshot|immutable market registry fact/.test(reason);
     if (!profileIdentityFailure) throw error;
     correlations = parseCorrelations(researchProfile.baselineCorrelationRaw);
     model = {
@@ -234,8 +243,13 @@ export function loadConfig(nowMs = Date.now()): WriterConfig {
       identityFailureReason: `research champion unavailable: ${reason}`, ageMs: Number.POSITIVE_INFINITY, multiAssetEnabled: false,
       eligibleUnderlyings: new Set(), quarantinedUnderlyings: new Map(),
       fallbackEligible: new Set(researchProfile.sources.sources.filter((source) => source.fallbackEligible).map((source) => source.underlying)),
-      pairEligibility: new Map(),
+      pairEligibility: new Map(), incompatibleMarkets: new Map(),
     };
+  }
+  // Boot-time signal like the shrunk-cluster warning below: these markets are refused on
+  // cross-underlying tickets until a champion fitted on their taxonomy is promoted.
+  if (model.incompatibleMarkets.size > 0) {
+    console.warn(JSON.stringify({ event: "correlation-registry-incompatible", markets: [...model.incompatibleMarkets].map(([vault, reason]) => ({ vault, reason })) }));
   }
   // Boot-time signal, not per-request noise: the shipped table's shrunk
   // clusters don't change quote to quote, so this fires once here rather than
@@ -304,7 +318,6 @@ export function loadConfig(nowMs = Date.now()): WriterConfig {
     perCodeReservedCap: process.env.PER_CODE_RESERVED_CAP
       ? BigInt(process.env.PER_CODE_RESERVED_CAP)
       : defaultPerCodeReservedCap(maxStake, minPremiumBps),
-    rhoBandPct: Number(process.env.RHO_BAND_PCT ?? 0.2),
     correlations,
     model,
     legEdgeBps: BigInt(process.env.LEG_EDGE_BPS ?? 300),

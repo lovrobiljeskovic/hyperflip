@@ -11,7 +11,8 @@ import { WAD } from "../src/pure.js";
 import type { WriterConfig } from "../src/config.js";
 import { quoteDigest } from "../src/quotes.js";
 import { loadResearchNetworkProfile } from "../src/research/network.js";
-import type { QuoteDecision } from "../src/research/types.js";
+import { assertQuoteDecision, type QuoteDecision } from "../src/research/types.js";
+import { TooComplexError } from "../src/copula.js";
 
 const V1 = "0x1111111111111111111111111111111111111111" as Address;
 const V2 = "0x2222222222222222222222222222222222222222" as Address;
@@ -38,6 +39,7 @@ const MODEL: WriterConfig["model"] = {
   baselineCorrelationSha256: RESEARCH_PROFILE.baselineCorrelationSha256, artifactSha256: "d".repeat(64), validationSha256: "e".repeat(64), validationState: "Supported", identityFailureReason: null,
   ageMs: 0, multiAssetEnabled: true, eligibleUnderlyings: new Set(UNDERLYINGS), quarantinedUnderlyings: new Map(), fallbackEligible: new Set(),
   pairEligibility: new Map(UNDERLYINGS.flatMap((left, index) => UNDERLYINGS.slice(index + 1).map((right) => [pair(left, right), { status: "direct" as const, reason: "fixture", correlation: 0.1 }]))),
+  incompatibleMarkets: new Map(),
 };
 
 const FIXTURE_MARKETS = new Map(
@@ -71,7 +73,7 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     infoApiUrl: "", researchRoot: "/tmp", researchProfile: RESEARCH_PROFILE, researchPersistence: {} as WriterConfig["researchPersistence"], port: 0, edgeBps: 0n, minPremiumBps: 100n, minLegs: 2,
     maxStake: 10_000_000n, perMarketCap: 1_000_000_000n, perClusterCap: 1_000_000_000n,
     perCodeReservedCap: 1_000_000_000n,
-    rhoBandPct: 0.2, correlations: CORRELATIONS, model: MODEL, legEdgeBps: 0n, quoteTtlMs: 30_000,
+    correlations: CORRELATIONS, model: MODEL, legEdgeBps: 0n, quoteTtlMs: 30_000,
     spotPxStaleMs: 60_000,
     minBookDepthWad: 0n,
     lockoutMs: 600_000, pokerIntervalMs: 15_000, deployBlock: 0n,
@@ -105,7 +107,7 @@ function deps(overrides: Partial<QuoteDeps> = {}): QuoteDeps {
     chainId: 31337,
     fetchLegPrice: async () => ({ priceWad: WAD / 2n, source: "l2Book", observedAtMs: 1_000_000, depthWad: WAD, vwapWad: WAD / 2n, freshnessMs: null }),
     recordQuote: async () => {},
-    bestEstimateJointProbWad: (legs) => Promise.resolve(jointProbWad(legs, c.correlations, 0)),
+    jointProbWad: (legs) => Promise.resolve(jointProbWad(legs, c.correlations)),
     readAllowance: async () => 1_000_000_000n,
     readSettled: async () => new Set(),
     sign: async () => "0xsig" as Hex,
@@ -126,18 +128,20 @@ test("happy path: returns signed quote, reserves exposure", async () => {
   assert.equal(j.quote.premium, "1000000");
   // V1 (BTC, bull) and V2 (ETH, bear) sit in the same cluster but bet opposite
   // directions, so real correlation pushes the joint probability below the
-  // naive 0.5*0.5 product — a higher payout than the old independence math gave.
-  assert.equal(j.quote.maxPayout, "8422341");
+  // naive 0.5*0.5 product — a higher payout than independence would give.
+  // Point model (R5): the deleted band used to quote this at the 0.8 scale
+  // (8422341); the fitted-loading point price is what the table says.
+  assert.equal(j.quote.maxPayout, "15407941");
   assert.equal(j.quote.deadline, "1030"); // (1_000_000 + 30_000) ms -> seconds
   assert.equal(j.sig, "0xsig");
-  assert.equal(d.exposure.reservedGlobal(d.now()), 7_422_341n); // maxPayout - premium
+  assert.equal(d.exposure.reservedGlobal(d.now()), 14_407_941n); // maxPayout - premium
   assert.equal(d.metrics.quoted, 1);
 });
 
-test("best-estimate worker failure returns pricing-unavailable before reservation or signing", async () => {
+test("worker failure returns pricing-unavailable before reservation or signing", async () => {
   let signed = false;
   const d = deps({
-    bestEstimateJointProbWad: async () => { throw new Error("worker down"); },
+    jointProbWad: async () => { throw new Error("worker down"); },
     sign: async () => { signed = true; return "0xsig" as Hex; },
   });
   const r = await handleQuote(d, goodBody);
@@ -146,14 +150,24 @@ test("best-estimate worker failure returns pricing-unavailable before reservatio
   assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
 });
 
-test("same-underlying quote succeeds while the correlation worker is unavailable", async () => {
+test("a same-underlying ticket is integrated in the worker too, never on the event loop", async () => {
   let workerCalled = false;
   const d = deps({
-    bestEstimateJointProbWad: async () => { workerCalled = true; throw new Error("worker down"); },
+    jointProbWad: async () => { workerCalled = true; throw new Error("worker down"); },
   });
   const result = await handleQuote(d, body({ legs: [legOn(BTC_VAULT_A, true), legOn(BTC_VAULT_B, true)] }));
-  assert.equal(result.status, 200);
-  assert.equal(workerCalled, false);
+  assert.deepEqual(result, { status: 503, json: { error: "pricing-unavailable" } });
+  assert.equal(workerCalled, true);
+});
+
+test("a worker cost refusal is a fast 400 ticket-too-complex with nothing reserved", async () => {
+  const d = deps({
+    jointProbWad: async () => { throw new TooComplexError(16_000_000); },
+  });
+  const r = await handleQuote(d, goodBody);
+  assert.deepEqual(r, { status: 400, json: { error: "ticket-too-complex" } });
+  assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
+  assert.equal(d.metrics.rejected["ticket-too-complex"], 1);
 });
 
 test("same-cluster same-direction legs now quote instead of 400", async () => {
@@ -182,9 +196,9 @@ test("correlated legs pay less than the same legs priced independently", async (
   assert.ok(payout(correlated) < payout(crossCluster), "same-cluster legs must be materially tighter");
 });
 
-// The user's real ticket: NVDA>230 (p=0.1318) + SP500>8000 (p=0.4405). At the
-// house end of the rho band the equity cluster collapses the joint to ~P(NVDA),
-// and edge then pushes the payout below NVDA alone on Core — a ticket with
+// The user's real ticket: NVDA>230 (p=0.1318) + SP500>8000 (p=0.4405). The
+// equity cluster collapses the joint to ~P(NVDA), and edge then pushes the
+// payout below NVDA alone on Core — a ticket with
 // strictly fewer ways to win AND a lower payout. Must be refused, not signed.
 test("a quote dominated by one leg's Core fair payout is refused", async () => {
   const skewedPrices = async (l: { vault: Address }) => ({
@@ -317,10 +331,14 @@ test("correlation eligibility rejects stale, missing, ineligible, quarantined, a
     { ...MODEL, quarantinedUnderlyings: new Map([["ETH", "stale"]]) },
     { ...MODEL, pairEligibility: new Map() },
     { ...MODEL, pairEligibility: new Map([[pair("BTC", "ETH"), { status: "fallback", reason: "fixture", correlation: 0.1 }]]) },
+    // R6: a live market the champion taxonomy does not cover is refused on its own ticket only.
+    { ...MODEL, incompatibleMarkets: new Map([[V2.toLowerCase(), "cluster-remapped"]]) },
   ];
   for (const model of cases) {
     assert.deepEqual(validateQuoteRequest(goodBody, cfg({ model }), 1_000_000), { ok: false, status: 400, reason: "correlation-unavailable" });
   }
+  const unrelated = body({ legs: [legOn(NVDA_VAULT, true), legOn(SP500_VAULT, true)] });
+  assert.equal(validateQuoteRequest(unrelated, cfg({ model: cases.at(-1) }), 1_000_000).ok, true);
 });
 
 test("model age and multi-asset eligibility advance at request and health time without a restart", () => {
@@ -372,7 +390,7 @@ test("book fetch failure: 503, nothing reserved", async () => {
 });
 
 test("at-capacity: 409, metrics counted", async () => {
-  const d = deps({ readAllowance: async () => 1_000_000n }); // risk ~7.4M > 1_000_000
+  const d = deps({ readAllowance: async () => 1_000_000n }); // risk ~14.4M > 1_000_000
   const r = await handleQuote(d, goodBody);
   assert.equal(r.status, 409);
   assert.equal(d.metrics.rejected["at-capacity"], 1);
@@ -381,9 +399,9 @@ test("at-capacity: 409, metrics counted", async () => {
 
 test("quota-cap: 409 once one invite code's unminted reservations hit their cap; a second code is unaffected", async () => {
   const OTHER_TAKER = "0x4444444444444444444444444444444444444444" as Address;
-  // goodBody's risk is 7_422_341n (see the happy-path test); cap it just under
+  // goodBody's risk is 14_407_941n (see the happy-path test); cap it just under
   // that so a second quote on the same code trips the quota gate.
-  const d = deps({ cfg: cfg({ perCodeReservedCap: 7_422_341n, inviteCodes: new Set(["beta-test", "beta-test-2"]) }) });
+  const d = deps({ cfg: cfg({ perCodeReservedCap: 14_407_941n, inviteCodes: new Set(["beta-test", "beta-test-2"]) }) });
   const first = await handleQuote(d, goodBody);
   assert.equal(first.status, 200);
   const second = await handleQuote(d, goodBody);
@@ -401,7 +419,7 @@ test("quota-cap: 409 once one invite code's unminted reservations hit their cap;
 });
 
 test("quota-cap: reservation expiry frees the taker's budget for a new quote", async () => {
-  const d = deps({ cfg: cfg({ perCodeReservedCap: 7_422_341n }) });
+  const d = deps({ cfg: cfg({ perCodeReservedCap: 14_407_941n }) });
   let now = 1_000_000;
   const dWithClock = { ...d, now: () => now };
   assert.equal((await handleQuote(dWithClock, goodBody)).status, 200);
@@ -453,6 +471,23 @@ test("journal: records the returned quote identity and economics before returnin
   });
   assert.equal(typeof (recorded as { quoteDigest?: unknown }).quoteDigest, "string");
   const decision = recorded as QuoteDecision;
+  // Point-model evidence (R5): one worker-computed probability, no band, and
+  // the champion's registry identity kept apart from the live one.
+  assertQuoteDecision(decision);
+  assert.equal(decision.schemaVersion, 4);
+  if (decision.schemaVersion !== 4) throw new Error("unreachable");
+  assert.deepEqual({
+    pricingMode: decision.pricingMode, rhoBandPct: decision.rhoBandPct,
+    championMarketRegistrySha256: decision.championMarketRegistrySha256, liveMarketRegistrySha256: decision.liveMarketRegistrySha256,
+  }, {
+    pricingMode: "point-model", rhoBandPct: 0,
+    championMarketRegistrySha256: MODEL.marketRegistrySha256, liveMarketRegistrySha256: RESEARCH_PROFILE.marketRegistrySha256,
+  });
+  assert.equal(decision.riskAdjustedJointProbWad, decision.bestEstimateJointProbWad);
+  assert.equal(decision.riskAdjustedJointProbWad, jointProbWad(
+    goodBody.legs.map((l) => { const m = d.cfg.markets.get(l.vault.toLowerCase())!; return { vault: l.vault, isYes: l.isYes, probWad: WAD / 2n, cluster: m.cluster, underlying: m.underlying, bullish: (m.direction === "up") === l.isYes }; }),
+    CORRELATIONS,
+  ).toString());
   const btc = CORRELATIONS.underlyings.BTC;
   const eth = CORRELATIONS.underlyings.ETH;
   const nominalPricingCorrelation = btc.global * eth.global + btc.cluster * eth.cluster;

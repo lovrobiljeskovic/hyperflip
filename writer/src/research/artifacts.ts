@@ -4,7 +4,9 @@ import { pairCorrelation, parseCorrelations, type CorrelationTable } from "../co
 import type { ValidationReport } from "./replay.js";
 import { trailingFresh } from "./returns.js";
 import { openResearchPersistence, type ResearchPersistence } from "./persistence.js";
-import { canonicalJson, readDerivedDataset, researchRelativePath, sha256, verifyManifest } from "./store.js";
+import { directGate, fallbackGate } from "./matrix.js";
+import { assertMarketRegistrySnapshot, canonicalJson, readDerivedDataset, researchRelativePath, sha256, verifyManifest } from "./store.js";
+import { APPROVED_FIT_POLICY, LEGACY_FIT_POLICY } from "./types.js";
 import type { CorrelationArtifact, DataManifest, SourceRegistry } from "./types.js";
 import { assertLoadedResearchNetworkProfile, bindResearchRootIdentity, type LoadedResearchNetworkProfile } from "./network.js";
 
@@ -34,6 +36,10 @@ export interface ArtifactModelMetadata {
   quarantinedUnderlyings: Map<string, string>;
   fallbackEligible: Set<string>;
   pairEligibility: Map<string, { status: "direct" | "fallback" | "quarantined"; reason: string; correlation: number | null }>;
+  /** Live registry markets (lowercase vault) the champion taxonomy does not cover, with the
+   * registryCompatibility reason. Refused on their own cross-underlying tickets only; the
+   * champion stays enabled for every compatible market (R6). */
+  incompatibleMarkets: Map<string, string>;
 }
 
 export interface ValidatedArtifact {
@@ -107,10 +113,12 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
   try { parsed = JSON.parse(raw); } catch { fail("malformed JSON"); }
   const artifact = parsed as CorrelationArtifact;
   const root = object(artifact, "root");
-  if (root.schemaVersion !== 2) fail("schemaVersion must be 2");
+  if (root.schemaVersion !== 2 && root.schemaVersion !== 3) fail("schemaVersion must be 2 (legacy, read-only) or 3");
+  const legacy = root.schemaVersion === 2;
   if (root.network !== "testnet") fail("network must be testnet");
   const profileSha256 = hash(root.profileSha256, "profileSha256");
-  if (root.modelFamily !== "hierarchical-gaussian-factor") fail("modelFamily must be hierarchical-gaussian-factor");
+  if (legacy && root.modelFamily !== "hierarchical-gaussian-factor") fail("modelFamily must be hierarchical-gaussian-factor");
+  if (!legacy && root.modelFamily !== "signed-asset-factor") fail("modelFamily must be signed-asset-factor");
   const modelVersion = text(root.modelVersion, "modelVersion");
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(modelVersion)) fail("modelVersion is not a safe artifact filename");
   const createdAtMs = timestamp(root.createdAt, "createdAt");
@@ -124,7 +132,7 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
   const deploymentRegistrySha256 = hash(root.deploymentRegistrySha256, "deploymentRegistrySha256");
   const baselineCorrelationSha256 = hash(root.baselineCorrelationSha256, "baselineCorrelationSha256");
   const policy = object(root.policy, "policy");
-  if (policy.lookbackDays !== 180 || policy.halfLifeDays !== 45 || JSON.stringify(policy.diagnosticWindowsDays) !== "[30,90,180]" || policy.minHourly !== 1_000 || policy.minDaily !== 90 || policy.minCoverage !== 0.8 || policy.maxProjectionError !== 0.10) fail("policy must match [180,45,[30,90,180]] and fixed quality gates");
+  if (canonicalJson(policy) !== canonicalJson(legacy ? LEGACY_FIT_POLICY : APPROVED_FIT_POLICY)) fail(legacy ? "policy must match [180,45,[30,90,180]] and fixed quality gates" : "policy must exactly match the approved fit policy");
   const clusters = object(root.clusters, "clusters");
   if (Object.keys(clusters).length === 0) fail("clusters must be non-empty");
   const clusterByUnderlying = new Map<string, string>();
@@ -137,7 +145,9 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
       const global = finite(loading.global, `clusters.${cluster}.${underlying}.global`);
       const member = finite(loading.cluster, `clusters.${cluster}.${underlying}.cluster`);
       const structural = finite(loading.underlying, `clusters.${cluster}.${underlying}.underlying`);
-      if ([global, member, structural].some((value) => value < 0 || value > 1) || global ** 2 + member ** 2 + structural ** 2 > 0.99 + 1e-12) fail(`clusters.${cluster}.${underlying} loadings explain over 0.99 variance`);
+      if ([global, member, structural].some((value) => value < (legacy ? 0 : -1) || value > 1)) fail(`clusters.${cluster}.${underlying} loadings must be inside ${legacy ? "[0, 1]" : "[-1, 1]"}`);
+      if (global ** 2 + member ** 2 + structural ** 2 > 0.99 + 1e-12) fail(`clusters.${cluster}.${underlying} loadings explain over 0.99 variance`);
+      if (!legacy && Math.abs(global ** 2 + member ** 2 + structural ** 2 - APPROVED_FIT_POLICY.vMax) > 1e-9) fail(`clusters.${cluster}.${underlying}.underlying must be the structural residual sqrt(vMax - global^2 - cluster^2)`);
       if (loading.underlyingBasis !== "structural-underlying") fail(`clusters.${cluster}.${underlying}.underlyingBasis is invalid`);
       clusterByUnderlying.set(underlying, cluster);
     }
@@ -226,6 +236,8 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
     partitioned.set(key, "quarantined");
   }
   if (!same(partitioned.keys(), expectedPairs)) fail("pair evidence must partition every canonical pair exactly once");
+  if (legacy) { if ("pairEvidence" in root) fail("legacy artifacts must not carry pairEvidence"); }
+  else validatePairEvidence(root.pairEvidence, pairs, expectedPairs);
   const validation = object(root.validation, "validation");
   if (validation.status !== "pending") fail("candidate validation status must be pending");
   const table = parseCorrelations(raw);
@@ -243,7 +255,10 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
   }
   if (profile) {
     assertLoadedResearchNetworkProfile(profile);
-    if (profile.profile.network !== root.network || profile.profileSha256 !== profileSha256 || profile.sourceRegistrySha256 !== sourceRegistrySha256 || profile.marketRegistrySha256 !== marketRegistrySha256 || profile.deploymentRegistrySha256 !== deploymentRegistrySha256 || profile.baselineCorrelationSha256 !== baselineCorrelationSha256) fail("artifact profile identity mismatch");
+    // The market registry hash is deliberately absent: it is the candidate-time snapshot the
+    // artifact was fitted against (verified by assertMarketRegistrySnapshot), not a live identity.
+    // Promotion still pins it to the current registry in validateArtifact.
+    if (profile.profile.network !== root.network || profile.profileSha256 !== profileSha256 || profile.sourceRegistrySha256 !== sourceRegistrySha256 || profile.deploymentRegistrySha256 !== deploymentRegistrySha256 || profile.baselineCorrelationSha256 !== baselineCorrelationSha256) fail("artifact profile identity mismatch");
     const baseline = parseCorrelations(profile.baselineCorrelationRaw);
     const profileSources = new Map(profile.sources.sources.map((source) => [source.underlying, source]));
     for (const [key, record] of fallbackRecords) {
@@ -263,14 +278,82 @@ export function parseCorrelationArtifact(raw: string, nowMs = Date.now(), source
   return { artifact, table, model: {
     artifactKind: "champion", network: "testnet", profileSha256, version: modelVersion, dataAsOf: artifact.dataAsOf, dataManifestSha256, sourceRegistrySha256,
     marketRegistrySha256, deploymentRegistrySha256, baselineCorrelationSha256, artifactSha256: sha256(raw), validationSha256: null,
-    validationState: "Unavailable", identityFailureReason: null, ageMs, multiAssetEnabled: ageMs < CHAMPION_MAX_AGE_MS,
-    eligibleUnderlyings, quarantinedUnderlyings: quarantined, fallbackEligible, pairEligibility: pairs,
+    validationState: "Unavailable", identityFailureReason: null, ageMs, multiAssetEnabled: !legacy && ageMs < CHAMPION_MAX_AGE_MS,
+    eligibleUnderlyings, quarantinedUnderlyings: quarantined, fallbackEligible, pairEligibility: pairs, incompatibleMarkets: new Map(),
   } };
+}
+
+/** Every pair's evidence must agree with the eligibility partition, the recorded correlations, and
+ * the approved policy gates. A rewritten fitted value, a relabeled gate, or a missing pair fails here. */
+function validatePairEvidence(value: unknown, pairs: Map<string, { status: "direct" | "fallback" | "quarantined"; reason: string; correlation: number | null }>, expectedPairs: Set<string>): void {
+  if (!Array.isArray(value)) fail("pairEvidence must be an array");
+  const directCount = [...pairs.values()].filter((pair) => pair.status === "direct").length;
+  const seen = new Set<string>();
+  for (const raw of value as unknown[]) {
+    const entry = object(raw, "pairEvidence entry");
+    if (!same(Object.keys(entry), ["pair", "evidence", "mode", "effectiveN", "weight", "target", "interval", "fitted", "residual", "gate"])) fail("pairEvidence entry has invalid fields");
+    if (!Array.isArray(entry.pair) || entry.pair.length !== 2 || typeof entry.pair[0] !== "string" || typeof entry.pair[1] !== "string") fail("pairEvidence pair is invalid");
+    const [left, right] = entry.pair as [string, string];
+    if (left >= right) fail(`canonical pair required for ${left}:${right}`);
+    const key = pairKey(left, right);
+    if (seen.has(key)) fail(`pairEvidence duplicates ${key}`);
+    seen.add(key);
+    const eligibility = pairs.get(key);
+    if (!eligibility) fail(`pairEvidence references unknown pair ${key}`);
+    if (entry.evidence !== eligibility.status) fail(`pairEvidence disagrees with pair eligibility for ${key}`);
+    const gate = object(entry.gate, `pairEvidence gate ${key}`);
+    if (!same(Object.keys(gate), ["passed", "reason"]) || typeof gate.passed !== "boolean") fail(`pairEvidence gate is invalid for ${key}`);
+    text(gate.reason, `pairEvidence gate reason ${key}`);
+    const optional = (name: string): number | null => entry[name] === null ? null : finite(entry[name], `pairEvidence.${name} ${key}`);
+    if (entry.evidence === "quarantined") {
+      if (entry.mode !== null || entry.effectiveN !== null || entry.weight !== 0 || entry.interval !== null) fail(`quarantined pairEvidence must carry no admitted weight for ${key}`);
+      const target = optional("target");
+      const fitted = optional("fitted");
+      const residual = optional("residual");
+      if ((target === null) !== (fitted === null) || (residual === null) !== (fitted === null) || (residual !== null && Math.abs(residual - (fitted! - target!)) > 1e-9)) fail(`pairEvidence residual is inconsistent for ${key}`);
+      if (gate.passed) fail(`quarantined pair ${key} cannot pass a gate`);
+      continue;
+    }
+    const target = finite(entry.target, `pairEvidence.target ${key}`);
+    const fitted = finite(entry.fitted, `pairEvidence.fitted ${key}`);
+    const residual = finite(entry.residual, `pairEvidence.residual ${key}`);
+    const weight = finite(entry.weight, `pairEvidence.weight ${key}`);
+    if (Math.abs(target) > 1 || Math.abs(fitted) > 1) fail(`pairEvidence correlations must lie in [-1, 1] for ${key}`);
+    if (Math.abs(residual - (fitted - target)) > 1e-9) fail(`pairEvidence residual is inconsistent for ${key}`);
+    if (target !== eligibility.correlation) fail(`pairEvidence target differs from the recorded ${entry.evidence} correlation for ${key}`);
+    let verdict: { passed: boolean; reason: string };
+    if (entry.evidence === "direct") {
+      if (entry.mode !== "hourly" && entry.mode !== "daily") fail(`direct pairEvidence mode is invalid for ${key}`);
+      const effectiveN = finite(entry.effectiveN, `pairEvidence.effectiveN ${key}`);
+      if (effectiveN <= 0 || weight <= 0) fail(`direct pairEvidence needs positive effectiveN and weight for ${key}`);
+      const interval = object(entry.interval, `pairEvidence interval ${key}`);
+      if (!same(Object.keys(interval), ["lower", "upper", "adjustedLower", "adjustedUpper", "m"])) fail(`pairEvidence interval has invalid fields for ${key}`);
+      const [lower, upper, adjustedLower, adjustedUpper] = ["lower", "upper", "adjustedLower", "adjustedUpper"].map((name) => finite(interval[name], `pairEvidence.interval.${name} ${key}`));
+      if (!Number.isSafeInteger(interval.m) || interval.m !== directCount) fail(`pairEvidence interval m must equal the ${directCount} admitted direct pairs for ${key}`);
+      if (!(adjustedLower <= lower && lower <= target && target <= upper && upper <= adjustedUpper)) fail(`pairEvidence interval must nest around the target for ${key}`);
+      verdict = directGate(fitted, target, { lower, upper, adjustedLower, adjustedUpper, m: interval.m });
+    } else {
+      if (entry.mode !== null || entry.effectiveN !== null || entry.interval !== null || weight !== APPROVED_FIT_POLICY.omegaFallback) fail(`fallback pairEvidence must be a labeled point prior with weight ${APPROVED_FIT_POLICY.omegaFallback} for ${key}`);
+      verdict = fallbackGate(fitted, target);
+    }
+    if (gate.passed !== verdict.passed || gate.reason !== verdict.reason) fail(`pairEvidence gate result disagrees with the approved policy for ${key}`);
+    if (!verdict.passed) fail(`admitted ${entry.evidence} pair ${key} fails its residual gate`);
+  }
+  if (!same(seen, expectedPairs)) fail("pairEvidence must record every canonical pair exactly once");
+}
+
+/** Legacy artifacts remain readable evidence but never become a champion. */
+export function assertActivationEligible(artifact: CorrelationArtifact): void {
+  if (artifact.schemaVersion !== 3) fail(`legacy schemaVersion ${String(artifact.schemaVersion)} model is not activation-eligible`);
 }
 
 export function validateArtifact(raw: string, context: Context, nowMs: number): ValidatedArtifact {
   const result = parseCorrelationArtifact(raw, nowMs, context.sources, context.markets, context.profile);
   const { artifact } = result;
+  assertActivationEligible(artifact);
+  // A candidate is promotable only against the registry it was fitted on; later rotations are a
+  // startup/report compatibility question, not a promotion one.
+  if (artifact.marketRegistrySha256 !== context.profile.marketRegistrySha256) fail("artifact profile identity mismatch");
   if (!Number.isSafeInteger(nowMs)) fail("nowMs must be a safe integer");
   const ageMs = nowMs - Date.parse(artifact.dataAsOf);
   if (ageMs < 0) fail("dataAsOf is in the future");
@@ -308,7 +391,7 @@ export function assertValidationArtifactIdentity(raw: string, artifact: Correlat
   if (report.modelVersion !== artifact.modelVersion || report.inputManifestSha256 !== artifact.dataManifestSha256) fail("validation identity mismatch");
   if (report.candidateSha256 !== sha256(raw)) fail("validation candidate hash mismatch");
   if (report.sourceRegistrySha256 !== profile.sourceRegistrySha256 || report.sourceRegistrySha256 !== artifact.sourceRegistrySha256) fail("validation source registry mismatch");
-  if (report.marketRegistrySha256 !== profile.marketRegistrySha256 || report.marketRegistrySha256 !== artifact.marketRegistrySha256) fail("validation market registry mismatch");
+  if (report.marketRegistrySha256 !== artifact.marketRegistrySha256) fail("validation market registry mismatch");
   if (report.deploymentRegistrySha256 !== profile.deploymentRegistrySha256 || report.deploymentRegistrySha256 !== artifact.deploymentRegistrySha256) fail("validation deployment registry mismatch");
   if (report.baselineCorrelationSha256 !== profile.baselineCorrelationSha256 || report.baselineCorrelationSha256 !== artifact.baselineCorrelationSha256 || report.baselineSha256 !== profile.baselineCorrelationSha256) fail("validation baseline correlation mismatch");
   if (report.baselineSnapshotPath !== `facts/baselines/${profile.baselineCorrelationSha256}.json`) fail("validation baseline snapshot path mismatch");
@@ -356,11 +439,13 @@ export function promoteCandidate(rootInput: string, candidatePath: string, profi
   try { candidate = researchRelativePath(root, candidatePath); } catch { return fail("candidate path escapes research root"); }
   const raw = storage.readText(candidate);
   const preliminary = parseCorrelationArtifact(raw, nowMs, sources, undefined, profile);
+  assertActivationEligible(preliminary.artifact);
   if (candidate.split("/").at(-1) !== `${preliminary.artifact.modelVersion}.json`) fail("candidate filename does not match modelVersion");
   const manifestFact = manifestFor(storage, preliminary.artifact.dataManifestSha256);
   verifyManifest(root, manifestFact.manifest, storage);
   const sourceSnapshot = `facts/source-registries/${preliminary.artifact.sourceRegistrySha256}.json`;
   if (sha256(storage.read(sourceSnapshot)) !== preliminary.artifact.sourceRegistrySha256) fail("source registry snapshot hash mismatch");
+  assertMarketRegistrySnapshot(root, storage, preliminary.artifact.marketRegistrySha256);
   const candidateDirectory = candidate.includes("/") ? `${candidate.slice(0, candidate.lastIndexOf("/"))}/` : "";
   const validationPath = `${candidateDirectory}${preliminary.artifact.modelVersion}.validation.json`;
   const validationBytes = storage.readText(validationPath);
