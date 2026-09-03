@@ -26,11 +26,10 @@ without reconstructing the entire history.
   hashes against those snapshots instead of the registry current at run time; `/health` reports
   champion and live registry hashes and incompatible markets separately.
 - Implementation branch/worktree: `feat/correlations` in the main working tree, based on mainline
-  `main` at `dc7147005f6cbfe4c566e0ffb60fca435b03fe6f`. Nothing committed yet; all `R1`–`R6` work
-  is uncommitted under `writer/` and `tools/`. Pre-existing uncommitted edits preserved untouched:
-  staged `.DS_Store`, modified `docs/research/testnet-correlation-handover.md`, untracked
+  `main` at `dc7147005f6cbfe4c566e0ffb60fca435b03fe6f`. `R1`–`R6` committed as `a148095` and
+  pushed to `origin/feat/correlations` (2026-09-03). Left uncommitted on purpose: `.DS_Store`,
   `session-report-20260818-2001.html`.
-- Last verified commit: `dc71470` plus the uncommitted `R1`–`R6` working tree (checks below, all exit 0).
+- Last verified commit: `a148095` (checks below, all exit 0, run on the identical tree before committing).
 - Production state: static rollback assumed active; not reverified this session (no shared-state
   access); reverify before any shared-state work.
 - Open decision gate: none.
@@ -401,9 +400,8 @@ been fully restored. Never leave a half-transition.
   immutable fixture bytes rewritten: `expected-candidate.json`, `replay-expected.json`, and
   `report-expected.html` are unchanged by this package.
 - Commit/base: branch `feat/correlations`, base `dc7147005f6cbfe4c566e0ffb60fca435b03fe6f`
-  (equals `main` tip). Nothing committed; `git add -f` still needed for `docs/` when a commit is
-  requested. New untracked files this package: `tools/registry-compat.mjs`,
-  `tools/registry-compat.d.mts`.
+  (equals `main` tip). `R1`–`R6` committed together as `a148095` and pushed; `git add -f` is still
+  needed for `docs/` (ignored directory) on every later commit.
 - Files changed this package: `tools/registry-compat.mjs` (new), `tools/registry-compat.d.mts`
   (new), `tools/rotate-lib.mjs`, `tools/rotate-lib.test.mjs`; under `writer/`: `src/config.ts`,
   `src/server.ts`, `src/index.ts`, `src/research/artifacts.ts`, `src/research/journal.ts`,
