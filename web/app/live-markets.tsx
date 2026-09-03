@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { compareMarketVolume, fetchMarketBoard, onlySports, sideLabel, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
@@ -240,8 +241,9 @@ export function HeroStats({ board }: { board: BoardSnapshot }) {
   );
 }
 
-/** One continuous line of actual markets. The duplicate set is hidden from
- * assistive tech and exists only to make the native CSS loop seamless. */
+/** One continuous line of actual markets, each a link into the builder with
+ * that market pre-picked. The duplicate set is hidden from assistive tech and
+ * exists only to make the native CSS loop seamless. */
 export function LiveMarketRail({ board }: { board: BoardSnapshot }) {
   const { state } = useMarkets(board.markets);
   const mids = useMids(board.mids);
@@ -256,6 +258,7 @@ export function LiveMarketRail({ board }: { board: BoardSnapshot }) {
 
   const markets = [...state.markets].sort((a, b) => compareMarketVolume(a, b, false)).slice(0, 6);
   const items = markets.map((market) => ({
+    vault: market.vault,
     title: market.title,
     yes: midNumber(mids, market.coinYes),
     no: midNumber(mids, market.coinNo),
@@ -264,14 +267,19 @@ export function LiveMarketRail({ board }: { board: BoardSnapshot }) {
   const set = (hidden: boolean) => (
     <div className="flex shrink-0" aria-hidden={hidden || undefined}>
       {items.map((item) => (
-        <div key={item.title} className="flex min-w-[310px] items-center justify-between gap-8 border-r border-line px-5 py-3">
+        <Link
+          key={item.vault}
+          href={`/build?leg=${item.vault}`}
+          tabIndex={hidden ? -1 : undefined}
+          className="flex min-w-[310px] items-center justify-between gap-8 border-r border-line px-5 py-3 transition-colors hover:bg-raised"
+        >
           <span className="max-w-[190px] truncate text-xs">{item.title}</span>
           <span className="mono shrink-0 text-[11px]">
             <span className="text-yes">Y {item.yes === null ? "-" : pct1(item.yes)}</span>
             <span className="mx-2 text-line">/</span>
             <span className="text-no">N {item.no === null ? "-" : pct1(item.no)}</span>
           </span>
-        </div>
+        </Link>
       ))}
     </div>
   );

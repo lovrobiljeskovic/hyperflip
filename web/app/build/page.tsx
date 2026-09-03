@@ -265,6 +265,18 @@ function LoadingSkeleton() {
   );
 }
 
+function legFor(market: Market, isYes: boolean): BuilderLeg {
+  return {
+    vault: market.vault,
+    isYes,
+    // Grouped leg: the outcome is the label, the question is the title.
+    title: market.group ? (market.groupTitle ?? market.group) : market.title,
+    coin: isYes ? market.coinYes : market.coinNo,
+    label: market.group ? market.title : sideLabel(market, isYes),
+    group: market.group,
+  };
+}
+
 export default function BuildPage() {
   const [markets, setMarkets] = useState<Market[] | null>(null);
   const [error, setError] = useState(false);
@@ -279,7 +291,13 @@ export default function BuildPage() {
     setError(false);
     setMarkets(null);
     try {
-      setMarkets(await fetchMarketBoard());
+      const board = await fetchMarketBoard();
+      setMarkets(board);
+      // Landing-page rail hands off a market as ?leg=<vault>; pick its YES side.
+      const picked = new URLSearchParams(window.location.search).get("leg")?.toLowerCase();
+      const market = picked && board.find((m) => m.vault.toLowerCase() === picked);
+      // Not addLeg: that toggles, and StrictMode runs this effect twice in dev.
+      if (market) setLegs((prev) => (prev.some((l) => l.vault === market.vault) ? prev : [...prev, legFor(market, true)]));
     } catch {
       setError(true);
     }
@@ -316,18 +334,7 @@ export default function BuildPage() {
       const rest = prev.filter((l) => l.vault !== market.vault && !(market.group && l.group === market.group));
       // Clicking the already-selected side toggles the leg off; the other side swaps it.
       if (prev.some((l) => l.vault === market.vault && l.isYes === isYes)) return rest;
-      return [
-        ...rest,
-        {
-          vault: market.vault,
-          isYes,
-          // Grouped leg: the outcome is the label, the question is the title.
-          title: market.group ? (market.groupTitle ?? market.group) : market.title,
-          coin: isYes ? market.coinYes : market.coinNo,
-          label: market.group ? market.title : sideLabel(market, isYes),
-          group: market.group,
-        },
-      ];
+      return [...rest, legFor(market, isYes)];
     });
   }
 
