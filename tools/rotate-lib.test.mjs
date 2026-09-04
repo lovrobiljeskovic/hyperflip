@@ -261,12 +261,12 @@ function sportsBoard() {
     { outcome: 11277, name: "template:sportsContestDraw", description: "", quoteToken: "USDC", sideSpecs: YN_SIDES },
     { outcome: 11278, name: "template:sportsContestParticipant", description: "participant:Humans", quoteToken: "USDC", sideSpecs: YN_SIDES },
     { outcome: 11275, name: "template fallback", description: "", quoteToken: "USDC", sideSpecs: YN_SIDES },
-    // q928: every leg at 0.5 -> untraded, skipped whole
+    // q928: every leg at 0.5 -> untraded, wrapped last
     { outcome: 11286, name: "template:sportsContestParticipant", description: "participant:Dogs", quoteToken: "USDC", sideSpecs: YN_SIDES },
     { outcome: 11287, name: "template:sportsContestParticipant", description: "participant:Birds", quoteToken: "USDC", sideSpecs: YN_SIDES },
     // standalone 2-way winner with named sides, kickoff Aug 20
     { outcome: 12289, name: "template:sportsContestWinner3", description: FIXTURE, quoteToken: "USDC", sideSpecs: NAMED_SIDES },
-    // standalone winner pinned at 0.5 -> dropped
+    // standalone winner pinned at 0.5 -> wrapped last
     { outcome: 12290, name: "template:sportsContestWinner3", description: FIXTURE.replace("Minnesota Twins", "Boston Red Sox"), quoteToken: "USDC", sideSpecs: NAMED_SIDES },
     // standalone Yes/No winner, kickoff Oct 1 (inside 60d)
     { outcome: 11273, name: "template:sportsContestWinner", description: "competition:Hypurr Race|contestType:race|officialSource:Hypurr News|participantA:Hypurr|participantB:Usain Bolt|resolutionDeadline:20261005-2359|scheduledStart:20261001-1500|season:2026|sport:track|stage:Final", quoteToken: "USDC", sideSpecs: [{ name: "template:Yes" }, { name: "template:No" }] },
@@ -278,6 +278,11 @@ function sportsBoard() {
     { outcome: 15317, name: "template:sportsContestWinner", description: "competition:NFL|participantA:Washington Commanders|participantB:Baltimore Ravens|resolutionDeadline:20260830-1200|scheduledStart:20260810-1200|sport:football", quoteToken: "USDC", sideSpecs: NAMED_SIDES },
     // beyond the window (maxMsLeft 50d in this fixture)
     { outcome: 15386, name: "template:sportsContestWinner", description: "competition:Popularity Contest|participantA:OXYZ|participantB:TXYZ|resolutionDeadline:20261212-1212|scheduledStart:20261212-1212|sport:Popularity", quoteToken: "USDC", sideSpecs: NAMED_SIDES },
+    // same fixture as 12289 from a second deployer with club suffixes -> deduped by key
+    { outcome: 12291, name: "template:sportsContestWinner7", description: FIXTURE.replace("Minnesota Twins", "Minnesota Twins FC").replace("Baltimore Orioles", "Baltimore Orioles AFC").replace("competition:MLB", "competition:USA_-_MLB"), quoteToken: "USDC", sideSpecs: NAMED_SIDES },
+    // deployer smoke test and a disaster market under the sports template -> junk
+    { outcome: 16289, name: "template:sportsContestWinner", description: "competition:SMOKE|contestType:game|officialSource:smoke.test|participantA:Smoke Team A|participantB:Smoke Team B|resolutionDeadline:20260910-1200|scheduledStart:20260907-1700|season:2026|sport:football|stage:1", quoteToken: "USDC", sideSpecs: NAMED_SIDES },
+    { outcome: 12666, name: "template:sportsContestWinner3", description: "competition:Magnitude 6.0+ earthquake in Japan|contestType:event|officialSource:USGS|participantA:Yes|participantB:No|resolutionDeadline:20261001-2359|scheduledStart:20260916-0000|season:2026|shortNameA:Yes|shortNameB:No|sport:earthquakes|stage:Before Oct 1", quoteToken: "USDC", sideSpecs: NAMED_SIDES },
     // politics filed under the sports template -> not sports
     { outcome: 11569, name: "template:sportsContestWinner", description: "competition:US Midterms 2026|contestType:House majority race|officialSource:AP|participantA:Democrats|participantB:Republicans|resolutionDeadline:20260915-1200|scheduledStart:20260901-0000|season:2026|sport:politics|stage:House Control", quoteToken: "USDC", sideSpecs: NAMED_SIDES },
   ];
@@ -290,17 +295,20 @@ function sportsBoard() {
   const mids = {
     "#112760": "0.45", "#112770": "0.5", "#112780": "0.3",
     "#112860": "0.5", "#112870": "0.5",
-    "#122890": "0.61", "#122900": "0.5", "#112730": "0.054", "#165410": "0.4", "#125660": "0.4", "#153170": "0.7", "#153860": "0.4", "#115690": "0.53",
+    "#122890": "0.61", "#122900": "0.5", "#122910": "0.58", "#162890": "0.6", "#126660": "0.7", "#112730": "0.054", "#165410": "0.4", "#125660": "0.4", "#153170": "0.7", "#153860": "0.4", "#115690": "0.53",
   };
   return { outcomes, questions, mids, maxMsLeft: 50 * 86400_000 };
 }
 
-test("pickSports wraps templated questions whole, standalone winners and over/unders; skips untraded, dated-out, past-kickoff", () => {
+test("pickSports wraps templated questions whole, standalone winners and over/unders; untraded last, skips dated-out, past-kickoff", () => {
   const { outcomes, questions, mids, maxMsLeft } = sportsBoard();
   const picked = pickSports({ outcomes, questions, mids, knownCoins: new Set(), nowMs: NOW, maxMsLeft });
-  // soonest kickoff first: Twins/Orioles Aug 20, q927 Sep 1, Ohtani Sep 3, Hypurr race Oct 1
-  assert.deepEqual(picked.map((p) => p.outcome), [12289, 11276, 11277, 11278, 16541, 11273]);
-  const [twins, cats, draw, , ohtani, race] = picked;
+  // traded first by kickoff: Twins/Orioles Aug 20, q927 Sep 1, Ohtani Sep 3, Hypurr race Oct 1;
+  // then untraded by kickoff: Red Sox/Orioles Aug 20, q928 Sep 2
+  assert.deepEqual(picked.map((p) => p.outcome), [12289, 11276, 11277, 11278, 16541, 11273, 12290, 11286, 11287]);
+  const [twins, cats, draw, , ohtani, race, redsox, dogs] = picked;
+  assert.equal(redsox.priced, 0);
+  assert.equal(dogs.priced, 0);
   assert.deepEqual(twins, {
     outcome: 12289, coinYes: "#122890", coinNo: "#122891", question: null, group: null,
     title: "Minnesota Twins vs Baltimore Orioles", sideYes: "min", sideNo: "bal",
@@ -324,10 +332,10 @@ test("pickSports wraps templated questions whole, standalone winners and over/un
 
 test("pickSports skips a question already wrapped and one that does not fit the cap whole", () => {
   const { outcomes, questions, mids, maxMsLeft } = sportsBoard();
-  assert.deepEqual(pickSports({ outcomes, questions, mids, knownCoins: new Set(["#112770"]), nowMs: NOW, maxMsLeft }).map((p) => p.outcome), [12289, 16541, 11273]);
-  // cap 3: Twins (1) fits, q927 (3) would make 4 -> skipped whole, Ohtani (1) and race (1) fit
+  assert.deepEqual(pickSports({ outcomes, questions, mids, knownCoins: new Set(["#112770"]), nowMs: NOW, maxMsLeft }).map((p) => p.outcome), [12289, 16541, 11273, 12290, 11286, 11287]);
+  // cap 3: Twins (1) fits, q927 (3) would make 4 -> skipped whole, Ohtani (1) and race (1) fit; untraded find no room
   assert.deepEqual(pickSports({ outcomes, questions, mids, knownCoins: new Set(), nowMs: NOW, maxMsLeft, cap: 3 }).map((p) => p.outcome), [12289, 16541, 11273]);
-  // perCompetition 1: only one MLB leg (the Ohtani prop's competition is the parenthetical MLB)
+  // perCompetition 1: only one MLB leg (the Ohtani prop's competition is the parenthetical MLB); untraded 2-leg q928 does not fit
   assert.deepEqual(pickSports({ outcomes, questions, mids, knownCoins: new Set(), nowMs: NOW, maxMsLeft, perCompetition: 1 }).map((p) => p.outcome), [12289, 11273]);
 });
 

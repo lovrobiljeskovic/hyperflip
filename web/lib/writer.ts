@@ -27,6 +27,24 @@ export interface Market {
 }
 
 /** The landing page is sports-only; the registry still lists legacy crypto vaults. */
+/** allMids returns a mid for every coin on the venue, perps included, so a
+ * stale, crossed or colliding key can hand back a non-probability. Only
+ * (0, 1) is a probability - anything else must degrade to "-" rather than
+ * render as e.g. 6400000.0%. Same bound as priceBreakdown in lib/format.ts.
+ * Do not widen it. An empty book reports exactly 0.5 until Core prints a
+ * trade; with no 24h volume that is a placeholder, not a price, and the
+ * writer refuses it (unpriced-leg), so it is unpickable here too. */
+export function marketMid(mids: Record<string, string>, market: Pick<Market, "volume24h">, coin: string): number | null {
+  const raw = mids[coin];
+  if (raw === undefined) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || n >= 1) return null;
+  // ponytail: a traded book resting at exactly 0.5 with zero volume today is
+  // hidden until it moves; use writer book depth if that ever bites.
+  if (n === 0.5 && !market.volume24h) return null;
+  return n;
+}
+
 export function onlySports(markets: Market[]): Market[] {
   return markets.filter((m) => m.category === "sports");
 }

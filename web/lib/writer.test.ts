@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { compareMarketVolume, groupMarkets, requestQuote, sideLabel, withMarketVolumes, type Market } from "./writer";
+import { compareMarketVolume, groupMarkets, marketMid, requestQuote, sideLabel, withMarketVolumes, type Market } from "./writer";
+
+test("marketMid: (0,1) only, and the empty-book 0.5 placeholder is null unless the market has traded", () => {
+  const mids = { a: "0.61", b: "0.5", c: "6400000", d: "0" };
+  expect(marketMid(mids, {}, "a")).toBe(0.61);
+  expect(marketMid(mids, {}, "b")).toBeNull();
+  expect(marketMid(mids, { volume24h: 12 }, "b")).toBe(0.5);
+  expect(marketMid(mids, {}, "c")).toBeNull();
+  expect(marketMid(mids, {}, "d")).toBeNull();
+  expect(marketMid(mids, {}, "zzz")).toBeNull();
+});
 
 const REQ = {
   taker: "0x1111111111111111111111111111111111111111" as const,

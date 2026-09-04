@@ -5,6 +5,7 @@ import { TooComplexError } from "./copula.js";
 import { nominalPairCorrelation, riskAdjustedJointProbWad, type CorrLeg } from "./correlation.js";
 import { ExposureBook } from "./exposure.js";
 import { dominatingLeg, edgeBreakdown, independentJointProbWad, priceParlay, totalEdgeBps } from "./pricing.js";
+import { WAD } from "./pure.js";
 import { quoteDigest, type ParlayQuote, type QuoteLeg } from "./quotes.js";
 import type { LegPriceObservation } from "./infoApi.js";
 import type { QuoteDecision } from "./research/types.js";
@@ -196,6 +197,14 @@ export async function handleQuote(
   } catch {
     reject(metrics, "stale-book");
     return { status: 503, json: { error: "stale-book" } };
+  }
+  // An empty book reports spotPx 0.5 until Core prints a trade: a placeholder,
+  // not a probability. Quoting it hands the taker a free pick of the mispriced
+  // side on every outcome of the question.
+  const unpriced = v.legs.findIndex((_, i) => priceObservations[i].source === "spotPx" && priceObservations[i].priceWad === WAD / 2n);
+  if (unpriced !== -1) {
+    reject(metrics, "unpriced-leg");
+    return { status: 503, json: { error: "unpriced-leg", vault: v.legs[unpriced].vault } };
   }
   try {
     allowance = await deps.readAllowance();

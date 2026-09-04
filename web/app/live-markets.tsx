@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { compareMarketVolume, fetchMarketBoard, onlySports, sideLabel, type Market } from "@/lib/writer";
+import { compareMarketVolume, fetchMarketBoard, marketMid, onlySports, sideLabel, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
 import { formatVolume, oddsLabel, pct1, until } from "@/lib/format";
@@ -69,13 +69,6 @@ export interface BoardSnapshot {
  * same domain priceBreakdown() enforces on a signed quote's leg prices.
  * Anything else is not a probability and must not reach the board or the
  * hero, where it would print as a nonsense percentage or payout. */
-function midNumber(mids: Record<string, string>, coin: string): number | null {
-  const raw = mids[coin];
-  if (raw === undefined) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 && n < 1 ? n : null;
-}
-
 /* Odds cell that nudges on a mid change while the semantic YES/NO text color
    carries direction. */
 function OddsCell({ side, mid }: { side: "YES" | "NO"; mid: number | null }) {
@@ -109,8 +102,8 @@ function OddsCell({ side, mid }: { side: "YES" | "NO"; mid: number | null }) {
 }
 
 function BoardRow({ market, mids }: { market: Market; mids: Record<string, string> }) {
-  const yes = midNumber(mids, market.coinYes);
-  const no = midNumber(mids, market.coinNo);
+  const yes = marketMid(mids, market, market.coinYes);
+  const no = marketMid(mids, market, market.coinNo);
   // The leading side tints the row so direction reads before the numbers.
   const lead =
     yes === null || no === null
@@ -260,8 +253,8 @@ export function LiveMarketRail({ board }: { board: BoardSnapshot }) {
   const items = markets.map((market) => ({
     vault: market.vault,
     title: market.title,
-    yes: midNumber(mids, market.coinYes),
-    no: midNumber(mids, market.coinNo),
+    yes: marketMid(mids, market, market.coinYes),
+    no: marketMid(mids, market, market.coinNo),
   }));
 
   const set = (hidden: boolean) => (
@@ -319,7 +312,7 @@ export function HeroSlip({ board }: { board: BoardSnapshot }) {
         side: "YES" as const,
         label: sideLabel(m, true),
         title: m.title,
-        prob: midNumber(mids, m.coinYes),
+        prob: marketMid(mids, m, m.coinYes),
       }))
     : [];
 

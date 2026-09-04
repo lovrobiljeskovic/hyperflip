@@ -1,23 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { compareMarketVolume, fetchMarketBoard, groupMarkets, onlySports, sideLabel, type Market } from "@/lib/writer";
+import { compareMarketVolume, fetchMarketBoard, groupMarkets, marketMid, onlySports, sideLabel, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { formatVolume, oddsLabel, pct1, until } from "@/lib/format";
 import { Ticket, type BuilderLeg } from "./ticket";
 import { AppHeader } from "../app-header";
-
-/** allMids returns a mid for every coin on the venue, perps included, so a
- * stale, crossed or colliding key can hand back a non-probability. Only
- * (0, 1) is a probability - anything else must degrade to "-" rather than
- * render as e.g. 6400000.0%. Same bound as midNumber in app/live-markets.tsx
- * and priceBreakdown in lib/format.ts. Do not widen it. */
-function midOf(mids: Record<string, string>, coin: string): number | null {
-  const raw = mids[coin];
-  if (raw === undefined) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 && n < 1 ? n : null;
-}
 
 /** Matches ParlayVault.MAX_LEGS (src/ParlayVault.sol:58) and the writer's own
  * bound (writer/src/server.ts:49). Display only - the cap is enforced on-chain
@@ -124,8 +112,8 @@ function BoardRow({
   const current = legs.find((l) => l.vault === market.vault);
   // aria-label overrides the button's text, so the price has to be spoken here
   // or a screen reader never hears it - the price IS the control.
-  const yes = midOf(mids, market.coinYes);
-  const no = midOf(mids, market.coinNo);
+  const yes = marketMid(mids, market, market.coinYes);
+  const no = marketMid(mids, market, market.coinNo);
   return (
     <div
       className={`border-t border-line px-4 py-3 sm:grid sm:grid-cols-[1fr_124px_124px_84px_76px] sm:items-center sm:gap-x-3 sm:px-5 ${
@@ -213,7 +201,7 @@ function GroupRow({
   const head = members[0];
   // Favourite first, unpriced last: the eye lands on the short-priced outcome.
   const priced = members
-    .map((m) => ({ m, mid: midOf(mids, m.coinYes) }))
+    .map((m) => ({ m, mid: marketMid(mids, m, m.coinYes) }))
     .sort((a, b) => (b.mid ?? -1) - (a.mid ?? -1));
   const volume = members.reduce((acc, m) => acc + (m.volume24h ?? 0), 0);
   return (

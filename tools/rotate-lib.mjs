@@ -271,7 +271,18 @@ const isSportsQuestion = (q) => typeof q.name === "string" && /^template:sports(
 // Testnet deployers file politics and macro under the sports templates
 // (`sport:politics`, "Yes beats No?"). Sports-only beta: drop those.
 const NON_SPORT = /politic|econom|election|geopolit|law\b|government/i;
-const isRealSport = (ev) => !!ev.sport && !NON_SPORT.test(ev.sport) && !NON_SPORT.test(ev.competition);
+// Testnet deployers file smoke tests, block-stacking, earthquakes and cooking
+// under the sports templates; with untraded books now wrapped, the 0.5 pin no
+// longer weeds them, so `sport` must name a real one.
+const SPORT = /baseball|basketball|soccer|football|\bf1\b|formula|hockey|tennis|golf|cricket|rugby|\bmma\b|boxing|\bufc\b|motorsport|racing|athletics|track|esport|dota|\bcs2\b|dodgeball/i;
+const JUNK = /smoke|\btest\b/i;
+const isRealSport = (ev) =>
+  !!ev.sport && SPORT.test(ev.sport) && !NON_SPORT.test(ev.sport) && !NON_SPORT.test(ev.competition) &&
+  !JUNK.test([ev.competition, ev.officialSource, ev.participantA, ev.participantB].join("|"));
+// Two deployers list the same match as "Arsenal FC" and "Arsenal"; the key must
+// collide so the board carries one vault per fixture and the writer's
+// same-`underlying` refusal catches a parlay of the twins.
+const teamSlug = (s) => slug(s).replace(/(^|-)(fc|afc|cf|sc)(?=-|$)/g, "").replace(/^-|-$/g, "");
 const isSportsWinner = (o) => typeof o.name === "string" && o.name.startsWith("template:sportsContestWinner");
 const isSportsScalar = (o) => typeof o.name === "string" && o.name.startsWith("template:sportsScalarMarket");
 
@@ -314,9 +325,10 @@ export function pickSports({
     const members = (q.namedOutcomes ?? []).map((id) => byId.get(id)).filter(Boolean);
     if (members.length < 2 || members.length !== (q.namedOutcomes ?? []).length) continue;
     if (members.some((o) => o.quoteToken !== "USDC" || mid(o.outcome) === undefined || knownCoins.has(coinOf(o.outcome)))) continue;
-    // A question where every leg sits at 0.5 has never traded: the implied
-    // probabilities sum past 1 and any leg is a free pick for the taker.
-    if (!members.some((o) => Number(mid(o.outcome)) !== 0.5)) continue;
+    // Every leg at 0.5 = never traded. Wrapped anyway so the board lists it;
+    // the writer refuses to quote a 0.5-pinned empty book (unpriced-leg) until
+    // Core prints a price, so an untraded question costs deploy gas, not edge.
+    const priced = members.some((o) => Number(mid(o.outcome)) !== 0.5) ? 1 : 0;
     // A match is "A vs B"; a season/tournament question lists its favourites
     // as participantA/B, which would mislabel a 9-way winner market.
     const isMatch = /^(match|game)$/i.test(ev.contestType ?? "") || members.length <= 3;
@@ -325,7 +337,7 @@ export function pickSports({
       : `${ev.competition}${ev.season ? ` ${ev.season}` : ""} winner`;
     const underlying = `q${q.question}`;
     events.push({
-      key: underlying, competition: ev.competition, startMs: ev.startMs, priced: 1,
+      key: underlying, competition: ev.competition, startMs: ev.startMs, priced,
       legs: members.map((o) => {
         const label = memberLabel(o);
         return {
@@ -345,17 +357,14 @@ export function pickSports({
     if (knownCoins.has(coinOf(o.outcome)) || mid(o.outcome) === undefined) continue;
     const ev = parseSportsEvent(o.description);
     if (!ev || !isRealSport(ev) || !inWindow(ev)) continue;
-    // ponytail: standalone books pinned at 0.5 are dropped outright (no
-    // sibling leg to prove the event has traded); revisit if the sports board
-    // runs empty.
-    if (Number(mid(o.outcome)) === 0.5) continue;
+    const priced = Number(mid(o.outcome)) !== 0.5 ? 1 : 0;
     let leg;
     if (winner) {
       if (!ev.participantA || !ev.participantB) continue;
       // Sides are either the two participants (`template:{shortNameA}`) or a
       // plain Yes/No on "participantA wins".
       const named = o.sideSpecs[0]?.name === "template:{shortNameA}";
-      const key = `${slug(ev.participantA)}-${slug(ev.participantB)}-${yyyymmdd(ev.startMs)}`;
+      const key = `${teamSlug(ev.participantA)}-${teamSlug(ev.participantB)}-${yyyymmdd(ev.startMs)}`;
       leg = {
         title: named ? `${ev.participantA} vs ${ev.participantB}` : `${ev.participantA} beats ${ev.participantB}?`,
         sideYes: named ? ev.shortNameA || ev.participantA : "Yes",
@@ -370,18 +379,19 @@ export function pickSports({
       leg = { title: `${ev.measure} over ${ev.high}?`, sideYes: "Over", sideNo: "Under", underlying: key, groupTitle: ev.event };
     }
     events.push({
-      key: leg.underlying, competition: ev.competition, startMs: ev.startMs, priced: 1,
+      key: leg.underlying, competition: ev.competition, startMs: ev.startMs, priced,
       legs: [{
         outcome: o.outcome, coinYes: coinOf(o.outcome), coinNo: `#${o.outcome * 10 + 1}`,
         question: null, group: null, ...leg, cluster: ev.competition, sport: ev.sport,
-        startMs: ev.startMs, expiryMs: ev.expiryMs, priced: 1,
+        startMs: ev.startMs, expiryMs: ev.expiryMs, priced,
       }],
     });
   }
 
-  // Soonest kickoff first; a competition (= writer cluster, = PER_CLUSTER_CAP
-  // pool) cannot fill the board; a question that does not fit whole is skipped.
-  events.sort((a, b) => a.startMs - b.startMs);
+  // Traded books first, then soonest kickoff, so untraded ones only take cap
+  // room left over; a competition (= writer cluster, = PER_CLUSTER_CAP pool)
+  // cannot fill the board; a question that does not fit whole is skipped.
+  events.sort((a, b) => b.priced - a.priced || a.startMs - b.startMs);
   const picked = [];
   const perComp = new Map();
   const seen = new Set();

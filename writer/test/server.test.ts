@@ -372,6 +372,18 @@ test("book fetch failure: 503, nothing reserved", async () => {
   assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
 });
 
+test("empty book at the 0.5 spotPx placeholder: 503 unpriced-leg, nothing reserved", async () => {
+  const d = deps({ fetchLegPrice: async () => ({ priceWad: WAD / 2n, source: "spotPx", observedAtMs: 1_000_000, depthWad: null, vwapWad: null, freshnessMs: null }) });
+  const r = await handleQuote(d, goodBody);
+  assert.equal(r.status, 503);
+  assert.equal((r.json as { error: string }).error, "unpriced-leg");
+  assert.equal(d.metrics.rejected["unpriced-leg"], 1);
+  assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
+  // A traded book resting exactly at 0.5 is a real price.
+  const traded = deps({ fetchLegPrice: async () => ({ priceWad: WAD / 2n, source: "l2Book", observedAtMs: 1_000_000, depthWad: WAD, vwapWad: WAD / 2n, freshnessMs: null }) });
+  assert.equal((await handleQuote(traded, goodBody)).status, 200);
+});
+
 test("at-capacity: 409, metrics counted", async () => {
   const d = deps({ readAllowance: async () => 1_000_000n }); // risk ~7.4M > 1_000_000
   const r = await handleQuote(d, goodBody);
