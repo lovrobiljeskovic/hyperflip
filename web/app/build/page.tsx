@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { compareMarketVolume, fetchMarketBoard, groupMarkets, sideLabel, type Market } from "@/lib/writer";
+import { compareMarketVolume, fetchMarketBoard, groupMarkets, onlySports, sideLabel, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { formatVolume, oddsLabel, pct1, until } from "@/lib/format";
 import { Ticket, type BuilderLeg } from "./ticket";
@@ -291,7 +291,7 @@ export default function BuildPage() {
     setError(false);
     setMarkets(null);
     try {
-      const board = await fetchMarketBoard();
+      const board = onlySports(await fetchMarketBoard());
       setMarkets(board);
       // Landing-page rail hands off a market as ?leg=<vault>; pick its YES side.
       const picked = new URLSearchParams(window.location.search).get("leg")?.toLowerCase();
