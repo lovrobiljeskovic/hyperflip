@@ -26,7 +26,7 @@ import {
   USDC_DECIMALS,
   type PriceBreakdown,
 } from "@/lib/format";
-import { HL_DRIP, hyperEvmTestnet } from "@/lib/chain";
+import { HL_DRIP, hyperEvmTestnet, tradeUrl } from "@/lib/chain";
 import { PARLAY_VAULT, parlayVaultAbi } from "@/lib/contracts";
 import { useConnectAction, useUsdc, useWalletState } from "@/lib/wallet";
 import { Overround } from "../overround-motif";
@@ -617,9 +617,15 @@ export function Ticket({
               >
                 {legLabel(leg)}
               </span>
-              <span title={leg.title} className="flex-1 truncate text-fg">
+              <a
+                href={tradeUrl(leg.coin)}
+                target="_blank"
+                rel="noreferrer"
+                title={leg.title}
+                className="flex-1 truncate text-fg underline decoration-line underline-offset-4 transition-colors hover:decoration-dim"
+              >
                 {leg.title}
-              </span>
+              </a>
               <span className="mono text-dim">{midPct(mids, leg.coin)}</span>
               {!display && (
                 <button

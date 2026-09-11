@@ -8,7 +8,7 @@ import { scanParlayIds, type ParlayRef } from "@/lib/scan";
 import { pool } from "@/lib/pool";
 import { PARLAY_VAULT, STATUS, outcomeVaultAbi, parlayVaultAbi } from "@/lib/contracts";
 import { formatUsdc, multiplier, pct1, until } from "@/lib/format";
-import { HL_APP, hyperEvmTestnet } from "@/lib/chain";
+import { hyperEvmTestnet, tradeUrl } from "@/lib/chain";
 import { fetchMarkets, type Market, sideLabel } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { useConnectAction, useWalletState } from "@/lib/wallet";
@@ -256,7 +256,7 @@ function LegTable({
               href={
                 coin === undefined
                   ? `${EXPLORER}/address/${leg.vault}`
-                  : `${HL_APP}/trade/${encodeURIComponent(coin)}`
+                  : tradeUrl(coin)
               }
               target="_blank"
               rel="noreferrer"

@@ -349,6 +349,7 @@ export function pickSports({
           question: q.question, group: underlying, groupTitle, title: label,
           sideYes: label, sideNo: `Not ${label}`, underlying, cluster: ev.competition,
           sport: ev.sport, startMs: ev.startMs, expiryMs: ev.expiryMs, priced: Number(mid(o.outcome)) !== 0.5 ? 1 : 0,
+          ...(o.venue ? { deployer: o.venue } : {}),
         };
       }),
     });
@@ -388,6 +389,7 @@ export function pickSports({
         outcome: o.outcome, coinYes: coinOf(o.outcome), coinNo: `#${o.outcome * 10 + 1}`,
         question: null, group: null, ...leg, cluster: ev.competition, sport: ev.sport,
         startMs: ev.startMs, expiryMs: ev.expiryMs, priced,
+        ...(o.venue ? { deployer: o.venue } : {}),
       }],
     });
   }
@@ -433,6 +435,9 @@ export function sportsRegistryEntry(pick, vault) {
     entry.group = pick.group;
   }
   if (pick.sport) entry.sport = pick.sport;
+  // outcomeMeta's per-outcome `venue` is the HIP-4 deployer's name; the UI
+  // shows it so a taker can tell whose market a leg is.
+  if (pick.deployer) entry.deployer = pick.deployer;
   return entry;
 }
 

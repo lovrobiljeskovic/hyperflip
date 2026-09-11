@@ -79,7 +79,18 @@ const nowMs = Date.now();
 const knownCoins = new Set(registry.markets.map((m) => m.coinYes));
 
 const expired = registry.markets.filter((m) => m.expiryMs <= nowMs);
-const kept = registry.markets.filter((m) => m.expiryMs > nowMs);
+// Entries wrapped before `deployer` existed learn it here; outcomeMeta still
+// lists every live outcome, and coinYes is the outcome id times ten.
+const venueOf = new Map(outcomes.map((o) => [`#${o.outcome * 10}`, o.venue]));
+let backfilled = 0;
+const kept = registry.markets
+  .filter((m) => m.expiryMs > nowMs)
+  .map((m) => {
+    const deployer = venueOf.get(m.coinYes);
+    if (m.deployer || !deployer) return m;
+    backfilled++;
+    return { ...m, deployer };
+  });
 let picks;
 if (sports) {
   picks = pickSports({ outcomes, questions, mids, knownCoins, nowMs });
@@ -111,9 +122,9 @@ if (picks.length === 0) {
   // Prune anyway. Core settles then prunes an expired outcome within ~10 minutes,
   // so an expired vault left in the registry is one the keeper can never relay —
   // it only alerts "manual recovery needed" on every start.
-  if (expired.length && !dryRun) {
+  if ((expired.length || backfilled) && !dryRun) {
     writeRegistry(kept);
-    console.log(`pruned ${expired.length} stranded vault(s) from the registry`);
+    console.log(`pruned ${expired.length} stranded vault(s), backfilled deployer on ${backfilled}`);
   }
   process.exit(0);
 }

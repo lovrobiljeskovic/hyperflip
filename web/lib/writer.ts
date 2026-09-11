@@ -23,6 +23,9 @@ export interface Market {
   sport?: string;
   /** Competition (MLB, UEFA Champions League); the writer's exposure cluster. */
   cluster?: string;
+  /** HIP-4 deployer's venue name (outcomeMeta `venue`). Absent on entries
+   * wrapped before rotation recorded it. */
+  deployer?: string;
   volume24h?: number;
 }
 

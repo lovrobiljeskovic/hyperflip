@@ -16,3 +16,5 @@ export const hyperEvmTestnet = defineChain({
 /** Hyperliquid testnet frontend — Core order books and the testnet faucet. */
 export const HL_APP = "https://app.hyperliquid-testnet.xyz";
 export const HL_DRIP = `${HL_APP}/drip`;
+/** Live Core order book for an outcome coin (`#114180`). */
+export const tradeUrl = (coin: string) => `${HL_APP}/trade/${encodeURIComponent(coin)}`;

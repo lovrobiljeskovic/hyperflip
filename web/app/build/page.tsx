@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { compareMarketVolume, fetchMarketBoard, groupMarkets, marketMid, onlySports, sideLabel, type Market } from "@/lib/writer";
+import { tradeUrl } from "@/lib/chain";
 import { useMids } from "@/lib/mids";
 import { formatVolume, oddsLabel, pct1, until } from "@/lib/format";
 import { Ticket, type BuilderLeg } from "./ticket";
@@ -125,7 +126,9 @@ function BoardRow({
           <AssetIcon underlying={market.underlying} category={market.category} badge={market.sport} />
         </span>
         <div className="min-w-0">
-          <p className="truncate text-[13px]">{market.title}</p>
+          <p className="truncate text-[13px]">
+            <MarketLink coin={market.coinYes}>{market.title}</MarketLink>
+          </p>
           <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">
             {categoryLine(market)}
             <span className="sm:hidden">
@@ -167,10 +170,26 @@ function BoardRow({
   );
 }
 
-/** "Baseball · MLB" for sports, the bare category otherwise. */
+/** "Baseball · MLB · by txya" for sports, the bare category otherwise. The
+ * deployer tail is the only hint on the board of whose market a leg is. */
 function categoryLine(market: Market): string {
-  if (market.category !== "sports") return market.category;
-  return [market.sport ?? market.category, market.cluster].filter(Boolean).join(" · ");
+  const by = market.deployer ? `by ${market.deployer}` : undefined;
+  if (market.category !== "sports") return [market.category, by].filter(Boolean).join(" · ");
+  return [market.sport ?? market.category, market.cluster, by].filter(Boolean).join(" · ");
+}
+
+/** Title as a deep link to the leg's live Core book, new tab. */
+function MarketLink({ coin, children }: { coin: string; children: ReactNode }) {
+  return (
+    <a
+      href={tradeUrl(coin)}
+      target="_blank"
+      rel="noreferrer"
+      className="underline decoration-line underline-offset-4 transition-colors hover:decoration-dim"
+    >
+      {children}
+    </a>
+  );
 }
 
 /** Quoting locks at the resolution deadline; in-play markets stay on the board. */
@@ -211,7 +230,9 @@ function GroupRow({
             <AssetIcon underlying={head.underlying} category={head.category} badge={head.sport} />
           </span>
           <div className="min-w-0">
-            <p className="truncate text-[13px]">{title}</p>
+            <p className="truncate text-[13px]">
+              <MarketLink coin={head.coinYes}>{title}</MarketLink>
+            </p>
             <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">
               {categoryLine(head)}
               {" · "}

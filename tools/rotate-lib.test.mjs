@@ -344,13 +344,14 @@ test("pickSports skips a question already wrapped and one that does not fit the 
 });
 
 test("pickSports titles a season or tournament question by competition, not by its two seeded participants", () => {
-  const outcomes = [11418, 11419, 11420, 11421].map((id, i) => ({ outcome: id, name: "template:sportsContestParticipant", description: `participant:Club ${i}`, quoteToken: "USDC", sideSpecs: YN_SIDES }));
+  const outcomes = [11418, 11419, 11420, 11421].map((id, i) => ({ outcome: id, name: "template:sportsContestParticipant", description: `participant:Club ${i}`, quoteToken: "USDC", sideSpecs: YN_SIDES, venue: "abaa" }));
   const questions = [{ question: 938, name: "template:sportsContestResult", description: "competition:UEFA Champions League|contestType:tournament|officialSource:uefa.com|participantA:Paris Saint-Germain|participantB:Bayern Munich|resolutionDeadline:20270606-2300|scheduledStart:20260908-1900|season:2026/27|sport:Association Football|stage:Tournament", fallbackOutcome: 11417, namedOutcomes: [11418, 11419, 11420, 11421] }];
   const mids = { "#114180": "0.72", "#114190": "0.5", "#114200": "0.475", "#114210": "0.445" };
   const picked = pickSports({ outcomes, questions, mids, knownCoins: new Set(), nowMs: NOW });
   assert.equal(picked.length, 4);
   assert.equal(picked[0].groupTitle, "UEFA Champions League 2026/27 winner");
   assert.equal(picked[0].cluster, "UEFA Champions League");
+  assert.equal(sportsRegistryEntry(picked[0], "0x1").deployer, "abaa");
 });
 
 test("sportsRegistryEntry satisfies the writer's registry shape with the sports fields", () => {
