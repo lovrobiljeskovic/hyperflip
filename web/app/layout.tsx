@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Bricolage_Grotesque, Instrument_Sans, Martian_Mono } from "next/font/google";
 import "./globals.css";
+import { siteUrl } from "@/lib/site";
 import { Providers } from "./providers";
 
 /* Three faces, both grounds. Bricolage carries display and the wordmark through
@@ -23,21 +24,20 @@ const martian = Martian_Mono({
   subsets: ["latin"],
 });
 
-const deploymentHost = process.env.VERCEL_URL;
-const siteUrl =
-  process.env.VERCEL_ENV === "production"
-    ? "https://hyperflip.xyz"
-    : deploymentHost
-      ? `https://${deploymentHost}`
-      : "http://localhost:3000";
-
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
-  title: "Hyperflip | Stack outcomes on HyperCore",
+  title: {
+    default: "Hyperflip | Stack outcomes on HyperCore",
+    template: "%s | Hyperflip",
+  },
   description:
-    "Combine live HyperCore outcome markets into one on-chain slip with a signed price and locked payout.",
+    "Hyperflip combines live HyperCore outcome markets into one on-chain slip with a signed price and locked payout.",
   applicationName: "Hyperflip",
+  keywords: ["Hyperflip", "HyperCore", "Hyperliquid", "HIP-4", "outcome markets", "parlay", "on-chain slip"],
+  alternates: { canonical: "/" },
   openGraph: {
+    siteName: "Hyperflip",
+    url: "/",
     title: "Hyperflip | Stack outcomes on HyperCore",
     description: "Two to ten live outcomes. One on-chain slip. One locked payout.",
     type: "website",
@@ -49,6 +49,28 @@ export const metadata: Metadata = {
   },
 };
 
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@graph": [
+    { "@type": "Organization", "@id": `${siteUrl}/#org`, name: "Hyperflip", url: siteUrl, logo: `${siteUrl}/icon.svg` },
+    {
+      "@type": "WebSite",
+      "@id": `${siteUrl}/#site`,
+      name: "Hyperflip",
+      url: siteUrl,
+      publisher: { "@id": `${siteUrl}/#org` },
+    },
+    {
+      "@type": "WebApplication",
+      name: "Hyperflip",
+      url: siteUrl,
+      applicationCategory: "FinanceApplication",
+      operatingSystem: "Web",
+      description: "Combine live HyperCore outcome markets into one on-chain slip with a signed price and locked payout.",
+    },
+  ],
+};
+
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
@@ -56,6 +78,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${bricolage.variable} ${instrument.variable} ${martian.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-ink text-fg font-sans">
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
         <Providers>{children}</Providers>
       </body>
     </html>
