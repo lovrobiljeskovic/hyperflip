@@ -155,8 +155,11 @@ function Slab({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** The board for the #board section: every listed market with both sides
- * priced live. */
+/** How many rows the landing board shows; the full list lives in the builder. */
+const BOARD_ROWS = 5;
+
+/** The board for the #board section: the busiest markets with both sides
+ * priced live. Unpriced markets never make the cut - a dash row sells nothing. */
 export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
   const { state, retry } = useMarkets(board.markets);
   const mids = useMids(board.mids);
@@ -196,11 +199,25 @@ export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
     );
   }
 
-  if (state.markets.length === 0) {
+  const pricedAll = [...state.markets]
+    .filter((m) => marketMid(mids, m, m.coinYes) !== null && marketMid(mids, m, m.coinNo) !== null)
+    .sort((a, b) => compareMarketVolume(a, b, false));
+  // One row per question first (five different games beats five sides of one
+  // futures market), then fill from the rest if the registry is narrow.
+  const seen = new Set<string>();
+  const distinct = pricedAll.filter((m) => {
+    const g = m.groupTitle ?? m.vault;
+    if (seen.has(g)) return false;
+    seen.add(g);
+    return true;
+  });
+  const priced = [...distinct, ...pricedAll.filter((m) => !distinct.includes(m))].slice(0, BOARD_ROWS);
+
+  if (priced.length === 0) {
     return (
       <Slab>
         <p className="mono px-5 py-10 text-center text-xs uppercase tracking-wide text-dim">
-          No markets listed yet
+          {state.markets.length === 0 ? "No markets listed yet" : "No priced markets yet"}
         </p>
       </Slab>
     );
@@ -216,10 +233,18 @@ export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
         <span className="text-right">Expires</span>
       </div>
       <div className="flex flex-col divide-y divide-line">
-        {[...state.markets].sort((a, b) => compareMarketVolume(a, b, false)).map((m) => (
+        {priced.map((m) => (
           <BoardRow key={m.vault} market={m} mids={mids} />
         ))}
       </div>
+      {state.markets.length > priced.length && (
+        <Link
+          href="/build"
+          className="mono block border-t border-line px-5 py-3 text-center text-[10px] uppercase tracking-[0.14em] text-dim transition-colors hover:bg-raised hover:text-fg"
+        >
+          All {state.markets.length} markets in the builder
+        </Link>
+      )}
     </Slab>
   );
 }

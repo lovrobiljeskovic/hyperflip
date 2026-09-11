@@ -447,7 +447,12 @@ export default function BuildPage() {
           </div>
         </section>
 
-        <aside id="slip" className="scroll-mt-20 lg:sticky lg:top-24 lg:self-start lg:pl-8">
+        {/* Sticky slip scrolls inside its own viewport-high box, so a long ticket
+            (many legs, quote breakdown, errors) never hides below the fold. */}
+        <aside
+          id="slip"
+          className="scroll-mt-20 lg:sticky lg:top-24 lg:-mr-3 lg:max-h-[calc(100dvh-6.5rem)] lg:self-start lg:overflow-y-auto lg:pb-24 lg:pl-8 lg:pr-3"
+        >
           <Ticket legs={legs} onRemove={removeLeg} />
         </aside>
       </main>

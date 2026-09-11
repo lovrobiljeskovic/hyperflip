@@ -95,7 +95,7 @@ export default async function Home() {
         <section id="board" className="section-reveal mx-auto w-full max-w-[1280px] scroll-mt-20 px-4 py-20 sm:px-6 lg:py-28">
           <h2 className="display max-w-[12ch] text-[clamp(2.5rem,5vw,4.6rem)]">Markets, moving now.</h2>
           <p className="mt-5 max-w-[54ch] text-base leading-relaxed text-dim">
-            Live decimal odds and implied probability for every listed sports market. The board carries no house edge.
+            Live decimal odds and implied probability for the busiest priced sports markets. The board carries no house edge.
           </p>
           <LiveMarketBoard board={board} />
         </section>

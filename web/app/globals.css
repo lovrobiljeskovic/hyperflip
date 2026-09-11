@@ -91,7 +91,9 @@ details[open] > summary::after { content: "-"; }
 
 @keyframes section-reveal { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: translateY(0); } }
 @supports (animation-timeline: view()) {
-  .section-reveal { animation: section-reveal linear both; animation-timeline: view(); animation-range: entry 5% cover 28%; }
+  .section-reveal { animation: section-reveal linear both; animation-timeline: view(); animation-range: cover 0 cover 40vh; }
+  /* Fixed-length range: a percentage of `cover` scales with section height, so a
+     tall section held its heading at partial opacity until far down the page. */
 }
 
 @keyframes market-rail { to { transform: translateX(-50%); } }
