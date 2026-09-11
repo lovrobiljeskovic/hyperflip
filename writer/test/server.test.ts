@@ -738,12 +738,13 @@ test("independent mode: a winner leg plus an over/under on the same game is refu
   assert.equal(validateQuoteRequest(body({ legs: [legOn(MATCH_A, true), legOn(MATCH_B_OTHER, true)] }), c, 0).ok, true);
 });
 
-test("independent mode: quoting locks out at kickoff (startMs), not at the resolution deadline", () => {
+test("independent mode: quoting stays open in-play, locks at the resolution deadline (expiryMs)", () => {
   const c = sportsCfg();
   const ticket = body({ legs: [legOn(MATCH_A, true), legOn(GAME_STANDALONE, true)] });
-  // startMs 5_000_000, lockout 600_000 -> refuse from 4_400_000 even though expiryMs is 9_000_000
-  assert.equal(validateQuoteRequest(ticket, c, 4_399_999).ok, true);
-  assert.deepEqual(validateQuoteRequest(ticket, c, 4_400_000), { ok: false, status: 400, reason: "expiry-lockout" });
+  // startMs 5_000_000 is past; expiryMs 9_000_000, lockout 600_000 -> refuse from 8_400_000
+  assert.equal(validateQuoteRequest(ticket, c, 6_000_000).ok, true);
+  assert.equal(validateQuoteRequest(ticket, c, 8_399_999).ok, true);
+  assert.deepEqual(validateQuoteRequest(ticket, c, 8_400_000), { ok: false, status: 400, reason: "expiry-lockout" });
 });
 
 test("correlated mode still refuses cross-underlying tickets without model evidence (independence is opt-in)", () => {

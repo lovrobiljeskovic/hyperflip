@@ -274,8 +274,8 @@ function sportsBoard() {
     { outcome: 16541, name: "template:sportsScalarMarket4", description: "event:St. Louis Cardinals vs Los Angeles Dodgers (MLB)|high:0.5|low:0.5|measure:Shohei Ohtani home runs|officialSource:mlb.com|resolutionDeadline:20260904-0210|scheduledStart:20260903-0210|sport:Baseball", quoteToken: "USDC", sideSpecs: OU_SIDES },
     // over/under without dates -> not quotable
     { outcome: 12566, name: "template:sportsScalarMarket", description: "high:1.5|low:1.5|measure:Goals", quoteToken: "USDC", sideSpecs: OU_SIDES },
-    // already past kickoff
-    { outcome: 15317, name: "template:sportsContestWinner", description: "competition:NFL|participantA:Washington Commanders|participantB:Baltimore Ravens|resolutionDeadline:20260830-1200|scheduledStart:20260810-1200|sport:football", quoteToken: "USDC", sideSpecs: NAMED_SIDES },
+    // resolution deadline already passed
+    { outcome: 15317, name: "template:sportsContestWinner", description: "competition:NFL|participantA:Washington Commanders|participantB:Baltimore Ravens|resolutionDeadline:20260817-1200|scheduledStart:20260810-1200|sport:football", quoteToken: "USDC", sideSpecs: NAMED_SIDES },
     // beyond the window (maxMsLeft 50d in this fixture)
     { outcome: 15386, name: "template:sportsContestWinner", description: "competition:Popularity Contest|participantA:OXYZ|participantB:TXYZ|resolutionDeadline:20261212-1212|scheduledStart:20261212-1212|sport:Popularity", quoteToken: "USDC", sideSpecs: NAMED_SIDES },
     // same fixture as 12289 from a second deployer with club suffixes -> deduped by key
@@ -300,7 +300,7 @@ function sportsBoard() {
   return { outcomes, questions, mids, maxMsLeft: 50 * 86400_000 };
 }
 
-test("pickSports wraps templated questions whole, standalone winners and over/unders; untraded last, skips dated-out, past-kickoff", () => {
+test("pickSports wraps templated questions whole, standalone winners and over/unders; untraded last, skips dated-out, past-deadline", () => {
   const { outcomes, questions, mids, maxMsLeft } = sportsBoard();
   const picked = pickSports({ outcomes, questions, mids, knownCoins: new Set(), nowMs: NOW, maxMsLeft });
   // traded first by kickoff: Twins/Orioles Aug 20, q927 Sep 1, Ohtani Sep 3 (Hypurr race is junk);
@@ -327,6 +327,11 @@ test("pickSports wraps templated questions whole, standalone winners and over/un
   assert.equal(ohtani.title, "Shohei Ohtani home runs over 0.5?");
   assert.equal(ohtani.underlying, "st-louis-cardinals-vs-los-angeles-dodgers-mlb-20260903");
   assert.ok(!picked.some((p) => p.outcome === 11273), "Hypurr Race is junk");
+});
+
+test("pickSports wraps an in-play fixture: kickoff passed, resolution deadline still ahead", () => {
+  const outcomes = [{ outcome: 15317, name: "template:sportsContestWinner", description: "competition:NFL|participantA:Washington Commanders|participantB:Baltimore Ravens|resolutionDeadline:20260830-1200|scheduledStart:20260810-1200|sport:football", quoteToken: "USDC", sideSpecs: NAMED_SIDES }];
+  assert.deepEqual(pickSports({ outcomes, mids: { "#153170": "0.7" }, knownCoins: new Set(), nowMs: NOW }).map((p) => p.outcome), [15317]);
 });
 
 test("pickSports skips a question already wrapped and one that does not fit the cap whole", () => {

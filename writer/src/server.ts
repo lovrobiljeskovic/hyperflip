@@ -126,9 +126,9 @@ export function validateQuoteRequest(
     const key = l.vault.toLowerCase();
     const market = cfg.markets.get(key);
     if (!market) return { ok: false, status: 400, reason: "unknown-vault" };
-    // Lock at kickoff when the registry knows it: the result of a game is
-    // public long before its resolution deadline.
-    const lockAtMs = market.startMs ?? market.expiryMs;
+    // Lock at the resolution deadline, not kickoff: in-play quoting is wanted,
+    // the Core mid moves with the game and pricing follows it.
+    const lockAtMs = market.expiryMs;
     if (lockAtMs !== undefined && now >= lockAtMs - cfg.lockoutMs) {
       return { ok: false, status: 400, reason: "expiry-lockout" };
     }

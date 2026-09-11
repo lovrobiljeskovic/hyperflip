@@ -173,10 +173,9 @@ function categoryLine(market: Market): string {
   return [market.sport ?? market.category, market.cluster].filter(Boolean).join(" · ");
 }
 
-/** Quoting locks at kickoff when the registry knows it, else at expiry. */
+/** Quoting locks at the resolution deadline; in-play markets stay on the board. */
 function closesIn(market: Market): string {
-  const at = market.startMs ?? market.expiryMs;
-  return at ? until(at) : "-";
+  return market.expiryMs ? until(market.expiryMs) : "-";
 }
 
 /** One HIP-4 question (A / Draw / B, tournament winner): one card, one button
@@ -300,8 +299,8 @@ export default function BuildPage() {
       .filter((m) => tab === "all" || m.category === tab)
       // Expired-but-not-yet-rotated markets are dead weight on the board -
       // filter them out client-side rather than let a stale price look pickable.
-      // Same for a game past kickoff: the writer refuses it (expiry-lockout).
-      .filter((m) => (m.startMs ?? m.expiryMs ?? Infinity) >= Date.now());
+      // Games past kickoff stay: the writer quotes in-play until expiry.
+      .filter((m) => (m.expiryMs ?? Infinity) >= Date.now());
     if (sort === "volume") return filtered.sort((a, b) => compareMarketVolume(a, b, volumeAsc));
     // Markets without an expiry sink to the bottom in either direction.
     return filtered.sort((a, b) => {

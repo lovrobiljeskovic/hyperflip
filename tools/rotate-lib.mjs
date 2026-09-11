@@ -317,7 +317,9 @@ export function pickSports({
   const byId = new Map(outcomes.map((o) => [o.outcome, o]));
   const coinOf = (id) => `#${id * 10}`;
   const mid = (id) => mids[coinOf(id)];
-  const inWindow = (ev) => ev.startMs - nowMs >= minMsLeft && ev.expiryMs - nowMs <= maxMsLeft;
+  // Gate on the resolution deadline, not kickoff: an in-play fixture is still
+  // quotable (the writer locks at expiryMs too).
+  const inWindow = (ev) => ev.expiryMs - nowMs >= minMsLeft && ev.expiryMs - nowMs <= maxMsLeft;
   const events = []; // { key, competition, startMs, priced, legs: [candidate] }
 
   for (const q of questions) {
