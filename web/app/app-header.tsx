@@ -18,9 +18,7 @@ export function AppHeader() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const linkClass = (active: boolean) =>
-    active
-      ? "border-b border-accent pb-[3px] text-fg"
-      : "text-dim transition-colors hover:text-fg";
+    active ? "border-b border-accent pb-[3px] text-fg" : "text-dim transition-colors hover:text-fg";
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-ink/90 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-[1280px] items-center justify-between gap-4 px-4 sm:gap-6 sm:px-6">
@@ -29,12 +27,7 @@ export function AppHeader() {
           {NAV.map((l) => {
             const active = pathname === l.href || (l.href === "/#board" && pathname === "/");
             return (
-              <Link
-                key={l.href}
-                href={l.href}
-                aria-current={active ? "page" : undefined}
-                className={linkClass(active)}
-              >
+              <Link key={l.href} href={l.href} aria-current={active ? "page" : undefined} className={linkClass(active)}>
                 {l.label}
               </Link>
             );

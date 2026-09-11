@@ -6,7 +6,7 @@ import { useAccount, useBalance, useSwitchChain } from "wagmi";
 import { hyperEvmTestnet } from "@/lib/chain";
 import { formatUsdc, shortAddress } from "@/lib/format";
 import { useConnectAction, useDisconnectAction, useUsdc, useWalletState } from "@/lib/wallet";
-import { HyperflipMark } from "./brand";
+import { HyperflipLogo } from "./brand";
 
 const EXPLORER = hyperEvmTestnet.blockExplorers.default.url;
 
@@ -103,7 +103,7 @@ export function WalletButton() {
             className="absolute right-0 z-30 mt-2 w-72 rounded-card border border-line bg-panel p-4 text-xs shadow-[0_24px_60px_rgba(4,10,12,0.6)]"
           >
             <div className="mb-3 flex items-center gap-2 border-b border-line pb-3">
-              <HyperflipMark className="size-5" />
+              <HyperflipLogo className="size-5" />
               <span className="display text-sm">hyperflip wallet</span>
             </div>
             <p className="break-all mono text-[11px] leading-relaxed text-fg">{address}</p>
