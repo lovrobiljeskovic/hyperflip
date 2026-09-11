@@ -199,7 +199,8 @@ export async function handleQuote(
   let allowance: bigint;
   try {
     settled = await deps.readSettled(vaults);
-  } catch {
+  } catch (err) {
+    console.error(JSON.stringify({ at: new Date().toISOString(), event: "rpc-down", step: "readSettled", error: String((err as Error).message).slice(0, 300) }));
     reject(metrics, "rpc-down");
     return { status: 503, json: { error: "rpc-down" } };
   }
@@ -224,7 +225,8 @@ export async function handleQuote(
   }
   try {
     allowance = await deps.readAllowance();
-  } catch {
+  } catch (err) {
+    console.error(JSON.stringify({ at: new Date().toISOString(), event: "rpc-down", step: "readAllowance", error: String((err as Error).message).slice(0, 300) }));
     reject(metrics, "rpc-down");
     return { status: 503, json: { error: "rpc-down" } };
   }

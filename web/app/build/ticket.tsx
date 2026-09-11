@@ -96,6 +96,7 @@ function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: BuilderLeg
   // not an outage - "unreachable" sends people to check their connection.
   if (res.error === "stale-book") return "No live price for one of these markets right now - try again shortly.";
   if (res.error === "warming-up") return "Writer just restarted and is warming up - retry in a few seconds.";
+  if (res.error === "rpc-down") return "Chain RPC is rate-limiting the writer - retry in a moment.";
   if (res.status === 0 || res.status === 503) return "Writer unreachable - retrying.";
   if (res.status === 429) return "Too many quotes too fast - pausing a moment.";
   if (res.status === 403) return "Invite code rejected - enter a valid one below.";

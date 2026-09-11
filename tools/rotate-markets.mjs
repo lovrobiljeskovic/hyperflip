@@ -23,7 +23,7 @@ const INFO_URL = "https://api.hyperliquid-testnet.xyz/info";
 // sports vaults on 2026-09-03 within one big block each. Chainlink Labs
 // (free, no key) is great for reads but 429s forge's simulation burst; dRPC
 // drops upstreams mid-run ("failed to get account ... no available upstreams").
-const DEPLOY_RPCS = ["https://rpc.hyperliquid-testnet.xyz/evm", "https://rpcs.chain.link/hyperevm/testnet", "https://hyperliquid-testnet.drpc.org"];
+const PUBLIC_DEPLOY_RPCS = ["https://rpc.hyperliquid-testnet.xyz/evm", "https://rpcs.chain.link/hyperevm/testnet", "https://hyperliquid-testnet.drpc.org"];
 const REGISTRY = path.join(ROOT, "registry/markets.json");
 const SOURCES = path.join(ROOT, "registry/correlation-sources.json");
 const ENV_FILE = path.join(ROOT, ".env");
@@ -54,6 +54,10 @@ for (const key of ["PRIVATE_KEY", "TESTNET_RPC", "KEEPER_ADDRESS"]) {
     process.exit(1);
   }
 }
+// A keyed endpoint (DEPLOY_RPCS in .env, comma list) goes first: the public ones
+// share one per-IP quota with the keeper and writer on the same box, and the
+// hourly deploy burst was tipping all of them into 429 at once (2026-09-11).
+const DEPLOY_RPCS = [...new Set([...(process.env.DEPLOY_RPCS ?? "").split(",").map((u) => u.trim()).filter(Boolean), ...PUBLIC_DEPLOY_RPCS])];
 console.log(`keeper: ${process.env.KEEPER_ADDRESS} (must be KEEPER_PRIVATE_KEY's address)`);
 
 async function info(type, extra = {}) {
