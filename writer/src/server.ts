@@ -373,7 +373,9 @@ export async function handleQuote(
   };
   try {
     await deps.recordQuote(decision);
-  } catch {
+  } catch (err) {
+    // Swallowed, this 503s every quote (journal-failed) with nothing in the log to say why.
+    console.error(new Date().toISOString(), "quote journal append failed", (err as Error).message);
     exposure.release(quoteId);
     reject(metrics, "journal-failed");
     return { status: 503, json: { error: "journal-failed" } };

@@ -123,6 +123,17 @@ fail-closed storage requirement under `[Service]`:
 Environment=RESEARCH_REQUIRE_ANCHORED_FS=1
 ```
 
+Both units also carry a drop-in (`/etc/systemd/system/<unit>.service.d/chown.conf`) that
+re-owns the tree as root before every start. An rsync from a Mac (openrsync, no `--chown`)
+leaves `/opt/hype/writer` owned by uid 501; the writer then cannot create `quotes.jsonl` and
+every quote 503s with `journal-failed`. The drop-in makes a forgotten `chown` self-heal on
+the next restart:
+
+```ini
+[Service]
+ExecStartPre=+/bin/chown -R hype:hype /opt/hype/writer
+```
+
 `tools/supervise.sh` is not used on the server — systemd replaces it. The script remains for
 local runs.
 
@@ -160,7 +171,7 @@ cd <repo root>
 forge build   # only if contracts changed
 
 rsync -az --delete --exclude node_modules --exclude .env --exclude settlement-cache.json keeper/ root@91.99.94.25:/opt/hype/keeper/
-rsync -az --delete --exclude node_modules --exclude .env --exclude waitlist.json writer/ root@91.99.94.25:/opt/hype/writer/
+rsync -az --delete --exclude node_modules --exclude .env --exclude waitlist.json --exclude quotes.jsonl writer/ root@91.99.94.25:/opt/hype/writer/
 # Registry is BOX-AUTHORITATIVE (rotate.timer rewrites it nightly) — pull, never push:
 rsync -az root@91.99.94.25:/opt/hype/registry/ registry/
 
