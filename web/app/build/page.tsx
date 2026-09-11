@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { compareMarketVolume, fetchMarketBoard, groupMarkets, marketMid, onlySports, sideLabel, type Market } from "@/lib/writer";
 import { tradeUrl } from "@/lib/chain";
 import { useMids } from "@/lib/mids";
@@ -289,6 +289,23 @@ export default function BuildPage() {
   const [markets, setMarkets] = useState<Market[] | null>(null);
   const [error, setError] = useState(false);
   const [legs, setLegs] = useState<BuilderLeg[]>([]);
+  const slipRef = useRef<HTMLElement>(null);
+  // Pin the slip's bottom when it's taller than the viewport: sticky top =
+  // min(6rem, viewport - height - 1rem). CSS alone can't read its own height.
+  useEffect(() => {
+    const el = slipRef.current;
+    if (!el) return;
+    const fit = () => {
+      el.style.top = `${Math.min(96, window.innerHeight - el.offsetHeight - 16)}px`;
+    };
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    window.addEventListener("resize", fit);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", fit);
+    };
+  }, []);
   const [tab, setTab] = useState("all");
   const [sort, setSort] = useState<"volume" | "expiry">("volume");
   const [volumeAsc, setVolumeAsc] = useState(false);
@@ -447,12 +464,10 @@ export default function BuildPage() {
           </div>
         </section>
 
-        {/* Sticky slip scrolls inside its own viewport-high box, so a long ticket
-            (many legs, quote breakdown, errors) never hides below the fold. */}
-        <aside
-          id="slip"
-          className="scroll-mt-20 lg:sticky lg:top-24 lg:-mr-3 lg:max-h-[calc(100dvh-6.5rem)] lg:self-start lg:overflow-y-auto lg:pb-24 lg:pl-8 lg:pr-3"
-        >
+        {/* Sticky slip. When the ticket outgrows the viewport its sticky top
+            goes negative so the bottom (CTA) pins instead - scrolling back up
+            reveals the top. No inner scroll container. */}
+        <aside ref={slipRef} id="slip" className="scroll-mt-20 lg:sticky lg:top-24 lg:self-start lg:pl-8">
           <Ticket legs={legs} onRemove={removeLeg} />
         </aside>
       </main>

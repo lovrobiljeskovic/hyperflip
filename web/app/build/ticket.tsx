@@ -746,16 +746,6 @@ export function Ticket({
                       {formatUsdc(premium)} USDC
                     </DetailRow>
                   </div>
-
-                  <div className="flex flex-col gap-1.5 border-t border-line pt-3">
-                    <DetailRow label="Price protection">Fixed - signed quote</DetailRow>
-                    <DetailRow label="Slippage">None (0%)</DetailRow>
-                    <DetailRow label="Route">{needsApproval ? "2 txs · Approve + Mint" : "1 tx · Mint"}</DetailRow>
-                    <DetailRow label="Platform fee">0.00 USDC</DetailRow>
-                    <DetailRow label="Network">{hyperEvmTestnet.name}</DetailRow>
-                    <DetailRow label="Gas token">{hyperEvmTestnet.nativeCurrency.symbol}</DetailRow>
-                    <DetailRow label="Quote valid for">{ttlLeft}s</DetailRow>
-                  </div>
                 </div>
               </details>
             </div>
