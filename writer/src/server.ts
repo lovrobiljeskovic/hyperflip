@@ -128,6 +128,15 @@ export function validateQuoteRequest(
     if (!market) return { ok: false, status: 400, reason: "unknown-vault" };
     // Lock at the resolution deadline, not kickoff: in-play quoting is wanted,
     // the Core mid moves with the game and pricing follows it.
+    //
+    // ponytail: MAINNET GATE — in-play quoting off a thin Core book. After a
+    // goal the true probability jumps at once but the Core mid only moves when
+    // someone repositions an order; in that window anyone on a live feed buys
+    // the winning side from us at the stale price. edgeBps covers noise, not a
+    // 30-point mispricing. Before real USDC sits in the vault, once
+    // `now >= market.startMs`: widen the edge, cut the per-market cap, or
+    // refuse for N seconds after a large mid move. Kickoff lockout
+    // (`market.startMs ?? market.expiryMs` here) was the pre-2026-09-11 guard.
     const lockAtMs = market.expiryMs;
     if (lockAtMs !== undefined && now >= lockAtMs - cfg.lockoutMs) {
       return { ok: false, status: 400, reason: "expiry-lockout" };
