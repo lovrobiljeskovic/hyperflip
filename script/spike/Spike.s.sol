@@ -37,18 +37,16 @@ contract Spike is Script {
     /// balance, observe nothing happens and no revert).
     function split(uint32 outcome, uint64 w) external {
         vm.startBroadcast();
-        ICoreWriter(CoreConstants.CORE_WRITER).sendRawAction(
-            CoreConstants.encodeOutcomeOp(CoreConstants.OP_SPLIT_OUTCOME, outcome, w)
-        );
+        ICoreWriter(CoreConstants.CORE_WRITER)
+            .sendRawAction(CoreConstants.encodeOutcomeOp(CoreConstants.OP_SPLIT_OUTCOME, outcome, w));
         vm.stopBroadcast();
     }
 
     /// Verifies: OP_MERGE_OUTCOME numbering (UNVERIFIED = 1).
     function merge(uint32 outcome, uint64 w) external {
         vm.startBroadcast();
-        ICoreWriter(CoreConstants.CORE_WRITER).sendRawAction(
-            CoreConstants.encodeOutcomeOp(CoreConstants.OP_MERGE_OUTCOME, outcome, w)
-        );
+        ICoreWriter(CoreConstants.CORE_WRITER)
+            .sendRawAction(CoreConstants.encodeOutcomeOp(CoreConstants.OP_MERGE_OUTCOME, outcome, w));
         vm.stopBroadcast();
     }
 

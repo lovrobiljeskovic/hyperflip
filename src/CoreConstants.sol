@@ -105,11 +105,7 @@ library CoreConstants {
         return uint256(quoteWei) * evmUnitsPerShare / QUOTE_WEI_PER_SHARE;
     }
 
-    function _convert(uint256 amountEvm, uint256 weiPerShare, uint256 evmUnitsPerShare)
-        internal
-        pure
-        returns (uint64)
-    {
+    function _convert(uint256 amountEvm, uint256 weiPerShare, uint256 evmUnitsPerShare) internal pure returns (uint64) {
         uint256 scaled = amountEvm * weiPerShare;
         uint256 w = scaled / evmUnitsPerShare;
         require(w > 0 && w <= type(uint64).max, "BAD_AMOUNT");
