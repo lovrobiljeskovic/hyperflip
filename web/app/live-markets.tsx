@@ -101,6 +101,14 @@ function OddsCell({ side, mid }: { side: "YES" | "NO"; mid: number | null }) {
   );
 }
 
+/** The line that says which game or competition a market belongs to: the
+ * group question when it differs from the outcome, else sport and league. */
+function marketContext(m: Market): string {
+  return m.groupTitle && m.groupTitle !== m.title
+    ? m.groupTitle
+    : [m.sport ?? m.category, m.cluster].filter(Boolean).join(" · ");
+}
+
 function BoardRow({ market, mids }: { market: Market; mids: Record<string, string> }) {
   const yes = marketMid(mids, market, market.coinYes);
   const no = marketMid(mids, market, market.coinNo);
@@ -120,9 +128,7 @@ function BoardRow({ market, mids }: { market: Market; mids: Record<string, strin
       <div className="col-span-2 sm:col-span-1">
         <p className="text-[12px] leading-snug">{market.title}</p>
         <p className="mono mt-1 text-[10px] uppercase tracking-[0.14em] text-dim">
-          {market.groupTitle && market.groupTitle !== market.title
-            ? market.groupTitle
-            : [market.sport ?? market.category, market.cluster].filter(Boolean).join(" · ")}
+          {marketContext(market)}
           <span className="sm:hidden">
             {" · "}
             {formatVolume(market.volume24h)}
@@ -253,6 +259,7 @@ export function LiveMarketRail({ board }: { board: BoardSnapshot }) {
   const items = markets.map((market) => ({
     vault: market.vault,
     title: market.title,
+    context: marketContext(market),
     yes: marketMid(mids, market, market.coinYes),
     no: marketMid(mids, market, market.coinNo),
   }));
@@ -266,7 +273,10 @@ export function LiveMarketRail({ board }: { board: BoardSnapshot }) {
           tabIndex={hidden ? -1 : undefined}
           className="flex min-w-[310px] items-center justify-between gap-8 border-r border-line px-5 py-3 transition-colors hover:bg-raised"
         >
-          <span className="max-w-[190px] truncate text-xs">{item.title}</span>
+          <span className="min-w-0 max-w-[190px]">
+            <span className="block truncate text-xs">{item.title}</span>
+            <span className="mono block truncate text-[9px] uppercase tracking-[0.12em] text-dim">{item.context}</span>
+          </span>
           <span className="mono shrink-0 text-[11px]">
             <span className="text-yes">Y {item.yes === null ? "-" : pct1(item.yes)}</span>
             <span className="mx-2 text-line">/</span>
@@ -286,7 +296,17 @@ export function LiveMarketRail({ board }: { board: BoardSnapshot }) {
 
 /* --- the hero slip --- */
 
-type SlipLeg = { side: "YES" | "NO"; label: string; title: string; prob: number | null };
+type SlipLeg = { side: "YES" | "NO"; label: string; title: string; context: string; prob: number | null };
+
+/* Worked example printed whenever the live feed cannot fully price a slip
+   (registry down, fewer than two markets, or a leg without a mid). The hero
+   must always show a complete combination; the header labels it as an
+   example so it never reads as a live quote. */
+const EXAMPLE_LEGS: SlipLeg[] = [
+  { side: "YES", label: "Arsenal", title: "Arsenal", context: "Arsenal vs Chelsea - match winner", prob: 0.58 },
+  { side: "YES", label: "Over", title: "Over 215.5 points", context: "Lakers vs Celtics", prob: 0.51 },
+  { side: "NO", label: "No", title: "Straight sets", context: "Djokovic vs Alcaraz", prob: 0.62 },
+];
 
 function Line({ i, children }: { i: number; children: React.ReactNode }) {
   return (
@@ -306,22 +326,20 @@ export function HeroSlip({ board }: { board: BoardSnapshot }) {
   const printing = usePrinting();
 
   const listed = state.status === "live" ? state.markets.slice(0, 3) : [];
-  const live = listed.length >= 2;
-  const legs: SlipLeg[] = live
-    ? listed.map((m) => ({
-        side: "YES" as const,
-        label: sideLabel(m, true),
-        title: m.title,
-        prob: marketMid(mids, m, m.coinYes),
-      }))
-    : [];
+  const liveLegs: SlipLeg[] = listed.map((m) => ({
+    side: "YES" as const,
+    label: sideLabel(m, true),
+    title: m.title,
+    context: marketContext(m),
+    prob: marketMid(mids, m, m.coinYes),
+  }));
+  // A half-priced slip has no honest combined implied, so fall back to the
+  // worked example rather than multiplying by an assumed certainty.
+  const live = liveLegs.length >= 2 && liveLegs.every((l) => l.prob !== null);
+  const legs = live ? liveLegs : EXAMPLE_LEGS;
 
-  // A half-priced slip has no honest combined implied, so the payout goes
-  // unavailable rather than multiplying by an assumed certainty.
-  const combined = live && legs.every((l) => l.prob !== null)
-    ? legs.reduce((acc, l) => acc * (l.prob as number), 1)
-    : null;
-  const fair = combined !== null && combined > 0 ? 1 / combined : null;
+  const combined = legs.reduce((acc, l) => acc * (l.prob as number), 1);
+  const fair = 1 / combined;
 
   return (
     <div className="[perspective:1200px]">
@@ -329,10 +347,8 @@ export function HeroSlip({ board }: { board: BoardSnapshot }) {
         <div className="ticket-shell px-6 py-7 sm:px-7 sm:py-8">
           <Line i={0}>
             <div className="mono flex items-baseline justify-between text-[9px] uppercase tracking-[0.14em] text-dim">
-              <span>Live combination</span>
-              <span>
-                {live ? `${legs.length} legs` : "feed unavailable"}
-              </span>
+              <span>{live ? "Live combination" : "Example combination"}</span>
+              <span>{legs.length} legs</span>
             </div>
           </Line>
 
@@ -340,12 +356,15 @@ export function HeroSlip({ board }: { board: BoardSnapshot }) {
             <div className="my-4 h-px bg-line" />
           </Line>
 
-          {live ? <ul className="flex flex-col gap-3">
+          <ul className="flex flex-col gap-3">
             {legs.map((leg, i) => (
               <li key={i}>
                 <Line i={2 + i}>
                   <div className="flex items-baseline justify-between gap-3 text-[12px]">
-                    <span className="flex-1 truncate leading-snug">{leg.title}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate leading-snug">{leg.title}</span>
+                      <span className="mono block truncate text-[9px] uppercase tracking-[0.12em] text-dim">{leg.context}</span>
+                    </span>
                     <span className={`mono shrink-0 uppercase ${leg.side === "YES" ? "text-yes" : "text-no"}`}>
                       {leg.label} {leg.prob === null ? "-" : pct1(leg.prob)}
                     </span>
@@ -353,9 +372,7 @@ export function HeroSlip({ board }: { board: BoardSnapshot }) {
                 </Line>
               </li>
             ))}
-          </ul> : (
-            <Line i={2}><p className="py-10 text-center text-sm text-dim">Live markets will print here when the feed reconnects.</p></Line>
-          )}
+          </ul>
 
           <Line i={2 + legs.length}>
             <div className="my-4 h-px bg-line" />
@@ -364,13 +381,13 @@ export function HeroSlip({ board }: { board: BoardSnapshot }) {
           <Line i={3 + legs.length}>
             <div className="mt-3 flex items-end justify-between">
               <span className="mono text-[9px] uppercase tracking-[0.14em] text-dim">Combined fair odds</span>
-              <span className="mono text-[28px] leading-none text-accent">{fair === null ? "-" : `${fair.toFixed(2)}×`}</span>
+              <span className="mono text-[28px] leading-none text-accent">{`${fair.toFixed(2)}×`}</span>
             </div>
           </Line>
 
           <Line i={4 + legs.length}>
             <p className="mono mt-5 border-t border-line pt-4 text-[9px] leading-relaxed text-dim">
-              Live Core odds before the house spread. Build a slip to request a signed quote.
+              {live ? "Live Core odds" : "Illustrative odds"} before the house spread. Build a slip to request a signed quote.
             </p>
           </Line>
         </div>
