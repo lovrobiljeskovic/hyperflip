@@ -50,6 +50,9 @@ export interface QuoteDeps {
    * to serve: each one reserves exposure until TTL and burns RPC calls.
    * ponytail: per-IP punishes shared NATs; key by inviteCode if that bites. */
   quoteLimiter?: RateLimiter;
+  /** false until the exposure book is seeded from chain (index.ts); /quote answers
+   * 503 warming-up meanwhile instead of quoting blind to real open exposure. */
+  ready?: () => boolean;
 }
 
 type Validated =
@@ -166,6 +169,10 @@ export async function handleQuote(
   ip = "unknown",
 ): Promise<{ status: number; json: unknown }> {
   const { cfg, exposure, metrics } = deps;
+  if (deps.ready && !deps.ready()) {
+    reject(metrics, "warming-up");
+    return { status: 503, json: { error: "warming-up" } };
+  }
   if (deps.quoteLimiter && !deps.quoteLimiter.allow(ip)) {
     reject(metrics, "rate-limited");
     return { status: 429, json: { error: "rate-limited" } };

@@ -98,10 +98,10 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     nativeCurrency: { name: "HYPE", symbol: "HYPE", decimals: 18 },
     rpcUrls: { default: { http: rpcUrls } },
   });
-  // Testnet RPCs rate-limit bursts (-32005 limit exceeded, which viem treats as retryable);
-  // startup alone reads 4 calls per vault. Retry hard with a long backoff instead of crashing
-  // on a transient limiter, then fall through to the next endpoint.
-  const transport = fallback(rpcUrls.map((u) => http(u, { retryCount: 6, retryDelay: 2_000 })));
+  // viem's fallback() forces retryCount 0 on each inner http() and retries the whole
+  // chain itself (default 3 tries, 150ms exponential), so per-URL retry options were
+  // dead config: a 429 on one URL falls through to the next, then the set is retried.
+  const transport = fallback(rpcUrls.map((u) => http(u)));
   const publicClient = createPublicClient({ chain, transport });
   const walletClient = createWalletClient({ account, chain, transport });
   // attest() (balanceLoop) and settle() (settlementLoop) both send from `account` with no

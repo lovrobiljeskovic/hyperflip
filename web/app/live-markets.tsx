@@ -325,17 +325,19 @@ export function HeroSlip({ board }: { board: BoardSnapshot }) {
   const mids = useMids(board.mids);
   const printing = usePrinting();
 
-  const listed = state.status === "live" ? state.markets.slice(0, 3) : [];
-  const liveLegs: SlipLeg[] = listed.map((m) => ({
-    side: "YES" as const,
-    label: sideLabel(m, true),
-    title: m.title,
-    context: marketContext(m),
-    prob: marketMid(mids, m, m.coinYes),
-  }));
-  // A half-priced slip has no honest combined implied, so fall back to the
-  // worked example rather than multiplying by an assumed certainty.
-  const live = liveLegs.length >= 2 && liveLegs.every((l) => l.prob !== null);
+  // Only priced markets qualify: a half-priced slip has no honest combined
+  // implied, so an unpriced leg is skipped rather than assumed certain.
+  const liveLegs: SlipLeg[] = (state.status === "live" ? state.markets : [])
+    .map((m) => ({
+      side: "YES" as const,
+      label: sideLabel(m, true),
+      title: m.title,
+      context: marketContext(m),
+      prob: marketMid(mids, m, m.coinYes),
+    }))
+    .filter((l) => l.prob !== null)
+    .slice(0, 3);
+  const live = liveLegs.length >= 2;
   const legs = live ? liveLegs : EXAMPLE_LEGS;
 
   const combined = legs.reduce((acc, l) => acc * (l.prob as number), 1);

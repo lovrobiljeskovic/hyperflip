@@ -751,3 +751,16 @@ test("correlated mode still refuses cross-underlying tickets without model evide
   const c = cfg({ markets: SPORTS_MARKETS, model: { ...MODEL, multiAssetEnabled: false, eligibleUnderlyings: new Set(), pairEligibility: new Map() } });
   assert.deepEqual(validateQuoteRequest(body({ legs: [legOn(MATCH_A, true), legOn(GAME_STANDALONE, true)] }), c, 0), { ok: false, status: 400, reason: "correlation-unavailable" });
 });
+
+test("handleQuote answers 503 warming-up until deps.ready() flips, without consuming quote quota", async () => {
+  const d = deps();
+  let seeded = false;
+  d.ready = () => seeded;
+  const cold = await handleQuote(d, goodBody);
+  assert.equal(cold.status, 503);
+  assert.deepEqual(cold.json, { error: "warming-up" });
+  assert.equal(d.metrics.rejected["warming-up"], 1);
+  seeded = true;
+  const warm = await handleQuote(d, goodBody);
+  assert.equal(warm.status, 200);
+});

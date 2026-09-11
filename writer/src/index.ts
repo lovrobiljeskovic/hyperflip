@@ -27,12 +27,13 @@ async function main(): Promise<void> {
   const quoteJournal = cfg.researchPersistence;
   // Independent mode never integrates a copula, so no worker thread to hold.
   const correlationWorker = cfg.pricingMode === "correlated" ? new CorrelationWorker() : null;
-  // Testnet RPCs rate-limit bursts (-32005, retryable in viem) and the poker's cold-start
-  // rescan is one — deployBlock..head in 1000-block chunks, two getLogs each. Retry hard with a
-  // long backoff instead of dying on the limiter, then fall through to the next endpoint.
-  // Comma-separated URL list, same convention as the keeper.
+  // Comma-separated URL list, same convention as the keeper. viem's fallback()
+  // forces retryCount 0 on each inner http() and retries the whole chain itself
+  // (default 3 tries, 150ms exponential): a 429 on the first URL falls through to
+  // the next within ~2s, well under the web's 10s quote abort. Per-URL retry
+  // options here are silently ignored, so none are passed.
   const rpcUrls = cfg.rpcUrl.split(",").map((u) => u.trim()).filter(Boolean);
-  const transport = fallback(rpcUrls.map((u) => http(u, { retryCount: 6, retryDelay: 2_000 })));
+  const transport = fallback(rpcUrls.map((u) => http(u)));
   const publicClient = createPublicClient({ transport });
   const chainId = await publicClient.getChainId();
   const profileIdentityFailure = applyWriterProfileIdentity(cfg, chainId);
@@ -101,6 +102,9 @@ async function main(): Promise<void> {
       console.warn(JSON.stringify({ event: "book-fetch-failed", coin, error: (err as Error).message.slice(0, 200) })),
   });
 
+  // Flipped once poker.seed() has rebuilt the exposure book; /quote refuses with
+  // 503 warming-up until then (see startServer ordering below).
+  let seeded = false;
   const deps: QuoteDeps = {
     cfg,
     exposure,
@@ -137,6 +141,7 @@ async function main(): Promise<void> {
       return new Set([...states].filter(([, s]) => s.settled).map(([v]) => v));
     },
     sign: (q: ParlayQuote) => signQuote(cfg.quoteSignerKey, chainId, cfg.parlayVault, q),
+    ready: () => seeded,
     waitlist: new Waitlist(cfg.waitlistFile),
     sendInvite: cfg.resendApiKey
       ? (email, code) => sendInviteEmail(cfg.resendApiKey!, email, code)
@@ -167,11 +172,44 @@ async function main(): Promise<void> {
     },
     log: (msg) => console.log(JSON.stringify({ at: new Date().toISOString(), ...msg })),
   });
+  // Listen BEFORE seeding. Seeding hits the public RPC in bursts and has taken
+  // 30s-3min on rate-limited testnet; every hourly rotate.service restart repeated
+  // that as a full outage (Caddy 502 with no CORS headers, which the browser reports
+  // as status 0 -> "Writer unreachable"). Listening first turns that window into an
+  // explicit 503 warming-up the UI can name and retry.
+  startServer(deps, cfg.port, () => {
+    // Per-market exposure vs cap: without this a "market-cap" rejection is
+    // unfalsifiable from outside — you cannot tell a real cap from a leaked
+    // reservation. ponytail: unauthenticated, so it does show house posture to
+    // anyone who asks; gate it behind an ops token once the bankroll is real.
+    const now = Date.now();
+    const modelStatus = currentModelStatus(cfg.model, now);
+    const perMarket: Record<string, string> = {};
+    for (const v of cfg.markets.keys()) perMarket[v] = exposure.perMarket(v, now).toString();
+    // Per-coin, not a single global: a fresh BTC book must not hide a dead NVDA book
+    // silently riding stale spotPx (mainnet-hardening P0-1). null = never confirmed live.
+    const priceFreshnessMs = buildPriceFreshness(cfg.markets.values(), (coin) => legPriceFetcher.ageMs(coin));
+    return {
+      ok: true,
+      pricingMode: cfg.pricingMode,
+      quoteJournalLastAppendMs: lastQuoteJournalAppendMs,
+      model: { version: cfg.model.version, dataAsOf: cfg.model.dataAsOf, dataManifestSha256: cfg.model.dataManifestSha256, sourceRegistrySha256: cfg.model.sourceRegistrySha256, identityFailureReason: cfg.model.identityFailureReason, ...modelStatus },
+      seeded,
+      openParlays: poker.openCount(),
+      priceFreshnessMs,
+      perMarketCap: cfg.perMarketCap.toString(),
+      reservedGlobal: exposure.reservedGlobal(now).toString(),
+      perMarket,
+    };
+  });
+  console.log(JSON.stringify({ at: new Date().toISOString(), event: "writer-listening", port: cfg.port }));
+
   // Rebuild `open` from on-chain state before quoting starts (mainnet-hardening P1-6)
   // instead of leaving per-market/cluster caps blind to real exposure until the
-  // deployBlock->head scan catches up — this runs on every nightly rotate.service
-  // restart, so it has to be both fast and correct every night, not just at genesis.
+  // deployBlock->head scan catches up — this runs on every rotate.service
+  // restart, so it has to be both fast and correct every time, not just at genesis.
   await poker.seed();
+  seeded = true;
 
   // POKER_INTERVAL_MS=0 turns the poker off. Quoting and minting are unaffected —
   // the poker only recycles house escrow off DEAD tickets and keeps the exposure
@@ -218,30 +256,6 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({ at: new Date().toISOString(), event: "poker-disabled" }));
   }
 
-  startServer(deps, cfg.port, () => {
-    // Per-market exposure vs cap: without this a "market-cap" rejection is
-    // unfalsifiable from outside — you cannot tell a real cap from a leaked
-    // reservation. ponytail: unauthenticated, so it does show house posture to
-    // anyone who asks; gate it behind an ops token once the bankroll is real.
-    const now = Date.now();
-    const modelStatus = currentModelStatus(cfg.model, now);
-    const perMarket: Record<string, string> = {};
-    for (const v of cfg.markets.keys()) perMarket[v] = exposure.perMarket(v, now).toString();
-    // Per-coin, not a single global: a fresh BTC book must not hide a dead NVDA book
-    // silently riding stale spotPx (mainnet-hardening P0-1). null = never confirmed live.
-    const priceFreshnessMs = buildPriceFreshness(cfg.markets.values(), (coin) => legPriceFetcher.ageMs(coin));
-    return {
-      ok: true,
-      pricingMode: cfg.pricingMode,
-      quoteJournalLastAppendMs: lastQuoteJournalAppendMs,
-      model: { version: cfg.model.version, dataAsOf: cfg.model.dataAsOf, dataManifestSha256: cfg.model.dataManifestSha256, sourceRegistrySha256: cfg.model.sourceRegistrySha256, identityFailureReason: cfg.model.identityFailureReason, ...modelStatus },
-      openParlays: poker.openCount(),
-      priceFreshnessMs,
-      perMarketCap: cfg.perMarketCap.toString(),
-      reservedGlobal: exposure.reservedGlobal(now).toString(),
-      perMarket,
-    };
-  });
   console.log(JSON.stringify({ at: new Date().toISOString(), event: "writer-started", port: cfg.port, chainId, pricingMode: cfg.pricingMode, modelVersion: cfg.model.version, dataAsOf: cfg.model.dataAsOf }));
 }
 
