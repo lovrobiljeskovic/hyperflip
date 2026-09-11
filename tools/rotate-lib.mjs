@@ -275,7 +275,9 @@ const NON_SPORT = /politic|econom|election|geopolit|law\b|government/i;
 // under the sports templates; with untraded books now wrapped, the 0.5 pin no
 // longer weeds them, so `sport` must name a real one.
 const SPORT = /baseball|basketball|soccer|football|\bf1\b|formula|hockey|tennis|golf|cricket|rugby|\bmma\b|boxing|\bufc\b|motorsport|racing|athletics|track|esport|dota|\bcs2\b|dodgeball/i;
-const JUNK = /smoke|\btest\b/i;
+// Hypurr Race (Hypurr v Usain Bolt) and Ancient War (Radiant v Dire, season 1523rd)
+// pass the sport whitelist (track, esport) but are deployer fiction.
+const JUNK = /smoke|\btest\b|hypurr race|ancient war/i;
 const isRealSport = (ev) =>
   !!ev.sport && SPORT.test(ev.sport) && !NON_SPORT.test(ev.sport) && !NON_SPORT.test(ev.competition) &&
   !JUNK.test([ev.competition, ev.officialSource, ev.participantA, ev.participantB].join("|"));

@@ -303,10 +303,10 @@ function sportsBoard() {
 test("pickSports wraps templated questions whole, standalone winners and over/unders; untraded last, skips dated-out, past-kickoff", () => {
   const { outcomes, questions, mids, maxMsLeft } = sportsBoard();
   const picked = pickSports({ outcomes, questions, mids, knownCoins: new Set(), nowMs: NOW, maxMsLeft });
-  // traded first by kickoff: Twins/Orioles Aug 20, q927 Sep 1, Ohtani Sep 3, Hypurr race Oct 1;
+  // traded first by kickoff: Twins/Orioles Aug 20, q927 Sep 1, Ohtani Sep 3 (Hypurr race is junk);
   // then untraded by kickoff: Red Sox/Orioles Aug 20, q928 Sep 2
-  assert.deepEqual(picked.map((p) => p.outcome), [12289, 11276, 11277, 11278, 16541, 11273, 12290, 11286, 11287]);
-  const [twins, cats, draw, , ohtani, race, redsox, dogs] = picked;
+  assert.deepEqual(picked.map((p) => p.outcome), [12289, 11276, 11277, 11278, 16541, 12290, 11286, 11287]);
+  const [twins, cats, draw, , ohtani, redsox, dogs] = picked;
   assert.equal(redsox.priced, 0);
   assert.equal(dogs.priced, 0);
   assert.deepEqual(twins, {
@@ -326,17 +326,16 @@ test("pickSports wraps templated questions whole, standalone winners and over/un
   assert.equal(ohtani.sideYes, "Over");
   assert.equal(ohtani.title, "Shohei Ohtani home runs over 0.5?");
   assert.equal(ohtani.underlying, "st-louis-cardinals-vs-los-angeles-dodgers-mlb-20260903");
-  assert.equal(race.title, "Hypurr beats Usain Bolt?");
-  assert.equal(race.sideYes, "Yes");
+  assert.ok(!picked.some((p) => p.outcome === 11273), "Hypurr Race is junk");
 });
 
 test("pickSports skips a question already wrapped and one that does not fit the cap whole", () => {
   const { outcomes, questions, mids, maxMsLeft } = sportsBoard();
-  assert.deepEqual(pickSports({ outcomes, questions, mids, knownCoins: new Set(["#112770"]), nowMs: NOW, maxMsLeft }).map((p) => p.outcome), [12289, 16541, 11273, 12290, 11286, 11287]);
-  // cap 3: Twins (1) fits, q927 (3) would make 4 -> skipped whole, Ohtani (1) and race (1) fit; untraded find no room
-  assert.deepEqual(pickSports({ outcomes, questions, mids, knownCoins: new Set(), nowMs: NOW, maxMsLeft, cap: 3 }).map((p) => p.outcome), [12289, 16541, 11273]);
+  assert.deepEqual(pickSports({ outcomes, questions, mids, knownCoins: new Set(["#112770"]), nowMs: NOW, maxMsLeft }).map((p) => p.outcome), [12289, 16541, 12290, 11286, 11287]);
+  // cap 3: Twins (1) fits, q927 (3) would make 4 -> skipped whole, Ohtani (1) fits, untraded Red Sox (1) fits
+  assert.deepEqual(pickSports({ outcomes, questions, mids, knownCoins: new Set(), nowMs: NOW, maxMsLeft, cap: 3 }).map((p) => p.outcome), [12289, 16541, 12290]);
   // perCompetition 1: only one MLB leg (the Ohtani prop's competition is the parenthetical MLB); untraded 2-leg q928 does not fit
-  assert.deepEqual(pickSports({ outcomes, questions, mids, knownCoins: new Set(), nowMs: NOW, maxMsLeft, perCompetition: 1 }).map((p) => p.outcome), [12289, 11273]);
+  assert.deepEqual(pickSports({ outcomes, questions, mids, knownCoins: new Set(), nowMs: NOW, maxMsLeft, perCompetition: 1 }).map((p) => p.outcome), [12289]);
 });
 
 test("pickSports titles a season or tournament question by competition, not by its two seeded participants", () => {

@@ -1,0 +1,9 @@
+[Unit]
+Description=Hourly market rotation (testnet deployers list fixtures same day, hours before kickoff)
+
+[Timer]
+OnCalendar=*-*-* *:10:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
