@@ -35,6 +35,7 @@ export const metadata: Metadata = {
   applicationName: "Hyperflip",
   keywords: ["Hyperflip", "HyperCore", "Hyperliquid", "HIP-4", "outcome markets", "parlay", "on-chain slip"],
   alternates: { canonical: "/" },
+  verification: { google: "BPoq5CSIGwE3lTC0OKiPgVtX47UZu6ZoT7SgYAxiWd0" },
   openGraph: {
     siteName: "Hyperflip",
     url: "/",
