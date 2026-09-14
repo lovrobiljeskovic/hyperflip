@@ -11,7 +11,7 @@ import { fetchBestAskWad } from "./infoApi.js";
 import { appendQuoteDecision } from "./research/journal.js";
 import { buildPriceFreshness, makeLegPriceFetcher, readSpotPxWad } from "./spotPx.js";
 import { Poker } from "./poker.js";
-import { isStalled, stallThresholdMs } from "./pure.js";
+import { bankrollRoom, isStalled, lowBankrollAlerter, parseDecimalToUnits, stallThresholdMs } from "./pure.js";
 import { signQuote, type ParlayQuote, type QuoteLeg } from "./quotes.js";
 import { currentModelStatus, newMetrics, startServer, type QuoteDeps } from "./server.js";
 import { readLegStates } from "./settlement.js";
@@ -43,6 +43,10 @@ async function main(): Promise<void> {
     abi: parlayVaultAbi,
     functionName: "usdc",
   })) as `0x${string}`;
+  // Refill runbook lives in DEPLOY.md ("Bankroll"). LOW_BANKROLL is in USDC.
+  const lowBankroll = parseDecimalToUnits(process.env.LOW_BANKROLL ?? "100", 6);
+  const shouldAlertLowBankroll = lowBankrollAlerter(lowBankroll);
+  let lastBankroll: bigint | null = null;
 
   // minPremiumBps is owner-settable on-chain; the env value is only a startup default.
   // The chain value always wins for pricing — override cfg and warn on drift so a stale
@@ -129,13 +133,17 @@ async function main(): Promise<void> {
     },
     bestEstimateJointProbWad: (legs) =>
       correlationWorker ? correlationWorker.bestEstimate(legs, cfg.correlations) : Promise.reject(new Error("no correlation worker in independent mode")),
-    readAllowance: () =>
-      publicClient.readContract({
-        address: usdcAddress,
-        abi: erc20Abi,
-        functionName: "allowance",
-        args: [cfg.writerAddress, cfg.parlayVault],
-      }),
+    readAllowance: async () => {
+      const [allowance, balance] = await Promise.all([
+        publicClient.readContract({ address: usdcAddress, abi: erc20Abi, functionName: "allowance", args: [cfg.writerAddress, cfg.parlayVault] }),
+        publicClient.readContract({ address: usdcAddress, abi: erc20Abi, functionName: "balanceOf", args: [cfg.writerAddress] }),
+      ]);
+      lastBankroll = bankrollRoom(allowance, balance);
+      // "ALERT" prefix is what ops/alert-relay.sh forwards to Telegram.
+      if (shouldAlertLowBankroll(lastBankroll))
+        console.error(new Date().toISOString(), "ALERT", JSON.stringify({ event: "low-bankroll", bankroll: lastBankroll.toString(), allowance: allowance.toString(), balance: balance.toString(), threshold: lowBankroll.toString() }));
+      return lastBankroll;
+    },
     readSettled: async (vaults) => {
       const states = await readLegStates(publicClient, vaults);
       return new Set([...states].filter(([, s]) => s.settled).map(([v]) => v));
@@ -199,6 +207,8 @@ async function main(): Promise<void> {
       priceFreshnessMs,
       perMarketCap: cfg.perMarketCap.toString(),
       reservedGlobal: exposure.reservedGlobal(now).toString(),
+      // min(allowance, balance) as of the last quote; null until the first quote.
+      bankroll: lastBankroll?.toString() ?? null,
       perMarket,
     };
   });

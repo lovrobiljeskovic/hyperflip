@@ -218,6 +218,54 @@ ssh root@91.99.94.25 'journalctl -u rotate.service -n 50 --no-pager'            
 Note `npm ci` must install devDependencies — `npm start` runs `tsx`, which is a devDependency.
 Do not set `NODE_ENV=production`.
 
+## Bankroll (house wallet)
+
+The house is the writer wallet (`WRITER_ADDRESS`). Every mint pulls `maxPayout - premium` from
+it into ParlayVault; a won ticket pays that to the taker for good, a dead ticket returns it to the
+wallet, but the allowance is spent either way. The writer caps exposure at
+`min(allowance, balanceOf(writer))` and logs an `ALERT low-bankroll` line once when that drops
+below `LOW_BANKROLL` USDC (default 100); `/health` shows `bankroll`.
+
+Refill = top up the wallet (testnet drip, then Core->EVM spot send), then re-approve. Approving
+the max once means only the balance ever needs attention:
+
+```sh
+cast send $USDC "approve(address,uint256)" $PARLAY_VAULT_ADDRESS \
+  0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff \
+  --rpc-url https://rpc.hyperliquid-testnet.xyz/evm --private-key $WRITER_PRIVATE_KEY --legacy
+```
+
+`USDC` is `cast call $PARLAY_VAULT_ADDRESS "usdc()(address)"`. Long-dated legs (UCL winner,
+Super Bowl) lock escrow for months; `PER_CLUSTER_CAP` is what bounds that, not the picker.
+
+## Alerts to Telegram
+
+Keeper, writer and rotate only ever write `ALERT`/`FATAL` lines to journald. `alert-relay.timer`
+greps them every 5 minutes and posts to a Telegram bot (`ops/alert-relay.sh`). One-time setup:
+create a bot with @BotFather (token), message it once, read your chat id from
+`https://api.telegram.org/bot<TOKEN>/getUpdates`, then on the box:
+
+```sh
+printf 'TG_TOKEN=<token>\nTG_CHAT=<chat id>\n' > /opt/hype/alert.env && chmod 600 /opt/hype/alert.env
+cp /opt/hype/repo/ops/systemd/alert-relay.* /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now alert-relay.timer
+logger -t writer -p err "ALERT relay smoke test" && /opt/hype/repo/ops/alert-relay.sh
+```
+
+The last line is a `logger` line, not a service line, so it will NOT be picked up by `-u writer`;
+to test end to end restart the writer with `LOW_BANKROLL` above the balance and quote once, or
+just wait for a real one. Pair with an external ping on `/health` (UptimeRobot free tier) so a
+dead box, which cannot relay its own death, still pages.
+
+## Launch-day smoke
+
+```sh
+INVITE_CODE=<code> node tools/smoke.mjs
+```
+
+One line: live markets, priced legs (allMids not pinned at 0.5), open parlays, bankroll,
+reserved, and a real 2-leg quote multiple. Exit 1 on anything missing. Run before invites go out
+and after every rotation you care about.
+
 ## Writer drop-ins
 
 `/etc/systemd/system/writer.service.d/research.conf` adds the research env; a `rollback.conf`

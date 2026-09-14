@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { blockRanges, isStalled, stallThresholdMs } from "../src/pure.js";
+import { bankrollRoom, blockRanges, isStalled, lowBankrollAlerter, stallThresholdMs } from "../src/pure.js";
 
 test("blockRanges: single range when span fits", () => {
   assert.deepEqual(blockRanges(10n, 20n, 1000n), [{ from: 10n, to: 20n }]);
@@ -40,4 +40,18 @@ test("isStalled: false within threshold, true once elapsed exceeds it", () => {
   assert.equal(isStalled(lastTickAt, lastTickAt + 120_000, 120_000), false); // exactly at bound: not yet stalled
   assert.equal(isStalled(lastTickAt, lastTickAt + 120_001, 120_000), true);
   assert.equal(isStalled(lastTickAt, lastTickAt, 120_000), false); // no time elapsed
+});
+
+test("bankrollRoom is min(allowance, balance)", () => {
+  assert.equal(bankrollRoom(500n, 200n), 200n);
+  assert.equal(bankrollRoom(100n, 200n), 100n);
+});
+
+test("lowBankrollAlerter fires once per dip and re-arms on recovery", () => {
+  const alert = lowBankrollAlerter(100n);
+  assert.equal(alert(150n), false);
+  assert.equal(alert(50n), true);
+  assert.equal(alert(10n), false);
+  assert.equal(alert(100n), false);
+  assert.equal(alert(99n), true);
 });

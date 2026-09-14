@@ -1,0 +1,8 @@
+[Unit]
+Description=Forward ALERT/FATAL journal lines to Telegram
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/hype/repo/ops/alert-relay.sh
