@@ -10,6 +10,8 @@ function runRepositoryGate(root) {
   const log = join(root, "commands.log");
   const webEnvFile = join(root, "web-env.json");
   const webEnv = {
+    DEPLOYMENT_FILE: resolve(import.meta.dirname, "fixtures/deployment.json"),
+    NEXT_PUBLIC_CHAIN_ID: "998",
     NEXT_TELEMETRY_DISABLED: "1",
     NEXT_PUBLIC_WRITER_URL: "http://127.0.0.1:1",
     NEXT_PUBLIC_INFO_API: "http://127.0.0.1:1",
@@ -54,7 +56,7 @@ test("repository gate checks each project with fixture web configuration", () =>
   try {
     assert.deepEqual(runRepositoryGate(root), [
       "forge fmt --check", "forge build --sizes",
-      "node scripts/abis.mjs --check", "node scripts/check-service-packages.mjs", "forge test",
+      "node scripts/abis.mjs --check", "node scripts/deployment.mjs --check", "node scripts/check-service-packages.mjs", "forge test",
       "npm keeper run check", "npm writer run check", "npm web run check",
       "node --test scripts/abis.test.mjs tools/rotate-lib.test.mjs tools/rotate-markets.test.mjs tools/verify.test.mjs",
     ]);

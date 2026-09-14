@@ -17,6 +17,8 @@ installation root; adjust paths for your host.
     abi/OutcomeVault.json
     abi/ParlayVault.json
   registry/markets.json
+  registry/deployment.testnet.json
+  registry/deployment.mts
 ```
 
 Both services resolve configuration from this layout and load their packaged
@@ -26,13 +28,13 @@ drift against the build, imports each packed service without `out/` or Foundry,
 and verifies the frontend's smaller interfaces. Service hosts no longer need a
 compiler or the Foundry artifact tree. The separate rotation checkout still does.
 
-Package each service from its directory with the existing lockfile included:
+Package each service from the repository root with the existing lockfile included:
 
 ```bash
-tar -czf ../writer.tar.gz package.json package-lock.json tsconfig.json src abi
+tar -czf /tmp/writer.tar.gz writer/package.json writer/package-lock.json writer/tsconfig.json writer/src writer/abi registry/deployment.mts registry/deployment.testnet.json
 ```
 
-Use `keeper.tar.gz` for the keeper. These explicit paths exclude private
+Replace `writer` with `keeper` for the keeper package. These explicit paths exclude private
 configuration and runtime state. Unpack into the layout above without overwriting
 existing state. Install service dependencies with
 `npm ci --include=dev`: startup uses `tsx`, which is a dev dependency.
@@ -40,12 +42,36 @@ existing state. Install service dependencies with
 Use the root `.env.example` for configuration. Set `CORS_ORIGINS` to the frontend
 origins, including `https://hyperflip.xyz` and `https://app.hyperflip.xyz` for the
 split deployment. The writer reads its registry from `MARKETS_FILE` and its
-ParlayVault address/block from `PARLAY_VAULT_ADDRESS` and `PARLAY_DEPLOY_BLOCK`.
+deployment identity from `registry/deployment.testnet.json`.
 `PRICING_MODE` can be unset or `independent`; other values fail startup.
 
 The signer, bankroll, and keeper must match the deployed contracts. Run services
 as an unprivileged user with a mode-0600 `.env`. Keep the deployer key out of the
 service installation; only the separate rotation/deployment checkout needs it.
+
+## Deployment identity
+
+`registry/deployment.testnet.json` owns the public chain, ParlayVault address and
+exact deployment block. Existing `PARLAY_VAULT_ADDRESS`, `PARLAY_DEPLOY_BLOCK`,
+`EVM_CHAIN_ID` and corresponding `NEXT_PUBLIC_` settings must match this manifest
+when present. Remove matching duplicates during configuration migration; a
+mismatch fails startup/build instead of silently selecting another deployment.
+Keys, RPC credentials and the rotated market registry remain separate.
+
+For another deployment on chain 998, copy the manifest, set its address and exact
+creation block, and set `DEPLOYMENT_FILE` to that file's absolute path in each
+service and frontend build environment. Remove or update conflicting legacy
+settings. Verify the creation receipt before selecting the file. Services check
+RPC chain and vault code at the current, creation and preceding blocks before
+starting; their RPCs must serve historical code. A wrong block or unavailable
+history fails startup. The writer also requires positive `POKER_INTERVAL_MS`.
+
+The web upload is self-contained: `node scripts/deployment.mjs` copies the public
+manifest and loader into `web/deployment`; commit those generated files. The gate
+checks drift. Frontend builds validate the selected manifest and embed only its
+public identity, without making RPC requests. An alternate manifest must be
+available at build time; never put secrets in it. Rollback selects the previous
+manifest and matching environment settings without restoring runtime state.
 
 ## Persistent state
 

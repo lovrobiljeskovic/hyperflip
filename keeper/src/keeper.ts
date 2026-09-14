@@ -1,3 +1,4 @@
+import { verifyDeploymentRpc } from "../../registry/deployment.mjs";
 import {
   createPublicClient,
   createWalletClient,
@@ -93,7 +94,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   // balance-verification path) — see keeper/rpc-check.mjs.
   const rpcUrls = config.rpcUrl.split(",").map((u) => u.trim()).filter(Boolean);
   const chain = defineChain({
-    id: 998,
+    id: config.chainId,
     name: "HyperEVM Testnet",
     nativeCurrency: { name: "HYPE", symbol: "HYPE", decimals: 18 },
     rpcUrls: { default: { http: rpcUrls } },
@@ -103,6 +104,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   // dead config: a 429 on one URL falls through to the next, then the set is retried.
   const transport = fallback(rpcUrls.map((u) => http(u)));
   const publicClient = createPublicClient({ chain, transport });
+  await verifyDeploymentRpc(publicClient, config);
   const walletClient = createWalletClient({ account, chain, transport });
   // attest() (balanceLoop) and settle() (settlementLoop) both send from `account` with no
   // explicit nonce; serializing the send through this queue is what stops the two loops racing

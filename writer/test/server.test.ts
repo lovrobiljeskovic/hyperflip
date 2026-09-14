@@ -15,7 +15,7 @@ const TAKER = "0x3333333333333333333333333333333333333333" as Address;
 
 function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
   return {
-    rpcUrl: "", parlayVault: V1, writerAddress: TAKER,
+    chainId: 998, rpcUrl: "", parlayVault: V1, writerAddress: TAKER,
     quoteSignerKey: `0x${"11".repeat(32)}` as `0x${string}`,
     pokerKey: `0x${"22".repeat(32)}` as `0x${string}`,
     infoApiUrl: "", quoteJournalFile: "/dev/null", port: 0, edgeBps: 0n, minPremiumBps: 100n, minLegs: 2,

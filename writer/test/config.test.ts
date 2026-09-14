@@ -61,6 +61,7 @@ test("writer boots with only sports configuration and filters historical public 
   const marketsFile = join(root, "markets.json");
   const legacy = { ...MARKET, category: "other", title: "Legacy market" };
   const values = {
+    DEPLOYMENT_FILE: join(root, "deployment.json"), EVM_CHAIN_ID: "998", POKER_INTERVAL_MS: "15000",
     PRICING_MODE: "", MARKETS_FILE: marketsFile, PARLAY_VAULT_ADDRESS: VAULT, PARLAY_DEPLOY_BLOCK: "1",
     MAX_STAKE: "1000000", PER_MARKET_CAP: "1000000", PER_CLUSTER_CAP: "1000000", INVITE_CODES: "test",
     WRITER_ADDRESS: "0x2222222222222222222222222222222222222222",
@@ -70,6 +71,7 @@ test("writer boots with only sports configuration and filters historical public 
   const saved = new Map(Object.keys(values).map((key) => [key, process.env[key]]));
   try {
     writeFileSync(marketsFile, JSON.stringify({ network: "testnet", markets: [MARKET], archived: [MARKET, legacy] }));
+    writeFileSync(values.DEPLOYMENT_FILE, JSON.stringify({ schemaVersion: 1, network: "testnet", evmChainId: 998, parlayVault: VAULT, parlayDeployBlock: "1" }));
     Object.assign(process.env, values);
     const config = loadConfig();
     assert.equal(config.parlayVault, VAULT);
@@ -87,6 +89,9 @@ test("writer boots with only sports configuration and filters historical public 
     assert.throws(() => loadConfig(), /SPOT_PX_STALE_MS/);
     process.env.SPOT_PX_STALE_MS = "0";
     assert.equal(loadConfig().spotPxStaleMs, Infinity);
+    process.env.POKER_INTERVAL_MS = "0";
+    assert.throws(() => loadConfig(), /POKER_INTERVAL_MS/);
+    process.env.POKER_INTERVAL_MS = "15000";
     process.env.QUOTE_SIGNER_PRIVATE_KEY = "invalid";
     assert.throws(() => loadConfig(), /QUOTE_SIGNER_PRIVATE_KEY must be/);
   } finally {

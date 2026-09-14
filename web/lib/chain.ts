@@ -1,7 +1,7 @@
 import { defineChain } from "viem";
 
 export const hyperEvmTestnet = defineChain({
-  id: 998,
+  id: Number(process.env.NEXT_PUBLIC_CHAIN_ID),
   name: "HyperEVM Testnet",
   nativeCurrency: { name: "HYPE", symbol: "HYPE", decimals: 18 },
   rpcUrls: {

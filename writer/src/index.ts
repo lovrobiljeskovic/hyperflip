@@ -1,3 +1,4 @@
+import { verifyDeploymentRpc } from "../../registry/deployment.mjs";
 import crypto from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -22,7 +23,8 @@ async function main(): Promise<void> {
   const rpcUrls = cfg.rpcUrl.split(",").map((u) => u.trim()).filter(Boolean);
   const transport = fallback(rpcUrls.map((u) => http(u)));
   const publicClient = createPublicClient({ transport });
-  const chainId = await publicClient.getChainId();
+  await verifyDeploymentRpc(publicClient, cfg);
+  const chainId = cfg.chainId;
   const usdcAddress = (await publicClient.readContract({
     address: cfg.parlayVault,
     abi: parlayVaultAbi,

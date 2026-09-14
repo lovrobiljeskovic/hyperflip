@@ -1,3 +1,4 @@
+import { loadDeployment } from "../../registry/deployment.mjs";
 import { config as loadDotenv } from "dotenv";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -13,6 +14,7 @@ export { parseMarkets } from "./markets.js";
 export type { MarketInfo } from "./markets.js";
 
 export interface WriterConfig {
+  chainId: number;
   rpcUrl: string;
   parlayVault: Address;
   writerAddress: Address;
@@ -108,11 +110,12 @@ export function loadConfig(): WriterConfig {
   }
   // Zero explicitly disables freshness checks on testnet.
   const spotPxStaleMs = spotPxStaleMsRaw === 0 ? Infinity : spotPxStaleMsRaw;
+  const pokerIntervalMs = Number(process.env.POKER_INTERVAL_MS ?? 15_000);
+  if (!Number.isFinite(pokerIntervalMs) || pokerIntervalMs <= 0) throw new Error("POKER_INTERVAL_MS must be positive");
   return {
+    ...loadDeployment(),
     markets,
     registryJson,
-    parlayVault: requireAddress("PARLAY_VAULT_ADDRESS"),
-    deployBlock: BigInt(requireEnv("PARLAY_DEPLOY_BLOCK")),
     infoApiUrl: process.env.INFO_API_URL ?? "https://api.hyperliquid-testnet.xyz/info",
     quoteJournalFile: path.resolve(here, "../..", process.env.QUOTE_JOURNAL_FILE ?? "writer/quotes.jsonl"),
     rpcUrl: process.env.WRITER_RPC || requireEnv("TESTNET_RPC"),
@@ -135,7 +138,7 @@ export function loadConfig(): WriterConfig {
     // ponytail: testnet depth floor; measure liquidity before a real-money launch.
     minBookDepthWad: parseDecimalToUnits(process.env.MIN_BOOK_DEPTH ?? "50", 18),
     lockoutMs: Number(process.env.LOCKOUT_MS ?? 600_000),
-    pokerIntervalMs: Number(process.env.POKER_INTERVAL_MS ?? 15_000),
+    pokerIntervalMs,
     inviteCodes: parseInviteCodes(requireEnv("INVITE_CODES")),
     resendApiKey: process.env.RESEND_API_KEY,
     waitlistFile: path.resolve(here, "../..", process.env.WAITLIST_FILE ?? "writer/waitlist.json"),

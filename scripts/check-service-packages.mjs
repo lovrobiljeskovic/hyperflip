@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -11,10 +11,9 @@ const loader = join(root, "writer/node_modules/tsx/dist/loader.mjs");
 try {
   for (const service of ["keeper", "writer"]) {
     const archive = join(temporary, `${service}.tar.gz`);
-    execFileSync("tar", ["-czf", archive, "-C", join(root, service), "package.json", "package-lock.json", "tsconfig.json", "src", "abi"]);
+    execFileSync("tar", ["-czf", archive, "-C", root, ...["package.json", "package-lock.json", "tsconfig.json", "src", "abi"].map(path => `${service}/${path}`), "registry/deployment.mts", "registry/deployment.testnet.json"]);
     const destination = join(temporary, service);
-    mkdirSync(destination);
-    execFileSync("tar", ["-xzf", archive, "-C", destination]);
+    execFileSync("tar", ["-xzf", archive, "-C", temporary]);
     assert(!existsSync(join(destination, "out")));
     assert(existsSync(join(destination, "package-lock.json")));
     const module = pathToFileURL(join(destination, "src/abi.ts")).href;
@@ -23,6 +22,8 @@ try {
       const abis = await import(${JSON.stringify(module)});
       assert.equal(Object.keys(abis).length, 2);
       for (const abi of Object.values(abis)) assert(Array.isArray(abi) && abi.length > 0);
+      const { loadDeployment } = await import(${JSON.stringify(pathToFileURL(join(temporary, "registry/deployment.mts")).href)});
+      assert.equal(loadDeployment({}).chainId, 998);
     `], { env: { ...process.env, PATH: dirname(process.execPath) }, stdio: "pipe" });
     console.log(`PASS: packed ${service} imports its ABIs without out/ or Foundry`);
   }

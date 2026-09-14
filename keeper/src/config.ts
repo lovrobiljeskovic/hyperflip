@@ -1,3 +1,4 @@
+import { loadDeployment, type Deployment } from "../../registry/deployment.mjs";
 import { config as loadDotenv } from "dotenv";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -10,7 +11,7 @@ import { parseRegistryMarkets } from "./pure.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 loadDotenv({ path: path.resolve(here, "../../.env") });
 
-export interface KeeperConfig {
+export interface KeeperConfig extends Deployment {
   rpcUrl: string;
   keeperPrivateKey: `0x${string}`;
   vaultAddresses: Address[];
@@ -71,6 +72,7 @@ export function loadConfig(): KeeperConfig {
   );
 
   return {
+    ...loadDeployment(),
     rpcUrl,
     keeperPrivateKey: keeperPrivateKey as `0x${string}`,
     vaultAddresses,
