@@ -141,10 +141,11 @@ test("fetchEvents: a failed chunk keeps earlier chunks and resumes there next ti
   // chunk discarded the whole batch and left nextBlock untouched, so a cold start far
   // behind head never completed a tick and the poker stayed blind to every open parlay.
   const requested: bigint[] = [];
-  let failFrom: bigint | null = 2000n;
+  let failFrom: bigint | null = 200n;
   const publicClient = {
-    getBlockNumber: async () => 2500n,
-    getLogs: async ({ event, fromBlock }: { event: { name: string }; fromBlock: bigint }) => {
+    getBlockNumber: async () => 250n,
+    getLogs: async ({ event, fromBlock, toBlock }: { event: { name: string }; fromBlock: bigint; toBlock: bigint }) => {
+      assert(toBlock - fromBlock + 1n <= 100n, "public RPC rejects larger ranges");
       if (event.name === "ParlayMinted") requested.push(fromBlock);
       if (fromBlock === failFrom) throw new Error("rate limited");
       if (event.name === "ParlayMinted" && fromBlock === 0n) {
@@ -168,12 +169,16 @@ test("fetchEvents: a failed chunk keeps earlier chunks and resumes there next ti
 
   await poker.tick();
   assert.equal(poker.openCount(), 1); // chunk 0's mint survived the chunk-2 failure
-  assert.deepEqual(requested, [0n, 1000n, 2000n]); // stopped at the failure, no retry storm
+  assert.deepEqual(requested, [0n, 100n, 200n]); // stopped at the failure, no retry storm
 
   failFrom = null;
   requested.length = 0;
   await poker.tick();
-  assert.deepEqual(requested, [2000n]); // resumed where it left off, did not rescan 0..1999
+  assert.deepEqual(requested, [200n]); // resumed without rescanning completed chunks
+
+  requested.length = 0;
+  await poker.tick();
+  assert.deepEqual(requested, []); // the final partial chunk reached the head
 });
 
 // mainnet-hardening P1-6: a restart with N open parlays on-chain must rebuild `open`

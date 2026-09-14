@@ -132,17 +132,10 @@ export class Poker {
     if (toBlock < fromBlock) return { minted: [], resolvedIds: [], toBlock: fromBlock - 1n };
     const minted: MintedEvent[] = [];
     const resolvedIds: bigint[] = [];
-    // Testnet RPC caps getLogs at 1000 blocks per query; an unchunked scan bricks
-    // every tick once the gap since fromBlock exceeds that (found in the 8/18 e2e).
-    //
-    // Chunk progress must also be durable. This scan used to be all-or-nothing, so
-    // one rate-limited chunk discarded every chunk already scanned and left
-    // nextBlock untouched — the next tick reran the same doomed scan, forever. A
-    // cold start 136k blocks behind never completed a single tick, leaving the
-    // poker blind to every open parlay while it hammered the RPC (found 8/20).
-    // Keep whatever scanned cleanly and resume from there next tick.
+    // Keep ranges small enough for public dRPC. Retain completed chunks so a
+    // failed request resumes there next tick without losing exposure updates.
     let scanned = fromBlock - 1n;
-    for (const r of blockRanges(fromBlock, toBlock, 1000n)) {
+    for (const r of blockRanges(fromBlock, toBlock, 100n)) {
       try {
         const [mintLogs, resolveLogs] = await Promise.all([
           publicClient.getLogs({ address: parlayVault, event: MINTED, fromBlock: r.from, toBlock: r.to }),
