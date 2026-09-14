@@ -1,156 +1,17 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import type { PublicClient } from "viem";
-import { usePublicClient, useWriteContract } from "wagmi";
-import { scanParlayIds, type ParlayRef } from "@/lib/scan";
-import { pool } from "@/lib/pool";
-import { PARLAY_VAULT, STATUS, outcomeVaultAbi, parlayVaultAbi } from "@/lib/contracts";
-import { formatUsdc, multiplier, pct1, until } from "@/lib/format";
+import { useAccount, usePublicClient, useWriteContract } from "wagmi";
+import { usePositions } from "./use-positions";
+import { deriveRow, type Row, type LegVerdict } from "@/lib/positions";
+import { PARLAY_VAULT, STATUS, parlayVaultAbi } from "@/lib/contracts";
+import { formatUsdc, multiplier, pct1, until, shortError } from "@/lib/format";
 import { hyperEvmTestnet, tradeUrl } from "@/lib/chain";
 import { fetchMarkets, type Market, sideLabel } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { useConnectAction, useWalletState } from "@/lib/wallet";
 import { appHref } from "@/lib/site";
-
-const WAD = 10n ** 18n;
-
-type Leg = { vault: `0x${string}`; isYes: boolean };
-type ParlayData = {
-  legs: readonly Leg[];
-  writer: `0x${string}`;
-  premium: bigint;
-  maxPayout: bigint;
-  status: number;
-};
-type LegVerdict = "pending" | "hit" | "lost" | "fractional";
-
-interface Row {
-  id: bigint;
-  parlay: ParlayData;
-  burned: boolean;
-  legVerdicts: LegVerdict[]; // per-leg, in parlay.legs order
-  block: bigint; // mint block - kept so a post-claim reload doesn't rescan logs
-  mintedAtMs: number;
-}
-
-function legVerdict(isYes: boolean, settled: boolean, fraction: bigint | null): LegVerdict {
-  if (!settled) return "pending";
-  const winFraction = isYes ? WAD : 0n;
-  const loseFraction = isYes ? 0n : WAD;
-  if (fraction === winFraction) return "hit";
-  if (fraction === loseFraction) return "lost";
-  return "fractional";
-}
-
-async function loadRow(client: PublicClient, { id, block }: ParlayRef): Promise<Row> {
-  const parlay = (await client.readContract({
-    address: PARLAY_VAULT,
-    abi: parlayVaultAbi,
-    functionName: "parlay",
-    args: [id],
-  })) as ParlayData;
-
-  let burned = false;
-  try {
-    await client.readContract({ address: PARLAY_VAULT, abi: parlayVaultAbi, functionName: "ownerOf", args: [id] });
-  } catch {
-    burned = true; // ownerOf reverts once the NFT is burned (claimed Won parlay)
-  }
-
-  // Computed for every status, not just Open: the expanded row shows per-leg
-  // outcomes on closed tickets too ("which leg killed it"), which the parlay
-  // status alone can't answer.
-  const legVerdicts = await Promise.all(
-    parlay.legs.map(async (leg) => {
-      const settled = await client.readContract({
-        address: leg.vault,
-        abi: outcomeVaultAbi,
-        functionName: "settled",
-      });
-      const fraction = settled
-        ? await client.readContract({ address: leg.vault, abi: outcomeVaultAbi, functionName: "settleFractionWad" })
-        : null;
-      return legVerdict(leg.isYes, settled, fraction);
-    }),
-  );
-
-  const { timestamp } = await client.getBlock({ blockNumber: block });
-
-  return { id, parlay, burned, legVerdicts, block, mintedAtMs: Number(timestamp) * 1000 };
-}
-
-type RowView = {
-  statusLabel: string;
-  statusClass: string;
-  payoutClass: string;
-  action: { kind: "claim" | "resolve"; label: string } | null;
-};
-
-/** Row derivation table - task-7-brief.md §Row derivation, verbatim. */
-function deriveRow(row: Row): RowView {
-  const { parlay, burned, legVerdicts } = row;
-
-  if (parlay.status === STATUS.Open) {
-    const verdicts = legVerdicts;
-    const settledCount = verdicts.filter((v) => v !== "pending").length;
-    // A single lost leg kills the whole parlay immediately - check it before
-    // "not all settled" so a ticket doesn't sit as "n of m settled" once one
-    // leg has already lost (poker sweeps the escrow regardless of the rest).
-    if (verdicts.some((v) => v === "lost")) {
-      return { statusLabel: "Lost", statusClass: "text-no", payoutClass: "text-dim", action: null };
-    }
-    if (settledCount < verdicts.length) {
-      return {
-        statusLabel: `${settledCount} of ${verdicts.length} settled`,
-        statusClass: "text-dim",
-        payoutClass: "text-dim",
-        action: null,
-      };
-    }
-    if (verdicts.every((v) => v === "hit")) {
-      return {
-        statusLabel: "Claimable",
-        statusClass: "text-yes",
-        payoutClass: "text-accent",
-        action: { kind: "claim", label: "Claim" },
-      };
-    }
-    // all settled, some fractional, none lost - claim() would revert NOT_WON
-    return {
-      statusLabel: "Voidable",
-      statusClass: "text-dim",
-      payoutClass: "text-dim",
-      action: { kind: "resolve", label: "Reclaim premium" },
-    };
-  }
-
-  if (parlay.status === STATUS.Won) {
-    if (!burned) {
-      return {
-        statusLabel: "Claimable",
-        statusClass: "text-yes",
-        payoutClass: "text-accent",
-        action: { kind: "claim", label: "Claim" },
-      };
-    }
-    return { statusLabel: "Claimed", statusClass: "text-yes", payoutClass: "text-yes", action: null };
-  }
-
-  if (parlay.status === STATUS.Dead) {
-    return { statusLabel: "Lost", statusClass: "text-no", payoutClass: "text-dim", action: null };
-  }
-
-  // STATUS.Void
-  return { statusLabel: "Voided - premium refunded", statusClass: "text-dim", payoutClass: "text-dim", action: null };
-}
-
-function shortError(err: unknown): string {
-  const raw = String((err as Error)?.message ?? err);
-  const firstLine = raw.split("\n")[0] ?? raw;
-  return firstLine.length > 140 ? `${firstLine.slice(0, 140)}…` : firstLine;
-}
 
 const EXPLORER = hyperEvmTestnet.blockExplorers.default.url;
 
@@ -325,25 +186,29 @@ function LoadingSkeleton() {
 }
 
 export default function PositionsPage() {
+  const { address } = useWalletState();
+  const { chainId } = useAccount();
+  return <PositionsContent key={`${address?.toLowerCase()}:${chainId}`} />;
+}
+
+function PositionsContent() {
   const { ready, address, isConnected } = useWalletState();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
   const connect = useConnectAction();
 
-  const [rows, setRows] = useState<Row[] | null>(null);
-  const [error, setError] = useState(false);
+  const { rows, error, load, reloadRow } = usePositions(publicClient, address);
+  const actionInFlight = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [pending, setPending] = useState<{ id: bigint; kind: "claim" | "resolve" } | null>(null);
   const [actionError, setActionError] = useState<{ id: bigint; msg: string } | null>(null);
   const [expanded, setExpanded] = useState<bigint | null>(null);
   const [markets, setMarkets] = useState<Market[]>([]);
   const mids = useMids();
 
-  // Titles/coins/expiries live in the writer's registry, not on-chain - the
-  // leg detail rows fall back to the raw vault address if it's unreachable.
+  // Registry metadata supplies sports labels; addresses remain the fallback.
   useEffect(() => {
-    // A failed fetch here used to wipe markets to [], which turns every leg's
-    // title into its raw vault address on a transient blip - keep whatever
-    // we last had instead of clobbering it.
     fetchMarkets(true)
       .then(setMarkets)
       .catch(() => {});
@@ -353,38 +218,10 @@ export default function PositionsPage() {
     [markets],
   );
 
-  const load = useCallback(async () => {
-    if (!address || !publicClient) return;
-    setError(false);
-    setRows(null);
-    try {
-      const refs = await scanParlayIds(publicClient, address);
-      // Each row costs ~1.5s of round trips, so nine positions loaded one at a
-      // time read as a hung page. Six at a time; leg reads inside a row still
-      // fan out, so the real ceiling is ~6×(2+2L) in flight, which this testnet
-      // endpoint serves without rate-limiting.
-      // ponytail: fixed pool. Batch via multicall if position counts grow.
-      const loaded = await pool(refs, 6, (ref) => loadRow(publicClient, ref));
-      loaded.sort((a, b) => (a.id > b.id ? -1 : a.id < b.id ? 1 : 0)); // newest first
-      setRows(loaded);
-    } catch {
-      setError(true);
-    }
-  }, [address, publicClient]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function reloadRow(ref: ParlayRef) {
-    if (!publicClient) return;
-    const fresh = await loadRow(publicClient, ref);
-    setRows((prev) => (prev ? prev.map((r) => (r.id === ref.id ? fresh : r)) : prev));
-  }
-
   async function act(row: Row, kind: "claim" | "resolve") {
     const id = row.id;
-    if (!publicClient) return;
+    if (!publicClient || !address || actionInFlight.current) return;
+    actionInFlight.current = true;
     setPending({ id, kind });
     setActionError(null);
     try {
@@ -393,13 +230,18 @@ export default function PositionsPage() {
         abi: parlayVaultAbi,
         functionName: kind === "claim" ? "claim" : "resolveParlay",
         args: [id],
+        account: address,
+        chainId: hyperEvmTestnet.id,
       });
-      await publicClient.waitForTransactionReceipt({ hash });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (!mounted.current) return;
+      if (receipt.status !== "success") throw new Error("Transaction reverted; retry after refreshing the position.");
       await reloadRow(row);
     } catch (err) {
-      setActionError({ id, msg: shortError(err) });
+      if (mounted.current) setActionError({ id, msg: shortError(err) });
     } finally {
-      setPending(null);
+      actionInFlight.current = false;
+      if (mounted.current) setPending(null);
     }
   }
 
@@ -427,7 +269,7 @@ export default function PositionsPage() {
               Connect wallet
             </button>
           </div>
-        ) : error ? (
+        ) : error && rows === null ? (
           <div className="mt-10 flex flex-col items-start gap-3 rounded-card border border-line bg-panel p-6">
             <p className="text-no">Couldn&apos;t load your positions.</p>
             <button
@@ -452,6 +294,7 @@ export default function PositionsPage() {
           </div>
         ) : (
           <>
+            {error && <p role="alert" className="mt-4 text-no">Some positions could not be loaded. <button className="underline" onClick={() => void load()}>Retry</button></p>}
             <SummaryStrip rows={rows} />
 
             {/* Mobile: one card per slip; the table needs 860px and horizontal
@@ -513,7 +356,7 @@ export default function PositionsPage() {
                       <div className="px-4 pb-3">
                         <button
                           type="button"
-                          disabled={isPending}
+                          disabled={pending !== null}
                           onClick={() => void act(row, view.action!.kind)}
                           className={`mono w-full rounded-[4px] px-3 py-2 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                             view.action.kind === "claim"
@@ -602,7 +445,7 @@ export default function PositionsPage() {
                             {view.action ? (
                               <button
                                 type="button"
-                                disabled={isPending}
+                                disabled={pending !== null}
                                 onClick={() => void act(row, view.action!.kind)}
                                 className={`rounded-[4px] px-3 py-1 mono text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                                   view.action.kind === "claim"

@@ -25,7 +25,7 @@ export class ExposureBook {
   private reservations = new Map<string, Reservation>();
   private open = new Map<string, OpenParlay>();
 
-  /** @param clusterOf Maps a lowercase vault address to its correlation cluster;
+  /** @param clusterOf Maps a lowercase vault address to its competition exposure group;
    * injected so the book can bucket entries recorded before/after registry changes
    * without storing cluster snapshots. Default: no clusters (cluster cap inert).
    * @param reservationGraceMs Keeps an expired-but-undetected reservation counted

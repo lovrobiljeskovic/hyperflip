@@ -1,7 +1,0 @@
-{
-  "parlays": [
-    { "id": "1", "quoteId": "0x01", "status": "won", "legs": [{ "vault": "0x1111111111111111111111111111111111111111", "isYes": true, "fraction": "1000000000000000000" }] },
-    { "id": "2", "quoteId": "0x02", "status": "dead", "legs": [{ "vault": "0x2222222222222222222222222222222222222222", "isYes": true, "fraction": "0" }, { "vault": "0x3333333333333333333333333333333333333333", "isYes": false, "fraction": null }] },
-    { "id": "3", "quoteId": "0x03", "status": "void", "legs": [{ "vault": "0x4444444444444444444444444444444444444444", "isYes": true, "fraction": "500000000000000000" }, { "vault": "0x5555555555555555555555555555555555555555", "isYes": false, "fraction": null }] }
-  ]
-}

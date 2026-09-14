@@ -1,46 +1,27 @@
+import { loadDeployment } from "../../registry/deployment.mjs";
 import { config as loadDotenv } from "dotenv";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isAddress, type Address } from "viem";
-import { parseCorrelations, type CorrelationTable } from "./correlation.js";
 import { parseMarkets, type MarketInfo } from "./markets.js";
 import { BPS, parseDecimalToUnits } from "./pure.js";
-import { assertValidationArtifactIdentity, assertValidationDerivedIdentity, parseCorrelationArtifact, type ArtifactModelMetadata } from "./research/artifacts.js";
-import { bindResearchRootIdentity, loadResearchNetworkProfile, type LoadedResearchNetworkProfile } from "./research/network.js";
-import { openResearchPersistence, type ResearchPersistence } from "./research/persistence.js";
-import { sha256 } from "./research/store.js";
-import type { ValidationReport } from "./research/replay.js";
 
-// .env lives at the repo root, one level above writer/ — same pattern as keeper/config.ts.
 const here = path.dirname(fileURLToPath(import.meta.url));
 loadDotenv({ path: path.resolve(here, "../../.env") });
 
 export { parseMarkets } from "./markets.js";
 export type { MarketInfo } from "./markets.js";
 
-/** `correlated`: the research champion / baseline copula prices the joint
- * probability and cross-underlying tickets need a Supported model (crypto and
- * equities). `independent`: legs multiply, cross-game tickets always quote,
- * legs sharing a game or question are refused — the sports beta. Boots from
- * MARKETS_FILE alone, no research root or profile. */
-export type PricingMode = "correlated" | "independent";
-
 export interface WriterConfig {
-  pricingMode: PricingMode;
+  chainId: number;
   rpcUrl: string;
   parlayVault: Address;
-  /** The bankroll wallet granting the ERC-20 allowance. Read-only here; this service never spends from it. */
   writerAddress: Address;
   quoteSignerKey: `0x${string}`;
   pokerKey: `0x${string}`;
   infoApiUrl: string;
-  /** Research storage; absent in independent mode. */
-  researchRoot?: string;
-  researchProfile?: LoadedResearchNetworkProfile;
-  researchPersistence?: ResearchPersistence;
-  /** Independent mode's quote journal: one JSON line per signed quote. */
-  quoteJournalFile?: string;
+  quoteJournalFile: string;
   port: number;
   edgeBps: bigint;
   minPremiumBps: bigint;
@@ -48,78 +29,23 @@ export interface WriterConfig {
   maxStake: bigint;
   perMarketCap: bigint;
   perClusterCap: bigint;
-  /** Cap on one invite code's reserved-but-unminted risk (sum of live /quote
-   * reservations keyed by `inviteCode`), independent of the per-IP request-rate
-   * limiter. Mitigates a caller who quotes repeatedly and never mints from
-   * pinning quotable headroom for everyone else (mainnet-hardening P0-4) — a
-   * liveness refinement, not a solvency cap; the allowance stays that.
-   * Keyed on the code, not the taker address: addresses rotate for free
-   * (defeating the cap) and an attacker could spam a victim's address to lock
-   * them out; codes are limited-supply, revocable, and burn the sender's own
-   * budget. People sharing one code share one budget — deliberate.
-   * Default derivation: priceParlay's floorCap caps a single quote's risk at
-   * (BPS/minPremiumBps - 1) * stake — computed from minPremiumBps, not a
-   * hardcoded multiple, so a deployment that changes MIN_PREMIUM_BPS without
-   * setting PER_CODE_RESERVED_CAP still gets a default that matches its own
-   * floorCap (~99x maxStake at the default 100bps). minPremiumBps is
-   * owner-settable on-chain and the chain value always wins over env at
-   * startup (index.ts) — when PER_CODE_RESERVED_CAP was left unset, index.ts
-   * recomputes this default off the synced chain value so it still tracks
-   * the live floorCap, not the stale env one. poker's polling lag
-   * (pokerIntervalMs, default 15s) means a
-   * just-minted reservation can still count as "reserved" for a beat after the
-   * taker already minted, so honest sequential minting can briefly hold 2-3
-   * near-max reservations at once — hence the further *3 below, giving room
-   * for ~3 such reservations while still bounding a single code to a small
-   * slice of a real bankroll's allowance/perMarketCap. */
+  // Invite codes share a reservation budget; wallet rotation cannot reset it.
   perCodeReservedCap: bigint;
-  /** Multiplicative half-width of the correlation uncertainty band. The pricer
-   * evaluates the joint probability at (1 - x) and (1 + x) times every pairwise
-   * rho and quotes the house-favorable end, so the house is paid for the fact
-   * that the loadings table is hand-set rather than measured. */
-  rhoBandPct: number;
-  /** Factor loadings from the profile-bound champion (or the profile baseline
-   * for same-underlying-only degraded service). Writer-only. */
-  correlations: CorrelationTable;
-  /** Validated champion metadata and source/pair admission state. */
-  model: ArtifactModelMetadata;
-  /** Extra edge (bps) per leg past the first. Base edge is flat in leg count,
-   * so without this a long ticket earns the same margin as a short one while
-   * carrying far more risk. Set to 0 to restore flat pricing. */
   legEdgeBps: bigint;
   quoteTtlMs: number;
-  /** A leg priced off spotPx (book empty/failed) is refused once its coin's last
-   * confirmed-live timestamp is older than this. spotPx has no on-chain timestamp
-   * (see writer/src/spotPx.ts), so freshness is tracked writer-side off book fetches. */
   spotPxStaleMs: number;
-  /** Minimum cumulative ask-side `sz` (same units as l2Book's `sz`, WAD-scaled) a
-   * book must cover before its price is trusted; below this it's treated as empty
-   * and falls through to spotPx (mainnet-hardening P0-3 — a 1-lot spoofed top
-   * can't move a quote). See writer/src/infoApi.ts `bestAskWad`. */
   minBookDepthWad: bigint;
   lockoutMs: number;
   pokerIntervalMs: number;
-  /** Block ParlayVault was deployed at — startup event scan starts here. */
   deployBlock: bigint;
-  /** Keyed by lowercase vault address. */
   markets: Map<string, MarketInfo>;
-  /** Raw registry file contents, served verbatim by GET /markets. */
   registryJson: string;
-  /** Valid invite codes; the only beta gate (spec §3). Waitlist-issued codes
-   * (waitlist.ts) are accepted alongside these. */
   inviteCodes: Set<string>;
-  /** Resend API key for waitlist invite emails; unset disables POST /waitlist. */
   resendApiKey?: string;
-  /** Waitlist store path (absolute). */
   waitlistFile: string;
-  /** Browser-origin allowlist for CORS on sensitive routes (/quote, /waitlist,
-   * /limits, /health, /metrics). Browser-enforcement only — a non-browser
-   * caller (curl, the poker script) ignores CORS entirely, so this is not an
-   * auth boundary; the invite gate and exposure caps remain that. /markets is
-   * deliberately left `*` — it's public registry data the UI may fetch from
-   * anywhere. */
   corsOrigins: string[];
 }
+
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -130,7 +56,6 @@ function requireEnv(name: string): string {
 function requireKey(name: string): `0x${string}` {
   const v = requireEnv(name);
   if (!/^0x[0-9a-fA-F]{64}$/.test(v)) {
-    // Never log the value itself — only that it's malformed.
     throw new Error(`${name} must be a 0x-prefixed 32-byte hex string`);
   }
   return v as `0x${string}`;
@@ -146,26 +71,18 @@ export function parseInviteCodes(raw: string): Set<string> {
   return new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
 }
 
-/** CORS_ORIGINS default: the known deployed frontends (project deploy state,
- * mainnet-hardening handoff). Override via env for other environments. */
 export const DEFAULT_CORS_ORIGINS =
-  "https://hyperflip.xyz,https://www.hyperflip.xyz,https://overround.xyz,https://overround-wine.vercel.app";
+  "https://hyperflip.xyz,https://www.hyperflip.xyz,https://app.hyperflip.xyz,https://overround.xyz,https://overround-wine.vercel.app";
 
 export function parseCorsOrigins(raw: string): string[] {
   return raw.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
-/** Default PER_CODE_RESERVED_CAP when unset — see WriterConfig.perCodeReservedCap
- * for the reasoning. Pulled out as a pure function so the derivation is
- * unit-testable without going through loadConfig's env/file plumbing. */
 export function defaultPerCodeReservedCap(maxStake: bigint, minPremiumBps: bigint): bigint {
+  // Allow three maximum-risk quotes while the mint watcher catches up.
   return maxStake * (BPS / minPremiumBps - 1n) * 3n;
 }
 
-/** Refresh perCodeReservedCap after index.ts syncs minPremiumBps from chain
- * (chain always wins — see WriterConfig.minPremiumBps). Only recomputes when
- * PER_CODE_RESERVED_CAP was left unset at load time, so an explicit env
- * override is never silently clobbered by the chain sync. */
 export function syncedPerCodeReservedCap(
   envWasSet: boolean,
   current: bigint,
@@ -175,196 +92,33 @@ export function syncedPerCodeReservedCap(
   return envWasSet ? current : defaultPerCodeReservedCap(maxStake, chainMinPremiumBps);
 }
 
-export function assertProfileChain(profile: LoadedResearchNetworkProfile, actualChainId: number): void {
-  if (actualChainId !== profile.profile.evmChainId) throw new Error(`research profile expected chain ${profile.profile.evmChainId}, got ${actualChainId}`);
-}
-
-export function profileDeploymentMismatchReason(profile: LoadedResearchNetworkProfile, vault: string, deployBlock: bigint): string | null {
-  if (vault.toLowerCase() !== profile.deployment.parlayVault.toLowerCase()) return `research profile expected vault ${profile.deployment.parlayVault}, got ${vault}`;
-  const expectedBlock = BigInt(profile.deployment.parlayDeployBlock);
-  if (deployBlock !== expectedBlock) return `research profile expected deploy block ${expectedBlock}, got ${deployBlock}`;
-  return null;
-}
-
-export function writerProfileIdentityFailure(config: Pick<WriterConfig, "researchProfile" | "parlayVault" | "deployBlock" | "model">, actualChainId: number): string | null {
-  const profile = config.researchProfile;
-  if (!profile) return null; // independent mode: no research identity to verify
-  try { assertProfileChain(profile, actualChainId); } catch (error) { return (error as Error).message; }
-  const deployment = profileDeploymentMismatchReason(profile, config.parlayVault, config.deployBlock);
-  if (deployment) return deployment;
-  const model = config.model;
-  if (model.identityFailureReason) return model.identityFailureReason;
-  if (model.network !== profile.profile.network) return `research champion expected network ${profile.profile.network}, got ${model.network}`;
-  for (const [label, actual, expected] of [
-    ["profile", model.profileSha256, profile.profileSha256],
-    ["source registry", model.sourceRegistrySha256, profile.sourceRegistrySha256],
-    ["market registry", model.marketRegistrySha256, profile.marketRegistrySha256],
-    ["deployment registry", model.deploymentRegistrySha256, profile.deploymentRegistrySha256],
-    ["baseline correlation", model.baselineCorrelationSha256, profile.baselineCorrelationSha256],
-  ]) if (actual !== expected) return `research champion ${label} hash mismatch`;
-  if (model.validationState !== "Supported" || !model.validationSha256) return "research champion has no Supported validation";
-  return null;
-}
-
-export function applyWriterProfileIdentity(config: Pick<WriterConfig, "researchProfile" | "parlayVault" | "deployBlock" | "model">, actualChainId: number): string | null {
-  const reason = writerProfileIdentityFailure(config, actualChainId);
-  config.model.identityFailureReason = reason;
-  if (reason) config.model.multiAssetEnabled = false;
-  return reason;
-}
-
-export function parsePricingMode(raw: string | undefined): PricingMode {
-  const mode = raw ?? "correlated";
-  if (mode !== "correlated" && mode !== "independent") throw new Error("PRICING_MODE must be correlated or independent");
-  return mode;
-}
-
-/** Everything that differs between the two pricing modes at boot. */
-interface PricingSource {
-  markets: Map<string, MarketInfo>;
-  registryJson: string;
-  correlations: CorrelationTable;
-  model: ArtifactModelMetadata;
-  parlayVault: Address;
-  deployBlock: bigint;
-  infoApiUrl: string;
-  researchRoot?: string;
-  researchProfile?: LoadedResearchNetworkProfile;
-  researchPersistence?: ResearchPersistence;
-  quoteJournalFile?: string;
-}
-
-const DEFAULT_INFO_API_URL = "https://api.hyperliquid-testnet.xyz/info";
-
-/** Independent mode has no champion; this stub keeps the /health and journal
- * shapes intact with every research identity field zeroed. */
-export function independentModel(registryJson: string): ArtifactModelMetadata {
-  const zero = "0".repeat(64);
-  return {
-    artifactKind: "profile-baseline", network: "testnet", profileSha256: zero, version: "independent",
-    dataAsOf: new Date(0).toISOString(), dataManifestSha256: zero, sourceRegistrySha256: zero,
-    marketRegistrySha256: sha256(registryJson), deploymentRegistrySha256: zero, baselineCorrelationSha256: zero,
-    artifactSha256: zero, validationSha256: null, validationState: "Unavailable", identityFailureReason: null,
-    ageMs: 0, multiAssetEnabled: false, eligibleUnderlyings: new Set(), quarantinedUnderlyings: new Map(),
-    fallbackEligible: new Set(), pairEligibility: new Map(),
-  };
-}
-
-function loadIndependentSource(): PricingSource {
-  const registryJson = readFileSync(path.resolve(here, "../..", requireEnv("MARKETS_FILE")), "utf8");
-  return {
-    markets: parseMarkets(registryJson),
-    registryJson,
-    correlations: { underlyings: {}, fallback: {}, shrunkClusters: [] },
-    model: independentModel(registryJson),
-    parlayVault: requireAddress("PARLAY_VAULT_ADDRESS"),
-    deployBlock: BigInt(requireEnv("PARLAY_DEPLOY_BLOCK")),
-    infoApiUrl: process.env.INFO_API_URL ?? DEFAULT_INFO_API_URL,
-    quoteJournalFile: path.resolve(here, "../..", process.env.QUOTE_JOURNAL_FILE ?? "writer/quotes.jsonl"),
-  };
-}
-
-function loadCorrelatedSource(nowMs: number): PricingSource {
-  const researchRoot = path.resolve(here, "../..", requireEnv("RESEARCH_ROOT"));
-  const researchProfile = loadResearchNetworkProfile(path.resolve(here, "../..", requireEnv("RESEARCH_NETWORK_PROFILE_FILE")));
-  const storage = openResearchPersistence(researchRoot);
-  bindResearchRootIdentity(storage, researchProfile);
-  const registryJson = researchProfile.marketRegistryRaw;
-  const markets = parseMarkets(registryJson);
-  let correlations: CorrelationTable;
-  let model: ArtifactModelMetadata;
-  try {
-    const championRaw = storage.readText("artifacts/champion.json");
-    const champion = parseCorrelationArtifact(championRaw, nowMs, researchProfile.sources, markets, researchProfile);
-    const validationBytes = storage.readText(`artifacts/candidates/${champion.artifact.modelVersion}.validation.json`);
-    const validation = JSON.parse(validationBytes) as ValidationReport;
-    assertValidationArtifactIdentity(championRaw, champion.artifact, validation, researchProfile);
-    assertValidationDerivedIdentity(researchRoot, storage, champion.artifact, validation, researchProfile);
-    if (validation.decision !== "Supported") throw new Error("artifact: writer requires Supported validation");
-    ({ table: correlations, model } = champion);
-    model.validationSha256 = sha256(validationBytes);
-    model.validationState = "Supported";
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    const profileIdentityFailure = (error as NodeJS.ErrnoException).code === "ENOENT"
-      || /network|profile identity|registry hash mismatch|source\/market cluster disagreement|validation.*mismatch|derived manifest|requires Supported validation/.test(reason);
-    if (!profileIdentityFailure) throw error;
-    correlations = parseCorrelations(researchProfile.baselineCorrelationRaw);
-    model = {
-      artifactKind: "profile-baseline", network: "testnet", profileSha256: researchProfile.profileSha256,
-      version: "profile-baseline", dataAsOf: new Date(0).toISOString(), dataManifestSha256: researchProfile.baselineCorrelationSha256,
-      sourceRegistrySha256: researchProfile.sourceRegistrySha256, marketRegistrySha256: researchProfile.marketRegistrySha256,
-      deploymentRegistrySha256: researchProfile.deploymentRegistrySha256, baselineCorrelationSha256: researchProfile.baselineCorrelationSha256,
-      artifactSha256: researchProfile.baselineCorrelationSha256, validationSha256: null, validationState: "Unavailable",
-      identityFailureReason: `research champion unavailable: ${reason}`, ageMs: Number.POSITIVE_INFINITY, multiAssetEnabled: false,
-      eligibleUnderlyings: new Set(), quarantinedUnderlyings: new Map(),
-      fallbackEligible: new Set(researchProfile.sources.sources.filter((source) => source.fallbackEligible).map((source) => source.underlying)),
-      pairEligibility: new Map(),
-    };
+export function loadConfig(): WriterConfig {
+  if (process.env.PRICING_MODE && process.env.PRICING_MODE !== "independent") {
+    throw new Error("PRICING_MODE must be independent or unset for sports pricing");
   }
-  // Boot-time signal, not per-request noise: the shipped table's shrunk
-  // clusters don't change quote to quote, so this fires once here rather than
-  // from the pure parse function on every call.
-  if (correlations.shrunkClusters.length > 0) {
-    console.warn(JSON.stringify({ event: "correlation-fallback-shrunk", clusters: correlations.shrunkClusters }));
-  }
-  // An empty table is not a degraded mode, it is silent mispricing: every leg
-  // falls through to zero loadings and every parlay quotes as independent,
-  // with nothing in the logs to say so. Refuse to boot.
-  if (Object.keys(correlations.underlyings).length === 0) {
-    throw new Error("correlations: no underlyings parsed — check the file's top-level `clusters` key");
-  }
-  // A market in a cluster the table has never heard of gets the blunt
-  // whole-table fallback (see loadingsFor), which is an over-estimate rather
-  // than an under-estimate — wrong, but not house-losing. Deliberately a warn
-  // and not a throw: the registry is rewritten by the rotation job, so a throw
-  // here would let that job brick the writer at startup.
-  const unknown = [...markets.values()].filter((m) => correlations.fallback[m.cluster] === undefined);
-  if (unknown.length > 0) {
-    console.warn(
-      JSON.stringify({
-        event: "correlation-unknown-market-cluster",
-        clusters: [...new Set(unknown.map((m) => m.cluster))],
-        markets: unknown.map((m) => ({ vault: m.vault, underlying: m.underlying, cluster: m.cluster })),
-      }),
-    );
-  }
-  return {
-    markets, registryJson, correlations, model,
-    parlayVault: researchProfile.deployment.parlayVault,
-    deployBlock: BigInt(researchProfile.deployment.parlayDeployBlock),
-    infoApiUrl: researchProfile.profile.infoApiUrl,
-    researchRoot, researchProfile, researchPersistence: storage,
-  };
-}
-
-export function loadConfig(nowMs = Date.now()): WriterConfig {
-  const pricingMode = parsePricingMode(process.env.PRICING_MODE);
-  const source = pricingMode === "independent" ? loadIndependentSource() : loadCorrelatedSource(nowMs);
+  const registry = JSON.parse(readFileSync(path.resolve(here, "../..", requireEnv("MARKETS_FILE")), "utf8"));
+  const markets = parseMarkets(JSON.stringify(registry));
+  // Keep historical settlement metadata on disk; expose only sports to the app.
+  const registryJson = JSON.stringify(Array.isArray(registry) ? registry : {
+    ...registry, archived: (registry.archived ?? []).filter((market: { category?: string }) => market.category === "sports"),
+  });
   const maxStake = BigInt(requireEnv("MAX_STAKE"));
   const minPremiumBps = BigInt(process.env.MIN_PREMIUM_BPS ?? 100);
   const spotPxStaleMsRaw = Number(process.env.SPOT_PX_STALE_MS ?? 60_000);
-  // isSpotPxStale is `now - lastFreshMs > staleMs`; a NaN staleMs makes every
-  // comparison false, silently disabling the P0-1 freshness gate instead of
-  // refusing quotes. Same "refuse to boot on malformed input" posture as the
-  // correlation table check above.
   if (!Number.isFinite(spotPxStaleMsRaw)) {
     throw new Error("SPOT_PX_STALE_MS must be a finite number");
   }
-  // 0 = gate explicitly OFF (mapped to Infinity for isSpotPxStale). Testnet
-  // outcome books are empty, so no coin ever earns a book-ask freshness stamp
-  // and a finite window 503s every quote (stale-book). Play-money deployments
-  // opt out; mainnet keeps the finite default.
+  // Zero explicitly disables freshness checks on testnet.
   const spotPxStaleMs = spotPxStaleMsRaw === 0 ? Infinity : spotPxStaleMsRaw;
+  const pokerIntervalMs = Number(process.env.POKER_INTERVAL_MS ?? 15_000);
+  if (!Number.isFinite(pokerIntervalMs) || pokerIntervalMs <= 0) throw new Error("POKER_INTERVAL_MS must be positive");
   return {
-    pricingMode,
-    ...source,
-    // The writer never touches the 0x814 precompile (keeper-only), which is the sole
-    // reason TESTNET_RPC is pinned to the official endpoint — and that endpoint
-    // rate-limits getLogs hard enough that the poker's catch-up scan cannot finish.
-    // WRITER_RPC lets the writer run on a higher-throughput endpoint while the keeper
-    // keeps the official one for the precompile.
-    rpcUrl: process.env.WRITER_RPC ?? requireEnv("TESTNET_RPC"),
+    ...loadDeployment(),
+    markets,
+    registryJson,
+    infoApiUrl: process.env.INFO_API_URL ?? "https://api.hyperliquid-testnet.xyz/info",
+    quoteJournalFile: path.resolve(here, "../..", process.env.QUOTE_JOURNAL_FILE ?? "writer/quotes.jsonl"),
+    rpcUrl: process.env.WRITER_RPC || requireEnv("TESTNET_RPC"),
     writerAddress: requireAddress("WRITER_ADDRESS"),
     quoteSignerKey: requireKey("QUOTE_SIGNER_PRIVATE_KEY"),
     pokerKey: requireKey("POKER_PRIVATE_KEY"),
@@ -378,15 +132,13 @@ export function loadConfig(nowMs = Date.now()): WriterConfig {
     perCodeReservedCap: process.env.PER_CODE_RESERVED_CAP
       ? BigInt(process.env.PER_CODE_RESERVED_CAP)
       : defaultPerCodeReservedCap(maxStake, minPremiumBps),
-    rhoBandPct: pricingMode === "independent" ? 0 : Number(process.env.RHO_BAND_PCT ?? 0.2),
     legEdgeBps: BigInt(process.env.LEG_EDGE_BPS ?? 300),
     quoteTtlMs: Number(process.env.QUOTE_TTL_MS ?? 30_000),
     spotPxStaleMs,
-    // ponytail: 50 is a placeholder floor, not a measured mainnet depth figure —
-    // recalibrate against real outcome-book liquidity before mainnet launch.
+    // ponytail: testnet depth floor; measure liquidity before a real-money launch.
     minBookDepthWad: parseDecimalToUnits(process.env.MIN_BOOK_DEPTH ?? "50", 18),
     lockoutMs: Number(process.env.LOCKOUT_MS ?? 600_000),
-    pokerIntervalMs: Number(process.env.POKER_INTERVAL_MS ?? 15_000),
+    pokerIntervalMs,
     inviteCodes: parseInviteCodes(requireEnv("INVITE_CODES")),
     resendApiKey: process.env.RESEND_API_KEY,
     waitlistFile: path.resolve(here, "../..", process.env.WAITLIST_FILE ?? "writer/waitlist.json"),

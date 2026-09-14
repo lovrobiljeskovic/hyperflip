@@ -1,6 +1,6 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { scanParlayIds } from "./scan";
-import { DEPLOY_BLOCK } from "./contracts";
+import { DEPLOY_BLOCK, PARLAY_VAULT } from "./contracts";
 
 const TAKER = "0x1111111111111111111111111111111111111111" as const;
 
@@ -52,6 +52,7 @@ test("runs chunks concurrently rather than one at a time", async () => {
   const client = fakeClient(DEPLOY_BLOCK + 50_000n);
   await scanParlayIds(client as never, TAKER);
   expect(client.peak()).toBeGreaterThan(1);
+  expect(client.peak()).toBeLessThanOrEqual(12);
 });
 
 test("checkpoints head and resumes from it, keeping already-found ids", async () => {
@@ -71,4 +72,27 @@ test("a failing chunk leaves no checkpoint, so the next load rescans the hole", 
   const boom = { ...client, getLogs: async () => { throw new Error("upstream missing data"); } };
   await expect(scanParlayIds(boom as never, TAKER)).rejects.toThrow();
   expect([...store.keys()]).toEqual([]);
+});
+
+test("checkpoints are scoped by account and deployment; corrupt or unavailable storage rescans safely", async () => {
+  const { scanCacheKey } = await import("./scan");
+  const key = scanCacheKey(TAKER);
+  expect(key).toContain(`:998:`);
+  expect(key).toContain(`:${DEPLOY_BLOCK}:`);
+  expect(key).toContain(PARLAY_VAULT.toLowerCase());
+  store.set("unrelated", "keep");
+  store.set(`parlayScan2:${TAKER}`, JSON.stringify({ last: "999999999", refs: [] }));
+  for (const malformed of ["{", JSON.stringify({ last: "bad", refs: [] }), JSON.stringify({ last: String(DEPLOY_BLOCK), refs: [["bad", "1"]] }), JSON.stringify({ last: "999999999", refs: [] })]) {
+    store.set(key, malformed);
+    const client = fakeClient(DEPLOY_BLOCK);
+    await scanParlayIds(client as never, TAKER);
+    expect(client.ranges[0][0]).toBe(DEPLOY_BLOCK);
+  }
+  const other = fakeClient(DEPLOY_BLOCK);
+  await scanParlayIds(other as never, `0x${"2".repeat(40)}`);
+  expect(other.ranges[0][0]).toBe(DEPLOY_BLOCK);
+  expect(store.get("unrelated")).toBe("keep");
+  vi.stubGlobal("localStorage", { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("full"); } });
+  const offline = fakeClient(DEPLOY_BLOCK, { [DEPLOY_BLOCK.toString()]: { id: 1n, block: DEPLOY_BLOCK } });
+  expect(await scanParlayIds(offline as never, TAKER)).toEqual([{ id: 1n, block: DEPLOY_BLOCK }]);
 });

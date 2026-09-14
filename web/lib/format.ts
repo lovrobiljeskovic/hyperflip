@@ -37,8 +37,6 @@ export function shortAddress(a: string): string {
   return `${a.slice(0, 6)}…${a.slice(-4)}`;
 }
 
-/** Multiplier as a number (premium and maxPayout are both 6-decimal USDC, so
- * the ratio is decimal-safe well below Number's precision limit). */
 export function multiplierNum(premium: bigint, maxPayout: bigint): number {
   return premium === 0n ? 0 : Number(maxPayout) / Number(premium);
 }
@@ -49,38 +47,29 @@ export interface PriceBreakdown {
   legOdds: number[]; // 1/p per leg, quote.legs order
   legProbs: number[]; // p per leg
   fairMultiplier: number; // 1 / prod(p) — what the legs multiply to, verifiable by hand
-  correlatedMultiplier: number; // 1 / joint — fair odds once comovement is priced
   edgePct: number; // base house edge as a fraction (0.05 = 5%)
   legPct: number; // leg-count surcharge as a fraction
   actualMultiplier: number; // maxPayout / premium — the signed truth
 }
 
-/** The multiplier after each step is applied in turn, so the UI can show one
- * row per adjustment. Correlation moves the fair number itself and can go
- * either way; the edge components are additive in bps after it. */
 export function edgeSteps(bd: PriceBreakdown): {
-  afterCorrelation: number;
   afterEdge: number;
   afterLegs: number;
   modelled: number;
 } {
-  const at = (bps: number) => bd.correlatedMultiplier / (1 + bps);
+  const at = (bps: number) => bd.fairMultiplier / (1 + bps);
   return {
-    afterCorrelation: bd.correlatedMultiplier,
     afterEdge: at(bd.edgePct),
     afterLegs: at(bd.edgePct + bd.legPct),
     modelled: at(bd.edgePct + bd.legPct),
   };
 }
 
-/** Rebuild the writer's pricing steps for display (writer/src/pricing.ts:
- * maxPayout = stake / (joint * (1 + edge))). Returns null when the writer sent
- * no breakdown or the leg count doesn't match. */
+// Display arithmetic; the signed payout remains authoritative.
 export function priceBreakdown(
   legPricesWad: readonly string[],
   edgeBps: string,
   legBps: string | undefined,
-  jointProbWad: string | undefined,
   premium: bigint,
   maxPayout: bigint,
 ): PriceBreakdown | null {
@@ -88,20 +77,16 @@ export function priceBreakdown(
   const legProbs = legPricesWad.map((w) => Number(BigInt(w)) / Number(WAD));
   if (legProbs.some((p) => !(p > 0) || p >= 1)) return null;
   const prod = legProbs.reduce((a, p) => a * p, 1);
-  const joint = jointProbWad === undefined ? prod : Number(BigInt(jointProbWad)) / Number(WAD);
   return {
     legProbs,
     legOdds: legProbs.map((p) => 1 / p),
     fairMultiplier: 1 / prod,
-    correlatedMultiplier: joint > 0 ? 1 / joint : 1 / prod,
     edgePct: Number(edgeBps) / 10_000,
     legPct: Number(legBps ?? 0) / 10_000,
     actualMultiplier: multiplierNum(premium, maxPayout),
   };
 }
 
-/** Time until a market expires, in the largest unit that still reads as a
- * countdown. Past its expiry it says so rather than counting up. */
 export function until(ms: number): string {
   const s = (ms - Date.now()) / 1000;
   if (s <= 0) return "expired";
@@ -110,24 +95,21 @@ export function until(ms: number): string {
   return `${Math.floor(s / 86_400)}d`;
 }
 
-/** A mid as a one-decimal percentage. The board prints 61.4%, not 61% —
- * whole percents hide the moves the flash animation is reporting. */
 export function pct1(mid: number): string {
   return `${(mid * 100).toFixed(1)}%`;
 }
 
-/** A mid as decimal odds. Shared by the landing and build boards so both
- * print the same "2.13x" for the same price. */
 export function oddsLabel(mid: number | null): string {
   return mid === null ? "—" : `${(1 / mid).toFixed(2)}x`;
 }
 
-/** The book's margin on the live quote: correlated fair odds against what was
- * actually signed. Measured off correlatedMultiplier, not fairMultiplier —
- * correlation is a correction to the fair price, not house takeout, and
- * charging it to the margin ring would misreport the book. Returns 0 rather
- * than Infinity on a degenerate quote. */
 export function quotedOverround(bd: PriceBreakdown): number {
   if (bd.actualMultiplier <= 0) return 0;
-  return bd.correlatedMultiplier / bd.actualMultiplier - 1;
+  return bd.fairMultiplier / bd.actualMultiplier - 1;
+}
+
+export function shortError(err: unknown): string {
+  const raw = String((err as Error)?.message ?? err);
+  const firstLine = raw.split("\n")[0] ?? raw;
+  return firstLine.length > 140 ? `${firstLine.slice(0, 140)}…` : firstLine;
 }

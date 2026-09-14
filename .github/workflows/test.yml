@@ -8,13 +8,14 @@ on:
 env:
   FOUNDRY_PROFILE: ci
 
+permissions:
+  contents: read
+
 jobs:
   check:
-    strategy:
-      fail-fast: true
-
-    name: Foundry project
+    name: Repository checks
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,21 +26,20 @@ jobs:
         with:
           version: v1.8.0
 
-      - name: Show Forge version
-        run: |
-          forge --version
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.2
+          cache: npm
+          cache-dependency-path: |
+            keeper/package-lock.json
+            writer/package-lock.json
+            web/package-lock.json
 
-      - name: Run Forge fmt
+      - name: Install dependencies
         run: |
-          forge fmt --check
-        id: fmt
+          for project in keeper writer web; do
+            npm ci --prefix "$project"
+          done
 
-      - name: Run Forge build
-        run: |
-          forge build --sizes
-        id: build
-
-      - name: Run Forge tests
-        run: |
-          forge test -vvv
-        id: test
+      - name: Verify repository
+        run: bash scripts/verify.sh

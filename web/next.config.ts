@@ -1,10 +1,16 @@
 import type { NextConfig } from "next";
+import { loadDeployment } from "./deployment/deployment.mts";
+
+const deployment = loadDeployment(process.env, true);
 
 const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
   env: {
+    NEXT_PUBLIC_CHAIN_ID: String(deployment.chainId),
+    NEXT_PUBLIC_PARLAY_VAULT: deployment.parlayVault,
+    NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK: String(deployment.deployBlock),
     NEXT_PUBLIC_APP_ORIGIN: process.env.VERCEL_ENV === "production" ? "https://app.hyperflip.xyz" : "",
     NEXT_PUBLIC_SITE_ORIGIN: process.env.VERCEL_ENV === "production" ? "https://hyperflip.xyz" : "",
   },

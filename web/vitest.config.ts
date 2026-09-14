@@ -1,4 +1,8 @@
 import { defineConfig } from "vitest/config";
+import { fileURLToPath } from "node:url";
+import { loadDeployment } from "./deployment/deployment.mts";
+
+const deployment = loadDeployment({});
 
 export default defineConfig({
   test: {
@@ -6,8 +10,10 @@ export default defineConfig({
     // contracts.ts reads these at module load and throws when they are missing,
     // so anything importing it needs them present before the import runs.
     env: {
-      NEXT_PUBLIC_PARLAY_VAULT: "0x407CDc0B15E8d81f4D122481Ecf92Dbe07DC0169",
-      NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK: "61906227",
+      DEPLOYMENT_FILE: fileURLToPath(new URL("./deployment/deployment.testnet.json", import.meta.url)),
+      NEXT_PUBLIC_CHAIN_ID: String(deployment.chainId),
+      NEXT_PUBLIC_PARLAY_VAULT: deployment.parlayVault,
+      NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK: String(deployment.deployBlock),
     },
   },
 });

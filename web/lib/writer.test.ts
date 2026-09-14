@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { compareMarketVolume, currentPricing, fetchLimits, groupMarkets, marketMid, requestQuote, sideLabel, withMarketVolumes, type Market } from "./writer";
+import { compareMarketVolume, currentPricing, fetchLimits, fetchMarkets, groupMarkets, marketMid, requestQuote, sideLabel, withMarketVolumes, type Market } from "./writer";
 
 test("public pricing follows writer configuration and never invents missing fees", async () => {
   const limits = { maxStake: "1000000", edgeBps: "725", legEdgeBps: "150", quoteTtlMs: 30000 };
@@ -63,8 +63,8 @@ test("requestQuote surfaces a hung writer as the status-0 unreachable shape afte
 
 const MARKET = {
   vault: "0x1111111111111111111111111111111111111111",
-  title: "BTC above 80k?",
-  category: "crypto",
+  title: "Twins vs Orioles",
+  category: "sports",
   coinYes: "#100",
   coinNo: "#101",
 } satisfies Market;
@@ -104,4 +104,15 @@ test("groupMarkets collapses a question's vaults into one entry at the first mem
   if (group.kind !== "group") throw new Error("expected group");
   expect(group.title).toBe("Saudi Arabia vs Uruguay");
   expect(group.members.map((x) => x.vault)).toEqual(["0xa", "0xc"]);
+});
+
+test("fetchMarkets filters unsupported markets from active and historical responses", async () => {
+  const legacy = { ...MARKET, category: "other", title: "Legacy market" };
+  const archived = { ...MARKET, title: "Past game" };
+  const response = { markets: [MARKET, legacy], archived: [archived, legacy] };
+  vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response(JSON.stringify(response))));
+  expect(await fetchMarkets()).toEqual([MARKET]);
+  expect(await fetchMarkets(true)).toEqual([MARKET, archived]);
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify([MARKET, legacy]))));
+  expect(await fetchMarkets()).toEqual([MARKET]);
 });

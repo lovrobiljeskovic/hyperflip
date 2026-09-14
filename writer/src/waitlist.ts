@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readOptionalFile, replaceFile } from "../../services/files.mjs";
 
 export interface WaitlistEntry {
   email: string;
@@ -17,6 +17,7 @@ export function isValidEmail(email: string): boolean {
  * every signup — fine at beta scale (thousands, not millions). */
 export class Waitlist {
   private entries: WaitlistEntry[];
+  private failed = false;
   private codes = new Set<string>();
   private byEmail = new Map<string, WaitlistEntry>();
 
@@ -24,11 +25,18 @@ export class Waitlist {
     private file: string,
     private now: () => number = Date.now,
   ) {
-    this.entries = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as WaitlistEntry[]) : [];
-    for (const e of this.entries) {
-      this.codes.add(e.code);
-      this.byEmail.set(e.email, e);
-    }
+    const json = readOptionalFile(file);
+    try {
+      this.entries = json === undefined ? [] : JSON.parse(json);
+      if (!Array.isArray(this.entries)) throw new Error();
+      for (const e of this.entries) {
+        if (!e || typeof e.email !== "string" || !isValidEmail(e.email) || e.email !== e.email.trim().toLowerCase() ||
+            typeof e.code !== "string" || !e.code.trim() || !Number.isFinite(e.ts) || e.ts < 0 ||
+            this.byEmail.has(e.email) || this.codes.has(e.code)) throw new Error();
+        this.codes.add(e.code);
+        this.byEmail.set(e.email, e);
+      }
+    } catch { throw new Error("Invalid waitlist; preserve and repair it before restarting"); }
   }
 
   has(code: string): boolean {
@@ -42,18 +50,22 @@ export class Waitlist {
   /** Idempotent: a repeat signup returns the same code so the email can simply
    * be re-sent instead of leaking one code per retry. */
   signup(rawEmail: string): { code: string; isNew: boolean } {
+    if (this.failed) throw new Error("Waitlist save failed; inspect the file and restart before signup");
     const email = rawEmail.trim().toLowerCase();
+    if (!isValidEmail(email)) throw new Error("Invalid email");
     const existing = this.byEmail.get(email);
     if (existing) return { code: existing.code, isNew: false };
-    const code = `OVR-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+    let code: string;
+    do { code = `OVR-${crypto.randomBytes(3).toString("hex").toUpperCase()}`; } while (this.codes.has(code));
     const entry: WaitlistEntry = { email, code, ts: this.now() };
+    try { replaceFile(this.file, JSON.stringify([...this.entries, entry], null, 2)); }
+    catch (error) {
+      this.failed = true;
+      throw error;
+    }
     this.entries.push(entry);
     this.codes.add(code);
     this.byEmail.set(email, entry);
-    // tmp+rename so a crash mid-write can't truncate the list.
-    const tmp = `${this.file}.tmp`;
-    writeFileSync(tmp, JSON.stringify(this.entries, null, 2));
-    renameSync(tmp, this.file);
     return { code, isNew: true };
   }
 }

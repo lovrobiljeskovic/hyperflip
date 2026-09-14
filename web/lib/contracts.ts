@@ -13,6 +13,7 @@ export const DEPLOY_BLOCK = BigInt(
 );
 
 export const parlayVaultAbi = parseAbi([
+  "error ERC721NonexistentToken(uint256 tokenId)",
   "struct Leg { address vault; bool isYes; }",
   "struct Quote { address taker; Leg[] legs; uint96 premium; uint96 maxPayout; uint256 deadline; bytes32 quoteId; }",
   "struct Parlay { Leg[] legs; address writer; uint96 premium; uint96 maxPayout; uint8 status; }",

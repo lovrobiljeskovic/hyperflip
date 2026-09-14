@@ -117,30 +117,20 @@ export function encodeFractionCache(cache: ReadonlyMap<string, bigint>): string 
   return JSON.stringify(Object.fromEntries([...cache].map(([v, f]) => [v.toLowerCase(), f.toString()])));
 }
 
-/** Inverse of encodeFractionCache. A missing or corrupt file yields an empty cache — the same
- * state as a keeper that never observed the settlement, which routes to the "manual recovery"
- * alert rather than to a fabricated fraction. Never throw here: a bad cache file must not stop
- * the keeper from settling every other vault. */
+/** Reject damaged state so startup cannot replace it with a partial cache. */
 export function decodeFractionCache(json: string): Map<string, bigint> {
-  const out = new Map<string, bigint>();
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(json);
-  } catch {
-    return out;
-  }
-  if (typeof parsed !== "object" || parsed === null) return out;
-  for (const [vault, fraction] of Object.entries(parsed as Record<string, unknown>)) {
-    try {
-      if (typeof fraction !== "string") continue;
-      const f = BigInt(fraction);
-      if (f < 0n || f > WAD) continue; // settle() rejects >1e18 anyway; drop rather than relay junk
-      out.set(vault.toLowerCase(), f);
-    } catch {
-      continue; // one unparseable entry must not discard the rest
+    const parsed: unknown = JSON.parse(json);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+    const out = new Map<string, bigint>();
+    for (const [vault, fraction] of Object.entries(parsed)) {
+      if (!/^0x[0-9a-fA-F]{40}$/.test(vault) || typeof fraction !== "string" || !/^[0-9]+$/.test(fraction)) throw new Error();
+      const value = BigInt(fraction);
+      if (value > WAD || out.has(vault.toLowerCase())) throw new Error();
+      out.set(vault.toLowerCase(), value);
     }
-  }
-  return out;
+    return out;
+  } catch { throw new Error("Invalid settlement cache; preserve and repair it before restarting"); }
 }
 
 /** Serializes async calls through a promise chain: each call waits for the previous one to
