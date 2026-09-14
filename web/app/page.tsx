@@ -64,9 +64,9 @@ export default async function Home() {
       <main>
         <LiveMarketRail board={board} />
 
-        <section className="mx-auto grid min-h-[calc(100dvh-4rem-42px)] w-full max-w-[1280px] items-center gap-10 px-4 py-10 sm:px-6 lg:grid-cols-[1.08fr_.92fr] lg:gap-16 lg:py-14">
+        <section className="relative isolate mx-auto grid min-h-[calc(100dvh-4rem-42px)] w-full max-w-[1280px] items-center gap-10 px-4 py-10 sm:px-6 lg:grid-cols-[1.08fr_.92fr] lg:gap-16 lg:py-14">
+          <PurrCoinToss />
           <div className="hero-enter">
-            <PurrCoinToss />
             <h1 className="display max-w-[9ch] text-[clamp(3.25rem,7vw,6.6rem)] leading-[.86] tracking-[-.06em]">
               Flip markets. Stack outcomes.
             </h1>
