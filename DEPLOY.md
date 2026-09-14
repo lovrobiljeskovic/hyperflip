@@ -226,8 +226,14 @@ wallet, but the allowance is spent either way. The writer caps exposure at
 `min(allowance, balanceOf(writer))` and logs an `ALERT low-bankroll` line once when that drops
 below `LOW_BANKROLL` USDC (default 100); `/health` shows `bankroll`.
 
-Refill = top up the wallet (testnet drip, then Core->EVM spot send), then re-approve. Approving
-the max once means only the balance ever needs attention:
+Refill = top up the wallet, then re-approve. Testnet drip and app transfers land on HyperCore
+spot; move them to EVM with (writer key = `QUOTE_SIGNER_PRIVATE_KEY`):
+
+```sh
+PRIVATE_KEY=$QUOTE_SIGNER_PRIVATE_KEY uv run --with hyperliquid-python-sdk --with eth-account python tools/core-to-evm.py 999
+```
+
+Approving the max once means only the balance ever needs attention:
 
 ```sh
 cast send $USDC "approve(address,uint256)" $PARLAY_VAULT_ADDRESS \
