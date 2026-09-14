@@ -19,4 +19,4 @@ done
   export NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK=1
   npm run check
 )
-node --test tools/rotate-lib.test.mjs
+node --test tools/rotate-lib.test.mjs tools/rotate-markets.test.mjs tools/verify.test.mjs

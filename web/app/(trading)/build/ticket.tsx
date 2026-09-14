@@ -79,21 +79,14 @@ function shortMintError(err: unknown): string {
   return firstLine.length > 140 ? `${firstLine.slice(0, 140)}…` : firstLine;
 }
 
-/** Writer error → ticket-facing message. Falls back to the writer's reason
- * verbatim (e.g. stake-too-big) rather than pre-validating client-side. */
 function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: BuilderLeg[] = []): string {
   if (res.status === 400 && res.error === "dominated") {
-    // res.vault names the leg whose lone Core trade already out-pays the whole
-    // ticket - the other legs move together with it so tightly they add risk
-    // without adding payout.
     const keep = legs.find((l) => l.vault.toLowerCase() === res.vault?.toLowerCase());
     return keep
-      ? `These legs move together so tightly the combo pays less than "${keep.title}" alone - drop the other legs or mix in something less correlated.`
-      : "These legs move together so tightly the combo pays less than one leg alone - drop a leg or mix in something less correlated.";
+      ? `This ticket pays less than "${keep.title}" alone. Remove a leg or choose another game.`
+      : "This ticket pays less than one leg alone. Remove a leg or choose another game.";
   }
   if (res.error === "clock-skew") return "Quote expired immediately - check your clock.";
-  // stale-book is a writer refusal (no trustworthy price for a leg right now),
-  // not an outage - "unreachable" sends people to check their connection.
   if (res.error === "stale-book") return "No live price for one of these markets right now - try again shortly.";
   if (res.error === "warming-up") return "Writer just restarted and is warming up - retry in a few seconds.";
   if (res.error === "rpc-down") return "Chain RPC is rate-limiting the writer - retry in a moment.";
@@ -102,13 +95,8 @@ function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: BuilderLeg
   if (res.status === 403) return "Invite code rejected - enter a valid one below.";
   if (res.status === 409) {
     if (res.error === "leg-settled") return "A leg just settled - remove it and requote.";
-    // quota-cap is the invite code's own reservation quota, not a stake problem -
-    // shrinking the stake does not help, unlike the market-cap/cluster-cap case below.
     if (res.error === "quota-cap")
       return "This invite code has hit its open-ticket quota - wait ~a minute for reservations to clear or use another code.";
-    // market-cap/cluster-cap are stake-driven, not congestion: a long-shot ticket
-    // asks for a payout bigger than the house caps for those markets. Saying
-    // "at capacity" sends the taker away from a ticket that fits at a lower stake.
     const fit = res.maxStake === undefined ? 0n : BigInt(res.maxStake);
     if (fit > 0n) return `Payout too large for the house limit - stake up to ${formatUsdc(fit)} USDC on this ticket.`;
     if (res.error === "at-capacity") return "House bankroll is fully committed - try again shortly.";
@@ -118,8 +106,7 @@ function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: BuilderLeg
     return "These legs contradict each other - this ticket can never win.";
   if (res.status === 400 && res.error === "same-game")
     return "Two legs from the same game - parlays need different games. Drop one.";
-  if (res.status === 400 && res.error === "ticket-too-complex") return "Too many correlated legs to price - drop one.";
-  return res.error;
+  return "Could not quote this ticket. Check your selections and try again.";
 }
 
 function DetailRow({
@@ -143,12 +130,8 @@ const pct = (x: number) => `${(x * 100).toFixed(2)}%`;
 const mult = (x: number) => `${x.toFixed(2)}x`;
 const signedMult = (x: number) => `${x < 0 ? "\u2212" : "+"}${Math.abs(x).toFixed(2)}x`;
 
-/** How the multiplier was built: per-leg book price, then each deduction the
- * writer applies (writer/src/pricing.ts). The last row is the signed quote's
- * own ratio, so any gap against the arithmetic above is visible rather than
- * hidden - that gap is the contract's minimum-premium cap biting. */
 function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown }) {
-  const { afterCorrelation, afterEdge, afterLegs, modelled } = edgeSteps(bd);
+  const { afterEdge, afterLegs, modelled } = edgeSteps(bd);
   const capped = Math.abs(bd.actualMultiplier - modelled) / modelled > 0.005;
   return (
     <div className="flex flex-col gap-1.5">
@@ -164,13 +147,8 @@ function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown })
       ))}
       <div className="mt-1 border-t border-line pt-1.5" />
       <DetailRow label="Fair combined odds">{mult(bd.fairMultiplier)}</DetailRow>
-      {Math.abs(afterCorrelation - bd.fairMultiplier) > 0.005 && (
-        <DetailRow label="Correlation" className={afterCorrelation > bd.fairMultiplier ? "text-yes" : "text-no"}>
-          {signedMult(afterCorrelation - bd.fairMultiplier)}
-        </DetailRow>
-      )}
       <DetailRow label={`House edge ${pct(bd.edgePct)}`} className="text-no">
-        {signedMult(afterEdge - afterCorrelation)}
+        {signedMult(afterEdge - bd.fairMultiplier)}
       </DetailRow>
       {bd.legPct > 0 && (
         <DetailRow label={`${legs.length} legs ${pct(bd.legPct)}`} className="text-no">
@@ -559,7 +537,6 @@ export function Ticket({
           quoteResult.breakdown.legPricesWad,
           quoteResult.breakdown.edgeBps,
           quoteResult.breakdown.legBps,
-          quoteResult.breakdown.jointProbWad,
           premium,
           maxPayout,
         )

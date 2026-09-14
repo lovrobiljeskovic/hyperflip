@@ -6,44 +6,32 @@ export interface Market {
   category: string;
   coinYes: string;
   coinNo: string;
-  /** Perp symbol, e.g. BTC or NVDA. In the registry since the first rotation;
-   * optional here for tickets naming markets from before it existed. */
+
   underlying?: string;
   expiryMs?: number;
-  /** Kickoff; quoting locks here. Sports registries only. */
+
   startMs?: number;
-  /** Side labels ("Twins"/"Orioles", "Over"/"Under"); absent means Yes/No. */
+
   sideYes?: string;
   sideNo?: string;
-  /** Vaults sharing a group are one mutually exclusive question (A / Draw / B,
-   * tournament winner) and render as one card. */
+
   group?: string;
   groupTitle?: string;
   question?: number;
   sport?: string;
-  /** Competition (MLB, UEFA Champions League); the writer's exposure cluster. */
+
   cluster?: string;
-  /** HIP-4 deployer's venue name (outcomeMeta `venue`). Absent on entries
-   * wrapped before rotation recorded it. */
+
   deployer?: string;
   volume24h?: number;
 }
 
-/** The landing page is sports-only; the registry still lists legacy crypto vaults. */
-/** allMids returns a mid for every coin on the venue, perps included, so a
- * stale, crossed or colliding key can hand back a non-probability. Only
- * (0, 1) is a probability - anything else must degrade to "-" rather than
- * render as e.g. 6400000.0%. Same bound as priceBreakdown in lib/format.ts.
- * Do not widen it. An empty book reports exactly 0.5 until Core prints a
- * trade; with no 24h volume that is a placeholder, not a price, and the
- * writer refuses it (unpriced-leg), so it is unpickable here too. */
 export function marketMid(mids: Record<string, string>, market: Pick<Market, "volume24h">, coin: string): number | null {
   const raw = mids[coin];
   if (raw === undefined) return null;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0 || n >= 1) return null;
-  // ponytail: a traded book resting at exactly 0.5 with zero volume today is
-  // hidden until it moves; use writer book depth if that ever bites.
+  // ponytail: hides a traded 0.5 book with no volume today; use book depth if needed.
   if (n === 0.5 && !market.volume24h) return null;
   return n;
 }
@@ -52,13 +40,10 @@ export function onlySports(markets: Market[]): Market[] {
   return markets.filter((m) => m.category === "sports");
 }
 
-/** What the taker is taking on this market's side, for chips and buttons. */
 export function sideLabel(market: Pick<Market, "sideYes" | "sideNo"> | undefined, isYes: boolean): string {
   return (isYes ? market?.sideYes : market?.sideNo) ?? (isYes ? "YES" : "NO");
 }
 
-/** Board rows: grouped markets collapse into one entry keyed by `group`,
- * keeping the first member's position in the sort order. */
 export type BoardEntry = { kind: "market"; market: Market } | { kind: "group"; group: string; title: string; members: Market[] };
 
 export function groupMarkets(markets: Market[]): BoardEntry[] {
@@ -89,16 +74,13 @@ export interface WriterQuote {
   quoteId: `0x${string}`;
 }
 
-/** Informational pricing inputs echoed by the writer alongside the signed
- * quote (not covered by the signature). legPricesWad is in quote.legs order. */
+// Display inputs are not covered by the quote signature.
 export interface QuoteBreakdown {
   legPricesWad: string[];
-  /** P(all legs win) from the writer's copula, WAD. Absent on writers
-   * predating correlation pricing — treat as the product of the leg prices. */
+
   jointProbWad?: string;
   edgeBps: string;
-  legBps?: string; // absent on writers predating leg-count-scaled edge
-  pairDecisions?: { pair: [string, string]; status: string; reason?: string }[];
+  legBps?: string;
 }
 
 export type QuoteResult =
@@ -107,17 +89,13 @@ export type QuoteResult =
 
 const BASE = process.env.NEXT_PUBLIC_WRITER_URL ?? "";
 
-/* Revalidated rather than request-time so the landing page stays prerendered.
-   The option is inert in the browser, where this same function still backs the
-   client-side fallback fetch. */
+// Filter here so every route stays sports-only, including historical positions.
 export async function fetchMarkets(includeArchived = false): Promise<Market[]> {
   const r = await fetch(`${BASE}/markets`, { next: { revalidate: 60 } });
   if (!r.ok) throw new Error(`markets ${r.status}`);
   const j = (await r.json()) as Market[] | { markets: Market[]; archived?: Market[] };
-  if (Array.isArray(j)) return j;
-  // archived = rotated-out (expired) markets — only wanted where old tickets
-  // need naming; the build board must not offer them.
-  return includeArchived ? [...j.markets, ...(j.archived ?? [])] : j.markets;
+  if (Array.isArray(j)) return onlySports(j);
+  return onlySports(includeArchived ? [...j.markets, ...(j.archived ?? [])] : j.markets);
 }
 
 export function withMarketVolumes(markets: Market[], volumes: Record<string, number>): Market[] {
@@ -142,15 +120,12 @@ export interface WriterLimits {
   quoteTtlMs: number;
 }
 
-/** Missing parameters from an older writer must not become a zero-fee claim. */
 export function currentPricing(limits: WriterLimits | null): { base: string; perLeg: string } | null {
   const bps = [limits?.edgeBps, limits?.legEdgeBps];
   if (!bps.every((value) => typeof value === "string" && /^\d+$/.test(value) && Number.isSafeInteger(Number(value)))) return null;
   return { base: (Number(bps[0]) / 100).toFixed(2), perLeg: (Number(bps[1]) / 100).toFixed(2) };
 }
 
-/** Quote-shaping caps. Returns null when the writer is unreachable or too old
- * to serve /limits — callers fall back to unclamped input. */
 export async function fetchLimits(): Promise<WriterLimits | null> {
   try {
     const r = await fetch(`${BASE}/limits`, { cache: "no-store", signal: AbortSignal.timeout(10_000) });
@@ -163,7 +138,6 @@ export async function fetchLimits(): Promise<WriterLimits | null> {
 
 export type WaitlistResult = { ok: true } | { ok: false; error: string };
 
-/** Writer waitlist error → user-facing copy, shared by every signup form. */
 export const WAITLIST_ERRORS: Record<string, string> = {
   "bad-email": "Enter a valid email address.",
   "rate-limited": "Too many signups from your connection — try again later.",
@@ -172,7 +146,6 @@ export const WAITLIST_ERRORS: Record<string, string> = {
   unreachable: "Writer unreachable — try again shortly.",
 };
 
-/** Beta waitlist signup — the writer emails back a generated invite code. */
 export async function joinWaitlist(email: string): Promise<WaitlistResult> {
   try {
     const r = await fetch(`${BASE}/waitlist`, {
@@ -196,9 +169,6 @@ export async function requestQuote(req: {
 }): Promise<QuoteResult> {
   let r: Response;
   try {
-    // A hung writer would otherwise leave the CTA reading "Quoting…" forever —
-    // bound the wait and surface it as the same status-0 shape as a network
-    // failure, so the existing retry UI renders.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10_000);
     try {

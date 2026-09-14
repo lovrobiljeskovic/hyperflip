@@ -70,31 +70,11 @@ function PriceCell({
   );
 }
 
-/** The venue's own asset icon - crypto perps live at coins/SYM.svg, xyz-dex
- * assets (equities, commodities, indices) at coins/xyz:SYM.svg. Unknown
- * symbols come back 200 with Hyperliquid's generic coin mark, so the letter
- * badge only covers a missing underlying or a network failure. */
-function AssetIcon({ underlying, category, badge }: { underlying?: string; category: string; badge?: string }) {
-  const [failed, setFailed] = useState(false);
-  // Sports have no venue icon - the badge is the sport ("BA" for baseball).
-  if (!underlying || failed || category === "sports")
-    return (
-      <span className="mono flex h-5 w-5 items-center justify-center rounded-full border border-line text-[8px] uppercase text-dim">
-        {(badge ?? underlying ?? "?").slice(0, 2)}
-      </span>
-    );
-  const coin = category === "crypto" ? underlying : `xyz:${underlying}`;
+function SportBadge({ sport }: { sport?: string }) {
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={`https://app.hyperliquid.xyz/coins/${encodeURIComponent(coin)}.svg`}
-      alt=""
-      width={20}
-      height={20}
-      loading="lazy"
-      onError={() => setFailed(true)}
-      className="h-5 w-5 rounded-full"
-    />
+    <span aria-hidden="true" className="mono flex h-5 w-5 items-center justify-center rounded-full border border-line text-[8px] uppercase text-dim">
+      {(sport ?? "?").slice(0, 2)}
+    </span>
   );
 }
 
@@ -122,7 +102,7 @@ function BoardRow({
     >
       <div className="flex min-w-0 items-center gap-2.5">
         <span className="shrink-0">
-          <AssetIcon underlying={market.underlying} category={market.category} badge={market.sport} />
+          <SportBadge sport={market.sport} />
         </span>
         <div className="min-w-0">
           <p className="truncate text-[13px]">
@@ -169,11 +149,8 @@ function BoardRow({
   );
 }
 
-/** "Baseball · MLB · by txya" for sports, the bare category otherwise. The
- * deployer tail is the only hint on the board of whose market a leg is. */
 function categoryLine(market: Market): string {
   const by = market.deployer ? `by ${market.deployer}` : undefined;
-  if (market.category !== "sports") return [market.category, by].filter(Boolean).join(" · ");
   return [market.sport ?? market.category, market.cluster, by].filter(Boolean).join(" · ");
 }
 
@@ -226,7 +203,7 @@ function GroupRow({
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
           <span className="shrink-0">
-            <AssetIcon underlying={head.underlying} category={head.category} badge={head.sport} />
+            <SportBadge sport={head.sport} />
           </span>
           <div className="min-w-0">
             <p className="truncate text-[13px]">

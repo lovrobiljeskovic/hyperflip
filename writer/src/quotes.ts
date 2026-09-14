@@ -59,3 +59,28 @@ export async function signQuote(
     message: q,
   });
 }
+
+export interface QuoteRecord {
+  schemaVersion: 1;
+  recordedAtMs: number;
+  quoteId: Hex;
+  quoteDigest: Hex;
+  chainId: number;
+  parlayVault: Address;
+  taker: Address;
+  legs: (QuoteLeg & { underlying: string; cluster: string; outcomeCoin: string })[];
+  bookInputs: {
+    priceWad: string;
+    source: "l2Book" | "spotPx";
+    observedAtMs: number;
+    depthWad: string | null;
+    vwapWad: string | null;
+    freshnessMs: number | null;
+  }[];
+  jointProbWad: string;
+  edge: { baseBps: string; legBps: string; totalBps: string };
+  premium: string;
+  maxPayout: string;
+  deadline: string;
+  signatureHash: string;
+}

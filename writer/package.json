@@ -6,8 +6,6 @@
   "description": "House writer service: prices parlay premiums off the Core book, signs EIP-712 quotes, enforces exposure caps, pokes dead parlays.",
   "scripts": {
     "start": "tsx src/index.ts",
-    "research": "tsx src/research/cli.ts",
-    "research:check": "tsx --test test/research-*.test.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
     "check": "npm run typecheck && npm run test"

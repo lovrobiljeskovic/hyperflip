@@ -7,11 +7,11 @@ out/
 /broadcast/*/31337/
 /broadcast/**/dry-run/
 
-# Docs
-docs/
-
-# Dotenv file
+# Local environment and generated quote journals
 .env
+.env.*
+!.env.example
+writer/quotes.jsonl
 
 # Beads / Dolt files (added by bd init)
 .dolt/
