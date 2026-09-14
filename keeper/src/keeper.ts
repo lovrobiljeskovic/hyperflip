@@ -320,6 +320,12 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
       try {
         current = await readSpotBalanceWei(publicClient, vault, assetId);
       } catch (err) {
+        // Settled vault (startup race before settlementLoop's first tick, or settled since last
+        // tick): 0x801 throws on its pruned coin and there is nothing to verify — not an alert.
+        if (await readVault<boolean>(vault, "settled").catch(() => false)) {
+          settledVaults.add(vault);
+          continue;
+        }
         // RPC reads fail in bursts (-32005 rate limits). One alert per tick per vault buries every
         // other alert in the journal, so speak on the first failure and then once a minute,
         // and keep the nginx error page out of the log.
