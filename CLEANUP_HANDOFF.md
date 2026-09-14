@@ -286,3 +286,16 @@ The operator subsequently approved pushing all work and deploying Batch 3/4.
 See [CLEANUP_ROLLOUT.md](CLEANUP_ROLLOUT.md) for the current inspected baseline,
 concrete execution and rollback procedure. Earlier pending-approval notes above
 are historical.
+
+### Merged and deployed, 2026-09-14
+
+Cleanup was merged into main as `b644aba`. The writer runs `c1a3d8a`, which adds
+the tested public-RPC scan-size fix; the keeper runs `b644aba`. Both are deployed,
+and the cleanup frontend is promoted on the public domains. Release CI passed.
+The original uncommitted handoff/README work is preserved in committed history;
+archive/correlation-research remains unchanged at `f0db775`.
+
+See [CLEANUP_ROLLOUT.md](CLEANUP_ROLLOUT.md) for exact deployment IDs, RPC findings,
+quote-drain and exposure checks, state preservation, smoke output and rollback.
+Earlier pending-deployment notes are historical. Browser/wallet transaction
+acceptance remains untested; automated and read-only checks do not establish it.
