@@ -11,7 +11,7 @@ const loader = join(root, "writer/node_modules/tsx/dist/loader.mjs");
 try {
   for (const service of ["keeper", "writer"]) {
     const archive = join(temporary, `${service}.tar.gz`);
-    execFileSync("tar", ["-czf", archive, "-C", root, ...["package.json", "package-lock.json", "tsconfig.json", "src", "abi"].map(path => `${service}/${path}`), "registry/deployment.mts", "registry/deployment.testnet.json"]);
+    execFileSync("tar", ["-czf", archive, "-C", root, ...["package.json", "package-lock.json", "tsconfig.json", "src", "abi"].map(path => `${service}/${path}`), "registry/deployment.mts", "registry/deployment.testnet.json", "services/files.mts"]);
     const destination = join(temporary, service);
     execFileSync("tar", ["-xzf", archive, "-C", temporary]);
     assert(!existsSync(join(destination, "out")));
@@ -24,6 +24,8 @@ try {
       for (const abi of Object.values(abis)) assert(Array.isArray(abi) && abi.length > 0);
       const { loadDeployment } = await import(${JSON.stringify(pathToFileURL(join(temporary, "registry/deployment.mts")).href)});
       assert.equal(loadDeployment({}).chainId, 998);
+      const files = await import(${JSON.stringify(pathToFileURL(join(temporary, "services/files.mts")).href)});
+      assert.equal(typeof files.replaceFile, "function");
     `], { env: { ...process.env, PATH: dirname(process.execPath) }, stdio: "pipe" });
     console.log(`PASS: packed ${service} imports its ABIs without out/ or Foundry`);
   }

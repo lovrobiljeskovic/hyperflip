@@ -12,12 +12,10 @@ import { privateKeyToAccount } from "viem/accounts";
 import { keeperVerifierAbi, outcomeVaultAbi } from "./abi.js";
 import type { KeeperConfig } from "./config.js";
 import { OUTCOME_ACTIVE, OUTCOME_PRUNED, OUTCOME_SETTLED, readOutcomeStatus, readSpotBalanceWei } from "./core814.js";
-import { readFileSync, writeFileSync } from "node:fs";
+import { loadFractionCache, saveFraction } from "./cache.js";
 import {
   createSerializer,
-  decodeFractionCache,
   encodedOutcomeAssetId,
-  encodeFractionCache,
   evmToOutcomeWei,
   fractionWadFromSettledValue,
   newestSampleBefore,
@@ -118,18 +116,12 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   // and the pruned relay path can only replay a fraction this keeper saw at status 2 — a restart
   // inside that window used to destroy the only number that could still settle the vault. Keys
   // are lowercased vault addresses (see encodeFractionCache).
-  let lastKnownFraction: Map<string, bigint>;
-  try {
-    lastKnownFraction = decodeFractionCache(readFileSync(config.settlementCachePath, "utf8"));
-    if (lastKnownFraction.size > 0) log("loaded settlement cache", lastKnownFraction.size, "entries");
-  } catch {
-    lastKnownFraction = new Map(); // absent on first run; a cold cache is not an error
-  }
+  const lastKnownFraction = loadFractionCache(config.settlementCachePath);
+  if (lastKnownFraction.size > 0) log("loaded settlement cache", lastKnownFraction.size, "entries");
 
   function rememberFraction(vault: Address, fractionWad: bigint): void {
-    lastKnownFraction.set(vault.toLowerCase(), fractionWad);
     try {
-      writeFileSync(config.settlementCachePath, encodeFractionCache(lastKnownFraction));
+      saveFraction(lastKnownFraction, config.settlementCachePath, vault, fractionWad);
     } catch (err) {
       // In-memory copy still works for this process; only a restart would lose it.
       alert("could not persist settlement cache", config.settlementCachePath, (err as Error).message);

@@ -1,7 +1,6 @@
 import { verifyDeploymentRpc } from "../../registry/deployment.mjs";
 import crypto from "node:crypto";
-import { appendFileSync, mkdirSync } from "node:fs";
-import path from "node:path";
+import { QuoteJournal } from "./journal.js";
 import { createPublicClient, createWalletClient, erc20Abi, fallback, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { parlayVaultAbi } from "./abi.js";
@@ -20,6 +19,7 @@ const RECEIPT_TIMEOUT_MS = 60_000;
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
+  const journal = new QuoteJournal(cfg.quoteJournalFile);
   const rpcUrls = cfg.rpcUrl.split(",").map((u) => u.trim()).filter(Boolean);
   const transport = fallback(rpcUrls.map((u) => http(u)));
   const publicClient = createPublicClient({ transport });
@@ -89,8 +89,7 @@ async function main(): Promise<void> {
       return legPriceFetcher.fetch(coin);
     },
     recordQuote: async (decision) => {
-      mkdirSync(path.dirname(cfg.quoteJournalFile), { recursive: true });
-      appendFileSync(cfg.quoteJournalFile, `${JSON.stringify(decision)}\n`);
+      journal.append(decision);
       lastQuoteJournalAppendMs = Date.now();
     },
     readAllowance: async () => {

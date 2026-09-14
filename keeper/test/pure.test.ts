@@ -139,19 +139,11 @@ test("fraction cache CRITICAL: survives a round trip so a restart mid-prune-wind
   assert.equal(back.get("0xcccc000000000000000000000000000000000003"), 0n); // a real "YES lost" fraction, not a missing entry
 });
 
-test("fraction cache: corrupt input degrades to empty rather than throwing or inventing a fraction", () => {
-  // An unreadable cache must land on the manual-recovery alert, never on a fabricated relay.
-  assert.equal(decodeFractionCache("").size, 0);
-  assert.equal(decodeFractionCache("{ not json").size, 0);
-  assert.equal(decodeFractionCache("null").size, 0);
-  assert.equal(decodeFractionCache("[1,2,3]").size, 0);
-  assert.equal(decodeFractionCache('{"0xaaa":"not-a-number"}').size, 0);
-  assert.equal(decodeFractionCache('{"0xaaa":123}').size, 0); // number, not string: reject
-  assert.equal(decodeFractionCache(`{"0xaaa":"${(WAD + 1n).toString()}"}`).size, 0); // settle() would revert BAD_FRACTION
-  // one bad entry must not discard the good ones
-  const mixed = decodeFractionCache(`{"0xaaa":"bad","0xbbb":"${WAD.toString()}"}`);
-  assert.equal(mixed.size, 1);
-  assert.equal(mixed.get("0xbbb"), WAD);
+test("fraction cache: corruption fails instead of silently losing saved fractions", () => {
+  for (const raw of ["", "{ not json", "null", "[1,2,3]", '{"0xaaa":"bad"}', '{"0xaaa":123}',
+    JSON.stringify({ ["0x" + "a".repeat(40)]: (WAD + 1n).toString() }),
+    JSON.stringify({ ["0x" + "a".repeat(40)]: WAD.toString(), ["0x" + "b".repeat(40)]: "bad" }),
+  ]) assert.throws(() => decodeFractionCache(raw), /Invalid settlement cache/);
 });
 
 test("parseRegistryMarkets CRITICAL: keeper watches exactly what the writer quotes", () => {

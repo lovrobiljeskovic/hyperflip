@@ -19,6 +19,7 @@ installation root; adjust paths for your host.
   registry/markets.json
   registry/deployment.testnet.json
   registry/deployment.mts
+  services/files.mts
 ```
 
 Both services resolve configuration from this layout and load their packaged
@@ -31,7 +32,7 @@ compiler or the Foundry artifact tree. The separate rotation checkout still does
 Package each service from the repository root with the existing lockfile included:
 
 ```bash
-tar -czf /tmp/writer.tar.gz writer/package.json writer/package-lock.json writer/tsconfig.json writer/src writer/abi registry/deployment.mts registry/deployment.testnet.json
+tar -czf /tmp/writer.tar.gz writer/package.json writer/package-lock.json writer/tsconfig.json writer/src writer/abi registry/deployment.mts registry/deployment.testnet.json services/files.mts
 ```
 
 Replace `writer` with `keeper` for the keeper package. These explicit paths exclude private
@@ -94,6 +95,36 @@ Run one writer per ParlayVault. Quote reservations are in memory, so replicas
 would not share exposure limits. The writer reconstructs minted exposure at
 startup and returns `503 warming-up` until that completes. Keep
 `POKER_INTERVAL_MS` positive to continue tracking minted exposure.
+
+Missing state files are allowed on first startup. Unreadable, malformed or
+truncated existing files stop startup; they are never treated as an empty cache.
+New files use mode 0600. Waitlist and settlement-cache replacement writes and
+flushes a temporary file, renames it in the same directory, then flushes that
+directory. Use a local filesystem that supports these operations. Back up state
+with its ownership and permissions; leftover `*.tmp` files are uncommitted writes,
+not automatic recovery candidates.
+
+A failed signup save disables further signup in that process; fix the disk and
+restart so memory reloads whichever complete file reached disk. Existing invite
+codes continue to work. A keeper save failure retains the fraction in memory and
+alerts while continuing the existing settlement attempt. Repair storage promptly:
+a restart cannot recover an observation that never reached disk. Keep the keeper
+running while investigating a save failure when possible.
+
+Journal records are appended synchronously and flushed before a signed quote is
+returned. Append failure returns no successful quote and disables later appends
+until restart. Startup accepts existing positive schema versions, requires each
+record to be a JSON object on a newline-terminated line, and never truncates or
+rewrites history. This is an audit trail; it does not recover quote reservations.
+For a damaged journal, pause quoting and preserve the original privately before
+repair. Verify all complete records and retain any damaged tail separately; do
+not silently discard bytes. Restore a validated file, wait for outstanding quote
+deadlines to expire, then restart one writer and wait for exposure reconstruction.
+A complete final JSON record missing only its newline may have that newline added
+after inspection. Corrupt waitlist/cache recovery requires a verified backup or
+manual repair, retaining all known codes and fractions. Never restore stale state
+over a running service. These changes retain the existing JSON/JSONL formats;
+code rollback uses the current state files, not old snapshots.
 
 Sports quote journals use `schemaVersion: 1` with quote identity, book observations,
 probability, edge, and signed terms. Earlier journal records remain untouched;
