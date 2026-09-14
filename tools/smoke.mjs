@@ -2,7 +2,7 @@
 // 2-leg quote come back? One line out, exit 1 on any failure.
 //   INVITE_CODE=OVR-XXXX node tools/smoke.mjs
 // Env: WRITER_URL (default hosted writer), TAKER (any address), INVITE_CODE.
-const WRITER = process.env.WRITER_URL ?? "https://writer.overround.xyz";
+const WRITER = process.env.WRITER_URL ?? "https://writer.hyperflip.xyz";
 const INFO = "https://api.hyperliquid-testnet.xyz/info";
 const TAKER = process.env.TAKER ?? "0x1111111111111111111111111111111111111111";
 const CODE = process.env.INVITE_CODE;

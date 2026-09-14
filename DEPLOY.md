@@ -139,11 +139,12 @@ local runs.
 
 ## TLS and networking
 
-`writer.overround.xyz` has an A record pointing at the box. Caddy terminates TLS with a
-Let's Encrypt certificate (auto-renewing) and reverse-proxies to the writer on loopback:
+`writer.hyperflip.xyz` (canonical since 2026-09-14) and `writer.overround.xyz` (kept serving)
+both have A records pointing at the box. Caddy terminates TLS with Let's Encrypt certificates
+(auto-renewing) and reverse-proxies to the writer on loopback:
 
 ```
-writer.overround.xyz {
+writer.overround.xyz, writer.hyperflip.xyz {
 	reverse_proxy localhost:8787
 }
 ```
@@ -284,7 +285,7 @@ for a `WorkingDirectory` override before anything else.
 ```bash
 ssh root@91.99.94.25 'systemctl is-active keeper writer caddy'
 ssh root@91.99.94.25 'journalctl -u keeper -f'
-curl https://writer.overround.xyz/health
+curl https://writer.hyperflip.xyz/health
 ```
 
 The keeper logs only on events, not on every poll, so silence in its journal is normal.
