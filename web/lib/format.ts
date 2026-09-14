@@ -107,3 +107,9 @@ export function quotedOverround(bd: PriceBreakdown): number {
   if (bd.actualMultiplier <= 0) return 0;
   return bd.fairMultiplier / bd.actualMultiplier - 1;
 }
+
+export function shortError(err: unknown): string {
+  const raw = String((err as Error)?.message ?? err);
+  const firstLine = raw.split("\n")[0] ?? raw;
+  return firstLine.length > 140 ? `${firstLine.slice(0, 140)}…` : firstLine;
+}

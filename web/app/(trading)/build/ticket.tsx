@@ -1,16 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { erc20Abi, formatUnits, parseUnits } from "viem";
-import { useAccount, useBalance, usePublicClient, useReadContract, useSwitchChain, useWriteContract } from "wagmi";
+import { useState } from "react";
+import { useTicket } from "./use-ticket";
+import type { BuilderLeg } from "@/lib/ticket";
+import { formatUnits } from "viem";
 import {
-  fetchLimits,
   joinWaitlist,
-  requestQuote,
   WAITLIST_ERRORS,
   type QuoteResult,
-  type WriterQuote,
 } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
@@ -22,32 +20,15 @@ import {
   multiplierNum,
   priceBreakdown,
   quotedOverround,
-  secondsLeft,
   USDC_DECIMALS,
   type PriceBreakdown,
 } from "@/lib/format";
-import { HL_DRIP, hyperEvmTestnet, tradeUrl } from "@/lib/chain";
-import { PARLAY_VAULT, parlayVaultAbi } from "@/lib/contracts";
-import { useConnectAction, useUsdc, useWalletState } from "@/lib/wallet";
+import { hyperEvmTestnet, tradeUrl } from "@/lib/chain";
 import { Overround } from "@/app/overround-motif";
 
-export interface BuilderLeg {
-  vault: `0x${string}`;
-  isYes: boolean;
-  title: string;
-  coin: string;
-  /** Side label from the registry ("Twins", "Over"); YES/NO when absent. */
-  label?: string;
-  /** Question group this leg belongs to; one leg per group on a slip. */
-  group?: string;
-}
-
+export type { BuilderLeg } from "@/lib/ticket";
 const legLabel = (leg: BuilderLeg): string => leg.label ?? (leg.isYes ? "YES" : "NO");
 
-const MIN_LEGS = 2;
-const QUOTE_DEBOUNCE_MS = 400;
-/** Fallback quote lifetime until /limits answers with the writer's real one. */
-const TTL_SECONDS = 30;
 // Percent-of-cap stake chips - resolved against the writer's maxStake, or
 // treated as plain USDC amounts when /limits is unreachable.
 const STAKE_PRESETS = [25, 50, 100];
@@ -59,24 +40,6 @@ function midPct(mids: Record<string, string>, coin: string): string {
   // Only a value strictly inside (0, 1) is a probability - the same domain
   // priceBreakdown() enforces. allMids carries every coin on the venue.
   return Number.isFinite(n) && n > 0 && n < 1 ? impliedPct(n) : "-";
-}
-
-function tryParseStake(v: string): bigint | null {
-  if (!v.trim()) return null;
-  try {
-    const n = parseUnits(v, USDC_DECIMALS);
-    return n > 0n ? n : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Short, user-facing line for a thrown mint error (wallet rejection, RPC, revert). */
-function shortMintError(err: unknown): string {
-  const raw = String((err as Error)?.message ?? err);
-  if (raw.includes("exceeds balance")) return "Not enough testnet USDC in your wallet for the stake.";
-  const firstLine = raw.split("\n")[0] ?? raw;
-  return firstLine.length > 140 ? `${firstLine.slice(0, 140)}…` : firstLine;
 }
 
 function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: BuilderLeg[] = []): string {
@@ -167,17 +130,6 @@ function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown })
   );
 }
 
-type Cta =
-  | { kind: "disabled"; label: string }
-  | { kind: "connect"; label: string }
-  /** No saved invite code - the CTA slot renders the inline entry form. */
-  | { kind: "invite" }
-  /** Off-site next step (the faucet) - opens a new tab, with a one-line hint. */
-  | { kind: "external"; label: string; href: string; hint: string }
-  | { kind: "done"; label: string; href: string }
-  | { kind: "switch-chain"; label: string }
-  | { kind: "mint"; label: string };
-
 /** Inline invite entry - save a code, or get one emailed via the waitlist -
  * so a tester never has to leave the builder. */
 function InviteEntry({ onSave }: { onSave: (code: string) => void }) {
@@ -257,9 +209,6 @@ function InviteEntry({ onSave }: { onSave: (code: string) => void }) {
   );
 }
 
-const DRIP_HINT =
-  "Claim testnet USDC at the Hyperliquid drip, then transfer it (and some HYPE for gas) from Core to EVM.";
-
 export function Ticket({
   legs,
   onRemove,
@@ -271,261 +220,8 @@ export function Ticket({
 }) {
   const mids = useMids();
   const printing = usePrinting();
-  const { ready: walletReady, address, isConnected } = useWalletState();
-  const connect = useConnectAction();
-
-  const [stake, setStake] = useState("");
-  const [inviteCode, setInviteCode] = useState<string | null>(null);
-  const [quoteResult, setQuoteResult] = useState<QuoteResult | null>(null);
-  const [quoting, setQuoting] = useState(false);
-  const [ttlLeft, setTtlLeft] = useState(0);
-  const [mintState, setMintState] = useState<"idle" | "pending" | "done" | "requoted" | "error">("idle");
-  const [mintErrorMsg, setMintErrorMsg] = useState("");
-  const [mintErrorDetail, setMintErrorDetail] = useState("");
-
-  const publicClient = usePublicClient();
-  const { writeContractAsync } = useWriteContract();
-  const { chainId } = useAccount();
-  const { switchChain } = useSwitchChain();
-  const { address: usdcAddr, balance: usdcBalance } = useUsdc();
-  // Native HYPE - a wallet without gas fails the mint with a raw RPC error,
-  // so catch it in the CTA before the wallet ever opens.
-  const { data: gas } = useBalance({
-    address,
-    query: { enabled: !display && !!address },
-  });
-  // Drives the "1 tx / 2 tx" route line - the mint flow re-reads allowance
-  // itself, so a stale value here only ever mislabels the row, never the tx.
-  const { data: allowance } = useReadContract({
-    address: usdcAddr,
-    abi: erc20Abi,
-    functionName: "allowance",
-    args: address ? [address, PARLAY_VAULT] : undefined,
-    query: { enabled: !display && !!usdcAddr && !!address },
-  });
-
-  useEffect(() => {
-    if (display) return;
-    setInviteCode(localStorage.getItem("inviteCode"));
-  }, [display]);
-
-  const [maxStake, setMaxStake] = useState<bigint | null>(null);
-  // Quote lifetime is the writer's to decide (QUOTE_TTL_MS); hardcoding it here
-  // pinned the drain bar at 100% for the first minute of a 90s quote.
-  const [ttlSeconds, setTtlSeconds] = useState(TTL_SECONDS);
-  useEffect(() => {
-    if (display) return;
-    void fetchLimits().then((l) => {
-      if (!l) return;
-      setMaxStake(BigInt(l.maxStake));
-      if (l.quoteTtlMs > 0) setTtlSeconds(Math.round(l.quoteTtlMs / 1000));
-    });
-  }, [display]);
-
-  const stakeBase = tryParseStake(stake);
-  const requestSeq = useRef(0);
-  // True once we've already auto-requoted a quote that was expired on its very first
-  // tick (client clock ahead of the writer) - caps that auto-requote at one shot so a
-  // sustained skew can't loop POSTs. Reset on a fresh ticket config and on manual Retry.
-  const clockSkewRetried = useRef(false);
-
-  const runQuote = useCallback(async () => {
-    if (display) return;
-    if (legs.length < MIN_LEGS || !address || !inviteCode) return;
-    const base = tryParseStake(stake);
-    if (base === null) return;
-
-    const seq = ++requestSeq.current;
-    setQuoting(true);
-    const res = await requestQuote({
-      taker: address,
-      legs: legs.map((l) => ({ vault: l.vault, isYes: l.isYes })),
-      stake: base.toString(),
-      inviteCode,
-    });
-    if (seq !== requestSeq.current) return; // superseded by a newer request
-    setQuoting(false);
-    setQuoteResult(res);
-    // Preserve "requoted" (set by the LEG_SETTLED/QUOTE_EXPIRED mint retry)
-    // so its note stays visible alongside the refreshed CTA - but only when
-    // the retry actually succeeded; any other trigger (or a failed retry)
-    // clears it.
-    setMintState((s) => (s === "requoted" && res.ok ? "requoted" : "idle"));
-  }, [display, legs, stake, address, inviteCode]);
-
-  // Debounced (re)quote whenever the ticket's inputs change.
-  useEffect(() => {
-    if (display) return;
-    setQuoteResult(null);
-    setMintState("idle"); // user action (leg/stake change) clears any stale note
-    clockSkewRetried.current = false;
-    const t = setTimeout(() => void runQuote(), QUOTE_DEBOUNCE_MS);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [legs, stake, address, inviteCode, display]);
-
-  // TTL countdown against the live quote's deadline; drop + auto-requote at 0.
-  // Suspended while a mint is in flight or just landed: requoting mid-wallet-confirmation
-  // is pointless, and requoting right after "done" would wipe the confirmation CTA within
-  // TTL_SECONDS. If a freshly-landed quote is already expired on its first tick (client
-  // clock ahead of the writer), auto-requote once; if the retry lands pre-expired too,
-  // stop looping and surface a manual-retry error instead of hammering the writer.
-  useEffect(() => {
-    if (display || !quoteResult?.ok) {
-      setTtlLeft(0);
-      return;
-    }
-    if (mintState === "pending" || mintState === "done") return; // freeze - don't requote under a mint
-    let firstTick = true;
-    const tick = () => {
-      const left = secondsLeft(BigInt(quoteResult.quote.deadline), Date.now());
-      setTtlLeft(left);
-      if (left <= 0) {
-        if (firstTick && clockSkewRetried.current) {
-          setQuoteResult({ ok: false, status: 0, error: "clock-skew" });
-          return;
-        }
-        if (firstTick) clockSkewRetried.current = true;
-        setQuoteResult(null);
-        void runQuote();
-      }
-      firstTick = false;
-    };
-    tick();
-    const id = setInterval(tick, 250);
-    return () => clearInterval(id);
-  }, [display, quoteResult, mintState, runQuote]);
-
-  async function mintQuoted(q: WriterQuote, sig: `0x${string}`) {
-    setMintState("pending");
-    setMintErrorMsg("");
-    setMintErrorDetail("");
-    try {
-      if (!publicClient || !usdcAddr) throw new Error("client not ready");
-      let premium = BigInt(q.premium);
-      const [allowance, balance] = await Promise.all([
-        publicClient.readContract({
-          address: usdcAddr,
-          abi: erc20Abi,
-          functionName: "allowance",
-          args: [q.taker, PARLAY_VAULT],
-        }),
-        publicClient.readContract({
-          address: usdcAddr,
-          abi: erc20Abi,
-          functionName: "balanceOf",
-          args: [q.taker],
-        }),
-      ]);
-      // Fail before the approve tx, not after it: a wallet without the premium
-      // would otherwise pay approve gas and then revert the mint on-chain.
-      if (balance < premium) throw new Error("transfer amount exceeds balance");
-      if (allowance < premium) {
-        // Exact approval is safe against the post-approve requote below:
-        // premium == stake by writer construction (pricing.ts), so the fresh
-        // quote's premium is identical and stays covered.
-        const h = await writeContractAsync({
-          address: usdcAddr,
-          abi: erc20Abi,
-          functionName: "approve",
-          args: [PARLAY_VAULT, premium],
-        });
-        const approveReceipt = await publicClient.waitForTransactionReceipt({ hash: h });
-        if (approveReceipt.status !== "success") throw new Error("approve reverted");
-      }
-      // The approve (and the wallet confirm before it) may have outlived the
-      // quote's TTL. Instead of sending a doomed mint, fetch a fresh quote and
-      // mint that in the same flow - same stake means same premium, so the
-      // approval still covers it. Buffer of 10s absorbs mining + clock lag.
-      if (allowance < premium || secondsLeft(BigInt(q.deadline), Date.now()) < 10) {
-        const base = tryParseStake(stake);
-        if (!inviteCode || base === null) throw new Error("stake or invite code missing");
-        const res = await requestQuote({
-          taker: q.taker,
-          legs: legs.map((l) => ({ vault: l.vault, isYes: l.isYes })),
-          stake: base.toString(),
-          inviteCode,
-        });
-        if (!res.ok) {
-          setQuoteResult(res);
-          setMintState("idle");
-          return;
-        }
-        setQuoteResult(res);
-        q = res.quote;
-        sig = res.sig;
-        premium = BigInt(q.premium);
-      }
-      const mintArgs = [
-        {
-          taker: q.taker,
-          legs: q.legs,
-          premium,
-          maxPayout: BigInt(q.maxPayout),
-          deadline: BigInt(q.deadline),
-          quoteId: q.quoteId,
-        },
-        sig,
-      ] as const;
-      // Simulate first: surfaces the actual revert reason (QUOTE_EXPIRED,
-      // exceeds balance, …) before gas is spent - a mined-but-reverted tx
-      // resolves without one.
-      await publicClient.simulateContract({
-        address: PARLAY_VAULT,
-        abi: parlayVaultAbi,
-        functionName: "mint",
-        args: mintArgs,
-        account: q.taker,
-      });
-      const hash = await writeContractAsync({
-        address: PARLAY_VAULT,
-        abi: parlayVaultAbi,
-        functionName: "mint",
-        args: mintArgs,
-      });
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      // Simulation passed but the mined tx reverted - deadline raced the
-      // wallet confirmation; treat as stale quote.
-      if (receipt.status !== "success") throw new Error("QUOTE_EXPIRED (mint reverted on-chain)");
-      setMintState("done");
-    } catch (err) {
-      const msg = String((err as Error)?.message ?? err);
-      if (msg.includes("LEG_SETTLED") || msg.includes("QUOTE_EXPIRED")) {
-        void runQuote(); // stale quote - auto-requote (spec §4)
-        setMintState("requoted");
-      } else {
-        setMintErrorMsg(shortMintError(err));
-        setMintErrorDetail(msg);
-        setMintState("error");
-      }
-    }
-  }
-
-  function computeCta(): Cta {
-    if (legs.length < MIN_LEGS) return { kind: "disabled", label: "Add 2 legs to price a ticket" };
-    if (!walletReady) return { kind: "disabled", label: "Checking wallet…" };
-    if (!isConnected) return { kind: "connect", label: "Connect wallet" };
-    if (chainId !== undefined && chainId !== hyperEvmTestnet.id)
-      return { kind: "switch-chain", label: `Switch to ${hyperEvmTestnet.name}` };
-    if (!inviteCode) return { kind: "invite" };
-    // Empty wallet is a dead end without a next step - send the tester to the
-    // faucet instead of a disabled button.
-    if (usdcBalance === 0n) return { kind: "external", label: "Get testnet USDC →", href: HL_DRIP, hint: DRIP_HINT };
-    if (gas !== undefined && gas.value === 0n)
-      return { kind: "external", label: "Get HYPE for gas →", href: HL_DRIP, hint: DRIP_HINT };
-    if (stakeBase === null) return { kind: "disabled", label: "Enter a stake to quote" };
-    // Checked before the quote is even shown: a stake the wallet can't cover
-    // would otherwise reach the approve tx and burn gas on a doomed mint.
-    if (usdcBalance !== undefined && stakeBase > usdcBalance)
-      return { kind: "disabled", label: `Insufficient USDC - ${formatUsdc(usdcBalance)} available` };
-    if (mintState === "pending") return { kind: "disabled", label: "Confirm in wallet…" };
-    if (mintState === "done") return { kind: "done", label: "Minted - view positions", href: "/positions" };
-    if (quoting) return { kind: "disabled", label: "Quoting…" };
-    if (!quoteResult) return { kind: "disabled", label: "Waiting for quote…" };
-    if (!quoteResult.ok) return { kind: "disabled", label: "Unable to quote" };
-    return { kind: "mint", label: `Mint slip - ${formatUsdc(BigInt(quoteResult.quote.premium))} USDC` };
-  }
-  const cta = display ? null : computeCta();
+  const { stake, setStake, quoteResult, ttlLeft, ttlSeconds, mintState, mintErrorMsg, mintErrorDetail,
+    setInviteCode, maxStake, usdcBalance, allowance, cta, mintQuoted, retry, connect, switchChain } = useTicket(legs, display);
 
   // Quote-derived display values. premium/maxPayout are the signed truth;
   // `bd` re-derives the writer's pricing steps for the breakdown accordion.
@@ -750,11 +446,7 @@ export function Ticket({
               {(quoteResult.status === 0 || quoteResult.status === 503 || quoteResult.status === 429) && (
                 <button
                   type="button"
-                  onClick={() => {
-                    setMintState("idle"); // user action - clear any stale requoted/error note
-                    clockSkewRetried.current = false;
-                    void runQuote();
-                  }}
+                  onClick={retry}
                   className="mt-2 rounded-[4px] border border-line px-2 py-1 mono text-[11px] text-dim transition-colors hover:text-fg"
                 >
                   Retry
