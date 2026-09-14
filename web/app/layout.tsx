@@ -44,6 +44,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
+    site: "@hyperflip_xyz",
+    creator: "@hyperflip_xyz",
     title: "Hyperflip | Stack outcomes on HyperCore",
     description: "Two to ten live outcomes. One on-chain slip. One locked payout.",
   },
@@ -52,7 +54,15 @@ export const metadata: Metadata = {
 const jsonLd = {
   "@context": "https://schema.org",
   "@graph": [
-    { "@type": "Organization", "@id": `${siteUrl}/#org`, name: "Hyperflip", url: siteUrl, logo: `${siteUrl}/icon.svg` },
+    {
+      "@type": "Organization",
+      "@id": `${siteUrl}/#org`,
+      name: "Hyperflip",
+      url: siteUrl,
+      logo: `${siteUrl}/icon.svg`,
+      email: "contact@hyperflip.xyz",
+      sameAs: ["https://x.com/hyperflip_xyz"],
+    },
     {
       "@type": "WebSite",
       "@id": `${siteUrl}/#site`,
