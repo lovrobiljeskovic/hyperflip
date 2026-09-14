@@ -306,9 +306,14 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   // any other case this design defers to the owner rather than trusting elapsed time.
   // Consecutive failed balance-read samples per vault — throttles the alert, nothing else.
   const sampleFailures = new Map<string, number>();
+  // Vaults settlementLoop has seen settled on-chain. split/merge revert with SETTLED there, so no
+  // op can ever be pending, and 0x801 throws for a pruned outcome coin — sampling a settled vault
+  // is one guaranteed "balance sample failed" alert per minute per vault, forever.
+  const settledVaults = new Set<Address>();
 
   async function balanceLoop(): Promise<void> {
     for (const vault of config.vaultAddresses) {
+      if (settledVaults.has(vault)) continue;
       const info = vaultInfo.get(vault)!;
       const assetId = encodedOutcomeAssetId(info.outcome, true);
       let current: bigint;
@@ -414,6 +419,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
       try {
         const settled = await readVault<boolean>(vault, "settled");
         if (settled) {
+          settledVaults.add(vault);
           staleAlerted.delete(vault); // settled late (manual relay, or a race won elsewhere) — re-arm
           continue;
         }
