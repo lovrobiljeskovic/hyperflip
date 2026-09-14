@@ -11,15 +11,30 @@ installation root; adjust paths for your host.
 /opt/hype/
   .env
   keeper/
+    abi/OutcomeVault.json
+    abi/KeeperVerifier.json
   writer/
+    abi/OutcomeVault.json
+    abi/ParlayVault.json
   registry/markets.json
-  out/OutcomeVault.sol/OutcomeVault.json
-  out/KeeperVerifier.sol/KeeperVerifier.json
-  out/ParlayVault.sol/ParlayVault.json
 ```
 
-Both services resolve configuration and ABIs from this layout. Build the matching
-contracts with `forge build` before packaging. Install service dependencies with
+Both services resolve configuration from this layout and load their packaged
+ABIs. To regenerate interfaces, run `forge build && node scripts/abis.mjs` in
+the source checkout; commit the generated JSON. `bash scripts/verify.sh` checks
+drift against the build, imports each packed service without `out/` or Foundry,
+and verifies the frontend's smaller interfaces. Service hosts no longer need a
+compiler or the Foundry artifact tree. The separate rotation checkout still does.
+
+Package each service from its directory with the existing lockfile included:
+
+```bash
+tar -czf ../writer.tar.gz package.json package-lock.json tsconfig.json src abi
+```
+
+Use `keeper.tar.gz` for the keeper. These explicit paths exclude private
+configuration and runtime state. Unpack into the layout above without overwriting
+existing state. Install service dependencies with
 `npm ci --include=dev`: startup uses `tsx`, which is a dev dependency.
 
 Use the root `.env.example` for configuration. Set `CORS_ORIGINS` to the frontend
@@ -102,7 +117,7 @@ writer.example.com {
 
 ## Deployment and checks
 
-Run `bash scripts/verify.sh` before packaging. Synchronize source and matching
+Run `bash scripts/verify.sh` before packaging. Synchronize source and packaged
 ABIs while excluding private environment files, runtime state, `node_modules`,
 and the host's registry. Install dependencies, check ownership, then restart only
 the affected service. Verify service state and logs:

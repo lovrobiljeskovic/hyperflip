@@ -3,6 +3,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 forge fmt --check
 forge build --sizes
+node scripts/abis.mjs --check
+node scripts/check-service-packages.mjs
 forge test
 for project in keeper writer; do
   (cd "$project" && npm run check)
@@ -19,4 +21,4 @@ done
   export NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK=1
   npm run check
 )
-node --test tools/rotate-lib.test.mjs tools/rotate-markets.test.mjs tools/verify.test.mjs
+node --test scripts/abis.test.mjs tools/rotate-lib.test.mjs tools/rotate-markets.test.mjs tools/verify.test.mjs

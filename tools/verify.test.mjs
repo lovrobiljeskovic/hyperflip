@@ -53,9 +53,10 @@ test("repository gate checks each project with fixture web configuration", () =>
   const root = mkdtempSync(join(tmpdir(), "hype-gate-"));
   try {
     assert.deepEqual(runRepositoryGate(root), [
-      "forge fmt --check", "forge build --sizes", "forge test",
+      "forge fmt --check", "forge build --sizes",
+      "node scripts/abis.mjs --check", "node scripts/check-service-packages.mjs", "forge test",
       "npm keeper run check", "npm writer run check", "npm web run check",
-      "node --test tools/rotate-lib.test.mjs tools/rotate-markets.test.mjs tools/verify.test.mjs",
+      "node --test scripts/abis.test.mjs tools/rotate-lib.test.mjs tools/rotate-markets.test.mjs tools/verify.test.mjs",
     ]);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
