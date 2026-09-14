@@ -14,4 +14,6 @@ USDC = "USDC:0xeb62eee3685fc4c43992febcd9e75443"  # testnet token 0, from spotMe
 amount = float(sys.argv[1])
 wallet = Account.from_key(os.environ["PRIVATE_KEY"])
 print("from", wallet.address, "amount", amount)
-print(Exchange(wallet, TESTNET_API_URL).spot_transfer(amount, EVM_SYSTEM_ADDRESS, USDC))
+# sendAsset, not spotSend: spotSend answers "Action disabled when unified account
+# is active", sendAsset is the unified-account replacement.
+print(Exchange(wallet, TESTNET_API_URL).send_asset(EVM_SYSTEM_ADDRESS, "spot", "spot", USDC, amount))
