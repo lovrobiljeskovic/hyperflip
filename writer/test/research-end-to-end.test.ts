@@ -48,18 +48,31 @@ function profile(root: string): { file: string; loaded: LoadedResearchNetworkPro
   const file = join(root, "profile.json");
   writeFileSync(file, canonicalJson(value));
   writeFileSync(join(root, "sources.json"), canonicalJson(sources));
-  const markets = JSON.parse(readFileSync(new URL("../../registry/markets.json", import.meta.url), "utf8"));
-  markets.markets = ["BTC", "ETH", "SOL"].map((underlying) => markets.markets.find((market: { underlying: string }) => market.underlying === underlying));
-  for (const market of markets.markets) {
-    market.expiryMs = AS_OF + DAY;
-    if (market.underlying === "ETH") market.cluster = "equity";
-  }
-  markets.archived = [];
+  const markets = {
+    network: "testnet",
+    markets: sources.sources.map(({ underlying, cluster }, index) => ({
+      vault: `0x${(index + 1).toString(16).padStart(40, "0")}`,
+      coinYes: `#${index * 10 + 1}`, coinNo: `#${index * 10 + 2}`,
+      underlying, cluster, direction: "up", title: underlying, category: cluster,
+      expiryMs: AS_OF + DAY,
+    })),
+    archived: [],
+  };
   writeFileSync(join(root, "markets.json"), canonicalJson(markets));
-  writeFileSync(join(root, "deployment.json"), readFileSync(new URL("../../registry/deployment.testnet.json", import.meta.url)));
-  const baseline = JSON.parse(readFileSync(new URL("../../registry/correlations.json", import.meta.url), "utf8"));
-  baseline.clusters.equity.ETH = baseline.clusters.crypto.ETH;
-  delete baseline.clusters.crypto.ETH;
+  writeFileSync(join(root, "deployment.json"), canonicalJson({
+    schemaVersion: 1, network: "testnet", evmChainId: 998,
+    parlayVault: "0x9999999999999999999999999999999999999999", parlayDeployBlock: "1",
+  }));
+  const baseline = {
+    network: "testnet", fallbackReason: "operator-reviewed-testnet-bootstrap",
+    clusters: {
+      crypto: {
+        BTC: { global: 0.30, cluster: 0.90, underlying: 0.29 },
+        SOL: { global: 0.2954828964376993, cluster: 0.9061475490756113, underlying: 0.2856334665564427 },
+      },
+      equity: { ETH: { global: 0.30, cluster: 0.92, underlying: 0.20 } },
+    },
+  };
   writeFileSync(join(root, "correlations.json"), canonicalJson(baseline));
   return { file, loaded: loadResearchNetworkProfile(file) };
 }
@@ -73,6 +86,7 @@ function filesBelow(root: string): string[] {
 
 function withWriterEnv<T>(root: string, profileFile: string, run: () => T): T {
   const values: Record<string, string> = {
+    PRICING_MODE: "correlated", RESEARCH_REQUIRE_ANCHORED_FS: "0",
     RESEARCH_ROOT: root, RESEARCH_NETWORK_PROFILE_FILE: profileFile, TESTNET_RPC: "http://localhost.invalid", WRITER_ADDRESS: TAKER,
     QUOTE_SIGNER_PRIVATE_KEY: `0x${"11".repeat(32)}`, POKER_PRIVATE_KEY: `0x${"22".repeat(32)}`, MAX_STAKE: "1000000",
     PER_MARKET_CAP: "1000000000", PER_CLUSTER_CAP: "1000000000", PER_CODE_RESERVED_CAP: "1000000000", INVITE_CODES: "fixture",

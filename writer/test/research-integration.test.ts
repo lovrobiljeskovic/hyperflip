@@ -264,7 +264,7 @@ function runRepositoryGate(root: string): string[] {
   const bin = join(root, "bin");
   const log = join(root, "commands.log");
   mkdirSync(bin);
-  for (const command of ["forge", "npm"]) {
+  for (const command of ["forge", "npm", "node"]) {
     const file = join(bin, command);
     writeFileSync(file, `#!/bin/sh\nprintf '${command} %s\\n' "$*" >> "$ACCEPTANCE_LOG"\n`);
     chmodSync(file, 0o755);
@@ -347,7 +347,11 @@ test("correlation beta acceptance is deterministic, durable, joined, isolated, a
     assert.equal(daily, 7);
     assert.deepEqual(steps, ["derive", "calibrate"]);
 
-    assert.deepEqual(runRepositoryGate(roots[2]), ["forge fmt --check", "forge build", "forge test", "npm run research:check"]);
+    assert.deepEqual(runRepositoryGate(roots[2]), [
+      "forge fmt --check", "forge build --sizes", "forge test",
+      "npm run check", "npm run check", "npm run check",
+      "node --test tools/rotate-lib.test.mjs",
+    ]);
   } finally {
     for (const root of roots) rmSync(root, { recursive: true, force: true });
   }
