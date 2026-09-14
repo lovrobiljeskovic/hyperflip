@@ -29,7 +29,7 @@ import {
 import { HL_DRIP, hyperEvmTestnet, tradeUrl } from "@/lib/chain";
 import { PARLAY_VAULT, parlayVaultAbi } from "@/lib/contracts";
 import { useConnectAction, useUsdc, useWalletState } from "@/lib/wallet";
-import { Overround } from "../overround-motif";
+import { Overround } from "@/app/overround-motif";
 
 export interface BuilderLeg {
   vault: `0x${string}`;
@@ -215,6 +215,7 @@ function InviteEntry({ onSave }: { onSave: (code: string) => void }) {
 
   return (
     <div className="mt-4 flex flex-col gap-3">
+      <p className="mono text-[11px] text-dim">Saved your invite on the website? Enter it here once to use it in the app.</p>
       <form
         onSubmit={(e) => {
           e.preventDefault();

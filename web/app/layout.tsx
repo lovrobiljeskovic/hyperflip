@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { Bricolage_Grotesque, Instrument_Sans, Martian_Mono } from "next/font/google";
 import "./globals.css";
-import { siteUrl } from "@/lib/site";
-import { Providers } from "./providers";
+import { appCanonical, siteUrl } from "@/lib/site";
 
 /* Three faces, both grounds. Bricolage carries display and the wordmark through
    its opsz axis, Instrument Sans the body and UI labels, Martian Mono every
@@ -64,7 +63,7 @@ const jsonLd = {
     {
       "@type": "WebApplication",
       name: "Hyperflip",
-      url: siteUrl,
+      url: appCanonical(),
       applicationCategory: "FinanceApplication",
       operatingSystem: "Web",
       description: "Combine live HyperCore outcome markets into one on-chain slip with a signed price and locked payout.",
@@ -80,7 +79,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col bg-ink text-fg font-sans">
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
-        <Providers>{children}</Providers>
+        {children}
       </body>
     </html>
   );

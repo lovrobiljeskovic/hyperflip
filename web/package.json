@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "test": "vitest run",
-    "check": "next build && vitest run"
+    "check": "next build && vitest run && node scripts/check-page-bundles.mjs"
   },
   "dependencies": {
     "@privy-io/react-auth": "^3.37.3",

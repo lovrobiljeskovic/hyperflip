@@ -138,14 +138,22 @@ export function compareMarketVolume(left: Market, right: Market, ascending: bool
 export interface WriterLimits {
   maxStake: string;
   edgeBps: string;
+  legEdgeBps?: string;
   quoteTtlMs: number;
+}
+
+/** Missing parameters from an older writer must not become a zero-fee claim. */
+export function currentPricing(limits: WriterLimits | null): { base: string; perLeg: string } | null {
+  const bps = [limits?.edgeBps, limits?.legEdgeBps];
+  if (!bps.every((value) => typeof value === "string" && /^\d+$/.test(value) && Number.isSafeInteger(Number(value)))) return null;
+  return { base: (Number(bps[0]) / 100).toFixed(2), perLeg: (Number(bps[1]) / 100).toFixed(2) };
 }
 
 /** Quote-shaping caps. Returns null when the writer is unreachable or too old
  * to serve /limits — callers fall back to unclamped input. */
 export async function fetchLimits(): Promise<WriterLimits | null> {
   try {
-    const r = await fetch(`${BASE}/limits`);
+    const r = await fetch(`${BASE}/limits`, { cache: "no-store", signal: AbortSignal.timeout(10_000) });
     if (!r.ok) return null;
     return (await r.json()) as WriterLimits;
   } catch {

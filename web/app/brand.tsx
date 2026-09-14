@@ -5,10 +5,10 @@ export function HyperflipLogo({ className = "" }: { className?: string }) {
   return <img src="/brand/logo-clean.svg" alt="" className={className} />;
 }
 
-export function HyperflipBrand({ shared = false }: { shared?: boolean }) {
+export function HyperflipBrand({ shared = false, href = "/" }: { shared?: boolean; href?: string }) {
   const mark = <HyperflipLogo className="size-8" />;
   return (
-    <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="Hyperflip home">
+    <Link href={href} prefetch={false} className="flex shrink-0 items-center gap-2.5" aria-label="Hyperflip home">
       {shared ? (
         <ViewTransition name="hyperflip-mark" share="hyperflip-mark" default="none">
           {mark}

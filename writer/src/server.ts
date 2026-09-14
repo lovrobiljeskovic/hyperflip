@@ -513,6 +513,7 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
         JSON.stringify({
           maxStake: deps.cfg.maxStake.toString(),
           edgeBps: deps.cfg.edgeBps.toString(),
+          legEdgeBps: deps.cfg.legEdgeBps.toString(),
           quoteTtlMs: deps.cfg.quoteTtlMs,
         }),
       );

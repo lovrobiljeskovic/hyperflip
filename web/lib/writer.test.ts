@@ -1,5 +1,21 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { compareMarketVolume, groupMarkets, marketMid, requestQuote, sideLabel, withMarketVolumes, type Market } from "./writer";
+import { compareMarketVolume, currentPricing, fetchLimits, groupMarkets, marketMid, requestQuote, sideLabel, withMarketVolumes, type Market } from "./writer";
+
+test("public pricing follows writer configuration and never invents missing fees", async () => {
+  const limits = { maxStake: "1000000", edgeBps: "725", legEdgeBps: "150", quoteTtlMs: 30000 };
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(limits))));
+  expect(currentPricing(await fetchLimits())).toEqual({ base: "7.25", perLeg: "1.50" });
+  expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/limits"), expect.objectContaining({ cache: "no-store" }));
+  expect(currentPricing({ ...limits, edgeBps: "0", legEdgeBps: "0" })).toEqual({ base: "0.00", perLeg: "0.00" });
+  for (const legEdgeBps of [undefined, "", "-1", "NaN", "1.5", "9007199254740992"]) {
+    expect(currentPricing({ ...limits, legEdgeBps })).toBeNull();
+  }
+  expect(currentPricing({ ...limits, edgeBps: "bad" })).toBeNull();
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("unavailable", { status: 503 })));
+  expect(currentPricing(await fetchLimits())).toBeNull();
+  vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+  expect(currentPricing(await fetchLimits())).toBeNull();
+});
 
 test("marketMid: (0,1) only, and the empty-book 0.5 placeholder is null unless the market has traded", () => {
   const mids = { a: "0.61", b: "0.5", c: "6400000", d: "0" };

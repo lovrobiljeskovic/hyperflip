@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { appHref } from "@/lib/site";
 import { compareMarketVolume, fetchMarketBoard, marketMid, onlySports, sideLabel, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
@@ -239,7 +240,8 @@ export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
       </div>
       {state.markets.length > priced.length && (
         <Link
-          href="/build"
+          href={appHref()}
+          prefetch={false}
           className="mono block border-t border-line px-5 py-3 text-center text-[10px] uppercase tracking-[0.14em] text-dim transition-colors hover:bg-raised hover:text-fg"
         >
           All {state.markets.length} markets in the builder
@@ -294,7 +296,8 @@ export function LiveMarketRail({ board }: { board: BoardSnapshot }) {
       {items.map((item) => (
         <Link
           key={item.vault}
-          href={`/build?leg=${item.vault}`}
+          href={`${appHref()}?leg=${item.vault}`}
+          prefetch={false}
           tabIndex={hidden ? -1 : undefined}
           className="flex min-w-[310px] items-center justify-between gap-8 border-r border-line px-5 py-3 transition-colors hover:bg-raised"
         >
@@ -414,7 +417,7 @@ export function HeroSlip({ board }: { board: BoardSnapshot }) {
 
           <Line i={4 + legs.length}>
             <p className="mono mt-5 border-t border-line pt-4 text-[9px] leading-relaxed text-dim">
-              {live ? "Live Core odds" : "Illustrative odds"} before the house spread. Build a slip to request a signed quote.
+              {live ? "Market odds" : "Illustrative market odds"} before Hyperflip’s margin. Open the app to request a signed quote.
             </p>
           </Line>
         </div>

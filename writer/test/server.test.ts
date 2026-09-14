@@ -532,6 +532,20 @@ test("HTTP smoke: /quote, /health, /metrics, bad-json, unknown route", async () 
   }
 });
 
+test("GET /limits exposes configured base and per-leg pricing without authentication", async () => {
+  const origin = "https://app.hyperflip.xyz";
+  const server = startServer(deps({ cfg: cfg({ edgeBps: 725n, legEdgeBps: 150n, corsOrigins: [origin] }) }), 0, () => ({ ok: true }));
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/limits`, { headers: { origin } });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("access-control-allow-origin"), origin);
+    assert.deepEqual(await response.json(), { maxStake: "10000000", edgeBps: "725", legEdgeBps: "150", quoteTtlMs: 30000 });
+  } finally {
+    server.close();
+  }
+});
+
 test("GET /markets serves registry verbatim with CORS", async () => {
   const registryJson = '{"markets":[{"vault":"0x1111111111111111111111111111111111111111","title":"T","category":"c","coinYes":"#10","coinNo":"#11","underlying":"BTC","cluster":"crypto"}]}';
   const d = deps({ cfg: cfg({ registryJson }) });

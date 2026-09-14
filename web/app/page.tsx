@@ -2,7 +2,8 @@ import Link from "next/link";
 
 import { fetchMids } from "@/lib/info";
 import { fetchMarketBoard, onlySports } from "@/lib/writer";
-import { AppHeader } from "./app-header";
+import { LandingHeader } from "./landing-header";
+import { appHref } from "@/lib/site";
 import { HyperflipBrand } from "./brand";
 import { InviteForm } from "./invite-form";
 import { HeroSlip, LiveMarketBoard, LiveMarketRail, type BoardSnapshot } from "./live-markets";
@@ -37,7 +38,7 @@ const faq = [
   },
   {
     q: "What does it cost?",
-    a: "No separate platform fee. The house edge is 5% on the combined odds plus 3% for every leg past the first, built into the signed quote and shown before you mint.",
+    a: "Hyperflip includes a house margin in quoted odds. Pricing may change during beta; the app shows the breakdown before you mint.",
   },
 ];
 
@@ -58,7 +59,7 @@ export default async function Home() {
 
   return (
     <div className="flex min-h-full flex-col">
-      <AppHeader />
+      <LandingHeader />
 
       <main>
         <LiveMarketRail board={board} />
@@ -74,7 +75,8 @@ export default async function Home() {
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link
-                href="/build"
+                href={appHref()}
+                prefetch={false}
                 className="rounded-[8px] bg-accent px-6 py-3.5 font-semibold text-on-accent transition-transform active:scale-[.98] motion-reduce:transition-none"
               >
                 Start building
@@ -95,7 +97,7 @@ export default async function Home() {
         <section id="board" className="section-reveal mx-auto w-full max-w-[1280px] scroll-mt-20 px-4 py-20 sm:px-6 lg:py-28">
           <h2 className="display max-w-[12ch] text-[clamp(2.5rem,5vw,4.6rem)]">Markets, moving now.</h2>
           <p className="mt-5 max-w-[54ch] text-base leading-relaxed text-dim">
-            Live decimal odds and implied probability for the busiest priced sports markets. The board carries no house edge.
+            Market odds before Hyperflip’s margin. Preview the busiest priced sports markets, then open the app for a signed quote.
           </p>
           <LiveMarketBoard board={board} />
         </section>
@@ -119,16 +121,17 @@ export default async function Home() {
           <div>
             <h2 className="display max-w-[9ch] text-[clamp(2.5rem,5vw,4.6rem)]">Pricing you can inspect.</h2>
             <p className="mt-5 max-w-[42ch] text-base leading-relaxed text-dim">
-              Every quote separates market probability from house edge before your wallet opens.
+              See your stake, quoted odds, and maximum payout before you sign.
             </p>
           </div>
           <dl className="grid content-start gap-px overflow-hidden rounded-[12px] border border-line bg-line sm:grid-cols-2">
             <div className="bg-panel p-7 sm:col-span-2">
-              <dt className="mono text-[10px] uppercase tracking-[.14em] text-dim">House edge</dt>
-              <dd className="display mt-5 text-5xl text-accent">5% + 3% a leg</dd>
+              <dt className="mono text-[10px] uppercase tracking-[.14em] text-dim">How pricing works</dt>
+              <dd className="display mt-5 text-5xl text-accent">Know your quote.</dd>
               <p className="mt-3 max-w-[46ch] text-sm leading-relaxed text-dim">
-                Five percent on the combined odds, three more for every leg past the first. No separate platform fee.
+                Our house margin is included in the quoted odds. Inspect the adjustment and your final payout in the app. Pricing may change during beta.
               </p>
+              <Link href={appHref("/pricing")} prefetch={false} className="mt-4 inline-block text-sm text-accent underline underline-offset-4">See current pricing</Link>
             </div>
             <div className="bg-raised p-7">
               <dt className="mono text-[10px] uppercase tracking-[.14em] text-dim">Before mint</dt>
@@ -138,7 +141,7 @@ export default async function Home() {
             <div className="bg-panel p-7">
               <dt className="mono text-[10px] uppercase tracking-[.14em] text-dim">Price protection</dt>
               <dd className="mt-5 text-xl font-semibold">Signed and fixed</dd>
-              <p className="mt-2 text-sm leading-relaxed text-dim">A quote holds for 30 seconds, then refreshes.</p>
+              <p className="mt-2 text-sm leading-relaxed text-dim">Each quote shows its expiry. Minted slips retain their locked terms.</p>
             </div>
           </dl>
         </section>
@@ -161,7 +164,7 @@ export default async function Home() {
           <div>
             <h2 className="display max-w-[10ch] text-[clamp(2.5rem,5vw,4.6rem)]">Invite access. Testnet stakes.</h2>
             <p className="mt-5 max-w-[40ch] leading-relaxed text-dim">
-              Building is open to explore. A saved invite code is checked when you request a quote.
+              Explore the app without connecting a wallet. Get an invite by email, then enter your code in the app when you request a quote.
             </p>
           </div>
           <InviteForm />

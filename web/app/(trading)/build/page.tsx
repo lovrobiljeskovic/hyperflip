@@ -6,7 +6,6 @@ import { tradeUrl } from "@/lib/chain";
 import { useMids } from "@/lib/mids";
 import { formatVolume, oddsLabel, pct1, until } from "@/lib/format";
 import { Ticket, type BuilderLeg } from "./ticket";
-import { AppHeader } from "../app-header";
 
 /** Matches ParlayVault.MAX_LEGS (src/ParlayVault.sol:58) and the writer's own
  * bound (writer/src/server.ts:49). Display only - the cap is enforced on-chain
@@ -369,7 +368,6 @@ export default function BuildPage() {
 
   return (
     <div className="min-h-screen text-[13px] text-fg">
-      <AppHeader />
 
       <main className="mx-auto grid max-w-[1280px] gap-8 px-4 py-8 pb-24 sm:px-6 sm:py-10 lg:grid-cols-[1fr_400px] lg:gap-0 lg:pb-10">
         <section className="lg:border-r lg:border-line lg:pr-8">

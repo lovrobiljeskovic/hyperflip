@@ -12,7 +12,7 @@ import { hyperEvmTestnet, tradeUrl } from "@/lib/chain";
 import { fetchMarkets, type Market, sideLabel } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { useConnectAction, useWalletState } from "@/lib/wallet";
-import { AppHeader } from "../app-header";
+import { appHref } from "@/lib/site";
 
 const WAD = 10n ** 18n;
 
@@ -405,7 +405,6 @@ export default function PositionsPage() {
 
   return (
     <div className="min-h-screen text-[13px] text-fg">
-      <AppHeader />
 
       <main className="mx-auto max-w-[1280px] px-4 py-8 sm:px-6 sm:py-10">
         <h1 className="display text-[32px] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
@@ -445,7 +444,7 @@ export default function PositionsPage() {
           <div className="mt-10 rounded-card border border-line bg-panel p-6">
             <p className="text-dim">
               No slips yet -{" "}
-              <Link href="/build" className="text-accent underline underline-offset-4">
+              <Link href={appHref()} className="text-accent underline underline-offset-4">
                 build one
               </Link>
               .
