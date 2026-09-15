@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { appHref } from "@/lib/site";
-import { compareMarketVolume, fetchMarketBoard, marketMid, onlySports, sideLabel, type Market } from "@/lib/writer";
+import { compareMarketVolume, fetchMarketBoard, isPriced, marketMid, onlySports, sideLabel, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
 import { formatVolume, oddsLabel, pct1, until } from "@/lib/format";
@@ -201,7 +201,7 @@ export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
   }
 
   const pricedAll = [...state.markets]
-    .filter((m) => marketMid(mids, m, m.coinYes) !== null && marketMid(mids, m, m.coinNo) !== null)
+    .filter((m) => isPriced(mids, m))
     .sort((a, b) => compareMarketVolume(a, b, false));
   // One row per question first (five different games beats five sides of one
   // futures market), then fill from the rest if the registry is narrow.

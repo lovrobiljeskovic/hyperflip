@@ -39,6 +39,20 @@ export function marketMid(mids: Record<string, string>, market: Partial<Pick<Mar
   return n;
 }
 
+/** Both sides quotable: a book price, a traded 0.5, or a house prior. Unpriced rows are dead weight on a board. */
+export function isPriced(mids: Record<string, string>, market: Market): boolean {
+  return marketMid(mids, market, market.coinYes) !== null && marketMid(mids, market, market.coinNo) !== null;
+}
+
+/** Tab label. Core deployers spell the same sport several ways ("Soccer", "Association Football",
+ * "American football"); fold them so one sport gets one tab. */
+export function sportLabel(market: Pick<Market, "sport" | "category">): string {
+  const raw = (market.sport ?? market.category).trim().toLowerCase();
+  if (raw === "american football") return "Football";
+  if (raw === "association football" || raw === "soccer") return "Soccer";
+  return raw.length <= 3 ? raw.toUpperCase() : raw[0].toUpperCase() + raw.slice(1);
+}
+
 export function onlySports(markets: Market[]): Market[] {
   return markets.filter((m) => m.category === "sports");
 }

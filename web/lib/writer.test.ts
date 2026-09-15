@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { compareMarketVolume, currentPricing, fetchLimits, fetchMarkets, groupMarkets, marketMid, requestQuote, sideLabel, withMarketVolumes, type Market } from "./writer";
+import { compareMarketVolume, currentPricing, fetchLimits, fetchMarkets, groupMarkets, isPriced, marketMid, sportLabel, requestQuote, sideLabel, withMarketVolumes, type Market } from "./writer";
 
 test("public pricing follows writer configuration and never invents missing fees", async () => {
   const limits = { maxStake: "1000000", edgeBps: "725", legEdgeBps: "150", quoteTtlMs: 30000 };
@@ -29,6 +29,23 @@ test("marketMid: (0,1) only, and the empty-book 0.5 placeholder is null unless t
   expect(marketMid(mids, { priorYes: 0.4, coinYes: "b" }, "b")).toBe(0.4);
   expect(marketMid(mids, { priorYes: 0.4, coinYes: "b" }, "zzz")).toBeCloseTo(0.6);
   expect(marketMid(mids, { priorYes: 0.4, coinYes: "a" }, "a")).toBe(0.61);
+});
+
+test("isPriced: both sides need a usable mid; a house prior covers an empty book", () => {
+  const m = { vault: "0x1", title: "", category: "sports", coinYes: "y", coinNo: "n" } as Market;
+  expect(isPriced({ y: "0.6", n: "0.4" }, m)).toBe(true);
+  expect(isPriced({ y: "0.6" }, m)).toBe(false);
+  expect(isPriced({ y: "0.5", n: "0.5" }, m)).toBe(false);
+  expect(isPriced({}, { ...m, priorYes: 0.3 })).toBe(true);
+});
+
+test("sportLabel folds deployer spellings into one tab per sport", () => {
+  expect(sportLabel({ sport: "American football", category: "sports" })).toBe("Football");
+  expect(sportLabel({ sport: "American Football", category: "sports" })).toBe("Football");
+  expect(sportLabel({ sport: "Association Football", category: "sports" })).toBe("Soccer");
+  expect(sportLabel({ sport: "Soccer", category: "sports" })).toBe("Soccer");
+  expect(sportLabel({ sport: "F1", category: "sports" })).toBe("F1");
+  expect(sportLabel({ category: "sports" })).toBe("Sports");
 });
 
 const REQ = {

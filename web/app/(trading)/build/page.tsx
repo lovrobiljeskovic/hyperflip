@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { compareMarketVolume, fetchMarketBoard, groupMarkets, marketMid, onlySports, sideLabel, type Market } from "@/lib/writer";
+import { compareMarketVolume, fetchMarketBoard, groupMarkets, isPriced, marketMid, onlySports, sideLabel, sportLabel, type Market } from "@/lib/writer";
 import { tradeUrl } from "@/lib/chain";
 import { useMids } from "@/lib/mids";
 import { formatVolume, oddsLabel, pct1, until } from "@/lib/format";
@@ -304,17 +304,16 @@ export default function BuildPage() {
     }
   }, []);
 
-  const tabs = useMemo(
-    () => ["all", ...new Set((markets ?? []).map((m) => m.category))],
-    [markets],
+  // Only rows that will actually render: unpriced or expired markets are dropped
+  // below, so a sport whose every market is dead gets no tab either.
+  const live = useMemo(
+    () => (markets ?? []).filter((m) => (m.expiryMs ?? Infinity) >= Date.now() && isPriced(mids, m)),
+    [markets, mids],
   );
+  const tabs = useMemo(() => ["all", ...new Set(live.map(sportLabel))], [live]);
   const board = useMemo(() => {
-    const filtered = (markets ?? [])
-      .filter((m) => tab === "all" || m.category === tab)
-      // Expired-but-not-yet-rotated markets are dead weight on the board -
-      // filter them out client-side rather than let a stale price look pickable.
-      // Games past kickoff stay: the writer quotes in-play until expiry.
-      .filter((m) => (m.expiryMs ?? Infinity) >= Date.now());
+    // Games past kickoff stay: the writer quotes in-play until expiry.
+    const filtered = live.filter((m) => tab === "all" || sportLabel(m) === tab);
     if (sort === "volume") return filtered.sort((a, b) => compareMarketVolume(a, b, volumeAsc));
     // Markets without an expiry sink to the bottom in either direction.
     return filtered.sort((a, b) => {
@@ -322,7 +321,7 @@ export default function BuildPage() {
       if (b.expiryMs === undefined) return -1;
       return (a.expiryMs - b.expiryMs) * (expiryAsc ? 1 : -1);
     });
-  }, [markets, tab, sort, volumeAsc, expiryAsc]);
+  }, [live, tab, sort, volumeAsc, expiryAsc]);
 
   useEffect(() => {
     void load();
@@ -357,8 +356,8 @@ export default function BuildPage() {
             </span>
           </div>
 
-          {markets !== null && markets.length > 0 && (
-            <div className="mono mt-6 flex gap-1 text-[10px] uppercase tracking-[0.16em]">
+          {tabs.length > 2 && (
+            <div className="mono mt-6 flex flex-wrap gap-1 text-[10px] uppercase tracking-[0.16em]">
               {tabs.map((t) => (
                 <button
                   key={t}
@@ -391,8 +390,8 @@ export default function BuildPage() {
               </div>
             ) : markets === null ? (
               <LoadingSkeleton />
-            ) : markets.length === 0 ? (
-              <p className="rounded-card border border-line bg-panel p-6 text-dim">No markets listed.</p>
+            ) : live.length === 0 ? (
+              <p className="rounded-card border border-line bg-panel p-6 text-dim">No quotable markets right now.</p>
             ) : (
               <div className="overflow-hidden rounded-[12px] border border-line bg-panel/30">
                 <div className="mono flex justify-between gap-x-3 bg-panel px-4 py-3 text-[9px] uppercase tracking-[0.16em] text-dim sm:grid sm:grid-cols-[1fr_124px_124px_84px_76px] sm:px-5">
