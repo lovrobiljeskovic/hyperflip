@@ -2082,6 +2082,23 @@
       "sideNo": "sea",
       "groupTitle": "Texas Rangers vs Seattle Mariners",
       "sport": "Baseball"
+    },
+    {
+      "vault": "0x4c021a2428d93b2c0d4c58bda0a20f68b878676f",
+      "title": "Carolina Panthers vs Atlanta Falcons",
+      "category": "sports",
+      "cluster": "NFL",
+      "coinYes": "#194630",
+      "coinNo": "#194631",
+      "underlying": "carolina-panthers-atlanta-falcons-20260920",
+      "startMs": 1789923600000,
+      "expiryMs": 1790182800000,
+      "sideYes": "CAR",
+      "sideNo": "ATL",
+      "groupTitle": "Carolina Panthers vs Atlanta Falcons",
+      "sport": "American football",
+      "deployer": "flip",
+      "priorYes": 0.5427
     }
   ],
   "archived": [

@@ -32,8 +32,8 @@ for the runbook and `tools/house-lib.mjs` for the slot rule.
 
 ## Next steps, in order
 
-1. `POST https://writer.hyperflip.xyz/quote` with a house YES leg plus any priced leg, expect
-   200 and journal `source: "prior"`.
+1. Live quote verified 2026-09-15: CAR YES + JAX YES priced 0.5635 / 0.4486 (exact registry
+   priors), joint 0.2528, 500 bps edge.
 2. After DET@BUF (Thu 2026-09-18 00:15 UTC) goes final: confirm settle in `journalctl -u rotate`,
    keeper relays status 2, vault `settled`, next run registers the 11th game.
 
