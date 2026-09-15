@@ -17,24 +17,25 @@ for the runbook and `tools/house-lib.mjs` for the slot rule.
   kickoff; balanced games win contested slots. Expect ~12 of 16 Week 2 games; CLE@TB, NO@BAL,
   MIA@SF and one -300 game are dropped on purpose.
 
+## Live since 2026-09-15
+
+- Venue `flip` activated, box EOA granted both sub-deployer variants (`outcomeMeta.deployers`
+  lists them as `[variant, [user]]` pairs). Box EOA registers as `unifiedAccount` without issue.
+- First laptop smoke registered + wrapped CAR@ATL (outcome 19463, vault `0x4c021a…676f`);
+  its registry entry was hand-inserted into `/opt/hype/registry/markets.json` before the box
+  ran, since the box registry is authoritative and a missing entry re-wraps the outcome.
+- Box `rotate.service` filled all 10 slots (outcomes 19463-19472), writer serves them with
+  `priorYes`. ESPN's default scoreboard reported week 1 on Tuesday; `house-markets.mjs` now
+  advances to the next week once every game on the default board has kicked off.
+- Local writer cannot boot on the laptop: the deployment RPC history check needs an archive
+  endpoint (public RPCs ignore block tags). Verify quotes against the live writer instead.
+
 ## Next steps, in order
 
-1. User, from the staked wallet (abstraction `disabled` = standard, checked):
-   activate venue `flip`, then grant the box EOA `0x171070fe2e9f5bb1738ecf6979c24057ebe1576d`
-   as sub-deployer for `registerStandaloneOutcomeFromTemplate` and `settleOutcome`.
-   Commands in `DEPLOY.md`. Verify with `outcomeMeta.deployers`.
-   Caveat: the box EOA is the writer wallet and is `unifiedAccount`. Docs only require
-   standard abstraction for the deployer itself. If the grant or first register rejects on
-   it, switch the box EOA with `userSetAbstraction` `"disabled"`.
-2. Laptop smoke: `HOUSE_WEEK=2 HOUSE_MAX_ACTIVE=1 node tools/house-markets.mjs sync`, confirm
-   the outcome in `outcomeMeta` (venue `flip`), run again to wrap, check the registry entry
-   has `deployer: "flip"` and `priorYes`.
-3. Writer: restart, `POST /quote` with the house YES leg, expect 200 and journal
-   `source: "prior"`.
-4. Box: rsync repo (`DEPLOY.md`), `systemctl daemon-reload`, wait for the next `rotate.timer`
-   tick, check `journalctl -u rotate`.
-5. After DET@BUF (Thu 2026-09-18 00:15 UTC) goes final: confirm settle in the journal, keeper
-   relays status 2, vault `settled`, next run registers the 11th game.
+1. `POST https://writer.hyperflip.xyz/quote` with a house YES leg plus any priced leg, expect
+   200 and journal `source: "prior"`.
+2. After DET@BUF (Thu 2026-09-18 00:15 UTC) goes final: confirm settle in `journalctl -u rotate`,
+   keeper relays status 2, vault `settled`, next run registers the 11th game.
 
 ## Open decisions
 
