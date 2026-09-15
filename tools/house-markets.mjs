@@ -34,9 +34,13 @@ async function getJson(url) {
 
 async function espnFixtures() {
   const base = `https://site.api.espn.com/apis/site/v2/sports/${LEAGUE.path}/scoreboard`;
-  const week = process.env.HOUSE_WEEK;
-  const board = await getJson(week ? `${base}?week=${week}&seasontype=${LEAGUE.seasontype}&dates=${LEAGUE.season}` : base);
-  const weekNo = Number(week ?? board.week?.number);
+  const byWeek = (w) => getJson(`${base}?week=${w}&seasontype=${LEAGUE.seasontype}&dates=${LEAGUE.season}`);
+  let board = process.env.HOUSE_WEEK ? await byWeek(process.env.HOUSE_WEEK) : await getJson(base);
+  // ESPN's "current week" lags until midweek; once every game of it has kicked off, look at the next one.
+  if (!process.env.HOUSE_WEEK && board.week?.number && !(board.events ?? []).some((e) => Date.parse(e.date) > Date.now())) {
+    board = await byWeek(board.week.number + 1);
+  }
+  const weekNo = Number(process.env.HOUSE_WEEK ?? board.week?.number);
   const fixtures = await Promise.all((board.events ?? []).map(async (event) => {
     let moneyline;
     try {
