@@ -200,8 +200,9 @@ export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
     );
   }
 
+  // Same cut as the builder: unexpired and priced on both sides.
   const pricedAll = [...state.markets]
-    .filter((m) => isPriced(mids, m))
+    .filter((m) => (m.expiryMs ?? Infinity) >= Date.now() && isPriced(mids, m))
     .sort((a, b) => compareMarketVolume(a, b, false));
   // One row per question first (five different games beats five sides of one
   // futures market), then fill from the rest if the registry is narrow.
@@ -238,32 +239,16 @@ export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
           <BoardRow key={m.vault} market={m} mids={mids} />
         ))}
       </div>
-      {state.markets.length > priced.length && (
+      {pricedAll.length > priced.length && (
         <Link
           href={appHref()}
           prefetch={false}
           className="mono block border-t border-line px-5 py-3 text-center text-[10px] uppercase tracking-[0.14em] text-dim transition-colors hover:bg-raised hover:text-fg"
         >
-          All {state.markets.length} markets in the builder
+          All {pricedAll.length} markets in the app
         </Link>
       )}
     </Slab>
-  );
-}
-
-/** One line of true numbers above the headline. */
-export function HeroStats({ board }: { board: BoardSnapshot }) {
-  const { state } = useMarkets(board.markets);
-  const count =
-    state.status === "live"
-      ? `${state.markets.length} market${state.markets.length === 1 ? "" : "s"} live`
-      : "HyperEVM testnet";
-  return (
-    <p className="mono flex flex-wrap gap-x-7 gap-y-1 text-[10px] uppercase tracking-[0.14em] text-dim">
-      <span>{count}</span>
-      <span>testnet beta</span>
-      <span>invite only</span>
-    </p>
   );
 }
 

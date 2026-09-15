@@ -8,6 +8,7 @@ import { HyperflipBrand } from "./brand";
 import { InviteForm } from "./invite-form";
 import { HeroSlip, LiveMarketBoard, LiveMarketRail, type BoardSnapshot } from "./live-markets";
 import { PurrCoinToss } from "./purr-coin-toss";
+import { ScrollLink } from "./scroll-link";
 
 const steps = [
   { n: "01", title: "Pick the markets", body: "Take a side on two to ten live sports markets." },
@@ -79,12 +80,12 @@ export default async function Home() {
               >
                 Start building
               </Link>
-              <a
-                href="#board"
+              <ScrollLink
+                to="board"
                 className="rounded-[8px] border border-line px-6 py-3.5 font-medium text-fg transition-colors hover:border-dim"
               >
                 View markets
-              </a>
+              </ScrollLink>
             </div>
           </div>
           <div className="hero-enter hero-enter-late min-w-0">

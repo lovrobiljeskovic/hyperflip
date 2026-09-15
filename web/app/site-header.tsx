@@ -4,14 +4,16 @@ import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { HyperflipBrand } from "./brand";
+import { ScrollLink } from "./scroll-link";
 
 export function SiteHeader({ links, action, home = "/" }: {
-  links: { href: string; label: string; activePaths?: string[] }[];
+  links: { href: string; label: string; activePaths?: string[]; scrollTo?: string }[];
   action: ReactNode;
   home?: string;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+
   const linkClass = (active: boolean) =>
     active ? "border-b border-accent pb-[3px] text-fg" : "text-dim transition-colors hover:text-fg";
   return (
@@ -21,8 +23,9 @@ export function SiteHeader({ links, action, home = "/" }: {
         <nav aria-label="Main navigation" className="mono ml-auto hidden items-center gap-[26px] text-[10px] uppercase tracking-[0.1em] lg:flex">
           {links.map((l) => {
             const active = l.activePaths?.includes(pathname) ?? false;
+            if (l.scrollTo) return <ScrollLink key={l.label} to={l.scrollTo} className={linkClass(false)}>{l.label}</ScrollLink>;
             return (
-              <Link key={l.href} href={l.href} prefetch={false} aria-current={active ? "page" : undefined} className={linkClass(active)}>
+              <Link key={l.label} href={l.href} prefetch={false} aria-current={active ? "page" : undefined} className={linkClass(active)}>
                 {l.label}
               </Link>
             );
@@ -54,9 +57,10 @@ export function SiteHeader({ links, action, home = "/" }: {
         <nav aria-label="Mobile navigation" className="mono flex flex-col gap-1 border-t border-line bg-ink px-4 pb-4 pt-2 text-[11px] uppercase tracking-[0.1em] lg:hidden">
           {links.map((l) => {
             const active = l.activePaths?.includes(pathname) ?? false;
+            if (l.scrollTo) return <ScrollLink key={l.label} to={l.scrollTo} onClick={() => setOpen(false)} className="py-2 text-dim">{l.label}</ScrollLink>;
             return (
               <Link
-                key={l.href}
+                key={l.label}
                 href={l.href}
                 prefetch={false}
                 aria-current={active ? "page" : undefined}
