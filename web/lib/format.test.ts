@@ -10,6 +10,7 @@ import {
   quotedOverround,
   secondsLeft,
   shortAddress,
+  kickoff,
   until,
 } from "./format";
 
@@ -120,4 +121,12 @@ test("quotedOverround is how far fair odds exceed the quoted odds", () => {
   expect(quotedOverround(bd)).toBeCloseTo(0.0538, 4);
   expect(quotedOverround({ ...bd, actualMultiplier: 3.33 })).toBe(0);
   expect(quotedOverround({ ...bd, actualMultiplier: 0 })).toBe(0);
+});
+
+test("kickoff counts down to start, reads live after it, falls back to expiry", () => {
+  const now = Date.now();
+  expect(kickoff({ startMs: now + 2 * 86_400_000 + 1000, expiryMs: now + 5 * 86_400_000 })).toBe("2d");
+  expect(kickoff({ startMs: now - 1000, expiryMs: now + 5 * 86_400_000 })).toBe("live");
+  expect(kickoff({ expiryMs: now + 3 * 86_400_000 + 1000 })).toBe("3d");
+  expect(kickoff({})).toBe("-");
 });

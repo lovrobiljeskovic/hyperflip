@@ -4,7 +4,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { compareMarketVolume, fetchMarketBoard, groupMarkets, isPriced, marketMid, onlySports, sideLabel, sportLabel, type Market } from "@/lib/writer";
 import { tradeUrl } from "@/lib/chain";
 import { useMids } from "@/lib/mids";
-import { formatVolume, oddsLabel, pct1, until } from "@/lib/format";
+import { formatVolume, kickoff, oddsLabel, pct1 } from "@/lib/format";
 import { Ticket, type BuilderLeg } from "./ticket";
 
 /** Matches ParlayVault.MAX_LEGS (src/ParlayVault.sol:58) and the writer's own
@@ -114,7 +114,7 @@ function BoardRow({
               {" · "}
               {formatVolume(market.volume24h)}
               {" · "}
-              {closesIn(market)}
+              {kickoff(market)}
             </span>
           </p>
         </div>
@@ -143,7 +143,7 @@ function BoardRow({
         {formatVolume(market.volume24h)}
       </span>
       <span className="mono hidden text-right text-[12px] text-dim sm:block">
-        {closesIn(market)}
+        {kickoff(market)}
       </span>
     </div>
   );
@@ -166,11 +166,6 @@ function MarketLink({ coin, children }: { coin: string; children: ReactNode }) {
       {children}
     </a>
   );
-}
-
-/** Quoting locks at the resolution deadline; in-play markets stay on the board. */
-function closesIn(market: Market): string {
-  return market.expiryMs ? until(market.expiryMs) : "-";
 }
 
 /** One HIP-4 question (A / Draw / B, tournament winner): one card, one button
@@ -216,7 +211,7 @@ function GroupRow({
               {" · "}
               {formatVolume(volume)}
               {" · "}
-              {closesIn(head)}
+              {kickoff(head)}
             </p>
           </div>
         </div>
@@ -315,11 +310,14 @@ export default function BuildPage() {
     // Games past kickoff stay: the writer quotes in-play until expiry.
     const filtered = live.filter((m) => tab === "all" || sportLabel(m) === tab);
     if (sort === "volume") return filtered.sort((a, b) => compareMarketVolume(a, b, volumeAsc));
-    // Markets without an expiry sink to the bottom in either direction.
+    // Sort by kickoff (deadline when absent); markets with neither sink to the bottom.
+    const key = (m: Market) => m.startMs ?? m.expiryMs;
     return filtered.sort((a, b) => {
-      if (a.expiryMs === undefined) return b.expiryMs === undefined ? 0 : 1;
-      if (b.expiryMs === undefined) return -1;
-      return (a.expiryMs - b.expiryMs) * (expiryAsc ? 1 : -1);
+      const ka = key(a);
+      const kb = key(b);
+      if (ka === undefined) return kb === undefined ? 0 : 1;
+      if (kb === undefined) return -1;
+      return (ka - kb) * (expiryAsc ? 1 : -1);
     });
   }, [live, tab, sort, volumeAsc, expiryAsc]);
 
@@ -420,10 +418,10 @@ export default function BuildPage() {
                         setExpiryAsc(true);
                       }
                     }}
-                    aria-label={`Sort by expiry, ${sort === "expiry" && expiryAsc ? "soonest" : "latest"} first`}
+                    aria-label={`Sort by kickoff, ${sort === "expiry" && expiryAsc ? "soonest" : "latest"} first`}
                     className="text-right uppercase tracking-[0.16em] transition-colors hover:text-fg"
                   >
-                    Expires {sort === "expiry" ? (expiryAsc ? "↑" : "↓") : ""}
+                    Kickoff {sort === "expiry" ? (expiryAsc ? "↑" : "↓") : ""}
                   </button>
                 </div>
                 {groupMarkets(board).map((entry) =>

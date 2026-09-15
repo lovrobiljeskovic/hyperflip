@@ -6,7 +6,7 @@ import { appHref } from "@/lib/site";
 import { compareMarketVolume, fetchMarketBoard, isPriced, marketMid, onlySports, sideLabel, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
-import { formatVolume, oddsLabel, pct1, until } from "@/lib/format";
+import { formatVolume, kickoff, oddsLabel, pct1 } from "@/lib/format";
 
 /* One registry fetch shared by the hero slip, the stat line, and the board.
    ponytail: module-level promise cache, cleared on failure so a client-side
@@ -142,7 +142,7 @@ function BoardRow({ market, mids }: { market: Market; mids: Record<string, strin
         {formatVolume(market.volume24h)}
       </div>
       <div className="mono col-span-2 text-right text-[11px] text-dim sm:col-span-1">
-        {market.expiryMs ? until(market.expiryMs) : "-"}
+        {kickoff(market)}
       </div>
     </div>
   );
@@ -232,7 +232,7 @@ export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
         <span className="text-right">Yes</span>
         <span className="text-right">No</span>
         <span className="text-right">24h vol</span>
-        <span className="text-right">Expires</span>
+        <span className="text-right">Kickoff</span>
       </div>
       <div className="flex flex-col divide-y divide-line">
         {priced.map((m) => (

@@ -113,3 +113,10 @@ export function shortError(err: unknown): string {
   const firstLine = raw.split("\n")[0] ?? raw;
   return firstLine.length > 140 ? `${firstLine.slice(0, 140)}…` : firstLine;
 }
+
+/** Kickoff countdown, "live" once the game has started. Falls back to the resolution
+ * deadline for markets that carry no start time. */
+export function kickoff(m: { startMs?: number; expiryMs?: number }): string {
+  if (m.startMs) return m.startMs > Date.now() ? until(m.startMs) : "live";
+  return m.expiryMs ? until(m.expiryMs) : "-";
+}

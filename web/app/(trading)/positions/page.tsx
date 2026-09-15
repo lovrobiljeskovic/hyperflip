@@ -6,7 +6,7 @@ import { useAccount, usePublicClient, useWriteContract } from "wagmi";
 import { usePositions } from "./use-positions";
 import { deriveRow, type Row, type LegVerdict } from "@/lib/positions";
 import { PARLAY_VAULT, STATUS, parlayVaultAbi } from "@/lib/contracts";
-import { formatUsdc, multiplier, pct1, until, shortError } from "@/lib/format";
+import { formatUsdc, kickoff, multiplier, pct1, shortError } from "@/lib/format";
 import { hyperEvmTestnet, tradeUrl } from "@/lib/chain";
 import { fetchMarkets, type Market, sideLabel } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
@@ -92,7 +92,7 @@ function LegTable({
         <span className="w-10 sm:w-16">Side</span>
         <span className="flex-1">Market</span>
         <span className="w-16 text-right">Live</span>
-        <span className="w-16 text-right">Expires</span>
+        <span className="w-16 text-right">Kickoff</span>
         <span className="w-20 text-right">Outcome</span>
       </div>
       {row.parlay.legs.map((leg, i) => {
@@ -107,7 +107,7 @@ function LegTable({
         const verdict = VERDICT_STYLE[row.legVerdicts[i]];
         return (
           // flex-wrap: on mobile the meta line's basis-full pushes it to a
-          // second row; live/expires columns only exist at sm+.
+          // second row; live/kickoff columns only exist at sm+.
           <div key={leg.vault} className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 mono text-xs">
             <span className={`w-10 shrink-0 truncate sm:w-16 ${m?.group ? "" : "uppercase"} ${leg.isYes ? "text-yes" : "text-no"}`}>{sideLabel(m, leg.isYes)}</span>
             {/* The leg is a HyperCore market - link its live order book, not the
@@ -128,10 +128,10 @@ function LegTable({
             <span className="hidden w-16 text-right text-dim sm:block">
               {live === null ? "-" : pct1(live)}
             </span>
-            <span className="hidden w-16 text-right text-dim sm:block">{m?.expiryMs ? until(m.expiryMs) : "-"}</span>
+            <span className="hidden w-16 text-right text-dim sm:block">{m ? kickoff(m) : "-"}</span>
             <span className={`text-right sm:w-20 ${verdict.className}`}>{verdict.label}</span>
             <span className="basis-full pl-14 text-[10px] text-dim sm:hidden">
-              {live === null ? "-" : pct1(live)} live · expires {m?.expiryMs ? until(m.expiryMs) : "-"}
+              {live === null ? "-" : pct1(live)} live · kickoff {m ? kickoff(m) : "-"}
             </span>
           </div>
         );
