@@ -25,6 +25,10 @@ test("marketMid: (0,1) only, and the empty-book 0.5 placeholder is null unless t
   expect(marketMid(mids, {}, "c")).toBeNull();
   expect(marketMid(mids, {}, "d")).toBeNull();
   expect(marketMid(mids, {}, "zzz")).toBeNull();
+  // House prior fills in for an empty or untraded book; NO side is the complement.
+  expect(marketMid(mids, { priorYes: 0.4, coinYes: "b" }, "b")).toBe(0.4);
+  expect(marketMid(mids, { priorYes: 0.4, coinYes: "b" }, "zzz")).toBeCloseTo(0.6);
+  expect(marketMid(mids, { priorYes: 0.4, coinYes: "a" }, "a")).toBe(0.61);
 });
 
 const REQ = {

@@ -208,3 +208,19 @@ test("staleMs=Infinity disables the gate: never-stamped coin still prices off sp
     freshnessMs: null,
   });
 });
+
+test("makeLegPriceFetcher: book-empty + house prior prices the leg as `prior` with no stale gate", async () => {
+  const withPrior = makeLegPriceFetcher({
+    fetchBook: async () => null,
+    readSpotPx: async () => 1n,
+    prior: (coin) => (coin === "#10" ? 342_500_000_000_000_000n : undefined),
+    staleMs: 60_000,
+    now: () => 1_000_000,
+  });
+  const obs = await withPrior.fetch("#10");
+  assert.equal(obs.source, "prior");
+  assert.equal(obs.priceWad, 342_500_000_000_000_000n);
+  assert.equal(obs.depthWad, null);
+  assert.equal(withPrior.ageMs("#10"), null); // a prior never counts as a live-book confirmation
+  await assert.rejects(() => withPrior.fetch("#11"), /stale/); // no prior for this coin -> unchanged refusal
+});

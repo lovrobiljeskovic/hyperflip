@@ -1,3 +1,104 @@
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+export const INFO_URL = "https://api.hyperliquid-testnet.xyz/info";
+const PUBLIC_DEPLOY_RPCS = ["https://rpc.hyperliquid-testnet.xyz/evm", "https://rpcs.chain.link/hyperevm/testnet", "https://hyperliquid-testnet.drpc.org"];
+export const DEPLOY_ENV = {
+  QUOTE_TOKEN_ADDRESS: "0x2B3370eE501B4a559b57D449569354196457D8Ab",
+  CORE_SYSTEM_ADDRESS: "0x2000000000000000000000000000000000000000",
+  QUOTE_TOKEN_CORE_INDEX: "0",
+  VERIFIER_ADDRESS: "0xc19d502255852C3D2564C027b61556EB2E89e431",
+  QUESTION_ID: String(0xffffffff), // standalone-binary sentinel
+};
+// Read at call time so `.env` (loaded by the CLI after import) is honoured.
+const deployRpcs = () => [...new Set([...(process.env.DEPLOY_RPCS ?? "").split(",").map((u) => u.trim()).filter(Boolean), ...PUBLIC_DEPLOY_RPCS])];
+
+export async function info(type, extra = {}) {
+  const res = await fetch(INFO_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type, ...extra }),
+  });
+  if (!res.ok) throw new Error(`info ${type}: HTTP ${res.status}`);
+  return res.json();
+}
+
+export function bigBlocks(flag) {
+  execFileSync("uv", ["run", "tools/bigblocks.py", flag], { cwd: ROOT, stdio: "inherit" });
+}
+
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+export async function landedVault(pick, polls = 6) {
+  let tx;
+  try {
+    const broadcast = JSON.parse(readFileSync(path.join(ROOT, "broadcast/Deploy.s.sol/998/run-latest.json"), "utf8"));
+    tx = broadcast.transactions.find((t) => t.contractName === "OutcomeVault" && t.arguments?.[4] === String(pick.outcome));
+  } catch {
+    return null;
+  }
+  if (!tx) return null;
+  const rpcs = deployRpcs();
+  for (let i = 0; i < polls; i++) {
+    for (const rpc of rpcs) {
+      try {
+        const res = await fetch(rpc, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getTransactionReceipt", params: [tx.hash] }),
+        });
+        const receipt = (await res.json()).result;
+        if (receipt?.status === "0x1") return tx.contractAddress;
+        if (receipt) return null; // landed but reverted
+      } catch {} // RPC flake — try the other / next poll
+    }
+    await sleep(20_000); // big blocks tick ~60s; give a pending tx time
+  }
+  return null;
+}
+
+export async function deploy(pick, attempts = 4) {
+  const prior = await landedVault(pick, 1);
+  if (prior) {
+    console.log(`reusing already-landed vault ${prior} for outcome ${pick.outcome}`);
+    return prior;
+  }
+  const rpcs = deployRpcs();
+  for (let i = 0; i < attempts; i++) {
+    try {
+      execFileSync(
+        "forge",
+        // Pass the signing key through the environment, never command arguments.
+        ["script", "script/Deploy.s.sol", "--rpc-url", rpcs[i % rpcs.length], "--broadcast", "--legacy", "--sig", "run()", "--retries", "12", "--delay", "10"],
+        {
+          cwd: ROOT,
+          stdio: "inherit",
+          env: {
+            ...process.env,
+            ...DEPLOY_ENV,
+            // Question members must settle against their actual question ID.
+            ...(pick.question != null ? { QUESTION_ID: String(pick.question) } : {}),
+            OUTCOME_ID: String(pick.outcome),
+            MARKET_SYMBOL: sportsMarketSymbol(pick),
+          },
+        },
+      );
+    } catch (err) {
+      console.log(`forge exited non-zero for outcome ${pick.outcome} (attempt ${i + 1}) — checking chain for a landed tx...`);
+    }
+    const vault = await landedVault(pick);
+    if (vault) return vault;
+    if (i + 1 < attempts) {
+      console.log(`no landed tx for outcome ${pick.outcome}, retrying on other RPC in 15s...`);
+      await sleep(15_000);
+    }
+  }
+  throw new Error(`deploy failed for outcome ${pick.outcome} after ${attempts} attempts`);
+}
+
 function parseFields(description) {
   return Object.fromEntries(
     description.split("|").map((kv) => {
@@ -7,7 +108,7 @@ function parseFields(description) {
   );
 }
 
-function parseStamp(stamp) {
+export function parseStamp(stamp) {
   const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})$/.exec(stamp ?? "");
   return m === null ? null : Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
 }
@@ -54,6 +155,8 @@ const isRealSport = (ev) =>
   !JUNK.test([ev.competition, ev.officialSource, ev.participantA, ev.participantB].join("|"));
 // Normalize common club suffixes so duplicate listings share an event identity.
 const teamSlug = (s) => slug(s).replace(/(^|-)(fc|afc|cf|sc)(?=-|$)/g, "").replace(/^-|-$/g, "");
+/** Shared identity for one fixture across deployers: writer `sameGameLeg` keys on it. */
+export const eventKey = (ev) => `${teamSlug(ev.participantA)}-${teamSlug(ev.participantB)}-${yyyymmdd(ev.startMs)}`;
 const isSportsWinner = (o) => typeof o.name === "string" && o.name.startsWith("template:sportsContestWinner");
 const isSportsScalar = (o) => typeof o.name === "string" && o.name.startsWith("template:sportsScalarMarket");
 
@@ -122,7 +225,7 @@ export function pickSports({
     if (winner) {
       if (!ev.participantA || !ev.participantB) continue;
       const named = o.sideSpecs[0]?.name === "template:{shortNameA}";
-      const key = `${teamSlug(ev.participantA)}-${teamSlug(ev.participantB)}-${yyyymmdd(ev.startMs)}`;
+      const key = eventKey(ev);
       leg = {
         title: named ? `${ev.participantA} vs ${ev.participantB}` : `${ev.participantA} beats ${ev.participantB}?`,
         sideYes: named ? ev.shortNameA || ev.participantA : "Yes",

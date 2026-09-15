@@ -23,16 +23,19 @@ export interface Market {
   cluster?: string;
 
   deployer?: string;
+  /** House prior P(YES) written by tools/house-markets.mjs for markets we deployed. */
+  priorYes?: number;
   volume24h?: number;
 }
 
-export function marketMid(mids: Record<string, string>, market: Pick<Market, "volume24h">, coin: string): number | null {
+export function marketMid(mids: Record<string, string>, market: Partial<Pick<Market, "volume24h" | "priorYes" | "coinYes">>, coin: string): number | null {
+  const prior = market.priorYes === undefined ? null : coin === market.coinYes ? market.priorYes : 1 - market.priorYes;
   const raw = mids[coin];
-  if (raw === undefined) return null;
+  if (raw === undefined) return prior;
   const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0 || n >= 1) return null;
+  if (!Number.isFinite(n) || n <= 0 || n >= 1) return prior;
   // ponytail: hides a traded 0.5 book with no volume today; use book depth if needed.
-  if (n === 0.5 && !market.volume24h) return null;
+  if (n === 0.5 && !market.volume24h) return prior;
   return n;
 }
 

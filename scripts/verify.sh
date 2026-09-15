@@ -24,4 +24,4 @@ done
   export NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK=1
   npm run check
 )
-node --test scripts/abis.test.mjs tools/rotate-lib.test.mjs tools/rotate-markets.test.mjs tools/verify.test.mjs
+node --test scripts/abis.test.mjs tools/house-lib.test.mjs tools/rotate-lib.test.mjs tools/rotate-markets.test.mjs tools/verify.test.mjs

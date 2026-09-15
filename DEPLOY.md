@@ -220,6 +220,36 @@ and existing writer/keeper units. Adapt those paths before installation. It
 restarts the services after registry changes. Private deploy RPCs can be supplied
 through `DEPLOY_RPCS` to avoid sharing public endpoint quotas with running services.
 
+## House HIP-4 markets (venue `flip`)
+
+`tools/house-markets.mjs sync` runs first in `rotate.service`, hourly. Each run settles our
+finished games from ESPN finals, registers upcoming fixtures from the
+`sportsContestWinner7` template (testnet caps a deployer at 10 active outcomes and 50
+deployments per day, so games roll through in kickoff order), wraps new outcomes in
+OutcomeVaults through the rotation deploy path, and refreshes `priorYes` on our registry
+entries from the DraftKings moneyline ESPN publishes. The writer prices a leg from
+`priorYes` whenever the Core book is empty, until kickoff. A game takes a slot only if it
+still has `HOUSE_MIN_WINDOW_HOURS` (18) of pre-kickoff trading, and balanced games (moneyline
+nearest even) win contested slots, so lopsided fixtures are dropped rather than listed for
+minutes. Env knobs: `HOUSE_WEEK` (default: ESPN current week), `HOUSE_HORIZON_DAYS` (7),
+`HOUSE_MAX_ACTIVE` (10), `HOUSE_MIN_WINDOW_HOURS` (18). Register and settle cost no gas;
+the hourly cadence keeps writer restarts (registry rewrites on moneyline drift) to at most one per hour.
+
+```bash
+node tools/house-markets.mjs sync --dry-run
+```
+
+One-off setup from the staked wallet (100 testnet HYPE, Standard account abstraction;
+activation and the venue name are permanent), then grant the box deployer key:
+
+```bash
+PRIVATE_KEY=<master> uv run tools/hip4.py '{"type":"activateOutcomeDeployer","activate":{"venueName":"flip"}}'
+PRIVATE_KEY=<master> uv run tools/hip4.py '{"type":"outcomeDeploy","venue":"flip","operation":{"setSubDeployers":[{"variant":"registerStandaloneOutcomeFromTemplate","user":"<box eoa, lowercase>","allowed":true},{"variant":"settleOutcome","user":"<box eoa, lowercase>","allowed":true}]}}'
+```
+
+Settlement copies name, description and side names verbatim from `outcomeMeta`; unsettled
+outcomes past their resolution deadline settle to 0.5.
+
 ## Bankroll and settlement recovery
 
 The bankroll is `WRITER_ADDRESS`. The writer limits quotes to the smaller of its

@@ -19,6 +19,8 @@ export interface MarketInfo {
 
   group?: string;
   groupTitle?: string;
+  /** House prior P(YES) for markets we deployed; used when the Core book is empty. */
+  priorYes?: number;
   title: string;
   category: string;
 }
@@ -48,6 +50,8 @@ export function parseMarkets(raw: string): Map<string, MarketInfo> {
     if (typeof market.underlying !== "string" || market.underlying === "" || typeof market.cluster !== "string" || market.cluster === "") throw new Error(`market ${market.vault} missing underlying/cluster`);
     if (typeof market.title !== "string" || market.title === "" || typeof market.category !== "string" || market.category === "") throw new Error(`market ${market.vault} missing title/category`);
     if (market.category !== "sports") throw new Error(`market ${market.vault} must be sports`);
+    const priorYes = optionalNumber(market, "priorYes");
+    if (priorYes !== undefined && !(priorYes > 0 && priorYes < 1)) throw new Error(`market ${market.vault} priorYes must be in (0,1)`);
     map.set(market.vault.toLowerCase(), {
       vault: market.vault as Address,
       coinYes: market.coinYes,
@@ -63,6 +67,7 @@ export function parseMarkets(raw: string): Map<string, MarketInfo> {
       sideNo: optionalString(market, "sideNo"),
       group: optionalString(market, "group"),
       groupTitle: optionalString(market, "groupTitle"),
+      ...(priorYes !== undefined ? { priorYes } : {}),
     });
   }
   return map;

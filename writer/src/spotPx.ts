@@ -41,6 +41,9 @@ export function isSpotPxStale(lastFreshMs: number | undefined, now: number, stal
 export function makeLegPriceFetcher(opts: {
   fetchBook: (coin: string) => Promise<LegPriceObservation | null>;
   readSpotPx: (coin: string) => Promise<bigint>;
+  /** House prior for a coin (registry `priorYes`), or undefined. Wins over spotPx and
+   * is never stale-gated: it is our own number, not a Core placeholder. */
+  prior?: (coin: string) => bigint | undefined;
   staleMs: number;
   now: () => number;
   onBookError?: (coin: string, err: unknown) => void;
@@ -56,6 +59,10 @@ export function makeLegPriceFetcher(opts: {
         opts.onBookError?.(coin, err);
       }
       if (ask !== null) return ask;
+      const prior = opts.prior?.(coin);
+      if (prior !== undefined) {
+        return { priceWad: prior, source: "prior", observedAtMs: opts.now(), depthWad: null, vwapWad: null, freshnessMs: null };
+      }
       if (isSpotPxStale(lastFreshMs.get(coin), opts.now(), opts.staleMs)) {
         throw new Error(`spotPx stale for coin ${coin}`);
       }

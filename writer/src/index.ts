@@ -9,7 +9,7 @@ import { ExposureBook } from "./exposure.js";
 import { fetchBestAskWad } from "./infoApi.js";
 import { buildPriceFreshness, makeLegPriceFetcher, readSpotPxWad } from "./spotPx.js";
 import { Poker } from "./poker.js";
-import { bankrollRoom, isStalled, lowBankrollAlerter, parseDecimalToUnits, stallThresholdMs } from "./pure.js";
+import { bankrollRoom, isStalled, lowBankrollAlerter, parseDecimalToUnits, stallThresholdMs, WAD } from "./pure.js";
 import { signQuote, type ParlayQuote, type QuoteLeg } from "./quotes.js";
 import { newMetrics, startServer, type QuoteDeps } from "./server.js";
 import { readLegStates } from "./settlement.js";
@@ -66,9 +66,22 @@ async function main(): Promise<void> {
   const exposure = new ExposureBook((v) => cfg.markets.get(v)?.cluster, cfg.pokerIntervalMs * 2);
   const metrics = newMetrics();
   let lastQuoteJournalAppendMs: number | null = null;
+  // House priors: pre-kickoff only. In play the prior is stale by construction, so the
+  // leg falls through to the book / spotPx path and its existing refusals.
+  const priorByCoin = new Map<string, { wad: bigint; startMs?: number }>();
+  for (const m of cfg.markets.values()) {
+    if (m.priorYes === undefined) continue;
+    const yesWad = BigInt(Math.round(m.priorYes * 1e6)) * 10n ** 12n;
+    priorByCoin.set(m.coinYes, { wad: yesWad, startMs: m.startMs });
+    priorByCoin.set(m.coinNo, { wad: WAD - yesWad, startMs: m.startMs });
+  }
   const legPriceFetcher = makeLegPriceFetcher({
     fetchBook: (coin) => fetchBestAskWad(cfg.infoApiUrl, coin, cfg.minBookDepthWad),
     readSpotPx: (coin) => readSpotPxWad(publicClient, BigInt(coin.slice(1))),
+    prior: (coin) => {
+      const p = priorByCoin.get(coin);
+      return p && (p.startMs === undefined || Date.now() < p.startMs) ? p.wad : undefined;
+    },
     staleMs: cfg.spotPxStaleMs,
     now: () => Date.now(),
     onBookError: (coin, err) =>

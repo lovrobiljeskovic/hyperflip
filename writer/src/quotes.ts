@@ -71,7 +71,7 @@ export interface QuoteRecord {
   legs: (QuoteLeg & { underlying: string; cluster: string; outcomeCoin: string })[];
   bookInputs: {
     priceWad: string;
-    source: "l2Book" | "spotPx";
+    source: "l2Book" | "spotPx" | "prior";
     observedAtMs: number;
     depthWad: string | null;
     vwapWad: string | null;

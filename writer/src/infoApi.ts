@@ -2,7 +2,7 @@ import { parseDecimalToUnits } from "./pure.js";
 
 export interface LegPriceObservation {
   priceWad: bigint;
-  source: "l2Book" | "spotPx";
+  source: "l2Book" | "spotPx" | "prior";
   observedAtMs: number;
   depthWad: bigint | null;
   vwapWad: bigint | null;
