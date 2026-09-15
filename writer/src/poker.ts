@@ -5,12 +5,22 @@ import type { Metrics } from "./server.js";
 import { parlayIsDead, readLegStates, type LegState } from "./settlement.js";
 import { blockRanges } from "./pure.js";
 import type { QuoteLeg } from "./quotes.js";
+import { readOptionalFile, replaceFile } from "../../services/files.mjs";
 
 interface MintedEvent {
   id: bigint;
   quoteId: string;
   premium: bigint;
   maxPayout: bigint;
+  taker: Address;
+  block: bigint;
+}
+
+/** On-disk taker index: `[id, taker, mintBlock]` triples plus the last block the
+ * scan covered, so a restart resumes there instead of rescanning. */
+interface ParlayIndexFile {
+  scannedTo: string;
+  parlays: [string, string, string][];
 }
 
 export interface PokerDeps {
@@ -19,6 +29,11 @@ export interface PokerDeps {
   exposure: ExposureBook;
   metrics: Metrics;
   fromBlock: bigint;
+  /** Persists the taker index (served by GET /parlays). Unset: in-memory only. */
+  indexFile?: string;
+  /** First block the taker index covers when `indexFile` doesn't exist yet.
+   * Unset: index from the head seen at startup. */
+  indexFromBlock?: bigint;
   /** Sends resolveParlay(id) from the poker key. */
   resolve(id: bigint): Promise<void>;
   log(msg: object): void;
@@ -54,13 +69,47 @@ export class Poker {
   // seen yet. Callers must await seed() before the first tick(); tests that skip it
   // just get the old from-fromBlock behavior.
   private nextBlock: bigint;
+  // Taker index for the app's positions page: every ParlayMinted seen, by id. The
+  // browser used to eth_getLogs from deployBlock in 1000-block chunks on a public
+  // RPC — thousands of requests per wallet, minutes of spinner, then a rate-limit
+  // error. Here the same scan runs once, checkpointed, on the writer's RPC.
+  private index = new Map<bigint, { taker: Address; block: bigint }>();
+  /** Block the index resumes from; undefined means "the head seen at seed()". */
+  private indexFrom: bigint | undefined;
 
   constructor(private deps: PokerDeps) {
     this.nextBlock = deps.fromBlock;
+    this.indexFrom = deps.indexFromBlock;
+    if (!deps.indexFile) return;
+    const json = readOptionalFile(deps.indexFile);
+    if (json === undefined) return;
+    try {
+      const file = JSON.parse(json) as ParlayIndexFile;
+      for (const [id, taker, block] of file.parlays) this.index.set(BigInt(id), { taker: taker as Address, block: BigInt(block) });
+      this.indexFrom = BigInt(file.scannedTo) + 1n;
+    } catch { throw new Error(`Invalid parlay index ${deps.indexFile}; delete it to rebuild from PARLAY_INDEX_FROM_BLOCK`); }
   }
 
   openCount(): number {
     return this.open.size;
+  }
+
+  /** Mint refs for one taker, newest first. */
+  parlaysOf(taker: Address): { id: bigint; block: bigint }[] {
+    const t = taker.toLowerCase();
+    const out: { id: bigint; block: bigint }[] = [];
+    for (const [id, p] of this.index) if (p.taker.toLowerCase() === t) out.push({ id, block: p.block });
+    return out.sort((a, b) => (a.id > b.id ? -1 : a.id < b.id ? 1 : 0));
+  }
+
+  private saveIndex(scannedTo: bigint): void {
+    if (!this.deps.indexFile) return;
+    const file: ParlayIndexFile = {
+      scannedTo: scannedTo.toString(),
+      parlays: [...this.index].map(([id, p]) => [id.toString(), p.taker, p.block.toString()]),
+    };
+    try { replaceFile(this.deps.indexFile, JSON.stringify(file)); }
+    catch (err) { this.deps.log({ event: "parlay-index-write-failed", err: String(err) }); }
   }
 
   private async fetchOpenParlays(): Promise<{ open: { id: bigint; legs: QuoteLeg[]; risk: bigint }[]; headBlock: bigint }> {
@@ -122,7 +171,11 @@ export class Poker {
       // delete on a missing key is a no-op, so this is exactly "record as open".
       exposure.onMinted(`seed-${p.id}`, p.id.toString(), p.risk, p.legs.map((l) => l.vault));
     }
-    this.nextBlock = headBlock + 1n;
+    // Exposure is rebuilt, so the scan could start at head — but the taker index
+    // has no chain-state fallback, so resume from its checkpoint when that is
+    // older. Re-seen mints/resolves are idempotent Map.set/delete (see tick()).
+    const resume = this.indexFrom ?? headBlock + 1n;
+    this.nextBlock = resume < headBlock + 1n ? resume : headBlock + 1n;
   }
 
   private async fetchEvents(fromBlock: bigint) {
@@ -147,6 +200,8 @@ export class Poker {
             quoteId: l.args.quoteId!,
             premium: l.args.premium!,
             maxPayout: l.args.maxPayout!,
+            taker: l.args.taker!,
+            block: l.blockNumber,
           })),
         );
         resolvedIds.push(...resolveLogs.map((l) => l.args.id!));
@@ -180,6 +235,7 @@ export class Poker {
     const events = await this.fetchEvents(this.nextBlock);
 
     for (const m of events.minted) {
+      this.index.set(m.id, { taker: m.taker, block: m.block });
       const legs = await this.fetchLegs(m.id);
       this.open.set(m.id, legs);
       exposure.onMinted(m.quoteId, m.id.toString(), m.maxPayout - m.premium, legs.map((l) => l.vault));
@@ -192,6 +248,7 @@ export class Poker {
       log({ event: "parlay-resolved", id: id.toString() });
     }
     this.nextBlock = events.toBlock + 1n;
+    this.saveIndex(events.toBlock);
 
     if (this.open.size === 0) return;
     const vaults = [...new Set([...this.open.values()].flat().map((l) => l.vault))];

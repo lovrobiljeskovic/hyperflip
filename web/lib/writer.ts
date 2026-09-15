@@ -106,6 +106,20 @@ export type QuoteResult =
 
 const BASE = process.env.NEXT_PUBLIC_WRITER_URL ?? "";
 
+export interface ParlayRef {
+  id: bigint;
+  block: bigint; // mint block
+}
+
+/** The taker's slips from the writer's mint index - one request instead of an
+ * eth_getLogs scan from the deploy block on a rate-limited public RPC. */
+export async function fetchParlays(taker: `0x${string}`): Promise<ParlayRef[]> {
+  const r = await fetch(`${BASE}/parlays?taker=${taker}`, { cache: "no-store" });
+  if (!r.ok) throw new Error(`parlays ${r.status}`);
+  const refs = (await r.json()) as { id: string; block: string }[];
+  return refs.map((p) => ({ id: BigInt(p.id), block: BigInt(p.block) }));
+}
+
 // Filter here so every route stays sports-only, including historical positions.
 export async function fetchMarkets(includeArchived = false): Promise<Market[]> {
   const r = await fetch(`${BASE}/markets`, { next: { revalidate: 60 } });

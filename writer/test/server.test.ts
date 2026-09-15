@@ -284,6 +284,13 @@ test("HTTP smoke: /quote, /health, /metrics, bad-json, unknown route", async () 
 
     const notFound = await fetch(`${base}/nope`);
     assert.equal(notFound.status, 404);
+
+    d.parlaysOf = (taker) => (taker.toLowerCase() === TAKER.toLowerCase() ? [{ id: 7n, block: 120n }] : []);
+    const parlays = await fetch(`${base}/parlays?taker=${TAKER}`);
+    assert.equal(parlays.status, 200);
+    assert.deepEqual(await parlays.json(), [{ id: "7", block: "120" }]); // bigints serialized as strings
+    assert.equal((await fetch(`${base}/parlays?taker=nope`)).status, 400);
+    assert.equal((await fetch(`${base}/parlays`)).status, 404); // no query: not this route
   } finally {
     server.close();
   }

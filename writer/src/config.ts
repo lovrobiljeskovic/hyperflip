@@ -43,6 +43,8 @@ export interface WriterConfig {
   inviteCodes: Set<string>;
   resendApiKey?: string;
   waitlistFile: string;
+  parlayIndexFile?: string;
+  parlayIndexFromBlock?: bigint;
   corsOrigins: string[];
 }
 
@@ -142,6 +144,8 @@ export function loadConfig(): WriterConfig {
     inviteCodes: parseInviteCodes(requireEnv("INVITE_CODES")),
     resendApiKey: process.env.RESEND_API_KEY,
     waitlistFile: path.resolve(here, "../..", process.env.WAITLIST_FILE ?? "writer/waitlist.json"),
+    parlayIndexFile: path.resolve(here, "../..", process.env.PARLAY_INDEX_FILE ?? "writer/parlays.json"),
+    parlayIndexFromBlock: process.env.PARLAY_INDEX_FROM_BLOCK ? BigInt(process.env.PARLAY_INDEX_FROM_BLOCK) : undefined,
     corsOrigins: parseCorsOrigins(process.env.CORS_ORIGINS ?? DEFAULT_CORS_ORIGINS),
   };
 }

@@ -45,6 +45,8 @@ export interface QuoteDeps {
   quoteLimiter?: RateLimiter;
 
   ready?: () => boolean;
+  /** Mint refs for a taker, from the poker's index (GET /parlays?taker=). */
+  parlaysOf?(taker: Address): { id: bigint; block: bigint }[];
 }
 
 type Validated =
@@ -338,6 +340,11 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
     }
     if (req.method === "GET" && req.url === "/health") return send(200, health());
     if (req.method === "GET" && req.url === "/metrics") return send(200, deps.metrics);
+    if (req.method === "GET" && req.url?.startsWith("/parlays?") && deps.parlaysOf) {
+      const taker = new URL(req.url, "http://writer").searchParams.get("taker");
+      if (!taker || !isAddress(taker)) return send(400, { error: "taker must be an address" });
+      return send(200, deps.parlaysOf(taker).map((p) => ({ id: p.id.toString(), block: p.block.toString() })));
+    }
     if (req.method === "GET" && req.url === "/markets") {
       res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
       return res.end(deps.cfg.registryJson);

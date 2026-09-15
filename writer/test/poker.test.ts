@@ -5,9 +5,13 @@ import { Poker, type PokerDeps } from "../src/poker.js";
 import { ExposureBook } from "../src/exposure.js";
 import { newMetrics } from "../src/server.js";
 import { WAD } from "../src/pure.js";
+import { mkdtempSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 const V1 = "0x1111111111111111111111111111111111111111" as Address;
 const VAULT = "0x9999999999999999999999999999999999999999" as Address;
+const T = "0x3333333333333333333333333333333333333333" as Address;
 
 test("tick: syncs mint event, resolves dead parlay, releases exposure on resolve event", async () => {
   const resolved: bigint[] = [];
@@ -28,7 +32,7 @@ test("tick: syncs mint event, resolves dead parlay, releases exposure on resolve
       tickNo++;
       if (tickNo === 1) {
         return {
-          minted: [{ id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n }],
+          minted: [{ id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n, taker: T, block: 5n }],
           resolvedIds: [], toBlock: 10n,
         };
       }
@@ -59,7 +63,7 @@ test("tick: won/unsettled parlays are not poked", async () => {
     fromBlock: 0n,
     resolve: async (id) => { resolved.push(id); },
     log: () => {},
-    fetchEvents: async () => ({ minted: [{ id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n }], resolvedIds: [], toBlock: 10n }),
+    fetchEvents: async () => ({ minted: [{ id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n, taker: T, block: 5n }], resolvedIds: [], toBlock: 10n }),
     fetchLegs: async () => [{ vault: V1, isYes: true }],
     fetchLegStates: async () => new Map([[V1.toLowerCase(), { settled: true, fractionWad: WAD }]]),
   };
@@ -84,8 +88,8 @@ test("tick: a failing resolve() does not abort poking the rest of the batch", as
     log: () => {},
     fetchEvents: async () => ({
       minted: [
-        { id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n },
-        { id: 2n, quoteId: "0xq2", premium: 1n, maxPayout: 4n },
+        { id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n, taker: T, block: 5n },
+        { id: 2n, quoteId: "0xq2", premium: 1n, maxPayout: 4n, taker: T, block: 5n },
       ],
       resolvedIds: [],
       toBlock: 10n,
@@ -120,7 +124,7 @@ test("tick: a resolve() that times out does not stop subsequent ticks from pokin
       if (shouldTimeout) throw new Error("TimeoutError: waitForTransactionReceipt timed out");
     },
     log: () => {},
-    fetchEvents: async () => ({ minted: [{ id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n }], resolvedIds: [], toBlock: 10n }),
+    fetchEvents: async () => ({ minted: [{ id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n, taker: T, block: 5n }], resolvedIds: [], toBlock: 10n }),
     fetchLegs: async () => [{ vault: V1, isYes: true }],
     fetchLegStates: async () => new Map([[V1.toLowerCase(), { settled: true, fractionWad: 0n }]]),
   };
@@ -149,7 +153,7 @@ test("fetchEvents: a failed chunk keeps earlier chunks and resumes there next ti
       if (event.name === "ParlayMinted") requested.push(fromBlock);
       if (fromBlock === failFrom) throw new Error("rate limited");
       if (event.name === "ParlayMinted" && fromBlock === 0n) {
-        return [{ args: { id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n } }];
+        return [{ args: { id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n, taker: T }, blockNumber: 5n }];
       }
       return [];
     },
@@ -250,4 +254,49 @@ test("fetchOpenParlays default: reads nextId + parlay(id), keeps only Status.Ope
 
   assert.equal(poker.openCount(), 2); // only ids 1 and 3 are Status.Open
   assert.equal(exposure.perMarket(V1, 0), 8n); // (5-1) + (5-1)
+});
+
+test("index: persists taker refs, serves them newest first, and resumes from the checkpoint after restart", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "parlay-index-"));
+  const indexFile = path.join(dir, "parlays.json");
+  const requestedFrom: bigint[] = [];
+  const deps = (): PokerDeps => ({
+    publicClient: null as unknown as PokerDeps["publicClient"],
+    parlayVault: VAULT,
+    exposure: new ExposureBook(),
+    metrics: newMetrics(),
+    fromBlock: 0n,
+    indexFile,
+    indexFromBlock: 100n,
+    resolve: async () => {},
+    log: () => {},
+    fetchOpenParlays: async () => ({ open: [], headBlock: 500n }),
+    fetchEvents: async (fromBlock) => {
+      requestedFrom.push(fromBlock);
+      return {
+        minted: [
+          { id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n, taker: T, block: 120n },
+          { id: 2n, quoteId: "0xq2", premium: 1n, maxPayout: 4n, taker: V1, block: 130n },
+          { id: 3n, quoteId: "0xq3", premium: 1n, maxPayout: 4n, taker: T, block: 140n },
+        ],
+        resolvedIds: [],
+        toBlock: 500n,
+      };
+    },
+    fetchLegs: async () => [{ vault: V1, isYes: true }],
+    fetchLegStates: async () => new Map(),
+  });
+
+  const first = new Poker(deps());
+  await first.seed();
+  await first.tick();
+  assert.deepEqual(requestedFrom, [100n]); // fresh index starts at PARLAY_INDEX_FROM_BLOCK, not head
+  assert.deepEqual(first.parlaysOf(T), [{ id: 3n, block: 140n }, { id: 1n, block: 120n }]);
+  assert.deepEqual(first.parlaysOf(T.toUpperCase() as Address), first.parlaysOf(T)); // case-insensitive
+
+  const second = new Poker(deps());
+  assert.deepEqual(second.parlaysOf(V1), [{ id: 2n, block: 130n }]); // loaded from disk before any tick
+  await second.seed();
+  await second.tick();
+  assert.deepEqual(requestedFrom, [100n, 501n]); // resumed after the checkpoint (min with head+1)
 });

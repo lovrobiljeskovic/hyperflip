@@ -26,3 +26,5 @@ keeper/settlement-cache.json
 # Beta waitlist store (emails + issued invite codes — never commit)
 writer/waitlist.json
 .superpowers/
+# Taker index for GET /parlays (rebuilt from PARLAY_INDEX_FROM_BLOCK if deleted)
+writer/parlays.json

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PublicClient } from "viem";
 import { loadPositions, loadRow, type Row } from "@/lib/positions";
-import type { ParlayRef } from "@/lib/scan";
+import type { ParlayRef } from "@/lib/writer";
 
 export function usePositions(client: PublicClient | undefined, address: `0x${string}` | undefined) {
   const [rows, setRows] = useState<Row[] | null>(null);

@@ -2,9 +2,9 @@ import { expect, test, vi } from "vitest";
 import { ContractFunctionRevertedError, encodeErrorResult } from "viem";
 import { deriveRow, loadPositions, loadRow, type Row } from "./positions";
 import { DEPLOY_BLOCK, parlayVaultAbi, STATUS } from "./contracts";
-import { scanParlayIds } from "./scan";
+import { fetchParlays } from "./writer";
 
-vi.mock("./scan", () => ({ scanParlayIds: vi.fn() }));
+vi.mock("./writer", () => ({ fetchParlays: vi.fn() }));
 const vault = `0x${"1".repeat(40)}` as const;
 const parlay = { legs: [{ vault, isYes: true }], writer: vault, premium: 1000000n, maxPayout: 2000000n, status: STATUS.Won };
 const row: Row = { id: 1n, block: DEPLOY_BLOCK, mintedAtMs: 0, parlay, burned: false, legVerdicts: ["hit"] };
@@ -46,7 +46,7 @@ test("position statuses retain claim, resolve, lost and refunded behavior", () =
 });
 
 test("partial row failures retain other positions with bounded concurrency", async () => {
-  vi.mocked(scanParlayIds).mockResolvedValue(Array.from({ length: 14 }, (_, i) => ({ id: BigInt(i), block: DEPLOY_BLOCK })));
+  vi.mocked(fetchParlays).mockResolvedValue(Array.from({ length: 14 }, (_, i) => ({ id: BigInt(i), block: DEPLOY_BLOCK })));
   let active = 0;
   let peak = 0;
   const fake = client();

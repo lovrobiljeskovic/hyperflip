@@ -1,5 +1,5 @@
 import { BaseError, ContractFunctionRevertedError, type PublicClient } from "viem";
-import { scanParlayIds, type ParlayRef } from "./scan";
+import { fetchParlays, type ParlayRef } from "./writer";
 import { pool } from "./pool";
 import { PARLAY_VAULT, STATUS, outcomeVaultAbi, parlayVaultAbi } from "./contracts";
 
@@ -136,7 +136,7 @@ export function deriveRow(row: Row): RowView {
 }
 
 export async function loadPositions(client: PublicClient, address: `0x${string}`) {
-  const refs = await scanParlayIds(client, address);
+  const refs = await fetchParlays(address);
   const results = await pool(refs, 6, async ref => {
     try { return await loadRow(client, ref); } catch { return null; }
   });

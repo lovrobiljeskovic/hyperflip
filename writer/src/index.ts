@@ -128,6 +128,7 @@ async function main(): Promise<void> {
     signupLimiter: new RateLimiter(5, 60 * 60 * 1000),
     badInviteLimiter: new RateLimiter(20, 60 * 60 * 1000),
     quoteLimiter: new RateLimiter(300, 60 * 60 * 1000),
+    parlaysOf: (taker) => poker.parlaysOf(taker),
   };
   if (!cfg.resendApiKey) {
     console.warn(JSON.stringify({ event: "waitlist-disabled", reason: "RESEND_API_KEY unset" }));
@@ -139,6 +140,8 @@ async function main(): Promise<void> {
     exposure,
     metrics,
     fromBlock: cfg.deployBlock,
+    indexFile: cfg.parlayIndexFile,
+    indexFromBlock: cfg.parlayIndexFromBlock,
     resolve: async (id) => {
       const hash = await walletClient.writeContract({
         chain: null,
