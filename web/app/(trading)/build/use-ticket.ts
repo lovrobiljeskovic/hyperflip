@@ -81,12 +81,15 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
   const [maxStake, setMaxStake] = useState<bigint | null>(null);
   // Use the writer’s lifetime for the countdown bar.
   const [ttlSeconds, setTtlSeconds] = useState(TTL_SECONDS);
+  // Relay maker count drives the "best of N" CTA copy; a v1 writer omits it.
+  const [makerCount, setMakerCount] = useState(1);
   useEffect(() => {
     if (display) return;
     void fetchLimits().then((l) => {
       if (!l) return;
       setMaxStake(BigInt(l.maxStake));
       if (l.quoteTtlMs > 0) setTtlSeconds(Math.round(l.quoteTtlMs / 1000));
+      if (l.makers) setMakerCount(l.makers);
     });
   }, [display]);
 
@@ -206,7 +209,7 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
       return { kind: "disabled", label: `Insufficient USDC - ${formatUsdc(usdcBalance)} available` };
     if (session.minting || mintState === "pending") return { kind: "disabled", label: "Confirm in wallet…" };
     if (mintState === "done") return { kind: "done", label: "Minted - view positions", href: "/positions" };
-    if (quoting) return { kind: "disabled", label: "Quoting…" };
+    if (quoting) return { kind: "disabled", label: makerCount > 1 ? `Collecting quotes… best of ${makerCount}` : "Quoting…" };
     if (!quoteResult) return { kind: "disabled", label: "Waiting for quote…" };
     if (!quoteResult.ok) return { kind: "disabled", label: "Unable to quote" };
     if (secondsLeft(BigInt(quoteResult.quote.deadline), Date.now()) <= 0) return { kind: "disabled", label: "Refreshing quote…" };
@@ -219,6 +222,6 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
     void runQuote();
   }
   return { stake, setStake, quoteResult, ttlLeft, ttlSeconds, mintState, mintErrorMsg, mintErrorDetail,
-    setInviteCode, maxStake, usdcBalance, allowance, cta, mintQuoted, retry, connect, switchChain };
+    setInviteCode, maxStake, makerCount, usdcBalance, allowance, cta, mintQuoted, retry, connect, switchChain };
 
 }

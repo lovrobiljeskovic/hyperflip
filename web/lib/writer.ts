@@ -102,7 +102,8 @@ export interface QuoteBreakdown {
 }
 
 export type QuoteResult =
-  | { ok: true; quote: WriterQuote; sig: `0x${string}`; breakdown?: QuoteBreakdown }
+  // makers: relay fan-out tally (asked/quoted); optional so a v1 writer still parses.
+  | { ok: true; quote: WriterQuote; sig: `0x${string}`; breakdown?: QuoteBreakdown; makers?: { asked: number; quoted: number } }
   | { ok: false; status: number; error: string; maxStake?: string; vault?: string };
 
 const BASE = process.env.NEXT_PUBLIC_WRITER_URL ?? "";
@@ -150,6 +151,8 @@ export interface WriterLimits {
   edgeBps: string;
   legEdgeBps?: string;
   quoteTtlMs: number;
+  /** Configured maker count behind the relay; absent on a v1 writer. */
+  makers?: number;
 }
 
 export function currentPricing(limits: WriterLimits | null): { base: string; perLeg: string } | null {
@@ -221,10 +224,6 @@ export async function requestQuote(req: {
     const body = j as { error?: string; maxStake?: string; vault?: string };
     return { ok: false, status: r.status, error: body.error ?? "unknown", maxStake: body.maxStake, vault: body.vault };
   }
-  const { quote, sig, breakdown } = j as {
-    quote: WriterQuote;
-    sig: `0x${string}`;
-    breakdown?: QuoteBreakdown;
-  };
-  return { ok: true, quote, sig, breakdown };
+  const { quote, sig, breakdown, makers } = j as Extract<QuoteResult, { ok: true }>;
+  return { ok: true, quote, sig, breakdown, makers };
 }

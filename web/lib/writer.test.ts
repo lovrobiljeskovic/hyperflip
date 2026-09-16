@@ -2,9 +2,11 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { compareMarketVolume, currentPricing, fetchLimits, fetchMarkets, groupMarkets, isPriced, marketMid, sportLabel, requestQuote, sideLabel, withMarketVolumes, type Market } from "./writer";
 
 test("public pricing follows writer configuration and never invents missing fees", async () => {
-  const limits = { maxStake: "1000000", edgeBps: "725", legEdgeBps: "150", quoteTtlMs: 30000 };
+  const limits = { maxStake: "1000000", edgeBps: "725", legEdgeBps: "150", quoteTtlMs: 30000, makers: 2 };
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(limits))));
-  expect(currentPricing(await fetchLimits())).toEqual({ base: "7.25", perLeg: "1.50" });
+  const fetched = await fetchLimits();
+  expect(fetched?.makers).toBe(2);
+  expect(currentPricing(fetched)).toEqual({ base: "7.25", perLeg: "1.50" });
   expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/limits"), expect.objectContaining({ cache: "no-store" }));
   expect(currentPricing({ ...limits, edgeBps: "0", legEdgeBps: "0" })).toEqual({ base: "0.00", perLeg: "0.00" });
   for (const legEdgeBps of [undefined, "", "-1", "NaN", "1.5", "9007199254740992"]) {
@@ -80,6 +82,15 @@ test("requestQuote surfaces a hung writer as the status-0 unreachable shape afte
   const pending = requestQuote(REQ);
   await vi.advanceTimersByTimeAsync(10_000);
   await expect(pending).resolves.toEqual({ ok: false, status: 0, error: "writer-unreachable" });
+});
+
+test("requestQuote passes the relay's makers tally through and leaves it undefined for a v1 writer", async () => {
+  const body = { quote: { deadline: "1" }, sig: "0x1", breakdown: undefined };
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ ...body, makers: { asked: 3, quoted: 2 } }))));
+  expect(await requestQuote(REQ)).toMatchObject({ ok: true, makers: { asked: 3, quoted: 2 } });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body))));
+  const v1 = await requestQuote(REQ);
+  expect(v1.ok && v1.makers).toBeUndefined();
 });
 
 const MARKET = {
