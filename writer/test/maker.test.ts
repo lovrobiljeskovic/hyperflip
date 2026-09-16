@@ -276,12 +276,16 @@ test("HTTP smoke: /rfq bearer, /health, /metrics, bad-json, unknown route; loopb
 });
 
 test("GET /limits exposes configured base and per-leg pricing without authentication", async () => {
-  const server = startMaker(deps({ cfg: cfg({ edgeBps: 725n, legEdgeBps: 150n }) }), 0, () => ({ ok: true }));
+  const server = startMaker(deps({ cfg: cfg({ edgeBps: 725n, legEdgeBps: 150n }) }), 0, () => ({ ok: true, bankroll: "500000000" }));
   await new Promise<void>((resolve) => server.once("listening", resolve));
   try {
     const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/limits`);
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { maxStake: "10000000", edgeBps: "725", legEdgeBps: "150", quoteTtlMs: 30000 });
+    assert.deepEqual(await response.json(), {
+      maxStake: "10000000", edgeBps: "725", legEdgeBps: "150", quoteTtlMs: 30000,
+      perMarketCap: "1000000000", perClusterCap: "1000000000", perCodeReservedCap: "1000000000",
+      bankroll: "500000000", reserved: "0",
+    });
   } finally {
     server.close();
   }
