@@ -61,6 +61,10 @@ Verify against the code before relying on any single line number.
   pre-op baseline by pinning a precompile call to a block
   (`keeper/src/core814.ts:34-40`, `writer/src/spotPx.ts` header). This is the whole
   reason the keeper uses ambient sampling for baselines.
+- **0x80e bbo serves encoded outcome ids** (`uint32` = `outcomeTokenIndex`): returns
+  `(bid, ask)` 1e8-scaled; the NO book is the complement of the YES book (YES bid 0.55 ⇒
+  NO ask 0.45). Hedge spike 2026-09-16, `script/spike/FINDINGS-hedge.md`. No open-order
+  precompile exists; resting state is only visible as 0x801 `hold`.
 - **0x808 spotPx = last-trade price**, a 1e8-scaled `uint64`; WAD = `raw × 1e10`.
   Can be stale on a dead market — this is the root of handoff task P0-1
   (`writer/src/spotPx.ts`).

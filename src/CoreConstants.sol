@@ -34,14 +34,14 @@ library CoreConstants {
     /// decimals, spotMeta `evm_extra_wei_decimals: -2`) — else silent drop.
     uint24 internal constant ACTION_SPOT_SEND = 6;
 
-    // UNVERIFIED (Stage 0 hedge spike, script/spike/README-hedge.md): ids and
-    // field layouts copied from the official CoreWriter action table
-    // 2026-09-16; not yet exercised live from a contract, and never on an
-    // outcome asset. Open questions the spike answers: does `asset` take the
-    // encoded outcome id (outcomeTokenIndex, fits uint32) or a spot index; are
-    // limitPx/sz 1e8-scaled for outcome coins (docs say 1e8 * human value;
-    // outcome balances are 5-dec); tick/min-notional; does a bad field drop
-    // silently like action 17.
+    // VERIFIED live from a contract's Core account on an outcome asset
+    // (Stage 0 hedge spike 2026-09-16, script/spike/FINDINGS-hedge.md):
+    // actions 1, 9, 10, 11 accepted with `asset` = encoded outcome id and
+    // limitPx/sz = 1e8 * human value (10 YES @ 0.55 held 5.5e8 quote wei).
+    // Action 12 stayed UNVERIFIED: the builder EOA is ineligible on testnet
+    // ("Builder has insufficient balance to be approved."), so the send
+    // dropped silently and the layout is untested. The API names the same
+    // book "#<encoded id - 1e8>"; 0x80e (bbo) serves the encoded id.
     uint24 internal constant ACTION_LIMIT_ORDER = 1;
     uint24 internal constant ACTION_ADD_API_WALLET = 9;
     uint24 internal constant ACTION_CANCEL_BY_OID = 10;
@@ -96,10 +96,11 @@ library CoreConstants {
         return encodeAction(ACTION_SPOT_SEND, abi.encode(destination, token, wei_));
     }
 
-    /// UNVERIFIED. Action 1 (asset, isBuy, limitPx, sz, reduceOnly, encodedTif,
-    /// cloid). limitPx/sz = 1e8 * human value per docs; cloid 0 = none. The
+    /// VERIFIED (2026-09-16). Action 1 (asset, isBuy, limitPx, sz, reduceOnly,
+    /// encodedTif, cloid). limitPx/sz = 1e8 * human value; cloid 0 = none. The
     /// contract never learns the oid, so a non-zero cloid is the only cancel
-    /// handle it has (encodeCancelByCloid).
+    /// handle it has (encodeCancelByCloid). A resting bid locks px*sz quote
+    /// wei in `hold`; a fill moves `total` with no fee on the buy side.
     function encodeLimitOrder(
         uint32 asset,
         bool isBuy,
@@ -112,30 +113,32 @@ library CoreConstants {
         return encodeAction(ACTION_LIMIT_ORDER, abi.encode(asset, isBuy, limitPx, sz, reduceOnly, tif, cloid));
     }
 
-    /// UNVERIFIED. Action 10 (asset, oid).
+    /// VERIFIED (2026-09-16). Action 10 (asset, oid); hold released on cancel.
     function encodeCancelByOid(uint32 asset, uint64 oid) internal pure returns (bytes memory) {
         return encodeAction(ACTION_CANCEL_BY_OID, abi.encode(asset, oid));
     }
 
-    /// UNVERIFIED. Action 11 (asset, cloid).
+    /// VERIFIED (2026-09-16). Action 11 (asset, cloid); hold released on cancel.
     function encodeCancelByCloid(uint32 asset, uint128 cloid) internal pure returns (bytes memory) {
         return encodeAction(ACTION_CANCEL_BY_CLOID, abi.encode(asset, cloid));
     }
 
-    /// UNVERIFIED. Action 9 (apiWallet, name). Empty name = main agent. Lets
-    /// a contract delegate an off-chain key to trade its own Core account
-    /// (roadmap §13.3); the contract then verifies fills via 0x801.
+    /// VERIFIED (2026-09-16). Action 9 (apiWallet, name). Empty name = main
+    /// agent (not listed by the `extraAgents` info call). Lets a contract
+    /// delegate an off-chain key to trade its own Core account (roadmap
+    /// §13.3); the fill landed on 0x801 for the contract address.
     function encodeAddApiWallet(address apiWallet, string memory name) internal pure returns (bytes memory) {
         return encodeAction(ACTION_ADD_API_WALLET, abi.encode(apiWallet, name));
     }
 
-    /// UNVERIFIED. Action 12 (maxFeeRate in decibps, builder).
+    /// UNVERIFIED. Action 12 (maxFeeRate in decibps, builder). Sent live
+    /// 2026-09-16 but dropped: builder needs a funded perp account first.
     function encodeApproveBuilderFee(uint64 maxFeeDeciBps, address builder) internal pure returns (bytes memory) {
         return encodeAction(ACTION_APPROVE_BUILDER_FEE, abi.encode(maxFeeDeciBps, builder));
     }
 
-    /// CoreWriter `asset` is uint32; the encoded outcome id fits. UNVERIFIED
-    /// that CoreWriter accepts it in that field (vs a spot index).
+    /// CoreWriter `asset` is uint32; the encoded outcome id fits. VERIFIED
+    /// (2026-09-16): CoreWriter accepts it in that field for actions 1/10/11.
     function outcomeAssetId(uint32 outcome, bool yes) internal pure returns (uint32) {
         return uint32(outcomeTokenIndex(outcome, yes));
     }
@@ -194,11 +197,12 @@ library CoreConstants {
         (total,,) = abi.decode(ret, (uint64, uint64, uint64));
     }
 
-    /// Same read, keeping `hold` (wei locked under resting orders). UNVERIFIED
-    /// that `hold` moves for outcome-coin limit orders and releases on cancel
-    /// (Stage 0 items 2-3). `hold` is never cash: a solvency check must use
-    /// total - hold. There is no open-order precompile for outcome ids, so
-    /// "not filled and cancelled" is inferable only from hold returning to 0.
+    /// Same read, keeping `hold` (wei locked under resting orders). VERIFIED
+    /// (2026-09-16): a resting bid holds quote wei, a resting ask holds the
+    /// outcome token; both release on cancel and move to `total` on fill.
+    /// `hold` is never cash: a solvency check must use total - hold. There is
+    /// no open-order precompile for outcome ids (0x80e bbo serves the encoded
+    /// id), so "not filled and cancelled" is inferable only from hold = 0.
     function spotBalanceWithHold(address user, uint64 token) internal view returns (uint64 total, uint64 hold) {
         (bool ok, bytes memory ret) = SPOT_BALANCE_PRECOMPILE.staticcall(abi.encode(user, token));
         require(ok, "SPOT_BALANCE_READ_FAILED");
