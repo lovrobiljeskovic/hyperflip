@@ -8,16 +8,6 @@
         "internalType": "contract IERC20"
       },
       {
-        "name": "writer_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "quoteSigner_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
         "name": "minPremiumBps_",
         "type": "uint16",
         "internalType": "uint16"
@@ -198,6 +188,11 @@
         "components": [
           {
             "name": "taker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "maker",
             "type": "address",
             "internalType": "address"
           },
@@ -386,6 +381,11 @@
             "internalType": "address"
           },
           {
+            "name": "maker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
             "name": "legs",
             "type": "tuple[]",
             "internalType": "struct ParlayVault.Leg[]",
@@ -430,19 +430,6 @@
         "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "quoteSigner",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -531,6 +518,24 @@
   },
   {
     "type": "function",
+    "name": "setMaker",
+    "inputs": [
+      {
+        "name": "maker",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "signer",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setMinPremiumBps",
     "inputs": [
       {
@@ -544,29 +549,22 @@
   },
   {
     "type": "function",
-    "name": "setQuoteSigner",
+    "name": "signerOf",
     "inputs": [
       {
-        "name": "quoteSigner_",
+        "name": "maker",
         "type": "address",
         "internalType": "address"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setWriter",
-    "inputs": [
+    "outputs": [
       {
-        "name": "writer_",
+        "name": "signer",
         "type": "address",
         "internalType": "address"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -675,19 +673,6 @@
     "stateMutability": "view"
   },
   {
-    "type": "function",
-    "name": "writer",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
     "type": "event",
     "name": "Approval",
     "inputs": [
@@ -745,6 +730,25 @@
   },
   {
     "type": "event",
+    "name": "MakerSet",
+    "inputs": [
+      {
+        "name": "maker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "signer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "MinPremiumBpsChanged",
     "inputs": [
       {
@@ -768,6 +772,12 @@
       },
       {
         "name": "taker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "maker",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -814,19 +824,6 @@
   },
   {
     "type": "event",
-    "name": "QuoteSignerChanged",
-    "inputs": [
-      {
-        "name": "quoteSigner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "Transfer",
     "inputs": [
       {
@@ -846,19 +843,6 @@
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "WriterChanged",
-    "inputs": [
-      {
-        "name": "writer",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
       }
     ],
     "anonymous": false

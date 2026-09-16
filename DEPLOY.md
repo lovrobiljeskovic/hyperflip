@@ -252,8 +252,10 @@ outcomes past their resolution deadline settle to 0.5.
 
 ## Bankroll and settlement recovery
 
-The bankroll is `WRITER_ADDRESS`. The writer limits quotes to the smaller of its
-USDC balance and allowance to ParlayVault. A mint pulls `maxPayout - premium` into
+Each maker's bankroll is its `maker` address (registered via `MAKERS` at deploy); the
+house writer's is `WRITER_ADDRESS`. The writer limits quotes to the smaller of its
+USDC balance and allowance to ParlayVault. The v1 and v2 vaults coexist on chain; the
+writer serves one vault per process. A mint pulls `maxPayout - premium` into
 escrow; dead tickets return that escrow, while winning tickets pay the taker.
 Replenishing the wallet does not replenish a spent allowance. Use the bankroll
 wallet to review and renew approval when needed.
