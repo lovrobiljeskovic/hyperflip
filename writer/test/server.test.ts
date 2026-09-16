@@ -298,13 +298,17 @@ test("HTTP smoke: /quote, /health, /metrics, bad-json, unknown route", async () 
 
 test("GET /limits exposes configured base and per-leg pricing without authentication", async () => {
   const origin = "https://app.hyperflip.xyz";
-  const server = startServer(deps({ cfg: cfg({ edgeBps: 725n, legEdgeBps: 150n, corsOrigins: [origin] }) }), 0, () => ({ ok: true }));
+  const server = startServer(deps({ cfg: cfg({ edgeBps: 725n, legEdgeBps: 150n, corsOrigins: [origin] }) }), 0, () => ({ ok: true, bankroll: "500000000" }));
   await new Promise<void>((resolve) => server.once("listening", resolve));
   try {
     const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/limits`, { headers: { origin } });
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("access-control-allow-origin"), origin);
-    assert.deepEqual(await response.json(), { maxStake: "10000000", edgeBps: "725", legEdgeBps: "150", quoteTtlMs: 30000 });
+    assert.deepEqual(await response.json(), {
+      maxStake: "10000000", edgeBps: "725", legEdgeBps: "150", quoteTtlMs: 30000,
+      perMarketCap: "1000000000", perClusterCap: "1000000000", perCodeReservedCap: "1000000000",
+      bankroll: "500000000", reserved: "0",
+    });
   } finally {
     server.close();
   }

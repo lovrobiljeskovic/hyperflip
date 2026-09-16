@@ -350,6 +350,10 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
       return res.end(deps.cfg.registryJson);
     }
     if (req.method === "GET" && req.url === "/limits") {
+      // Caps are on house risk (maxPayout - premium). bankroll is the cached
+      // allowance/balance room from the last quote, null before the first one;
+      // reserved is live quote reservations not yet minted.
+      const h = health() as { bankroll?: string | null };
       res.writeHead(200, { "Content-Type": "application/json", ...lockedCors(req, deps.cfg.corsOrigins) });
       return res.end(
         JSON.stringify({
@@ -357,6 +361,11 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
           edgeBps: deps.cfg.edgeBps.toString(),
           legEdgeBps: deps.cfg.legEdgeBps.toString(),
           quoteTtlMs: deps.cfg.quoteTtlMs,
+          perMarketCap: deps.cfg.perMarketCap.toString(),
+          perClusterCap: deps.cfg.perClusterCap.toString(),
+          perCodeReservedCap: deps.cfg.perCodeReservedCap.toString(),
+          bankroll: h.bankroll ?? null,
+          reserved: deps.exposure.reservedGlobal(deps.now()).toString(),
         }),
       );
     }
