@@ -163,44 +163,50 @@ WantedBy=multi-user.target
 The writer unit uses `/opt/hype/writer`. Local supervision is available through
 `bash tools/supervise.sh keeper` and `bash tools/supervise.sh writer`.
 
-### Relay + makers (v2, sketch until S8)
+### Relay + makers (v2, side by side with v1)
 
-Against the v2 `ParlayVault` the writer package runs as two kinds of process from
-the same `/opt/hype/writer` checkout: one public **relay** (`npm run start:relay`)
-and one **maker** per house key (`npm start`). The relay validates intent, fans
-`POST /rfq` out to every maker, verifies each signature against `signerOf(maker)`
-on-chain, picks the highest `maxPayout`, journals every answer to `rfq.jsonl` and
-answers `/quote`. Makers bind `127.0.0.1` only.
+Against the v2 `ParlayVault` the writer package runs as two kinds of process:
+one public **relay** (`npm run start:relay`) and one **maker** per house key
+(`npm start`). The relay validates intent, fans `POST /rfq` out to every maker,
+verifies each signature against `signerOf(maker)` on-chain, picks the highest
+`maxPayout`, journals every answer to `rfq.jsonl` and answers `/quote`. Makers
+bind `127.0.0.1` only.
+
+v1 stays live until the new design works end to end, so v2 never lands in
+`/opt/hype`. It gets its own root with the same layout and its own `.env`:
+
+```text
+/opt/hype-v2/
+  .env                       DEPLOYMENT_FILE=/opt/hype-v2/registry/deployment.testnet-v2.json
+  writer/                    same package as v1
+  registry/deployment.testnet-v2.json
+  maker-a.env, maker-b.env
+```
 
 | Var | Process | Note |
 |---|---|---|
-| `WRITER_PORT` | relay | stays `8787`; Caddy and the box `.env` line are untouched |
+| `DEPLOYMENT_FILE` | both | v2 manifest; the v1 manifest and `/opt/hype/.env` are untouched |
+| `MARKETS_FILE` | both | point at v1's `/opt/hype/registry/markets.json` so rotation feeds both |
+| `WRITER_PORT` | relay | `8788`; Caddy adds `writer2.<domain> { reverse_proxy localhost:8788 }`, v1's 8787 host unchanged |
 | `RELAY_MAKERS` | relay | `0xmakerA=http://127.0.0.1:8791,0xmakerB=http://127.0.0.1:8792` |
 | `MAKER_TOKEN` | both | shared bearer on `/rfq`; required at boot by both |
 | `RFQ_WINDOW_MS`, `RFQ_MIN_TTL_MS`, `RFQ_JOURNAL_FILE` | relay | defaults `1500`, `8000`, `writer/rfq.jsonl` |
 | `INVITE_CODES`, `CORS_ORIGINS`, `RESEND_API_KEY`, `WAITLIST_FILE` | relay | moved out of the maker |
 | `MAKER_PORT` | maker | `8791`, `8792`, … one per instance |
-| `WRITER_ADDRESS`, `QUOTE_SIGNER_PRIVATE_KEY`, `POKER_PRIVATE_KEY`, `QUOTE_JOURNAL_FILE`, `PARLAY_INDEX_FILE` | maker | per instance; `QUOTE_TTL_MS=15000` |
+| `WRITER_ADDRESS`, `QUOTE_SIGNER_PRIVATE_KEY`, `POKER_PRIVATE_KEY`, `QUOTE_JOURNAL_FILE`, `PARLAY_INDEX_FILE` | maker | per instance file; `QUOTE_TTL_MS=15000` |
 | `MAX_STAKE`, `MIN_LEGS`, `LOCKOUT_MS` | both | relay validates intent, maker re-validates |
 
-Units: `relay.service` (`ExecStart=/usr/bin/npm run start:relay`,
-`EnvironmentFile=/opt/hype/.env`) and a `maker@.service` template
-(`ExecStart=/usr/bin/npm start`, `EnvironmentFile=/opt/hype/maker-%i.env`,
-each instance file carrying its own `MAKER_PORT`, keys, journal and index
-paths). Boot makers first: the relay reads `signerOf` for every entry in
-`RELAY_MAKERS` and refuses to start on a zero address. Verify with
-`ss -ltnp` that 8791/8792 bind `127.0.0.1`. In S8 `rotate.service`'s
-`systemctl restart writer keeper`, `alert-relay.sh`'s `-u writer` and the
-`tools/supervise.sh` allowlist become `relay maker@a maker@b`.
-
-Place a TLS proxy in front of writer port 8787 and keep that port closed to the
-public network. Example Caddy configuration, with your writer domain:
-
-```caddyfile
-writer.example.com {
-    reverse_proxy localhost:8787
-}
-```
+Units: `relay-v2.service` (`WorkingDirectory=/opt/hype-v2/writer`,
+`ExecStart=/usr/bin/npm run start:relay`, `EnvironmentFile=/opt/hype-v2/.env`)
+and a `maker-v2@.service` template (`ExecStart=/usr/bin/npm start`,
+`EnvironmentFile=/opt/hype-v2/.env` then `/opt/hype-v2/maker-%i.env`, the
+instance file carrying `MAKER_PORT`, keys, journal and index paths). Boot makers
+first: the relay reads `signerOf` for every entry in `RELAY_MAKERS` and refuses
+to start on a zero address. Verify with `ss -ltnp` that 8791/8792 bind
+`127.0.0.1`. The web preview deployment points `NEXT_PUBLIC_WRITER_URL` at
+`writer2` and `NEXT_PUBLIC_PARLAY_VAULT` at the v2 vault; prod web, v1 units,
+`rotate.service`, `alert-relay.sh` and `tools/supervise.sh` change only at the
+prod cutover, once every v1 parlay has settled.
 
 ## Deployment and checks
 
