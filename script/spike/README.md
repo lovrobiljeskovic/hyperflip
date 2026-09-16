@@ -32,10 +32,9 @@ credit lands.
    - Quote debited + outcome indices credited ⇒ confirms
      `OP_SPLIT_OUTCOME = 0`, wei units, AND the outcome-balance
      read the vault's claim verification depends on.
-   - Quote debited, outcome indices zero ⇒ index formula wrong or
-     precompile does not serve outcome balances: probe nearby indices;
-     if unreadable at any index, the claim-verification design must
-     change (keeper attestation fallback) — flag before mainnet work.
+   - Quote debited, outcome indices zero ⇒ index formula wrong. (The
+     2026-08-14 run hit "unreadable" here; obsolete since the 2026-08
+     testnet update — 0x801 serves the encoded id, see FINDINGS.md header.)
    - Nothing debited ⇒ op numbering wrong: retry with op 1,2,3.
 4. **Merge back** (risk 2): `merge` the same amount, read back: outcome
    indices debited, quote credited ⇒ confirms `OP_MERGE_OUTCOME = 1`.
@@ -66,5 +65,5 @@ credit lands.
 | op numbering | `CoreConstants.OP_*` |
 | spot send id/layout | `CoreConstants.ACTION_SPOT_SEND`, `encodeSpotSend` |
 | outcome index formula | `CoreConstants.outcomeTokenIndex` |
-| outcome balances unreadable | redesign claim verification — stop, discuss |
+| outcome balances unreadable | obsolete (readable since 2026-08 update); claim verification stays attestation-gated, see `OutcomeVault.sol` header |
 | Core→EVM destination is not address(this) | the three `address(this)` spotSend call sites in `src/OutcomeVault.sol` (cancelDeposit, claimRedeem, pullSettledFunds) |

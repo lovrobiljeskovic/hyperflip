@@ -1,5 +1,10 @@
 # Testnet spike findings — 2026-08-14
 
+> **2026-09-16 note:** the "outcome balances are NOT readable" kill-switch
+> below is obsolete. Since the 2026-08 testnet update 0x801 and 0x808 accept
+> the encoded outcome asset id (`100_000_000 + 10*outcome + side`), verified
+> 2026-08-25 and used live by `keeper/src/core814.ts`. Kept for history.
+
 Session executed README steps 1–4 against Hyperliquid testnet, then stopped
 at the step-3 kill-switch (outcome balances unreadable from the EVM).
 Steps 5–8 not run. Wallet `0xC1b15e354D5E4561B5692735070d874727001e48`;

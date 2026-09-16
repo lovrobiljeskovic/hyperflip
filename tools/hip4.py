@@ -16,7 +16,11 @@ from hyperliquid.utils.constants import TESTNET_API_URL
 from hyperliquid.utils.signing import get_timestamp_ms, sign_l1_action
 
 action = json.loads(sys.argv[1])
-exchange = Exchange(Account.from_key(os.environ["PRIVATE_KEY"]), TESTNET_API_URL)
+# ACCOUNT_ADDRESS (optional): trade on behalf of that account with PRIVATE_KEY as
+# its agent/API wallet (CoreWriter action 9 path, script/spike/README-hedge.md item 8).
+exchange = Exchange(
+    Account.from_key(os.environ["PRIVATE_KEY"]), TESTNET_API_URL, account_address=os.environ.get("ACCOUNT_ADDRESS")
+)
 nonce = get_timestamp_ms()
 signature = sign_l1_action(exchange.wallet, action, None, nonce, exchange.expires_after, False)
 response = exchange._post_action(action, signature, nonce)

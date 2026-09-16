@@ -44,5 +44,6 @@ Stable fallback market (won't settle mid-spike): question **978**
 
 Follow `script/spike/README.md` steps 1–8 in order. Each write step is
 async on Core — wait a few seconds before its read-back. Kill-switch
-steps (stop and discuss, no patching): outcome balances unreadable
-(step 3) and deposit ordering false (step 7).
+step (stop and discuss, no patching): deposit ordering false (step 7).
+The step-3 "outcome balances unreadable" kill-switch is obsolete since the
+2026-08 testnet update (0x801 accepts the encoded outcome id).

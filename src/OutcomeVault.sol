@@ -10,13 +10,17 @@ import {OutcomeToken} from "./OutcomeToken.sol";
 /// Per-market vault wrapping a HIP-4 binary outcome as oYES/oNO ERC-20s.
 /// See ~/docs/superpowers/specs/2026-08-12-hyperevm-outcome-composability-design.md for the design spec.
 ///
-/// Split/merge execution is NOT observable from the EVM (script/spike/FINDINGS.md
-/// kill-switch: outcome balances have no precompile and no token index), so
-/// every claim/cancel is gated on an `IExecutionVerifier` attestation instead
-/// of an on-chain balance proof. Today that verifier is a keeper; the owner can
-/// swap it for anything else — a dead or lying keeper is recovered by
-/// `setVerifier`, not by a timeout. Cancel therefore requires an explicit
-/// `Failed` verdict: elapsed time proves nothing about a Core action.
+/// Every claim/cancel is gated on an `IExecutionVerifier` attestation instead
+/// of an on-chain balance proof. Historical reason: when this was designed
+/// (2026-08-14) 0x801 did not serve outcome balances. Since the 2026-08
+/// testnet update it does (encoded asset id, `CoreConstants.outcomeTokenIndex`;
+/// the keeper reads it in keeper/src/core814.ts), but precompiles serve live
+/// state only and 0x801 reverts for pruned coins, so the attestation seam
+/// stays: it is what makes a rejected (silent) split distinguishable from a
+/// slow one. Today that verifier is a keeper; the owner can swap it for
+/// anything else — a dead or lying keeper is recovered by `setVerifier`, not
+/// by a timeout. Cancel therefore requires an explicit `Failed` verdict:
+/// elapsed time proves nothing about a Core action.
 ///
 /// The one thing the vault still reads on-chain is its own Core *quote*
 /// balance (token 0 at 0x801), used to prove a refund is actually funded, and
