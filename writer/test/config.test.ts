@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseMarkets, parseInviteCodes, parseCorsOrigins, defaultPerCodeReservedCap, syncedPerCodeReservedCap, loadConfig } from "../src/config.js";
+import { parseMarkets, parseInviteCodes, parseCorsOrigins, parseRelayMakers, defaultPerCodeReservedCap, syncedPerCodeReservedCap, loadConfig } from "../src/config.js";
 
 const VAULT = "0x1111111111111111111111111111111111111111";
 const MARKET = { vault: VAULT, coinYes: "#1", coinNo: "#2", underlying: "q844", cluster: "WC2026", title: "Draw", category: "sports", question: 844, startMs: 1, expiryMs: 2, sideYes: "Draw", sideNo: "No draw", group: "q844", groupTitle: "Saudi Arabia vs Uruguay" };
@@ -98,4 +98,14 @@ test("writer boots with only sports configuration and filters historical public 
     for (const [key, value] of saved) value === undefined ? delete process.env[key] : process.env[key] = value;
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("parseRelayMakers: addr=url pairs; rejects bad addresses and empty lists", () => {
+  assert.deepEqual(parseRelayMakers(" 0x1111111111111111111111111111111111111111=http://127.0.0.1:8791/ ,0x2222222222222222222222222222222222222222=http://127.0.0.1:8792"), [
+    { maker: "0x1111111111111111111111111111111111111111", url: "http://127.0.0.1:8791" },
+    { maker: "0x2222222222222222222222222222222222222222", url: "http://127.0.0.1:8792" },
+  ]);
+  assert.throws(() => parseRelayMakers("nope=http://127.0.0.1:8791"), /RELAY_MAKERS entry/);
+  assert.throws(() => parseRelayMakers("0x1111111111111111111111111111111111111111=8791"), /RELAY_MAKERS entry/);
+  assert.throws(() => parseRelayMakers(" , "), /at least one maker/);
 });

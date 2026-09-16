@@ -136,6 +136,7 @@ Verify against the code before relying on any single line number.
 `bad-invite`, `bad-taker`, `bad-legs`, `bad-leg-count`, `bad-leg`, `unknown-vault`,
 `expiry-lockout`, `bad-stake`, `stake-too-big`, `rpc-down`, `leg-settled`,
 `stale-book`, `ticket-too-complex`, `dominated`, `no-payout`, `cannot-win`,
-`at-capacity`, `market-cap`, `cluster-cap`, `sign-failed`, `rate-limited`. New
+`at-capacity`, `market-cap`, `cluster-cap`, `sign-failed`, `rate-limited`,
+`no-quotes` (relay: makers disagreed or none answered). New
 refusal paths (e.g. a spotPx-stale refusal in P0-1) should reuse `stale-book` or
 add a clearly-named reason and register it in the metrics counter.

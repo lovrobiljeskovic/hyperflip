@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { isAddress, type Address } from "viem";
 import { parseMarkets, type MarketInfo } from "./markets.js";
 import { BPS, parseDecimalToUnits } from "./pure.js";
+import type { RelayConfig } from "./relay.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 loadDotenv({ path: path.resolve(here, "../../.env") });
@@ -97,16 +98,54 @@ export function syncedPerCodeReservedCap(
   return envWasSet ? current : defaultPerCodeReservedCap(maxStake, chainMinPremiumBps);
 }
 
-export function loadConfig(): WriterConfig {
-  if (process.env.PRICING_MODE && process.env.PRICING_MODE !== "independent") {
-    throw new Error("PRICING_MODE must be independent or unset for sports pricing");
-  }
+function loadRegistry(): { markets: Map<string, MarketInfo>; registryJson: string } {
   const registry = JSON.parse(readFileSync(path.resolve(here, "../..", requireEnv("MARKETS_FILE")), "utf8"));
   const markets = parseMarkets(JSON.stringify(registry));
   // Keep historical settlement metadata on disk; expose only sports to the app.
   const registryJson = JSON.stringify(Array.isArray(registry) ? registry : {
     ...registry, archived: (registry.archived ?? []).filter((market: { category?: string }) => market.category === "sports"),
   });
+  return { markets, registryJson };
+}
+
+/** RELAY_MAKERS=0xmaker=http://127.0.0.1:8791,... (not MAKERS, which the deploy script owns). */
+export function parseRelayMakers(raw: string): { maker: Address; url: string }[] {
+  const makers = raw.split(",").map((s) => s.trim()).filter(Boolean).map((pair) => {
+    const [maker, ...rest] = pair.split("=");
+    const url = rest.join("=");
+    if (!isAddress(maker) || !/^https?:\/\//.test(url)) throw new Error(`RELAY_MAKERS entry "${pair}" must be 0xaddress=http://host:port`);
+    return { maker: maker as Address, url: url.replace(/\/+$/, "") };
+  });
+  if (!makers.length) throw new Error("RELAY_MAKERS must list at least one maker");
+  return makers;
+}
+
+export function loadRelayConfig(): RelayConfig {
+  return {
+    ...loadDeployment(),
+    ...loadRegistry(),
+    rpcUrl: process.env.WRITER_RPC || requireEnv("TESTNET_RPC"),
+    port: Number(process.env.WRITER_PORT ?? 8787),
+    makers: parseRelayMakers(requireEnv("RELAY_MAKERS")),
+    makerToken: requireEnv("MAKER_TOKEN"),
+    rfqWindowMs: Number(process.env.RFQ_WINDOW_MS ?? 1500),
+    rfqMinTtlMs: Number(process.env.RFQ_MIN_TTL_MS ?? 8000),
+    rfqJournalFile: path.resolve(here, "../..", process.env.RFQ_JOURNAL_FILE ?? "writer/rfq.jsonl"),
+    maxStake: BigInt(requireEnv("MAX_STAKE")),
+    minLegs: Number(process.env.MIN_LEGS ?? 2),
+    lockoutMs: Number(process.env.LOCKOUT_MS ?? 600_000),
+    minPremiumBps: BigInt(process.env.MIN_PREMIUM_BPS ?? 100),
+    inviteCodes: parseInviteCodes(requireEnv("INVITE_CODES")),
+    corsOrigins: parseCorsOrigins(process.env.CORS_ORIGINS ?? DEFAULT_CORS_ORIGINS),
+    waitlistFile: path.resolve(here, "../..", process.env.WAITLIST_FILE ?? "writer/waitlist.json"),
+    resendApiKey: process.env.RESEND_API_KEY,
+  };
+}
+
+export function loadConfig(): WriterConfig {
+  if (process.env.PRICING_MODE && process.env.PRICING_MODE !== "independent") {
+    throw new Error("PRICING_MODE must be independent or unset for sports pricing");
+  }
   const maxStake = BigInt(requireEnv("MAX_STAKE"));
   const minPremiumBps = BigInt(process.env.MIN_PREMIUM_BPS ?? 100);
   const spotPxStaleMsRaw = Number(process.env.SPOT_PX_STALE_MS ?? 60_000);
@@ -119,8 +158,7 @@ export function loadConfig(): WriterConfig {
   if (!Number.isFinite(pokerIntervalMs) || pokerIntervalMs <= 0) throw new Error("POKER_INTERVAL_MS must be positive");
   return {
     ...loadDeployment(),
-    markets,
-    registryJson,
+    ...loadRegistry(),
     infoApiUrl: process.env.INFO_API_URL ?? "https://api.hyperliquid-testnet.xyz/info",
     quoteJournalFile: path.resolve(here, "../..", process.env.QUOTE_JOURNAL_FILE ?? "writer/quotes.jsonl"),
     rpcUrl: process.env.WRITER_RPC || requireEnv("TESTNET_RPC"),
