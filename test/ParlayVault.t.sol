@@ -12,6 +12,9 @@ contract ParlayVaultTest is BaseTest {
     address internal house;
     address internal signer;
     uint256 internal signerKey;
+    address internal maker2;
+    address internal signer2;
+    uint256 internal signer2Key;
 
     uint96 internal constant PREMIUM = 10e5; // 10 mUSD (5-dec quote)
     uint96 internal constant MAX_PAYOUT = 100e5;
@@ -21,9 +24,16 @@ contract ParlayVaultTest is BaseTest {
         (signer, signerKey) = makeAddrAndKey("quoteSigner");
         house = makeAddr("house");
         vaultB = newVault(4);
-        plv = new ParlayVault(IERC20(address(quote)), house, signer, 100); // 1% floor
+        plv = new ParlayVault(IERC20(address(quote)), 100); // 1% floor
+        plv.setMaker(house, signer);
+        (signer2, signer2Key) = makeAddrAndKey("signer2");
+        maker2 = makeAddr("maker2");
+        plv.setMaker(maker2, signer2);
         quote.mint(house, 10_000e5);
         vm.prank(house);
+        quote.approve(address(plv), type(uint256).max);
+        quote.mint(maker2, 10_000e5);
+        vm.prank(maker2);
         quote.approve(address(plv), type(uint256).max);
         vm.prank(user);
         quote.approve(address(plv), type(uint256).max);
@@ -52,11 +62,16 @@ contract ParlayVaultTest is BaseTest {
 
     /// Default slip: 2 legs (YES on vault, NO on vaultB), 10 → 100.
     function makeQuote() internal view returns (ParlayVault.Quote memory q) {
+        return makeQuote(house);
+    }
+
+    function makeQuote(address maker) internal view returns (ParlayVault.Quote memory q) {
         ParlayVault.Leg[] memory legs = new ParlayVault.Leg[](2);
         legs[0] = ParlayVault.Leg(address(vault), true);
         legs[1] = ParlayVault.Leg(address(vaultB), false);
         q = ParlayVault.Quote({
             taker: user,
+            maker: maker,
             legs: legs,
             premium: PREMIUM,
             maxPayout: MAX_PAYOUT,
@@ -66,7 +81,11 @@ contract ParlayVaultTest is BaseTest {
     }
 
     function signQuote(ParlayVault.Quote memory q) internal view returns (bytes memory) {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, plv.quoteDigest(q));
+        return signQuoteWith(signerKey, q);
+    }
+
+    function signQuoteWith(uint256 key, ParlayVault.Quote memory q) internal view returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, plv.quoteDigest(q));
         return abi.encodePacked(r, s, v);
     }
 
@@ -74,30 +93,18 @@ contract ParlayVaultTest is BaseTest {
 
     function test_configInitial() public view {
         assertEq(plv.owner(), address(this));
-        assertEq(plv.writer(), house);
-        assertEq(plv.quoteSigner(), signer);
+        assertEq(plv.signerOf(house), signer);
+        assertEq(plv.signerOf(maker2), signer2);
         assertEq(plv.minPremiumBps(), 100);
     }
 
     function test_settersOnlyOwner() public {
         vm.startPrank(other);
         vm.expectRevert("NOT_OWNER");
-        plv.setQuoteSigner(other);
-        vm.expectRevert("NOT_OWNER");
-        plv.setWriter(other);
+        plv.setMaker(other, other);
         vm.expectRevert("NOT_OWNER");
         plv.setMinPremiumBps(1);
         vm.stopPrank();
-    }
-
-    function test_setQuoteSignerRejectsZero() public {
-        vm.expectRevert("ZERO_SIGNER");
-        plv.setQuoteSigner(address(0));
-    }
-
-    function test_constructorRejectsZeroSigner() public {
-        vm.expectRevert("ZERO_SIGNER");
-        new ParlayVault(IERC20(address(quote)), house, address(0), 100);
     }
 
     function test_setMinPremiumBpsRejectsAbove100Pct() public {
@@ -114,6 +121,9 @@ contract ParlayVaultTest is BaseTest {
         assertTrue(plv.quoteDigest(q) != d1);
         q = makeQuote();
         q.legs[0].isYes = false;
+        assertTrue(plv.quoteDigest(q) != d1);
+        q = makeQuote();
+        q.maker = maker2;
         assertTrue(plv.quoteDigest(q) != d1);
     }
 
@@ -134,7 +144,7 @@ contract ParlayVaultTest is BaseTest {
         assertEq(quote.balanceOf(user), userBefore - PREMIUM);
         assertEq(quote.balanceOf(house), 10_000e5 - (MAX_PAYOUT - PREMIUM));
         assertEq(quote.balanceOf(address(plv)), MAX_PAYOUT);
-        assertTrue(plv.usedQuotes(keccak256("q1")));
+        assertTrue(plv.usedQuotes(keccak256(abi.encode(house, keccak256("q1")))));
         ParlayVault.Parlay memory p = plv.parlay(1);
         assertEq(p.writer, house);
         assertEq(p.premium, PREMIUM);
@@ -180,6 +190,69 @@ contract ParlayVaultTest is BaseTest {
         vm.prank(user);
         vm.expectRevert("BAD_SIG");
         plv.mint(q, abi.encodePacked(r, s, v));
+    }
+
+    function test_mintRejectsUnknownMaker() public {
+        ParlayVault.Quote memory q = makeQuote(makeAddr("stranger"));
+        bytes memory sig = signQuote(q);
+        vm.prank(user);
+        vm.expectRevert("UNKNOWN_MAKER");
+        plv.mint(q, sig);
+    }
+
+    function test_mintRejectsRemovedMaker() public {
+        plv.setMaker(house, address(0));
+        ParlayVault.Quote memory q = makeQuote();
+        bytes memory sig = signQuote(q);
+        vm.prank(user);
+        vm.expectRevert("UNKNOWN_MAKER");
+        plv.mint(q, sig);
+    }
+
+    function test_setMakerRotatesSigner() public {
+        vm.expectEmit(true, true, true, true);
+        emit ParlayVault.MakerSet(house, signer2);
+        plv.setMaker(house, signer2);
+        ParlayVault.Quote memory q = makeQuote();
+        bytes memory sig = signQuote(q);
+        vm.prank(user);
+        vm.expectRevert("BAD_SIG");
+        plv.mint(q, sig);
+        bytes memory sig2 = signQuoteWith(signer2Key, q);
+        vm.prank(user);
+        assertEq(plv.mint(q, sig2), 1);
+    }
+
+    function test_mintEscrowsFromQuotedMaker() public {
+        uint256 houseBefore = quote.balanceOf(house);
+        ParlayVault.Quote memory q = makeQuote(maker2);
+        bytes memory sig = signQuoteWith(signer2Key, q);
+        vm.prank(user);
+        uint256 id = plv.mint(q, sig);
+        assertEq(quote.balanceOf(maker2), 10_000e5 - (MAX_PAYOUT - PREMIUM));
+        assertEq(quote.balanceOf(house), houseBefore);
+        assertEq(plv.parlay(id).writer, maker2);
+    }
+
+    /// Same quoteId under two makers is two distinct quotes.
+    function test_replayKeyIsPerMaker() public {
+        mintDefault();
+        ParlayVault.Quote memory q = makeQuote(maker2);
+        bytes memory sig = signQuoteWith(signer2Key, q);
+        vm.prank(user);
+        assertEq(plv.mint(q, sig), 2);
+        vm.prank(user);
+        vm.expectRevert("QUOTE_USED");
+        plv.mint(q, sig);
+    }
+
+    function test_mintEmitsMaker() public {
+        ParlayVault.Quote memory q = makeQuote();
+        bytes memory sig = signQuote(q);
+        vm.expectEmit(true, true, true, true);
+        emit ParlayVault.ParlayMinted(1, user, house, keccak256("q1"), PREMIUM, MAX_PAYOUT);
+        vm.prank(user);
+        plv.mint(q, sig);
     }
 
     function test_mintRejectsTamperedQuote() public {
@@ -259,7 +332,7 @@ contract ParlayVaultTest is BaseTest {
         plv.mint(q, sig);
     }
 
-    /// "At capacity": writer allowance revoked = mint reverts in transferFrom.
+    /// "At capacity": maker allowance revoked = mint reverts in transferFrom.
     /// No special handling — this IS the pause mechanism.
     function test_mintRevertsWhenWriterAllowanceExhausted() public {
         vm.prank(house);
@@ -301,15 +374,25 @@ contract ParlayVaultTest is BaseTest {
         assertEq(uint8(plv.parlay(id).status), uint8(ParlayVault.Status.Dead));
     }
 
-    /// Dead pot goes to the writer snapshotted at mint, not current config.
+    /// Dead pot goes to the maker snapshotted at mint, even after the maker is removed.
     function test_resolveDeadPaysSnapshottedWriter() public {
         uint256 id = mintDefault();
-        address newHouse = makeAddr("newHouse");
-        plv.setWriter(newHouse);
+        plv.setMaker(house, address(0)); // maker removed after mint
         settleLeg(vault, 0);
         plv.resolveParlay(id);
-        assertEq(quote.balanceOf(newHouse), 0);
         assertEq(quote.balanceOf(house), 10_000e5 - (MAX_PAYOUT - PREMIUM) + MAX_PAYOUT);
+    }
+
+    function test_resolveDeadPaysQuotedMaker() public {
+        ParlayVault.Quote memory q = makeQuote(maker2);
+        bytes memory sig = signQuoteWith(signer2Key, q);
+        vm.prank(user);
+        uint256 id = plv.mint(q, sig);
+        uint256 houseBefore = quote.balanceOf(house);
+        settleLeg(vault, 0);
+        plv.resolveParlay(id);
+        assertEq(quote.balanceOf(maker2), 10_000e5 - (MAX_PAYOUT - PREMIUM) + MAX_PAYOUT);
+        assertEq(quote.balanceOf(house), houseBefore);
     }
 
     function test_resolveRevertsWhenNoLegSettled() public {
