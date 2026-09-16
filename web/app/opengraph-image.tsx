@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ImageResponse } from "next/og";
 
-export const alt = "Hyperflip. Stack outcomes on HyperCore.";
+export const alt = "Hyperflip. Combos on HIP-4 markets.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -16,8 +16,8 @@ export default async function OpenGraphImage() {
           <img src={logo} width={72} height={72} />
           <span>hyperflip</span>
         </div>
-        <div style={{ display: "flex", maxWidth: 740, fontSize: 78, fontWeight: 800, lineHeight: .93, letterSpacing: "-4px" }}>Flip markets. Stack outcomes.</div>
-        <div style={{ display: "flex", fontSize: 24, color: "#9CA592" }}>Live on HyperEVM testnet</div>
+        <div style={{ display: "flex", maxWidth: 740, fontSize: 78, fontWeight: 800, lineHeight: .93, letterSpacing: "-4px" }}>Stack your picks. Multiply the payout.</div>
+        <div style={{ display: "flex", fontSize: 24, color: "#9CA592" }}>Combos on HIP-4 markets · HyperEVM testnet</div>
       </div>
       <div style={{ display: "flex", width: 20, height: 350, background: "#C8F36A", transform: "skewY(-18deg)" }} />
     </div>,

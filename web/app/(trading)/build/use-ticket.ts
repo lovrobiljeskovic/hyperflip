@@ -3,12 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { erc20Abi } from "viem";
 import { useAccount, useBalance, usePublicClient, useReadContract, useSwitchChain, useWriteContract } from "wagmi";
-import { fetchLimits, type QuoteResult, type WriterQuote } from "@/lib/writer";
+import { fetchLimits, type QuoteResult, type WriterLimits, type WriterQuote } from "@/lib/writer";
 import { formatUsdc, secondsLeft, shortError } from "@/lib/format";
 import { HL_DRIP, hyperEvmTestnet } from "@/lib/chain";
 import { PARLAY_VAULT } from "@/lib/contracts";
 import { useConnectAction, useUsdc, useWalletState } from "@/lib/wallet";
-import { tryParseStake, TicketSession, mintTicket, quoteMatches, type BuilderLeg } from "@/lib/ticket";
+import { tryParseStake, TicketSession, approveUsdc, mintTicket, quoteMatches, type BuilderLeg } from "@/lib/ticket";
 
 const MIN_LEGS = 2;
 const QUOTE_DEBOUNCE_MS = 400;
@@ -31,7 +31,8 @@ type Cta =
   | { kind: "external"; label: string; href: string; hint: string }
   | { kind: "done"; label: string; href: string }
   | { kind: "switch-chain"; label: string }
-  | { kind: "mint"; label: string };
+  /** Past every gate: step one approves the stake, step two mints once the allowance covers it. */
+  | { kind: "pay"; approve: { label: string; enabled: boolean; done: boolean }; mint: { label: string; enabled: boolean } };
 
 export function useTicket(legs: BuilderLeg[], display: boolean) {
   const { ready: walletReady, address, isConnected } = useWalletState();
@@ -45,6 +46,7 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
   const [mintState, setMintState] = useState<"idle" | "pending" | "done" | "requoted" | "error">("idle");
   const [mintErrorMsg, setMintErrorMsg] = useState("");
   const [mintErrorDetail, setMintErrorDetail] = useState("");
+  const [approving, setApproving] = useState(false);
 
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
@@ -64,8 +66,8 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
     address,
     query: { enabled: !display && !!address },
   });
-  // Display only; mint re-reads allowance.
-  const { data: allowance } = useReadContract({
+  // Gates the mint button; refetched after approve confirms. mint re-reads it too.
+  const { data: allowance, refetch: refetchAllowance } = useReadContract({
     address: usdcAddr,
     abi: erc20Abi,
     functionName: "allowance",
@@ -79,18 +81,23 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
   }, [display]);
 
   const [maxStake, setMaxStake] = useState<bigint | null>(null);
+  const [limits, setLimits] = useState<WriterLimits | null>(null);
   // Use the writer’s lifetime for the countdown bar.
   const [ttlSeconds, setTtlSeconds] = useState(TTL_SECONDS);
   useEffect(() => {
     if (display) return;
     void fetchLimits().then((l) => {
       if (!l) return;
+      setLimits(l);
       setMaxStake(BigInt(l.maxStake));
       if (l.quoteTtlMs > 0) setTtlSeconds(Math.round(l.quoteTtlMs / 1000));
     });
   }, [display]);
 
   const stakeBase = tryParseStake(stake);
+  // premium === stake by construction (quoteMatches), so the allowance needed is
+  // known before any quote arrives and survives requotes.
+  const needsApproval = stakeBase !== null && (allowance === undefined || allowance < stakeBase);
   // Allow one immediate-expiry retry; clock skew must not loop requests.
   const clockSkewRetried = useRef(false);
 
@@ -191,6 +198,25 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
     }
   }
 
+  async function approve() {
+    if (approving || session.minting || session.revision !== revision || !publicClient || !usdcAddr || !address || stakeBase === null) return;
+    setApproving(true);
+    setMintErrorMsg("");
+    setMintErrorDetail("");
+    try {
+      await approveUsdc({ client: publicClient, write: writeContractAsync, usdc: usdcAddr, taker: address, amount: stakeBase,
+        current: () => session.revision === revision });
+      await refetchAllowance();
+    } catch (err) {
+      if (session.revision !== revision) return;
+      setMintErrorMsg(shortMintError(err));
+      setMintErrorDetail(String((err as Error)?.message ?? err));
+      setMintState("error");
+    } finally {
+      setApproving(false);
+    }
+  }
+
   function computeCta(): Cta {
     if (legs.length < MIN_LEGS) return { kind: "disabled", label: "Add 2 legs to price a ticket" };
     if (!walletReady) return { kind: "disabled", label: "Checking wallet…" };
@@ -204,13 +230,22 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
     if (stakeBase === null) return { kind: "disabled", label: "Enter a stake to quote" };
     if (usdcBalance !== undefined && stakeBase > usdcBalance)
       return { kind: "disabled", label: `Insufficient USDC - ${formatUsdc(usdcBalance)} available` };
-    if (session.minting || mintState === "pending") return { kind: "disabled", label: "Confirm in wallet…" };
     if (mintState === "done") return { kind: "done", label: "Minted - view positions", href: "/positions" };
-    if (quoting) return { kind: "disabled", label: "Quoting…" };
-    if (!quoteResult) return { kind: "disabled", label: "Waiting for quote…" };
-    if (!quoteResult.ok) return { kind: "disabled", label: "Unable to quote" };
-    if (secondsLeft(BigInt(quoteResult.quote.deadline), Date.now()) <= 0) return { kind: "disabled", label: "Refreshing quote…" };
-    return { kind: "mint", label: `Mint slip - ${formatUsdc(BigInt(quoteResult.quote.premium))} USDC` };
+    const minting = session.minting || mintState === "pending";
+    const approve = needsApproval
+      ? { label: approving ? "Confirm in wallet…" : `Approve ${formatUsdc(stakeBase)} USDC`, enabled: !approving && !minting, done: false }
+      : { label: "USDC approved", enabled: false, done: true };
+    const waiting =
+      minting ? "Confirm in wallet…"
+      : quoting ? "Quoting…"
+      : !quoteResult ? "Waiting for quote…"
+      : !quoteResult.ok ? "Unable to quote"
+      : secondsLeft(BigInt(quoteResult.quote.deadline), Date.now()) <= 0 ? "Refreshing quote…"
+      : null;
+    const mint = waiting || !quoteResult?.ok
+      ? { label: waiting ?? "Waiting for quote…", enabled: false }
+      : { label: `Mint slip - ${formatUsdc(BigInt(quoteResult.quote.premium))} USDC`, enabled: !needsApproval && !approving };
+    return { kind: "pay", approve, mint };
   }
   const cta = display ? null : computeCta();
   function retry() {
@@ -219,6 +254,6 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
     void runQuote();
   }
   return { stake, setStake, quoteResult, ttlLeft, ttlSeconds, mintState, mintErrorMsg, mintErrorDetail,
-    setInviteCode, maxStake, usdcBalance, allowance, cta, mintQuoted, retry, connect, switchChain };
+    setInviteCode, maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain };
 
 }

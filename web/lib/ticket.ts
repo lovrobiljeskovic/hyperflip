@@ -53,6 +53,21 @@ export class TicketSession {
   }
 }
 
+/** Step one of the two-tx flow: exact-amount USDC approval for the vault. */
+export async function approveUsdc({ client, write, usdc, taker, amount, current }: {
+  client: PublicClient;
+  write: UseWriteContractReturnType["writeContractAsync"];
+  usdc: `0x${string}`;
+  taker: `0x${string}`;
+  amount: bigint;
+  current: () => boolean;
+}): Promise<void> {
+  const hash = await write({ address: usdc, abi: erc20Abi, functionName: "approve", args: [PARLAY_VAULT, amount], account: taker, chainId: hyperEvmTestnet.id });
+  const receipt = await client.waitForTransactionReceipt({ hash });
+  if (!current()) throw new Error("Ticket changed; review the current ticket before minting.");
+  if (receipt.status !== "success") throw new Error("approve reverted");
+}
+
 export async function mintTicket({ client, write, usdc, quote, sig, input, current, onQuote }: {
   client: PublicClient;
   write: UseWriteContractReturnType["writeContractAsync"];
@@ -75,12 +90,9 @@ export async function mintTicket({ client, write, usdc, quote, sig, input, curre
   ]);
   check();
   if (balance < premium) throw new Error("transfer amount exceeds balance");
-  if (allowance < premium) {
-    const hash = await write({ address: usdc, abi: erc20Abi, functionName: "approve", args: [PARLAY_VAULT, premium], account: quote.taker, chainId: hyperEvmTestnet.id });
-    const receipt = await client.waitForTransactionReceipt({ hash });
-    check();
-    if (receipt.status !== "success") throw new Error("approve reverted");
-  }
+  // Fallback only: the UI approves first, but a stale allowance read must not
+  // reach a mint that reverts on-chain.
+  if (allowance < premium) await approveUsdc({ client, write, usdc, taker: quote.taker, amount: premium, current });
   if (allowance < premium || secondsLeft(BigInt(quote.deadline), Date.now()) < 10) {
     const result = await requestQuote(input);
     check();

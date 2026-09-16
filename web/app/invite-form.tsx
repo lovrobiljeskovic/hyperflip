@@ -50,7 +50,7 @@ export function InviteForm() {
               placeholder="you@example.com"
             />
             <button type="submit" disabled={state === "sending"} className="mono rounded-[8px] bg-accent px-6 py-3 text-[12px] uppercase tracking-wide text-on-accent disabled:cursor-not-allowed disabled:opacity-60">
-              {state === "sending" ? "Sending…" : "Get invite"}
+              {state === "sending" ? "Sending…" : "Request an invite"}
             </button>
           </div>
           {error && <p id="waitlist-error" role="alert" className="mt-2 text-sm text-no">{error}</p>}

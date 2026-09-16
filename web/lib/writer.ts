@@ -149,6 +149,13 @@ export interface WriterLimits {
   edgeBps: string;
   legEdgeBps?: string;
   quoteTtlMs: number;
+  /** House risk caps and live bankroll, USDC base units; absent on an older writer. */
+  perMarketCap?: string;
+  perClusterCap?: string;
+  perCodeReservedCap?: string;
+  /** Cached allowance/balance room from the last quote; null before the first. */
+  bankroll?: string | null;
+  reserved?: string;
 }
 
 export function currentPricing(limits: WriterLimits | null): { base: string; perLeg: string } | null {

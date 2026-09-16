@@ -9,6 +9,7 @@ import {
   joinWaitlist,
   WAITLIST_ERRORS,
   type QuoteResult,
+  type WriterLimits,
 } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
@@ -209,6 +210,39 @@ function InviteEntry({ onSave }: { onSave: (code: string) => void }) {
   );
 }
 
+/** What the house can take right now, so a taker sizes a stake that quotes
+ * instead of bouncing off a 409. Caps are on house risk (payout minus stake). */
+function HouseLimits({ limits, maxStake }: { limits: WriterLimits | null; maxStake: bigint }) {
+  const usdc = (v: string | null | undefined) => (v ? `${formatUsdc(BigInt(v))} USDC` : "-");
+  const available =
+    limits?.bankroll ? formatUsdc(BigInt(limits.bankroll) - BigInt(limits.reserved ?? "0")) + " USDC" : null;
+  return (
+    <details className="mt-1 mono text-[11px] text-dim">
+      <summary className="cursor-pointer">
+        House limit {formatUsdc(maxStake)} USDC per ticket{available && ` · ${available} bankroll`}
+      </summary>
+      <div className="mt-2 flex flex-col gap-1 rounded-[4px] border border-line bg-raised/40 px-3 py-2">
+        <DetailRow label="Max stake per ticket">{formatUsdc(maxStake)} USDC</DetailRow>
+        <DetailRow label="House bankroll available">{available ?? "-"}</DetailRow>
+        <DetailRow label="Max house risk per market">{usdc(limits?.perMarketCap)}</DetailRow>
+        <DetailRow label="Max house risk per competition">{usdc(limits?.perClusterCap)}</DetailRow>
+        <DetailRow label="Open-quote budget per invite code">{usdc(limits?.perCodeReservedCap)}</DetailRow>
+        <p className="mt-1 text-[10px] leading-relaxed">
+          Risk is your max payout minus your stake. A quote that would push any of these over its cap comes back with the largest stake that fits.
+        </p>
+      </div>
+    </details>
+  );
+}
+
+/** Two-step pay buttons: live accent, done in the YES green, else muted. */
+function payButtonClass(enabled: boolean, done: boolean): string {
+  const base = "mono rounded-card py-[11px] text-center text-[12px] uppercase tracking-[0.1em] transition-transform motion-reduce:transition-none";
+  if (enabled) return `${base} bg-accent text-on-accent active:scale-[0.98] hover:opacity-90`;
+  if (done) return `${base} bg-yes/20 text-yes cursor-default`;
+  return `${base} bg-raised text-dim cursor-not-allowed`;
+}
+
 export function Ticket({
   legs,
   onRemove,
@@ -221,7 +255,7 @@ export function Ticket({
   const mids = useMids();
   const printing = usePrinting();
   const { stake, setStake, quoteResult, ttlLeft, ttlSeconds, mintState, mintErrorMsg, mintErrorDetail,
-    setInviteCode, maxStake, usdcBalance, allowance, cta, mintQuoted, retry, connect, switchChain } = useTicket(legs, display);
+    setInviteCode, maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain } = useTicket(legs, display);
 
   // Quote-derived display values. premium/maxPayout are the signed truth;
   // `bd` re-derives the writer's pricing steps for the breakdown accordion.
@@ -243,7 +277,6 @@ export function Ticket({
   // "how likely does this have to be" number behind the multiplier.
   const m = multiplierNum(premium, maxPayout);
   const breakEven = m > 0 ? 1 / m : null;
-  const needsApproval = allowance === undefined || allowance < premium;
   // Max is whichever runs out first: your balance or the house per-ticket cap.
   const maxAllowed =
     usdcBalance === undefined
@@ -379,9 +412,7 @@ export function Ticket({
                 Max
               </button>
             </div>
-            {maxStake !== null && (
-              <p className="mt-1 mono text-[11px] text-dim">House limit {formatUsdc(maxStake)} USDC per ticket</p>
-            )}
+            {maxStake !== null && <HouseLimits limits={limits} maxStake={maxStake} />}
           </div>
 
           {quoteResult?.ok && (
@@ -525,24 +556,32 @@ export function Ticket({
               <p className="mt-2 text-center mono text-[11px] text-dim">{cta.hint}</p>
             </>
           )}
-          {cta.kind === "mint" && (
-            <button
-              type="button"
-              onClick={() => quoteResult?.ok && mintQuoted(quoteResult.quote, quoteResult.sig)}
-              className="mono mt-4 w-full rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90"
-            >
-              {cta.label}
-            </button>
+          {cta.kind === "pay" && (
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={!cta.approve.enabled}
+                onClick={() => void approve()}
+                className={payButtonClass(cta.approve.enabled, cta.approve.done)}
+              >
+                <span className="block text-[9px] tracking-[0.16em] opacity-70">Step 1</span>
+                {cta.approve.label}
+              </button>
+              <button
+                type="button"
+                disabled={!cta.mint.enabled}
+                onClick={() => quoteResult?.ok && mintQuoted(quoteResult.quote, quoteResult.sig)}
+                className={payButtonClass(cta.mint.enabled, false)}
+              >
+                <span className="block text-[9px] tracking-[0.16em] opacity-70">Step 2</span>
+                {cta.mint.label}
+              </button>
+            </div>
           )}
           {cta.kind === "disabled" && (
             <div className="mono mt-4 w-full cursor-not-allowed rounded-card bg-raised py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-dim">
               {cta.label}
             </div>
-          )}
-          {cta.kind === "mint" && needsApproval && (
-            <p className="mt-2 text-center mono text-[11px] text-dim">
-              Two wallet confirmations: approve USDC, then mint.
-            </p>
           )}
           {mintState === "requoted" && (
             <p className="mt-3 text-center mono text-[11px] text-accent">Quote refreshed - mint again</p>

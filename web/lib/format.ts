@@ -116,6 +116,13 @@ export function shortError(err: unknown): string {
 
 /** Kickoff countdown, "live" once the game has started. Falls back to the resolution
  * deadline for markets that carry no start time. */
+/** Expected settlement date, UTC so server and client render the same string. */
+export function settles(m: { expiryMs?: number }): string {
+  return m.expiryMs
+    ? new Date(m.expiryMs).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
+    : "-";
+}
+
 export function kickoff(m: { startMs?: number; expiryMs?: number }): string {
   if (m.startMs) return m.startMs > Date.now() ? until(m.startMs) : "live";
   return m.expiryMs ? until(m.expiryMs) : "-";
