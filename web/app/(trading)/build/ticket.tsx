@@ -557,7 +557,7 @@ export function Ticket({
             </>
           )}
           {cta.kind === "pay" && (
-            <div className="mt-4 grid grid-cols-2 gap-2">
+            <div className="mt-4 flex flex-col gap-2">
               <button
                 type="button"
                 disabled={!cta.approve.enabled}

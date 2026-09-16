@@ -176,6 +176,8 @@ async function main(): Promise<void> {
   // Quotes stay disabled until existing on-chain exposure is loaded.
   await poker.seed();
   seeded = true;
+  // Prime /limits.bankroll so the app shows it before the first quote.
+  await deps.readAllowance().catch((err) => console.error(new Date().toISOString(), "boot readAllowance failed", err));
 
   // ponytail: disabling polling weakens exposure caps; keep it enabled for a funded writer.
   if (cfg.pokerIntervalMs > 0) {
