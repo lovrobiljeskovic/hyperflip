@@ -92,7 +92,7 @@ export async function mintTicket({ client, write, usdc, quote, sig, input, curre
     sig = result.sig;
     premium = BigInt(quote.premium);
   }
-  const args = [{ taker: quote.taker, legs: quote.legs, premium, maxPayout: BigInt(quote.maxPayout), deadline: BigInt(quote.deadline), quoteId: quote.quoteId }, sig] as const;
+  const args = [{ taker: quote.taker, maker: quote.maker, legs: quote.legs, premium, maxPayout: BigInt(quote.maxPayout), deadline: BigInt(quote.deadline), quoteId: quote.quoteId }, sig] as const;
   await client.simulateContract({ address: PARLAY_VAULT, abi: parlayVaultAbi, functionName: "mint", args, account: quote.taker });
   check();
   const hash = await write({ address: PARLAY_VAULT, abi: parlayVaultAbi, functionName: "mint", args, account: quote.taker, chainId: hyperEvmTestnet.id });

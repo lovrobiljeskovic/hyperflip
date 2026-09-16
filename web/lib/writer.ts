@@ -84,6 +84,7 @@ export function groupMarkets(markets: Market[]): BoardEntry[] {
 
 export interface WriterQuote {
   taker: `0x${string}`;
+  maker: `0x${string}`;
   legs: { vault: `0x${string}`; isYes: boolean }[];
   premium: string;
   maxPayout: string;

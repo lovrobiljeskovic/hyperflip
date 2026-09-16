@@ -15,7 +15,7 @@ export const DEPLOY_BLOCK = BigInt(
 export const parlayVaultAbi = parseAbi([
   "error ERC721NonexistentToken(uint256 tokenId)",
   "struct Leg { address vault; bool isYes; }",
-  "struct Quote { address taker; Leg[] legs; uint96 premium; uint96 maxPayout; uint256 deadline; bytes32 quoteId; }",
+  "struct Quote { address taker; address maker; Leg[] legs; uint96 premium; uint96 maxPayout; uint256 deadline; bytes32 quoteId; }",
   "struct Parlay { Leg[] legs; address writer; uint96 premium; uint96 maxPayout; uint8 status; }",
   "function mint(Quote q, bytes sig) returns (uint256)",
   "function claim(uint256 id)",
@@ -26,7 +26,7 @@ export const parlayVaultAbi = parseAbi([
 ]);
 
 export const parlayMintedEvent = parseAbiItem(
-  "event ParlayMinted(uint256 indexed id, address indexed taker, bytes32 quoteId, uint96 premium, uint96 maxPayout)",
+  "event ParlayMinted(uint256 indexed id, address indexed taker, address indexed maker, bytes32 quoteId, uint96 premium, uint96 maxPayout)",
 );
 
 export const outcomeVaultAbi = parseAbi([

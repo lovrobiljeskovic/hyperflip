@@ -7,7 +7,7 @@ const taker = `0x${"1".repeat(40)}` as const;
 const vault = `0x${"2".repeat(40)}` as const;
 const input = { taker, legs: [{ vault, isYes: true }], stake: "1000000", inviteCode: "invite" };
 const result = (): Extract<QuoteResult, { ok: true }> => ({ ok: true, sig: "0x1234", quote: {
-  taker, legs: input.legs, premium: input.stake, maxPayout: "2000000", deadline: String(Math.floor(Date.now() / 1000) + 30), quoteId: `0x${"a".repeat(64)}`,
+  taker, maker: taker, legs: input.legs, premium: input.stake, maxPayout: "2000000", deadline: String(Math.floor(Date.now() / 1000) + 30), quoteId: `0x${"a".repeat(64)}`,
 } });
 beforeEach(() => vi.resetAllMocks());
 
