@@ -8,6 +8,7 @@ export interface QuoteLeg {
 
 export interface ParlayQuote {
   taker: Address;
+  maker: Address;
   legs: QuoteLeg[];
   premium: bigint;
   maxPayout: bigint;
@@ -15,11 +16,11 @@ export interface ParlayQuote {
   quoteId: Hex;
 }
 
-/** Must match ParlayVault QUOTE_TYPEHASH / LEG_TYPEHASH exactly — verified by the
- * forge parity vector in writer/test/quotes.test.ts. */
+/** Must match ParlayVault QUOTE_TYPEHASH / LEG_TYPEHASH exactly (multi-maker spec §2.2) — verified by the forge parity vector in writer/test/quotes.test.ts. */
 export const quoteTypes = {
   Quote: [
     { name: "taker", type: "address" },
+    { name: "maker", type: "address" },
     { name: "legs", type: "Leg[]" },
     { name: "premium", type: "uint96" },
     { name: "maxPayout", type: "uint96" },
@@ -33,7 +34,7 @@ export const quoteTypes = {
 } as const;
 
 export function quoteDomain(chainId: number, verifyingContract: Address) {
-  return { name: "ParlayVault", version: "1", chainId, verifyingContract } as const;
+  return { name: "ParlayVault", version: "2", chainId, verifyingContract } as const;
 }
 
 export function quoteDigest(chainId: number, vault: Address, q: ParlayQuote): Hex {

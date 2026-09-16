@@ -225,7 +225,7 @@ test("journal: records the returned quote identity and economics before returnin
   } as Partial<QuoteDeps>);
   const r = await handleQuote(d, goodBody);
   assert.equal(r.status, 200);
-  const response = r.json as { quote: { quoteId: Hex; premium: string; maxPayout: string; deadline: string; legs: { vault: Address; isYes: boolean }[] } };
+  const response = r.json as { quote: { quoteId: Hex; maker: Address; premium: string; maxPayout: string; deadline: string; legs: { vault: Address; isYes: boolean }[] } };
   assert.deepEqual(recorded && {
     quoteId: (recorded as { quoteId: string }).quoteId,
     premium: (recorded as { premium: string }).premium,
@@ -244,6 +244,7 @@ test("journal: records the returned quote identity and economics before returnin
     (recorded as { quoteDigest: string }).quoteDigest,
     quoteDigest(d.chainId, d.cfg.parlayVault, {
       taker: TAKER,
+      maker: d.cfg.writerAddress,
       legs: response.quote.legs,
       premium: BigInt(response.quote.premium),
       maxPayout: BigInt(response.quote.maxPayout),

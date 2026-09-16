@@ -205,6 +205,7 @@ export async function handleQuote(
 
   const quote: ParlayQuote = {
     taker: v.taker,
+    maker: cfg.writerAddress,
     legs: v.legs,
     premium: priced.premium,
     maxPayout: priced.maxPayout,
@@ -256,6 +257,7 @@ export async function handleQuote(
     json: {
       quote: {
         taker: quote.taker,
+        maker: quote.maker,
         legs: quote.legs,
         premium: quote.premium.toString(),
         maxPayout: quote.maxPayout.toString(),

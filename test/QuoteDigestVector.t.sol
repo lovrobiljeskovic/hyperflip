@@ -10,12 +10,13 @@ import {ParlayVault} from "../src/ParlayVault.sol";
 /// the vault address and digest are stable across runs.
 contract QuoteDigestVectorTest is Test {
     function test_quoteDigestVector() public {
-        ParlayVault v = new ParlayVault(IERC20(address(0xDEAD)), address(0xBEEF), address(0xCAFE), 100);
+        ParlayVault v = new ParlayVault(IERC20(address(0xDEAD)), 100);
         ParlayVault.Leg[] memory legs = new ParlayVault.Leg[](2);
         legs[0] = ParlayVault.Leg(0x1111111111111111111111111111111111111111, true);
         legs[1] = ParlayVault.Leg(0x2222222222222222222222222222222222222222, false);
         ParlayVault.Quote memory q = ParlayVault.Quote({
             taker: 0x3333333333333333333333333333333333333333,
+            maker: 0x4444444444444444444444444444444444444444,
             legs: legs,
             premium: 5_000_000,
             maxPayout: 20_000_000,
@@ -28,6 +29,6 @@ contract QuoteDigestVectorTest is Test {
         // Locks the digest against contract-side EIP-712 drift; must match FORGE_DIGEST
         // in writer/test/quotes.test.ts. If this fails after an intentional struct/domain
         // change, regenerate both from the logged bytes32 above.
-        assertEq(v.quoteDigest(q), bytes32(0x538daa513e74bc97f666f097c513700d7f35eec2c77c18e1da82259be34e07e8));
+        assertEq(v.quoteDigest(q), bytes32(0x75da3f48720b6272b4035291cc36a8e145399cfa0a108555a706d2212f016531));
     }
 }
