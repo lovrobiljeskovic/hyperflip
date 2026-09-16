@@ -6,7 +6,7 @@ import { appHref } from "@/lib/site";
 import { compareMarketVolume, fetchMarketBoard, isPriced, marketMid, onlySports, sideLabel, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
-import { formatVolume, kickoff, oddsLabel, pct1 } from "@/lib/format";
+import { oddsLabel, pct1, settles } from "@/lib/format";
 
 /* One registry fetch shared by the hero slip, the stat line, and the board.
    ponytail: module-level promise cache, cleared on failure so a client-side
@@ -124,25 +124,17 @@ function BoardRow({ market, mids }: { market: Market; mids: Record<string, strin
           : "";
   return (
     <div
-      className={`grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-2 px-5 py-[15px] sm:grid-cols-[1fr_110px_110px_100px_120px] ${lead}`}
+      className={`grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-2 px-5 py-[15px] sm:grid-cols-[1fr_110px_110px_130px] ${lead}`}
     >
       <div className="col-span-2 sm:col-span-1">
         <p className="text-[12px] leading-snug">{market.title}</p>
-        <p className="mono mt-1 text-[10px] uppercase tracking-[0.14em] text-dim">
-          {marketContext(market)}
-          <span className="sm:hidden">
-            {" · "}
-            {formatVolume(market.volume24h)}
-          </span>
-        </p>
+        <p className="mono mt-1 text-[10px] uppercase tracking-[0.14em] text-dim">{marketContext(market)}</p>
       </div>
       <OddsCell side="YES" mid={yes} />
       <OddsCell side="NO" mid={no} />
-      <div className="mono hidden text-right text-[11px] text-dim sm:block">
-        {formatVolume(market.volume24h)}
-      </div>
       <div className="mono col-span-2 text-right text-[11px] text-dim sm:col-span-1">
-        {kickoff(market)}
+        <span className="sm:hidden">Settles </span>
+        {settles(market)}
       </div>
     </div>
   );
@@ -227,12 +219,11 @@ export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
 
   return (
     <Slab>
-      <div className="mono hidden grid-cols-[1fr_110px_110px_100px_120px] gap-x-4 border-b border-line px-5 py-3 text-[9px] uppercase tracking-[0.14em] text-dim sm:grid">
+      <div className="mono hidden grid-cols-[1fr_110px_110px_130px] gap-x-4 border-b border-line px-5 py-3 text-[9px] uppercase tracking-[0.14em] text-dim sm:grid">
         <span>Market</span>
         <span className="text-right">Yes</span>
         <span className="text-right">No</span>
-        <span className="text-right">24h vol</span>
-        <span className="text-right">Kickoff</span>
+        <span className="text-right">Settles</span>
       </div>
       <div className="flex flex-col divide-y divide-line">
         {priced.map((m) => (
@@ -245,7 +236,7 @@ export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
           prefetch={false}
           className="mono block border-t border-line px-5 py-3 text-center text-[10px] uppercase tracking-[0.14em] text-dim transition-colors hover:bg-raised hover:text-fg"
         >
-          All {pricedAll.length} markets in the app
+          See all {pricedAll.length} markets
         </Link>
       )}
     </Slab>
@@ -339,8 +330,16 @@ export function HeroSlip({ board }: { board: BoardSnapshot }) {
   const printing = usePrinting();
 
   // Only priced markets qualify: a half-priced slip has no honest combined
-  // implied, so an unpriced leg is skipped rather than assumed certain.
+  // implied, so an unpriced leg is skipped rather than assumed certain. One leg
+  // per question: two sides of the same futures market can never both win.
+  const seenGroup = new Set<string>();
   const liveLegs: SlipLeg[] = (state.status === "live" ? state.markets : [])
+    .filter((m) => {
+      const g = m.groupTitle ?? m.vault;
+      if (seenGroup.has(g)) return false;
+      seenGroup.add(g);
+      return true;
+    })
     .map((m) => ({
       side: "YES" as const,
       label: sideLabel(m, true),
@@ -362,7 +361,7 @@ export function HeroSlip({ board }: { board: BoardSnapshot }) {
         <div className="ticket-shell px-6 py-7 sm:px-7 sm:py-8">
           <Line i={0}>
             <div className="mono flex items-baseline justify-between text-[9px] uppercase tracking-[0.14em] text-dim">
-              <span>{live ? "Live combination" : "Example combination"}</span>
+              <span>{live ? "Live combo" : "Example combo"}</span>
               <span>{legs.length} legs</span>
             </div>
           </Line>
@@ -376,9 +375,13 @@ export function HeroSlip({ board }: { board: BoardSnapshot }) {
               <li key={i}>
                 <Line i={2 + i}>
                   <div className="flex items-baseline justify-between gap-3 text-[12px]">
+                    {/* The side label already names the outcome, so a leg whose
+                        title is that same name shows its question instead. */}
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate leading-snug">{leg.title}</span>
-                      <span className="mono block truncate text-[9px] uppercase tracking-[0.12em] text-dim">{leg.context}</span>
+                      <span className="block truncate leading-snug">{leg.title === leg.label ? leg.context : leg.title}</span>
+                      {leg.title !== leg.label && (
+                        <span className="mono block truncate text-[9px] uppercase tracking-[0.12em] text-dim">{leg.context}</span>
+                      )}
                     </span>
                     <span className={`mono shrink-0 uppercase ${leg.side === "YES" ? "text-yes" : "text-no"}`}>
                       {leg.label} {leg.prob === null ? "-" : pct1(leg.prob)}
@@ -395,14 +398,14 @@ export function HeroSlip({ board }: { board: BoardSnapshot }) {
 
           <Line i={3 + legs.length}>
             <div className="mt-3 flex items-end justify-between">
-              <span className="mono text-[9px] uppercase tracking-[0.14em] text-dim">Combined fair odds</span>
+              <span className="mono text-[9px] uppercase tracking-[0.14em] text-dim">Multiplier</span>
               <span className="mono text-[28px] leading-none text-accent">{`${fair.toFixed(2)}×`}</span>
             </div>
           </Line>
 
           <Line i={4 + legs.length}>
             <p className="mono mt-5 border-t border-line pt-4 text-[9px] leading-relaxed text-dim">
-              {live ? "Market odds" : "Illustrative market odds"} before Hyperflip’s margin. Open the app to request a signed quote.
+              {live ? "Fair value" : "Illustrative fair value"} before fees. Open the app to request a signed quote.
             </p>
           </Line>
         </div>

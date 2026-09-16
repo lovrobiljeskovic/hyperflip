@@ -26,28 +26,28 @@ const martian = Martian_Mono({
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "Hyperflip | Stack outcomes on HyperCore",
+    default: "Hyperflip | Stack HIP-4 Markets. Multiply the Payout.",
     template: "%s | Hyperflip",
   },
   description:
-    "Hyperflip combines live HyperCore outcome markets into one on-chain slip with a signed price and locked payout.",
+    "Bundle Hyperliquid outcome markets into one combo. Each one you add multiplies what you can win. Lock in your payout upfront, then hit them all to collect.",
   applicationName: "Hyperflip",
-  keywords: ["Hyperflip", "HyperCore", "Hyperliquid", "HIP-4", "outcome markets", "parlay", "on-chain slip"],
+  keywords: ["Hyperflip", "HyperCore", "Hyperliquid", "HIP-4", "outcome markets", "parlay", "combo"],
   alternates: { canonical: "/" },
   verification: { google: "BPoq5CSIGwE3lTC0OKiPgVtX47UZu6ZoT7SgYAxiWd0" },
   openGraph: {
     siteName: "Hyperflip",
     url: "/",
-    title: "Hyperflip | Stack outcomes on HyperCore",
-    description: "Two to ten live outcomes. One on-chain slip. One locked payout.",
+    title: "Hyperflip | Stack HIP-4 Markets. Multiply the Payout.",
+    description: "Bundle Hyperliquid outcome markets into one combo. Each one you add multiplies what you can win. Lock in your payout upfront, then hit them all to collect.",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
     site: "@hyperflip_xyz",
     creator: "@hyperflip_xyz",
-    title: "Hyperflip | Stack outcomes on HyperCore",
-    description: "Two to ten live outcomes. One on-chain slip. One locked payout.",
+    title: "Hyperflip | Stack HIP-4 Markets. Multiply the Payout.",
+    description: "Bundle Hyperliquid outcome markets into one combo. Each one you add multiplies what you can win. Lock in your payout upfront, then hit them all to collect.",
   },
 };
 
@@ -76,7 +76,7 @@ const jsonLd = {
       url: appCanonical(),
       applicationCategory: "FinanceApplication",
       operatingSystem: "Web",
-      description: "Combine live HyperCore outcome markets into one on-chain slip with a signed price and locked payout.",
+      description: "Bundle Hyperliquid outcome markets into one combo. Each one you add multiplies what you can win. Lock in your payout upfront, then hit them all to collect.",
     },
   ],
 };
