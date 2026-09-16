@@ -122,3 +122,56 @@ designed. Neither → Stage 3-alt, re-plan S9 onward.
 | action 9 / 12 | `encodeAddApiWallet` / `encodeApproveBuilderFee` tags |
 | settlement credit delay / pruning | `docs/mainnet-hardening-facts.md` precompile section |
 | fees, halts | `FINDINGS-hedge.md` only (inputs to the S9 margin-vault spec) |
+
+## S2b runbook — items 4 and 6 (after 2026-09-16 run, see FINDINGS-hedge.md)
+
+State left on testnet: probe `0x614992bbbe2BA4a35DC625b29FC66dCbCfe9FA6E` holds 10 YES +
+10 NO + 9 USDC on outcome **19467** (DET@BUF, kickoff 2026-09-18 00:15 UTC, box `rotate`
+settles from the ESPN final on the next hourly run, ~04:00 UTC). EOA
+`0x171070FE2E9f5bB1738Ecf6979C24057EBe1576D` holds ~21 USDC Core spot. Encoded ids YES
+`100194670` / NO `100194671`; API coin `#194670`. `readHold` in `Spike.s.sol` does not
+work (forge simulation has no precompiles): read with `cast call` as in `poll-settle.sh`.
+
+### Item 6 — kickoff halt (2026-09-18 00:10 → ~00:25 UTC, user present)
+
+Once a minute from T−5 min, from the EOA (`source .env`):
+```bash
+# 1-share YES bid at 0.01: no ask sits there, so it cannot fill
+uv run tools/hip4.py '{"type":"order","orders":[{"a":100194670,"b":true,"p":"0.01","s":"1","r":false,"t":{"limit":{"tif":"Gtc"}}}],"grouping":"na"}'
+# cancel it by the oid the response printed
+uv run tools/hip4.py '{"type":"cancel","cancels":[{"a":100194670,"o":<OID>}]}'
+# EOA token 0 hold must be back to 0 (1e6 while resting)
+cast call 0x0000000000000000000000000000000000000801 $(cast abi-encode "f(address,uint64)" 0x171070FE2E9f5bB1738Ecf6979C24057EBe1576D 0) --rpc-url https://rpcs.chain.link/hyperevm/testnet | xargs cast abi-decode "f()(uint64,uint64,uint64)"
+```
+Record per minute: accepted / first rejection and its exact error string, whether a resting
+order survives the lock (cancel still works?), any stuck hold. Also note `0x80e` bbo for
+`100194670` before and after the lock. Verdict = is there a trading window in-play at all
+(decides staggered-resolution hedging in the S9 spec).
+
+### Item 4 — hold through settlement (start the poller before the game ends, ~03:00 UTC)
+
+```bash
+nohup script/spike/poll-settle.sh > script/spike/settle-19467.log 2>&1 &
+```
+The log gives, per minute: 0x814 `status settledValue question` and probe 0x801
+`total/hold/entryNtl` for USDC, YES, NO. Read off:
+1. time status 1 → 2, and `settledValue` (1e8 = YES won);
+2. time probe token 0 goes `900000000` → `1900000000` (the winning side pays 1.0 × 10
+   shares; the losing 10 shares are worthless) — delay from status 2 = auto-credit delay;
+3. time status 2 → 3, whether the outcome-token reads REVERT after 3, and whether the
+   token 0 balance survives (it must).
+Then sweep back and refund the EVM bank (fees taken out of the spike's 40 USDC):
+```bash
+S="forge script script/spike/Spike.s.sol --tc Spike --rpc-url https://rpcs.chain.link/hyperevm/testnet"
+$S --private-key $PRIVATE_KEY --broadcast --sig "spotSendVia(address,address,uint64,uint64)" \
+   0x614992bbbe2BA4a35DC625b29FC66dCbCfe9FA6E 0x171070FE2E9f5bB1738Ecf6979C24057EBe1576D 0 1900000000
+PRIVATE_KEY=$PRIVATE_KEY uv run tools/core-to-evm.py 39     # EOA Core spot → EVM, adjust to balance
+```
+
+### Close-out
+- Fill the item 4 and item 6 rows in `FINDINGS-hedge.md` (replace the PENDING rows, drop
+  the "Pending" section), commit `settle-19467.log` next to it.
+- `docs/mainnet-hardening-facts.md` precompile section: settlement auto-credit delay and
+  what 0x801 does for outcome ids after status 3.
+- No `CoreConstants` tag changes expected (item 4/6 are semantics, not encodings).
+- Tracker: S2b → DONE with one-line finding.
