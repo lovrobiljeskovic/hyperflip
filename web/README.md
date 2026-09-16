@@ -24,5 +24,6 @@ origin. They are never transferred through URLs.
 `/pricing` reads the writer's current fees. Announce fee changes in the app before
 they take effect. New fees apply to new quotes; minted tickets retain their terms.
 
-Only public configuration belongs in `NEXT_PUBLIC_*` variables. An empty Privy
-app ID uses the wallet-connector fallback. Fonts are fetched during the build.
+Only public configuration belongs in `NEXT_PUBLIC_*` variables. Set a Privy app
+ID with your local origin allowed to connect wallets. An empty ID only supports
+viewing the app and reading chain state. Fonts are fetched during the build.

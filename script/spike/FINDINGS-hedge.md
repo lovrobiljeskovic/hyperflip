@@ -61,7 +61,42 @@ fully on-chain path (action 1 + cloid cancel) are both available.
 - `forge script` read steps against precompiles must go through `cast call`/a deployed
   reader, never the local simulation.
 
-## Pending (row S2b, after DET@BUF settles)
+## Documentation review — 2026-09-16
+
+S2b confirms our integration and measures timing; automatic settlement itself is
+already documented. These are distinct from the verified on-chain observations above:
+
+- [HIP-4 mechanics](https://hyperliquid.gitbook.io/hyperliquid-docs/hyperliquid-improvement-proposals-hips/hip-4-outcome-markets)
+  specify automatic conversion: YES pays `f` quote tokens per share, NO pays
+  `1-f`. With 10 of each, the expected gross credit is 10 USDC even for a
+  fractional result. No additional probe trades are needed for item 4.
+- [Read precompiles](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/hyperevm/interacting-with-hypercore)
+  reflect Core state when the EVM block is constructed. Item 4 still needs our
+  actual balance/status observations, credit timing, and post-pruning behavior.
+- [Deployer actions](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/hip-4-deployer-actions)
+  require settlement consistent with the market metadata. The testnet
+  `outcomeTemplates` response reviewed this session requires a real single
+  scheduled sports contest for `sportsContestWinner` (template 7). A fabricated
+  sports fixture is not a suitable shortcut to early settlement.
+- No generic kickoff trading halt was found in the reviewed documentation or
+  sports template. Item 6 must record acceptance/cancellation or rejection;
+  it must not assume a halt will occur. Code review clarification: `writer/src/index.ts`
+  disables house priors at `startMs` but permits book/spot-price fallback;
+  `writer/src/maker.ts` applies its lockout against `expiryMs`. Neither establishes
+  a blanket kickoff halt on Core. One fixture's result is not a universal guarantee
+  of future hedge availability or liquidity.
+
+User also reported seeing tradable live games on OutcomeXYZ on September 16.
+This supports in-play availability; no post-kickoff fill receipt was inspected
+for that report. S2b need not rediscover a presumed universal kickoff halt: focus
+on order/cancel behavior for our fixture and settlement credit/pruning.
+
+The template source is the testnet info API:
+`POST https://api.hyperliquid-testnet.xyz/info` with `{"type":"outcomeTemplates"}`.
+Recheck the template and active market metadata before any future deployment.
+No new market was deployed for this review. G0 remains passed; S2b remains pending.
+
+## Pending (row S2b, kickoff observation and later settlement)
 
 Item 4 readings for `0x614992bb…FA6E` on 19467, item 6 halt observation, then patch
 `docs/mainnet-hardening-facts.md` (settlement credit delay / pruning) and close this file.

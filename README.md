@@ -51,7 +51,8 @@ npm run dev --prefix web
 ```
 
 Open `http://localhost:3000`. `/build`, `/positions`, and `/pricing` are the trading
-routes. An empty Privy app ID uses the existing wallet-connector fallback.
+routes. Set `NEXT_PUBLIC_PRIVY_APP_ID` for wallet connection; an empty ID only
+supports viewing the app and reading chain state.
 The frontend can render without a writer; markets and quotes require a reachable
 writer. Wallet actions require testnet funds and a valid invite code.
 

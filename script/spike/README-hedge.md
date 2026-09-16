@@ -1,5 +1,10 @@
 # Hedge spike (Stage 0) — run order
 
+**Resume note (2026-09-16):** Setup and G0 are complete. The initial items below
+record the exploratory procedure; consult `FINDINGS-hedge.md` for corrected,
+verified behavior (including BBO support and direct RPC precompile reads).
+For pending work, use the S2b section and its documentation-review link.
+
 Question: can a **contract's** Core account trade an outcome book? Roadmap
 `2026-09-15-bedlam-parlays-hip4-roadmap.md` §4 Stage 0 + §13.3. Testnet only.
 Item 7 (mainnet depth probe) is dropped — no mainnet work.
@@ -125,6 +130,12 @@ designed. Neither → Stage 3-alt, re-plan S9 onward.
 
 ## S2b runbook — items 4 and 6 (after 2026-09-16 run, see FINDINGS-hedge.md)
 
+Read the [documentation review](FINDINGS-hedge.md#documentation-review--2026-09-16)
+first: automatic conversion is documented; settlement timing/pruning and trading
+availability on this fixture still need observations. Kickoff does not imply a
+documented protocol halt. The times below are the recorded schedule, not a fresh
+schedule check or a guarantee of settlement time; recheck before resuming.
+
 State left on testnet: probe `0x614992bbbe2BA4a35DC625b29FC66dCbCfe9FA6E` holds 10 YES +
 10 NO + 9 USDC on outcome **19467** (DET@BUF, kickoff 2026-09-18 00:15 UTC, box `rotate`
 settles from the ESPN final on the next hourly run, ~04:00 UTC). EOA
@@ -132,21 +143,22 @@ settles from the ESPN final on the next hourly run, ~04:00 UTC). EOA
 `100194670` / NO `100194671`; API coin `#194670`. `readHold` in `Spike.s.sol` does not
 work (forge simulation has no precompiles): read with `cast call` as in `poll-settle.sh`.
 
-### Item 6 — kickoff halt (2026-09-18 00:10 → ~00:25 UTC, user present)
+### Item 6 — trading around kickoff (2026-09-18 00:10 → ~00:25 UTC, user present)
 
 Once a minute from T−5 min, from the EOA (`source .env`):
 ```bash
-# 1-share YES bid at 0.01: no ask sits there, so it cannot fill
+# 1-share YES bid at 0.01: can fill if a matching order arrives; inspect the response
 uv run tools/hip4.py '{"type":"order","orders":[{"a":100194670,"b":true,"p":"0.01","s":"1","r":false,"t":{"limit":{"tif":"Gtc"}}}],"grouping":"na"}'
 # cancel it by the oid the response printed
 uv run tools/hip4.py '{"type":"cancel","cancels":[{"a":100194670,"o":<OID>}]}'
 # EOA token 0 hold must be back to 0 (1e6 while resting)
 cast call 0x0000000000000000000000000000000000000801 $(cast abi-encode "f(address,uint64)" 0x171070FE2E9f5bB1738Ecf6979C24057EBe1576D 0) --rpc-url https://rpcs.chain.link/hyperevm/testnet | xargs cast abi-decode "f()(uint64,uint64,uint64)"
 ```
-Record per minute: accepted / first rejection and its exact error string, whether a resting
-order survives the lock (cancel still works?), any stuck hold. Also note `0x80e` bbo for
-`100194670` before and after the lock. Verdict = is there a trading window in-play at all
-(decides staggered-resolution hedging in the S9 spec).
+Record per minute: acceptance or rejection and its exact error string, fills,
+cancellation success, and any remaining hold. Also note `0x80e` bbo for `100194670`
+before and after kickoff. If a halt occurs, record when and whether cancellation
+still works. If none occurs, record that observation without extrapolating it to
+every market. This informs the S9 hedge policy; liquidity remains a separate constraint.
 
 ### Item 4 — hold through settlement (start the poller before the game ends, ~03:00 UTC)
 
@@ -156,8 +168,8 @@ nohup script/spike/poll-settle.sh > script/spike/settle-19467.log 2>&1 &
 The log gives, per minute: 0x814 `status settledValue question` and probe 0x801
 `total/hold/entryNtl` for USDC, YES, NO. Read off:
 1. time status 1 → 2, and `settledValue` (1e8 = YES won);
-2. time probe token 0 goes `900000000` → `1900000000` (the winning side pays 1.0 × 10
-   shares; the losing 10 shares are worthless) — delay from status 2 = auto-credit delay;
+2. time probe token 0 goes `900000000` → `1900000000` (10 YES + 10 NO pay 10 USDC
+   in total, including a fractional result) — delay from status 2 = auto-credit delay;
 3. time status 2 → 3, whether the outcome-token reads REVERT after 3, and whether the
    token 0 balance survives (it must).
 Then sweep back and refund the EVM bank (fees taken out of the spike's 40 USDC):
