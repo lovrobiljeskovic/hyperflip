@@ -18,7 +18,11 @@ const json = async (url, init) => {
 };
 
 const health = (await json(`${WRITER}/health`)).body;
-if (!health.ok || !health.seeded) fail(`health ${JSON.stringify(health).slice(0, 200)}`);
+// Relay health: { ok, makers: [{ maker, ok, seeded, openParlays, bankroll }] }.
+const makers = Array.isArray(health.makers) ? health.makers : [];
+const makersUp = makers.filter((m) => m.ok && m.seeded);
+if (!health.ok || makersUp.length === 0) fail(`health ${JSON.stringify(health).slice(0, 200)}`);
+const house = makers[0] ?? {};
 
 const m = (await json(`${WRITER}/markets`)).body;
 const markets = Array.isArray(m) ? m : m.markets;
@@ -52,4 +56,4 @@ if (CODE) {
   if (!quote) fail(`no quote: last ${last}`);
 }
 
-console.log(`SMOKE OK: live ${live.length}/${markets.length}, priced ${priced.length}, open ${health.openParlays}, bankroll ${health.bankroll ?? "n/a"}, reserved ${health.reservedGlobal}, quote ${quote}`);
+console.log(`SMOKE OK: live ${live.length}/${markets.length}, priced ${priced.length}, makers ${makersUp.length}/${makers.length}, open ${house.openParlays ?? "n/a"}, bankroll ${house.bankroll ?? "n/a"}, quote ${quote}`);

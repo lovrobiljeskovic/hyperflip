@@ -163,6 +163,36 @@ WantedBy=multi-user.target
 The writer unit uses `/opt/hype/writer`. Local supervision is available through
 `bash tools/supervise.sh keeper` and `bash tools/supervise.sh writer`.
 
+### Relay + makers (v2, sketch until S8)
+
+Against the v2 `ParlayVault` the writer package runs as two kinds of process from
+the same `/opt/hype/writer` checkout: one public **relay** (`npm run start:relay`)
+and one **maker** per house key (`npm start`). The relay validates intent, fans
+`POST /rfq` out to every maker, verifies each signature against `signerOf(maker)`
+on-chain, picks the highest `maxPayout`, journals every answer to `rfq.jsonl` and
+answers `/quote`. Makers bind `127.0.0.1` only.
+
+| Var | Process | Note |
+|---|---|---|
+| `WRITER_PORT` | relay | stays `8787`; Caddy and the box `.env` line are untouched |
+| `RELAY_MAKERS` | relay | `0xmakerA=http://127.0.0.1:8791,0xmakerB=http://127.0.0.1:8792` |
+| `MAKER_TOKEN` | both | shared bearer on `/rfq`; required at boot by both |
+| `RFQ_WINDOW_MS`, `RFQ_MIN_TTL_MS`, `RFQ_JOURNAL_FILE` | relay | defaults `1500`, `8000`, `writer/rfq.jsonl` |
+| `INVITE_CODES`, `CORS_ORIGINS`, `RESEND_API_KEY`, `WAITLIST_FILE` | relay | moved out of the maker |
+| `MAKER_PORT` | maker | `8791`, `8792`, … one per instance |
+| `WRITER_ADDRESS`, `QUOTE_SIGNER_PRIVATE_KEY`, `POKER_PRIVATE_KEY`, `QUOTE_JOURNAL_FILE`, `PARLAY_INDEX_FILE` | maker | per instance; `QUOTE_TTL_MS=15000` |
+| `MAX_STAKE`, `MIN_LEGS`, `LOCKOUT_MS` | both | relay validates intent, maker re-validates |
+
+Units: `relay.service` (`ExecStart=/usr/bin/npm run start:relay`,
+`EnvironmentFile=/opt/hype/.env`) and a `maker@.service` template
+(`ExecStart=/usr/bin/npm start`, `EnvironmentFile=/opt/hype/maker-%i.env`,
+each instance file carrying its own `MAKER_PORT`, keys, journal and index
+paths). Boot makers first: the relay reads `signerOf` for every entry in
+`RELAY_MAKERS` and refuses to start on a zero address. Verify with
+`ss -ltnp` that 8791/8792 bind `127.0.0.1`. In S8 `rotate.service`'s
+`systemctl restart writer keeper`, `alert-relay.sh`'s `-u writer` and the
+`tools/supervise.sh` allowlist become `relay maker@a maker@b`.
+
 Place a TLS proxy in front of writer port 8787 and keep that port closed to the
 public network. Example Caddy configuration, with your writer domain:
 
