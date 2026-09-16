@@ -300,3 +300,41 @@ test("index: persists taker refs, serves them newest first, and resumes from the
   await second.tick();
   assert.deepEqual(requestedFrom, [100n, 501n]); // resumed after the checkpoint (min with head+1)
 });
+
+test("maker filter: index sees every maker's mints, exposure/open only our own", async () => {
+  const A = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as Address;
+  const B = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as Address;
+  const exposure = new ExposureBook();
+  const deps: PokerDeps = {
+    publicClient: null as unknown as PokerDeps["publicClient"],
+    parlayVault: VAULT,
+    exposure,
+    metrics: newMetrics(),
+    fromBlock: 0n,
+    maker: A,
+    resolve: async () => {},
+    log: () => {},
+    fetchOpenParlays: async () => ({
+      open: [{ id: 7n, legs: [{ vault: V1, isYes: true }], risk: 50n, writer: B }],
+      headBlock: 100n,
+    }),
+    fetchEvents: async () => ({
+      minted: [
+        { id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n, taker: T, maker: A.toUpperCase() as Address, block: 5n }, // case-insensitive match
+        { id: 2n, quoteId: "0xq2", premium: 1n, maxPayout: 9n, taker: T, maker: B, block: 6n },
+      ],
+      resolvedIds: [],
+      toBlock: 110n,
+    }),
+    fetchLegs: async () => [{ vault: V1, isYes: true }],
+    fetchLegStates: async () => new Map(),
+  };
+  const poker = new Poker(deps);
+  await poker.seed();
+  assert.equal(poker.openCount(), 0); // B's open parlay is B's risk, not ours
+
+  await poker.tick();
+  assert.deepEqual(poker.parlaysOf(T), [{ id: 2n, block: 6n }, { id: 1n, block: 5n }]); // positions page: all makers
+  assert.equal(poker.openCount(), 1);
+  assert.equal(exposure.perMarket(V1, 0), 3n); // only id 1's risk (4-1); id 2's 8 is B's
+});

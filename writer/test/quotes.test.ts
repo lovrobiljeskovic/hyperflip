@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { quoteDigest, type ParlayQuote } from "../src/quotes.js";
+import { privateKeyToAccount } from "viem/accounts";
+import { quoteDigest, recoverQuoteSigner, signQuote, type ParlayQuote } from "../src/quotes.js";
 
 // Vector (v2 domain) from test/QuoteDigestVector.t.sol (forge test --match-test test_quoteDigestVector -vv).
 const VAULT = "0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f" as const;
@@ -21,4 +22,12 @@ const q: ParlayQuote = {
 
 test("EIP-712 digest matches ParlayVault.quoteDigest forge vector", () => {
   assert.equal(quoteDigest(31337, VAULT, q), FORGE_DIGEST);
+});
+
+test("recoverQuoteSigner: round-trips signQuote and rejects a tampered quote", async () => {
+  const key = `0x${"11".repeat(32)}` as const;
+  const sig = await signQuote(key, 31337, VAULT, q);
+  assert.equal(await recoverQuoteSigner(31337, VAULT, q, sig), privateKeyToAccount(key).address);
+  const tampered = { ...q, quoteId: `0x${(43n).toString(16).padStart(64, "0")}` as const };
+  assert.notEqual(await recoverQuoteSigner(31337, VAULT, tampered, sig), privateKeyToAccount(key).address);
 });

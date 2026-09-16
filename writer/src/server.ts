@@ -224,6 +224,8 @@ export async function handleQuote(
     schemaVersion: 1,
     recordedAtMs: deps.now(),
     quoteId,
+    maker: quote.maker,
+    rfqId: "", // no RFQ flow yet — Task 2 threads the relay's id through
     quoteDigest: quoteDigest(deps.chainId, cfg.parlayVault, quote),
     chainId: deps.chainId,
     parlayVault: cfg.parlayVault,

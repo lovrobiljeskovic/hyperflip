@@ -1,4 +1,4 @@
-import { hashTypedData, type Address, type Hex } from "viem";
+import { hashTypedData, recoverTypedDataAddress, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 export interface QuoteLeg {
@@ -61,10 +61,19 @@ export async function signQuote(
   });
 }
 
+/** Relay-side check that a maker's returned signature really is theirs before it
+ * is forwarded to the taker — a bad sig would only surface as a revert at mint. */
+export async function recoverQuoteSigner(chainId: number, vault: Address, q: ParlayQuote, sig: Hex): Promise<Address> {
+  return recoverTypedDataAddress({ domain: quoteDomain(chainId, vault), types: quoteTypes, primaryType: "Quote", message: q, signature: sig });
+}
+
 export interface QuoteRecord {
+  // maker + rfqId are additive (schemaVersion stays 1; the journal only gates on >= 1).
   schemaVersion: 1;
   recordedAtMs: number;
   quoteId: Hex;
+  maker: Address;
+  rfqId: string;
   quoteDigest: Hex;
   chainId: number;
   parlayVault: Address;

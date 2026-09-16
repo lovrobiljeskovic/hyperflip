@@ -13,6 +13,8 @@ interface MintedEvent {
   premium: bigint;
   maxPayout: bigint;
   taker: Address;
+  /** Absent on legacy (v1) logs and in older test fakes. */
+  maker?: Address;
   block: bigint;
 }
 
@@ -34,6 +36,9 @@ export interface PokerDeps {
   /** First block the taker index covers when `indexFile` doesn't exist yet.
    * Unset: index from the head seen at startup. */
   indexFromBlock?: bigint;
+  /** Own maker address. Set: exposure only tracks parlays this key wrote (multi-maker
+   * vault — other makers' risk is theirs). Unset: legacy single-maker, count everything. */
+  maker?: Address;
   /** Sends resolveParlay(id) from the poker key. */
   resolve(id: bigint): Promise<void>;
   log(msg: object): void;
@@ -45,11 +50,11 @@ export interface PokerDeps {
    * straight from chain state, plus the block `nextId` was read at (so the log scan
    * can resume at head instead of deployBlock). Overridable for tests; the default
    * reads `nextId` + `parlay(id)` per id, batched. */
-  fetchOpenParlays?(): Promise<{ open: { id: bigint; legs: QuoteLeg[]; risk: bigint }[]; headBlock: bigint }>;
+  fetchOpenParlays?(): Promise<{ open: { id: bigint; legs: QuoteLeg[]; risk: bigint; writer?: Address }[]; headBlock: bigint }>;
 }
 
 const MINTED = parseAbiItem(
-  "event ParlayMinted(uint256 indexed id, address indexed taker, bytes32 quoteId, uint96 premium, uint96 maxPayout)",
+  "event ParlayMinted(uint256 indexed id, address indexed taker, address indexed maker, bytes32 quoteId, uint96 premium, uint96 maxPayout)",
 );
 const RESOLVED = parseAbiItem("event ParlayResolved(uint256 indexed id, uint8 status)");
 
@@ -102,6 +107,11 @@ export class Poker {
     return out.sort((a, b) => (a.id > b.id ? -1 : a.id < b.id ? 1 : 0));
   }
 
+  /** Undefined on either side = legacy single-maker behaviour (v1 logs, old fakes). */
+  private mine(maker?: Address): boolean {
+    return !this.deps.maker || !maker || maker.toLowerCase() === this.deps.maker.toLowerCase();
+  }
+
   private saveIndex(scannedTo: bigint): void {
     if (!this.deps.indexFile) return;
     const file: ParlayIndexFile = {
@@ -112,7 +122,7 @@ export class Poker {
     catch (err) { this.deps.log({ event: "parlay-index-write-failed", err: String(err) }); }
   }
 
-  private async fetchOpenParlays(): Promise<{ open: { id: bigint; legs: QuoteLeg[]; risk: bigint }[]; headBlock: bigint }> {
+  private async fetchOpenParlays(): Promise<{ open: { id: bigint; legs: QuoteLeg[]; risk: bigint; writer?: Address }[]; headBlock: bigint }> {
     if (this.deps.fetchOpenParlays) return this.deps.fetchOpenParlays();
     const { publicClient, parlayVault } = this.deps;
     // Snapshot head BEFORE reading nextId: nextId read after is guaranteed to reflect
@@ -126,7 +136,7 @@ export class Poker {
       abi: parlayVaultAbi,
       functionName: "nextId",
     })) as bigint;
-    const open: { id: bigint; legs: QuoteLeg[]; risk: bigint }[] = [];
+    const open: { id: bigint; legs: QuoteLeg[]; risk: bigint; writer?: Address }[] = [];
     // ids are 1..nextId inclusive (mint does `id = ++nextId`) and never reused — a
     // won-but-unclaimed or void-but-unresolved parlay can sit at Status.Open forever
     // (claim()/resolveParlay are both permissionless-but-nobody's-job), so nextId
@@ -147,11 +157,11 @@ export class Poker {
               abi: parlayVaultAbi,
               functionName: "parlay",
               args: [id],
-            }) as Promise<{ legs: QuoteLeg[]; premium: bigint; maxPayout: bigint; status: number }>,
+            }) as Promise<{ legs: QuoteLeg[]; writer: Address; premium: bigint; maxPayout: bigint; status: number }>,
         ),
       );
       parlays.forEach((p, i) => {
-        if (p.status === 0) open.push({ id: ids[i], legs: p.legs, risk: p.maxPayout - p.premium });
+        if (p.status === 0 && this.mine(p.writer)) open.push({ id: ids[i], legs: p.legs, risk: p.maxPayout - p.premium, writer: p.writer });
       });
     }
     return { open, headBlock };
@@ -165,6 +175,7 @@ export class Poker {
     const { exposure } = this.deps;
     const { open, headBlock } = await this.fetchOpenParlays();
     for (const p of open) {
+      if (!this.mine(p.writer)) continue; // injected fakes bypass the default's filter
       this.open.set(p.id, p.legs);
       // Reuses onMinted's reservation-delete-then-open-set path; the synthetic
       // quoteId never collides with a real one (those are 32-byte random hex) and a
@@ -201,6 +212,7 @@ export class Poker {
             premium: l.args.premium!,
             maxPayout: l.args.maxPayout!,
             taker: l.args.taker!,
+            maker: l.args.maker!,
             block: l.blockNumber,
           })),
         );
@@ -235,7 +247,10 @@ export class Poker {
     const events = await this.fetchEvents(this.nextBlock);
 
     for (const m of events.minted) {
+      // Index every maker's mints: the relay proxies /parlays to whichever maker it
+      // reaches, so a taker's positions page must not depend on who wrote the ticket.
       this.index.set(m.id, { taker: m.taker, block: m.block });
+      if (!this.mine(m.maker)) continue; // exposure + poking: own quotes only
       const legs = await this.fetchLegs(m.id);
       this.open.set(m.id, legs);
       exposure.onMinted(m.quoteId, m.id.toString(), m.maxPayout - m.premium, legs.map((l) => l.vault));
