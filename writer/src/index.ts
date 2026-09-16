@@ -11,9 +11,8 @@ import { buildPriceFreshness, makeLegPriceFetcher, readSpotPxWad } from "./spotP
 import { Poker } from "./poker.js";
 import { bankrollRoom, isStalled, lowBankrollAlerter, parseDecimalToUnits, stallThresholdMs, WAD } from "./pure.js";
 import { signQuote, type ParlayQuote, type QuoteLeg } from "./quotes.js";
-import { newMetrics, startServer, type QuoteDeps } from "./server.js";
+import { newMetrics, startMaker, type QuoteDeps } from "./maker.js";
 import { readLegStates } from "./settlement.js";
-import { RateLimiter, sendInviteEmail, Waitlist } from "./waitlist.js";
 
 const RECEIPT_TIMEOUT_MS = 60_000;
 
@@ -121,22 +120,13 @@ async function main(): Promise<void> {
     },
     sign: (q: ParlayQuote) => signQuote(cfg.quoteSignerKey, chainId, cfg.parlayVault, q),
     ready: () => seeded,
-    waitlist: new Waitlist(cfg.waitlistFile),
-    sendInvite: cfg.resendApiKey
-      ? (email, code) => sendInviteEmail(cfg.resendApiKey!, email, code)
-      : undefined,
-    signupLimiter: new RateLimiter(5, 60 * 60 * 1000),
-    badInviteLimiter: new RateLimiter(20, 60 * 60 * 1000),
-    quoteLimiter: new RateLimiter(300, 60 * 60 * 1000),
     parlaysOf: (taker) => poker.parlaysOf(taker),
   };
-  if (!cfg.resendApiKey) {
-    console.warn(JSON.stringify({ event: "waitlist-disabled", reason: "RESEND_API_KEY unset" }));
-  }
 
   const poker = new Poker({
     publicClient,
     parlayVault: cfg.parlayVault,
+    maker: cfg.writerAddress,
     exposure,
     metrics,
     fromBlock: cfg.deployBlock,
@@ -154,7 +144,7 @@ async function main(): Promise<void> {
     },
     log: (msg) => console.log(JSON.stringify({ at: new Date().toISOString(), ...msg })),
   });
-  startServer(deps, cfg.port, () => {
+  startMaker(deps, cfg.port, () => {
     const now = Date.now();
     const perMarket: Record<string, string> = {};
     for (const v of cfg.markets.keys()) perMarket[v] = exposure.perMarket(v, now).toString();
@@ -171,7 +161,7 @@ async function main(): Promise<void> {
       perMarket,
     };
   });
-  console.log(JSON.stringify({ at: new Date().toISOString(), event: "writer-listening", port: cfg.port }));
+  console.log(JSON.stringify({ at: new Date().toISOString(), event: "maker-listening", port: cfg.port }));
 
   // Quotes stay disabled until existing on-chain exposure is loaded.
   await poker.seed();

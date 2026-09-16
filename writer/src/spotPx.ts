@@ -36,7 +36,7 @@ export function isSpotPxStale(lastFreshMs: number | undefined, now: number, stal
 /** Per-coin leg pricer: best ask first, falling back to spotPx only while that coin's
  * last confirmed-live timestamp is within `staleMs`. Book fetch failures/empty books
  * don't touch freshness; only a real ask does. Throws when the only price available is
- * spotPx past the staleness window — the caller (server.ts) turns that into the
+ * spotPx past the staleness window — the caller (maker.ts) turns that into the
  * existing `stale-book` 503, same as an empty book with no spotPx source at all. */
 export function makeLegPriceFetcher(opts: {
   fetchBook: (coin: string) => Promise<LegPriceObservation | null>;

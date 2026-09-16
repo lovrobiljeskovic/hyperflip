@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { Address } from "viem";
 import { Poker, type PokerDeps } from "../src/poker.js";
 import { ExposureBook } from "../src/exposure.js";
-import { newMetrics } from "../src/server.js";
+import { newMetrics } from "../src/maker.js";
 import { WAD } from "../src/pure.js";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";

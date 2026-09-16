@@ -2,9 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import type { Address, Hex } from "viem";
-import { handleQuote, sameGameLeg, validateQuoteRequest, newMetrics, startServer, type QuoteDeps } from "../src/server.js";
+import { handleQuote, sameGameLeg, validateIntent, newMetrics, startMaker, type QuoteDeps } from "../src/maker.js";
 import { ExposureBook } from "../src/exposure.js";
-import { RateLimiter } from "../src/waitlist.js";
 import { WAD } from "../src/pure.js";
 import type { WriterConfig } from "../src/config.js";
 import { quoteDigest, type QuoteRecord } from "../src/quotes.js";
@@ -18,7 +17,7 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     chainId: 998, rpcUrl: "", parlayVault: V1, writerAddress: TAKER,
     quoteSignerKey: `0x${"11".repeat(32)}` as `0x${string}`,
     pokerKey: `0x${"22".repeat(32)}` as `0x${string}`,
-    infoApiUrl: "", quoteJournalFile: "/dev/null", port: 0, edgeBps: 0n, minPremiumBps: 100n, minLegs: 2,
+    infoApiUrl: "", quoteJournalFile: "/dev/null", port: 0, makerToken: "t", edgeBps: 0n, minPremiumBps: 100n, minLegs: 2,
     maxStake: 10_000_000n, perMarketCap: 1_000_000_000n, perClusterCap: 1_000_000_000n,
     perCodeReservedCap: 1_000_000_000n,
     legEdgeBps: 0n, quoteTtlMs: 30_000,
@@ -63,7 +62,8 @@ function deps(overrides: Partial<QuoteDeps> = {}): QuoteDeps {
   };
 }
 
-const goodBody = { taker: TAKER, legs: [{ vault: V1, isYes: true }, { vault: V2, isYes: false }], stake: "1000000", inviteCode: "beta-test" };
+const goodBody = { rfqId: "rfq-1", taker: TAKER, legs: [{ vault: V1, isYes: true }, { vault: V2, isYes: false }], stake: "1000000", quotaKey: "k1", respondByMs: 2_000_000 };
+const BEARER = { authorization: "Bearer t", "content-type": "application/json" };
 
 test("happy path: returns signed quote, reserves exposure", async () => {
   const d = deps();
@@ -86,55 +86,26 @@ test("cluster cap: 409 when cluster exposure would exceed perClusterCap", async 
   assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
 });
 
-test("quote without invite code is 403", async () => {
+
+test("bad-rfq: empty rfqId or quotaKey is 400 and reserves nothing; intent errors win first", async () => {
   const d = deps();
-  const { inviteCode: _drop, ...withoutInvite } = goodBody;
-  const r = await handleQuote(d, withoutInvite);
-  assert.equal(r.status, 403);
-  assert.deepEqual(r.json, { error: "bad-invite" });
-  assert.equal(d.metrics.rejected["bad-invite"], 1);
-});
-
-test("quote with unknown invite code is 403", async () => {
-  const r = await handleQuote(deps(), { ...goodBody, inviteCode: "wrong" });
-  assert.equal(r.status, 403);
-});
-
-test("bad-invite attempts over the limit are 429; valid codes never consume a slot", async () => {
-  const d = deps({ badInviteLimiter: new RateLimiter(2, 1000, () => 0) });
-  assert.equal((await handleQuote(d, goodBody)).status, 200);
-  assert.equal((await handleQuote(d, { ...goodBody, inviteCode: "wrong" })).status, 403);
-  assert.equal((await handleQuote(d, { ...goodBody, inviteCode: "wrong" })).status, 403);
-  assert.equal((await handleQuote(d, { ...goodBody, inviteCode: "wrong" })).status, 429);
-  assert.equal((await handleQuote(d, goodBody)).status, 200);
-});
-
-test("quote limiter caps all quotes per IP, keyed separately", async () => {
-  const d = deps({ quoteLimiter: new RateLimiter(1, 1000, () => 0) });
-  assert.equal((await handleQuote(d, goodBody, "1.2.3.4")).status, 200);
-  const r = await handleQuote(d, goodBody, "1.2.3.4");
-  assert.equal(r.status, 429);
-  assert.deepEqual(r.json, { error: "rate-limited" });
-  assert.equal((await handleQuote(d, goodBody, "5.6.7.8")).status, 200);
-});
-
-test("waitlist-issued code passes the invite gate", () => {
-  const c = cfg();
-  const body = { ...goodBody, inviteCode: "OVR-ABC123" };
-  assert.equal((validateQuoteRequest(body, c, 0) as { reason: string }).reason, "bad-invite");
-  const v = validateQuoteRequest(body, c, 0, new Set(["OVR-ABC123"]));
-  assert.ok(v.ok);
+  assert.deepEqual(await handleQuote(d, { ...goodBody, rfqId: "" }), { status: 400, json: { error: "bad-rfq" } });
+  const { quotaKey: _drop, ...noKey } = goodBody;
+  assert.equal((await handleQuote(d, noKey)).status, 400);
+  assert.equal(d.metrics.rejected["bad-rfq"], 2);
+  assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
+  assert.deepEqual(await handleQuote(d, { ...goodBody, rfqId: "", stake: "0" }), { status: 400, json: { error: "bad-stake" } });
 });
 
 test("validation: unknown vault, leg count, stake cap, lockout", () => {
   const c = cfg();
   const unknown = { ...goodBody, legs: [{ vault: TAKER, isYes: true }, { vault: V2, isYes: false }] };
-  assert.equal((validateQuoteRequest(unknown, c, 0) as { reason: string }).reason, "unknown-vault");
+  assert.equal((validateIntent(unknown, c, 0) as { reason: string }).reason, "unknown-vault");
   const one = { ...goodBody, legs: [{ vault: V1, isYes: true }] };
-  assert.equal((validateQuoteRequest(one, c, 0) as { reason: string }).reason, "bad-leg-count");
+  assert.equal((validateIntent(one, c, 0) as { reason: string }).reason, "bad-leg-count");
   const fat = { ...goodBody, stake: "10000001" };
-  assert.equal((validateQuoteRequest(fat, c, 0) as { reason: string }).reason, "stake-too-big");
-  assert.equal((validateQuoteRequest(goodBody, c, 1_500_000) as { reason: string }).reason, "expiry-lockout");
+  assert.equal((validateIntent(fat, c, 0) as { reason: string }).reason, "stake-too-big");
+  assert.equal((validateIntent(goodBody, c, 1_500_000) as { reason: string }).reason, "expiry-lockout");
 });
 
 test("settled leg: 409", async () => {
@@ -169,9 +140,9 @@ test("at-capacity: 409, metrics counted", async () => {
   assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
 });
 
-test("quota-cap: 409 once one invite code's unminted reservations hit their cap; a second code is unaffected", async () => {
+test("quota-cap: 409 once one quotaKey's unminted reservations hit their cap; a second key is unaffected", async () => {
   const OTHER_TAKER = "0x4444444444444444444444444444444444444444" as Address;
-  const d = deps({ cfg: cfg({ perCodeReservedCap: 3_000_000n, inviteCodes: new Set(["beta-test", "beta-test-2"]) }) });
+  const d = deps({ cfg: cfg({ perCodeReservedCap: 3_000_000n }) });
   const first = await handleQuote(d, goodBody);
   assert.equal(first.status, 200);
   const second = await handleQuote(d, goodBody);
@@ -180,8 +151,8 @@ test("quota-cap: 409 once one invite code's unminted reservations hit their cap;
   assert.equal(d.metrics.rejected["quota-cap"], 1);
   const spoofed = await handleQuote(d, { ...goodBody, taker: OTHER_TAKER });
   assert.equal(spoofed.status, 409);
-  const otherCode = await handleQuote(d, { ...goodBody, inviteCode: "beta-test-2" });
-  assert.equal(otherCode.status, 200);
+  const otherKey = await handleQuote(d, { ...goodBody, quotaKey: "k2" });
+  assert.equal(otherKey.status, 200);
 });
 
 test("quota-cap: reservation expiry frees the taker's budget for a new quote", async () => {
@@ -238,6 +209,8 @@ test("journal: records the returned quote identity and economics before returnin
   assert.equal(typeof (recorded as { quoteDigest?: unknown }).quoteDigest, "string");
   const decision = recorded as QuoteRecord;
   assert.equal(decision.schemaVersion, 1);
+  assert.equal(decision.maker, d.cfg.writerAddress);
+  assert.equal(decision.rfqId, "rfq-1");
   assert.equal(decision.jointProbWad, (WAD / 4n).toString());
   assert.equal(decision.bookInputs.length, 2);
   assert.equal(
@@ -254,22 +227,27 @@ test("journal: records the returned quote identity and economics before returnin
   );
 });
 
-test("HTTP smoke: /quote, /health, /metrics, bad-json, unknown route", async () => {
+test("HTTP smoke: /rfq bearer, /health, /metrics, bad-json, unknown route; loopback only", async () => {
   const d = deps();
-  const server = startServer(d, 0, () => ({ ok: true }));
+  const server = startMaker(d, 0, () => ({ ok: true }));
   await new Promise<void>((resolve) => server.once("listening", resolve));
-  const port = (server.address() as AddressInfo).port;
-  const base = `http://127.0.0.1:${port}`;
+  const addr = server.address() as AddressInfo;
+  assert.equal(addr.address, "127.0.0.1");
+  const base = `http://127.0.0.1:${addr.port}`;
   try {
-    const badJson = await fetch(`${base}/quote`, { method: "POST", body: "{not json" });
+    for (const headers of [{}, { authorization: "Bearer wrong" }] as Record<string, string>[]) {
+      const noAuth = await fetch(`${base}/rfq`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(goodBody) });
+      assert.equal(noAuth.status, 401);
+      assert.deepEqual(await noAuth.json(), { error: "unauthorized" });
+    }
+    assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
+    assert.equal(d.metrics.quoted, 0);
+
+    const badJson = await fetch(`${base}/rfq`, { method: "POST", headers: BEARER, body: "{not json" });
     assert.equal(badJson.status, 400);
     assert.deepEqual(await badJson.json(), { error: "bad-json" });
 
-    const quoteRes = await fetch(`${base}/quote`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(goodBody),
-    });
+    const quoteRes = await fetch(`${base}/rfq`, { method: "POST", headers: BEARER, body: JSON.stringify(goodBody) });
     assert.equal(quoteRes.status, 200);
     const qj = (await quoteRes.json()) as { sig: string };
     assert.equal(qj.sig, "0xsig");
@@ -298,148 +276,21 @@ test("HTTP smoke: /quote, /health, /metrics, bad-json, unknown route", async () 
 });
 
 test("GET /limits exposes configured base and per-leg pricing without authentication", async () => {
-  const origin = "https://app.hyperflip.xyz";
-  const server = startServer(deps({ cfg: cfg({ edgeBps: 725n, legEdgeBps: 150n, corsOrigins: [origin] }) }), 0, () => ({ ok: true }));
+  const server = startMaker(deps({ cfg: cfg({ edgeBps: 725n, legEdgeBps: 150n }) }), 0, () => ({ ok: true }));
   await new Promise<void>((resolve) => server.once("listening", resolve));
   try {
-    const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/limits`, { headers: { origin } });
+    const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/limits`);
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get("access-control-allow-origin"), origin);
     assert.deepEqual(await response.json(), { maxStake: "10000000", edgeBps: "725", legEdgeBps: "150", quoteTtlMs: 30000 });
   } finally {
     server.close();
   }
 });
 
-test("GET /markets serves registry verbatim with CORS", async () => {
-  const registryJson = '{"markets":[{"vault":"0x1111111111111111111111111111111111111111","title":"T","category":"c","coinYes":"#10","coinNo":"#11","underlying":"game-1","cluster":"sports"}]}';
-  const d = deps({ cfg: cfg({ registryJson }) });
-  const server = startServer(d, 0, () => ({ ok: true }));
-  const port = (server.address() as AddressInfo).port;
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/markets`);
-    assert.equal(r.status, 200);
-    assert.equal(r.headers.get("access-control-allow-origin"), "*");
-    assert.equal(await r.text(), registryJson);
-  } finally {
-    server.close();
-  }
-});
-
-test("OPTIONS preflight returns 204 with CORS headers for an allowed origin", async () => {
-  const server = startServer(deps(), 0, () => ({ ok: true }));
-  const port = (server.address() as AddressInfo).port;
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/quote`, {
-      method: "OPTIONS",
-      headers: { origin: "https://overround.xyz" },
-    });
-    assert.equal(r.status, 204);
-    assert.equal(r.headers.get("access-control-allow-origin"), "https://overround.xyz");
-    assert.match(r.headers.get("access-control-allow-headers") ?? "", /content-type/i);
-  } finally {
-    server.close();
-  }
-});
-
-test("OPTIONS preflight still 204s with no Origin header (no ACAO to echo)", async () => {
-  const server = startServer(deps(), 0, () => ({ ok: true }));
-  const port = (server.address() as AddressInfo).port;
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/quote`, { method: "OPTIONS" });
-    assert.equal(r.status, 204);
-    assert.equal(r.headers.get("access-control-allow-origin"), null);
-  } finally {
-    server.close();
-  }
-});
-
-test("OPTIONS /markets preflight stays open (*), not locked to the allowlist", async () => {
-  const server = startServer(deps(), 0, () => ({ ok: true }));
-  const port = (server.address() as AddressInfo).port;
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/markets`, {
-      method: "OPTIONS",
-      headers: { origin: "https://evil.example" },
-    });
-    assert.equal(r.status, 204);
-    assert.equal(r.headers.get("access-control-allow-origin"), "*");
-  } finally {
-    server.close();
-  }
-});
-
-test("POST /quote: disallowed origin still gets Vary: Origin (response is origin-dependent either way)", async () => {
-  const d = deps();
-  const server = startServer(d, 0, () => ({ ok: true }));
-  const port = (server.address() as AddressInfo).port;
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/quote`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin: "https://evil.example" },
-      body: JSON.stringify(goodBody),
-    });
-    assert.equal(r.headers.get("access-control-allow-origin"), null);
-    assert.equal(r.headers.get("vary"), "Origin");
-  } finally {
-    server.close();
-  }
-});
-
-test("POST /quote: allowed origin gets ACAO echo", async () => {
-  const d = deps();
-  const server = startServer(d, 0, () => ({ ok: true }));
-  const port = (server.address() as AddressInfo).port;
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/quote`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin: "https://overround.xyz" },
-      body: JSON.stringify(goodBody),
-    });
-    assert.equal(r.status, 200);
-    assert.equal(r.headers.get("access-control-allow-origin"), "https://overround.xyz");
-  } finally {
-    server.close();
-  }
-});
-
-test("POST /quote: disallowed origin gets no ACAO (browser would block) but request still succeeds server-side", async () => {
-  const d = deps();
-  const server = startServer(d, 0, () => ({ ok: true }));
-  const port = (server.address() as AddressInfo).port;
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/quote`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin: "https://evil.example" },
-      body: JSON.stringify(goodBody),
-    });
-    assert.equal(r.status, 200); // CORS is browser-enforcement only — fetch() here ignores it, like curl would.
-    assert.equal(r.headers.get("access-control-allow-origin"), null);
-  } finally {
-    server.close();
-  }
-});
-
-test("POST /quote: no Origin header (CLI/curl caller) is unaffected — no ACAO, request proceeds", async () => {
-  const d = deps();
-  const server = startServer(d, 0, () => ({ ok: true }));
-  const port = (server.address() as AddressInfo).port;
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/quote`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(goodBody),
-    });
-    assert.equal(r.status, 200);
-    assert.equal(r.headers.get("access-control-allow-origin"), null);
-  } finally {
-    server.close();
-  }
-});
 
 test("HTTP smoke: oversized body rejected with 413, server keeps serving", async () => {
   const d = deps();
-  const server = startServer(d, 0, () => ({ ok: true }));
+  const server = startMaker(d, 0, () => ({ ok: true }));
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const port = (server.address() as AddressInfo).port;
   const base = `http://127.0.0.1:${port}`;
@@ -447,7 +298,7 @@ test("HTTP smoke: oversized body rejected with 413, server keeps serving", async
     const huge = "a".repeat(65 * 1024);
     let big: Response | undefined;
     try {
-      big = await fetch(`${base}/quote`, { method: "POST", body: huge });
+      big = await fetch(`${base}/rfq`, { method: "POST", headers: BEARER, body: huge });
     } catch {
     }
     if (big) {
@@ -455,11 +306,7 @@ test("HTTP smoke: oversized body rejected with 413, server keeps serving", async
       assert.deepEqual(await big.json(), { error: "body-too-large" });
     }
 
-    const quoteRes = await fetch(`${base}/quote`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(goodBody),
-    });
+    const quoteRes = await fetch(`${base}/rfq`, { method: "POST", headers: BEARER, body: JSON.stringify(goodBody) });
     assert.equal(quoteRes.status, 200);
   } finally {
     server.close();
@@ -495,23 +342,23 @@ test("sports: cross-game legs quote as the product of their prices", async () =>
 
 test("sports: two legs on one question (A + Draw) are refused as same-game", () => {
   const c = sportsCfg();
-  assert.deepEqual(validateQuoteRequest(body({ legs: [legOn(MATCH_A, true), legOn(MATCH_DRAW, true)] }), c, 0), { ok: false, status: 400, reason: "same-game" });
-  assert.deepEqual(validateQuoteRequest(body({ legs: [legOn(MATCH_A, true), legOn(MATCH_DRAW, false)] }), c, 0), { ok: false, status: 400, reason: "same-game" });
+  assert.deepEqual(validateIntent(body({ legs: [legOn(MATCH_A, true), legOn(MATCH_DRAW, true)] }), c, 0), { ok: false, status: 400, reason: "same-game" });
+  assert.deepEqual(validateIntent(body({ legs: [legOn(MATCH_A, true), legOn(MATCH_DRAW, false)] }), c, 0), { ok: false, status: 400, reason: "same-game" });
   assert.equal(sameGameLeg([legOn(MATCH_A, true), legOn(MATCH_DRAW, true)], c), MATCH_DRAW);
 });
 
 test("sports: a winner leg plus an over/under on the same game is refused as same-game", () => {
   const c = sportsCfg();
-  assert.deepEqual(validateQuoteRequest(body({ legs: [legOn(MATCH_A, true), legOn(GAME_OU, true)] }), c, 0), { ok: false, status: 400, reason: "same-game" });
-  assert.equal(validateQuoteRequest(body({ legs: [legOn(MATCH_A, true), legOn(MATCH_B_OTHER, true)] }), c, 0).ok, true);
+  assert.deepEqual(validateIntent(body({ legs: [legOn(MATCH_A, true), legOn(GAME_OU, true)] }), c, 0), { ok: false, status: 400, reason: "same-game" });
+  assert.equal(validateIntent(body({ legs: [legOn(MATCH_A, true), legOn(MATCH_B_OTHER, true)] }), c, 0).ok, true);
 });
 
 test("sports: quoting stays open in-play, locks at the resolution deadline (expiryMs)", () => {
   const c = sportsCfg();
   const ticket = body({ legs: [legOn(MATCH_A, true), legOn(GAME_STANDALONE, true)] });
-  assert.equal(validateQuoteRequest(ticket, c, 6_000_000).ok, true);
-  assert.equal(validateQuoteRequest(ticket, c, 8_399_999).ok, true);
-  assert.deepEqual(validateQuoteRequest(ticket, c, 8_400_000), { ok: false, status: 400, reason: "expiry-lockout" });
+  assert.equal(validateIntent(ticket, c, 6_000_000).ok, true);
+  assert.equal(validateIntent(ticket, c, 8_399_999).ok, true);
+  assert.deepEqual(validateIntent(ticket, c, 8_400_000), { ok: false, status: 400, reason: "expiry-lockout" });
 });
 
 test("handleQuote answers 503 warming-up until deps.ready() flips, without consuming quote quota", async () => {

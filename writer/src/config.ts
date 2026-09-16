@@ -22,7 +22,10 @@ export interface WriterConfig {
   pokerKey: `0x${string}`;
   infoApiUrl: string;
   quoteJournalFile: string;
+  /** Loopback maker port (MAKER_PORT). The public relay owns WRITER_PORT. */
   port: number;
+  /** Shared secret the relay presents on POST /rfq. */
+  makerToken: string;
   edgeBps: bigint;
   minPremiumBps: bigint;
   minLegs: number;
@@ -124,7 +127,8 @@ export function loadConfig(): WriterConfig {
     writerAddress: requireAddress("WRITER_ADDRESS"),
     quoteSignerKey: requireKey("QUOTE_SIGNER_PRIVATE_KEY"),
     pokerKey: requireKey("POKER_PRIVATE_KEY"),
-    port: Number(process.env.WRITER_PORT ?? 8787),
+    port: Number(process.env.MAKER_PORT ?? 8791),
+    makerToken: requireEnv("MAKER_TOKEN"),
     edgeBps: BigInt(process.env.EDGE_BPS ?? 500),
     minPremiumBps,
     minLegs: Number(process.env.MIN_LEGS ?? 2),

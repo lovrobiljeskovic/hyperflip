@@ -63,7 +63,7 @@ test("writer boots with only sports configuration and filters historical public 
   const values = {
     DEPLOYMENT_FILE: join(root, "deployment.json"), EVM_CHAIN_ID: "998", POKER_INTERVAL_MS: "15000",
     PRICING_MODE: "", MARKETS_FILE: marketsFile, PARLAY_VAULT_ADDRESS: VAULT, PARLAY_DEPLOY_BLOCK: "1",
-    MAX_STAKE: "1000000", PER_MARKET_CAP: "1000000", PER_CLUSTER_CAP: "1000000", INVITE_CODES: "test",
+    MAX_STAKE: "1000000", PER_MARKET_CAP: "1000000", PER_CLUSTER_CAP: "1000000", INVITE_CODES: "test", MAKER_TOKEN: "t",
     WRITER_ADDRESS: "0x2222222222222222222222222222222222222222",
     QUOTE_SIGNER_PRIVATE_KEY: `0x${"11".repeat(32)}`, POKER_PRIVATE_KEY: `0x${"22".repeat(32)}`, TESTNET_RPC: "http://localhost:1",
     WRITER_RPC: "", SPOT_PX_STALE_MS: "60000", QUOTE_JOURNAL_FILE: join(root, "quotes.jsonl"),

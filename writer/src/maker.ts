@@ -6,7 +6,6 @@ import { dominatingLeg, edgeBreakdown, independentJointProbWad, priceParlay, tot
 import { WAD } from "./pure.js";
 import { quoteDigest, type ParlayQuote, type QuoteLeg, type QuoteRecord } from "./quotes.js";
 import type { LegPriceObservation } from "./infoApi.js";
-import { isValidEmail, type RateLimiter, type Waitlist } from "./waitlist.js";
 
 export interface Metrics {
   quoted: number;
@@ -36,24 +35,27 @@ export interface QuoteDeps {
   randomId(): Hex;
   metrics: Metrics;
 
-  waitlist?: Waitlist;
-  sendInvite?(email: string, code: string): Promise<void>;
-  signupLimiter?: RateLimiter;
-
-  badInviteLimiter?: RateLimiter;
-
-  quoteLimiter?: RateLimiter;
-
   ready?: () => boolean;
   /** Mint refs for a taker, from the poker's index (GET /parlays?taker=). */
   parlaysOf?(taker: Address): { id: bigint; block: bigint }[];
 }
 
-type Validated =
-  | { ok: true; taker: Address; legs: QuoteLeg[]; stake: bigint; inviteCode: string }
-  | { ok: false; status: number; reason: string };
+type Rejected = { ok: false; status: number; reason: string };
+type Intent = { ok: true; taker: Address; legs: QuoteLeg[]; stake: bigint } | Rejected;
+type IntentCfg = Pick<WriterConfig, "markets" | "minLegs" | "maxStake" | "lockoutMs">;
 
-export function sameGameLeg(legs: QuoteLeg[], cfg: WriterConfig): Address | null {
+/** Wire shape the relay POSTs to /rfq. `quotaKey` is opaque (relay decides what a
+ * budget is — invite code today); `respondByMs` is informational. */
+export interface RfqBody {
+  rfqId: string;
+  taker: Address;
+  legs: QuoteLeg[];
+  stake: string;
+  quotaKey: string;
+  respondByMs: number;
+}
+
+export function sameGameLeg(legs: QuoteLeg[], cfg: IntentCfg): Address | null {
   const seenGame = new Set<string>();
   const seenQuestion = new Set<number>();
   for (const leg of legs) {
@@ -68,21 +70,11 @@ export function sameGameLeg(legs: QuoteLeg[], cfg: WriterConfig): Address | null
   return null;
 }
 
-export function validateQuoteRequest(
-  body: unknown,
-  cfg: WriterConfig,
-  now: number,
-  waitlist?: { has(code: string): boolean },
-): Validated {
-  const b = body as { taker?: unknown; legs?: unknown; stake?: unknown; inviteCode?: unknown };
-  if (
-    !b ||
-    typeof b.inviteCode !== "string" ||
-    !(cfg.inviteCodes.has(b.inviteCode) || waitlist?.has(b.inviteCode))
-  ) {
-    return { ok: false, status: 403, reason: "bad-invite" };
-  }
-  if (typeof b.taker !== "string" || !isAddress(b.taker)) {
+/** Shared taker-intent checks (relay runs them before fan-out, maker re-runs them —
+ * a maker never trusts a relay's word on what it is pricing). */
+export function validateIntent(body: unknown, cfg: IntentCfg, now: number): Intent {
+  const b = body as { taker?: unknown; legs?: unknown; stake?: unknown } | null;
+  if (!b || typeof b.taker !== "string" || !isAddress(b.taker)) {
     return { ok: false, status: 400, reason: "bad-taker" };
   }
   if (!Array.isArray(b.legs)) return { ok: false, status: 400, reason: "bad-legs" };
@@ -113,29 +105,36 @@ export function validateQuoteRequest(
   }
   if (stake <= 0n) return { ok: false, status: 400, reason: "bad-stake" };
   if (stake > cfg.maxStake) return { ok: false, status: 400, reason: "stake-too-big" };
-  return { ok: true, taker: b.taker as Address, legs, stake, inviteCode: b.inviteCode };
+  return { ok: true, taker: b.taker as Address, legs, stake };
+}
+
+/** Maker-side: intent plus the relay envelope. `bad-rfq` is a maker<->relay contract
+ * error, never something a taker can trigger through the public relay.
+ * ponytail: respondByMs is ignored — a maker that gets the RFQ after the window closed
+ * prices anyway and holds one <=15 s reservation, identical to a losing quote. Add the
+ * skip if at-capacity ever becomes window-bound. */
+function validateRfq(body: unknown, cfg: IntentCfg, now: number): (Intent & { ok: true; rfqId: string; quotaKey: string }) | Rejected {
+  const v = validateIntent(body, cfg, now);
+  if (!v.ok) return v;
+  const { rfqId, quotaKey } = body as Partial<RfqBody>;
+  if (typeof rfqId !== "string" || !rfqId || typeof quotaKey !== "string" || !quotaKey) {
+    return { ok: false, status: 400, reason: "bad-rfq" };
+  }
+  return { ...v, rfqId, quotaKey };
 }
 
 export async function handleQuote(
   deps: QuoteDeps,
   body: unknown,
-  ip = "unknown",
+  ip = "unknown", // unused since rate limiting moved to the relay; kept so the call shape survives the split
 ): Promise<{ status: number; json: unknown }> {
   const { cfg, exposure, metrics } = deps;
   if (deps.ready && !deps.ready()) {
     reject(metrics, "warming-up");
     return { status: 503, json: { error: "warming-up" } };
   }
-  if (deps.quoteLimiter && !deps.quoteLimiter.allow(ip)) {
-    reject(metrics, "rate-limited");
-    return { status: 429, json: { error: "rate-limited" } };
-  }
-  const v = validateQuoteRequest(body, cfg, deps.now(), deps.waitlist);
+  const v = validateRfq(body, cfg, deps.now());
   if (!v.ok) {
-    if (v.reason === "bad-invite" && deps.badInviteLimiter && !deps.badInviteLimiter.allow(ip)) {
-      reject(metrics, "rate-limited");
-      return { status: 429, json: { error: "rate-limited" } };
-    }
     reject(metrics, v.reason);
     return { status: v.status, json: { error: v.reason } };
   }
@@ -193,7 +192,7 @@ export async function handleQuote(
   const now = deps.now();
   const risk = priced.maxPayout - priced.premium;
   // Keep check and reserve synchronous to prevent overlapping quotes exceeding caps.
-  const check = exposure.check(risk, vaults, allowance, cfg.perMarketCap, now, cfg.perClusterCap, v.inviteCode, cfg.perCodeReservedCap);
+  const check = exposure.check(risk, vaults, allowance, cfg.perMarketCap, now, cfg.perClusterCap, v.quotaKey, cfg.perCodeReservedCap);
   if (!check.ok) {
     reject(metrics, check.reason);
     console.log(JSON.stringify({ at: new Date(now).toISOString(), event: "quote-rejected", reason: check.reason, risk: risk.toString() }));
@@ -201,7 +200,7 @@ export async function handleQuote(
     return { status: 409, json: { error: check.reason, maxStake: fitStake.toString() } };
   }
   const quoteId = deps.randomId();
-  exposure.reserve(quoteId, risk, vaults, now + cfg.quoteTtlMs, v.inviteCode);
+  exposure.reserve(quoteId, risk, vaults, now + cfg.quoteTtlMs, v.quotaKey);
 
   const quote: ParlayQuote = {
     taker: v.taker,
@@ -225,7 +224,7 @@ export async function handleQuote(
     recordedAtMs: deps.now(),
     quoteId,
     maker: quote.maker,
-    rfqId: "", // no RFQ flow yet — Task 2 threads the relay's id through
+    rfqId: v.rfqId,
     quoteDigest: quoteDigest(deps.chainId, cfg.parlayVault, quote),
     chainId: deps.chainId,
     parlayVault: cfg.parlayVault,
@@ -278,48 +277,12 @@ export async function handleQuote(
   };
 }
 
-export async function handleWaitlist(
-  deps: QuoteDeps,
-  body: unknown,
-  ip: string,
-): Promise<{ status: number; json: unknown }> {
-  const { waitlist, sendInvite, signupLimiter } = deps;
-  if (!waitlist || !sendInvite) return { status: 503, json: { error: "waitlist-unavailable" } };
-  const raw = (body as { email?: unknown })?.email;
-  if (typeof raw !== "string" || !isValidEmail(raw.trim())) {
-    return { status: 400, json: { error: "bad-email" } };
-  }
-  if (signupLimiter && !signupLimiter.allow(ip)) return { status: 429, json: { error: "rate-limited" } };
-  const email = raw.trim().toLowerCase();
-  const { code, isNew } = waitlist.signup(email);
-  try {
-    await sendInvite(email, code);
-  } catch (err) {
-    console.error(new Date().toISOString(), "invite email failed", err);
-    return { status: 502, json: { error: "email-failed" } };
-  }
-  console.log(
-    JSON.stringify({ at: new Date(deps.now()).toISOString(), event: "waitlist-signup", isNew, total: waitlist.size() }),
-  );
-  return { status: 200, json: { ok: true } };
-}
-
 const MAX_BODY = 64 * 1024;
 
-// CORS controls browser access; invite codes and exposure caps enforce access limits.
-function corsAllowedOrigin(req: http.IncomingMessage, allowlist: string[]): string | undefined {
-  const raw = req.headers.origin;
-  const origin = Array.isArray(raw) ? raw[0] : raw;
-  return origin && allowlist.includes(origin) ? origin : undefined;
-}
-
-function lockedCors(req: http.IncomingMessage, allowlist: string[]): Record<string, string> {
-  const origin = corsAllowedOrigin(req, allowlist);
-  // Responses vary even when the origin is rejected.
-  return { Vary: "Origin", ...(origin ? { "Access-Control-Allow-Origin": origin } : {}) };
-}
-
-export function startServer(deps: QuoteDeps, port: number, health: () => unknown): http.Server {
+/** Loopback-only. Auth is a shared bearer so a stray local process cannot burn the
+ * house's reservation budget; the relay is the only intended caller. No CORS: browsers
+ * never talk to a maker directly. */
+export function startMaker(deps: QuoteDeps, port: number, health: () => unknown): http.Server {
   const server = http.createServer((req, res) => {
     req.on("error", (err) => {
       console.error(new Date().toISOString(), "request stream error", err);
@@ -329,43 +292,26 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
       console.error(new Date().toISOString(), "response stream error", err);
     });
     const send = (status: number, json: unknown) => {
-      res.writeHead(status, { "Content-Type": "application/json", ...lockedCors(req, deps.cfg.corsOrigins) });
+      res.writeHead(status, { "Content-Type": "application/json" });
       res.end(JSON.stringify(json));
     };
-    if (req.method === "OPTIONS") {
-      const cors = req.url === "/markets" ? { "Access-Control-Allow-Origin": "*" } : lockedCors(req, deps.cfg.corsOrigins);
-      res.writeHead(204, {
-        ...cors,
-        "Access-Control-Allow-Methods": "GET, POST",
-        "Access-Control-Allow-Headers": "content-type",
-        "Access-Control-Max-Age": "86400",
-      });
-      return res.end();
-    }
     if (req.method === "GET" && req.url === "/health") return send(200, health());
     if (req.method === "GET" && req.url === "/metrics") return send(200, deps.metrics);
     if (req.method === "GET" && req.url?.startsWith("/parlays?") && deps.parlaysOf) {
-      const taker = new URL(req.url, "http://writer").searchParams.get("taker");
+      const taker = new URL(req.url, "http://maker").searchParams.get("taker");
       if (!taker || !isAddress(taker)) return send(400, { error: "taker must be an address" });
       return send(200, deps.parlaysOf(taker).map((p) => ({ id: p.id.toString(), block: p.block.toString() })));
     }
-    if (req.method === "GET" && req.url === "/markets") {
-      res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
-      return res.end(deps.cfg.registryJson);
-    }
     if (req.method === "GET" && req.url === "/limits") {
-      res.writeHead(200, { "Content-Type": "application/json", ...lockedCors(req, deps.cfg.corsOrigins) });
-      return res.end(
-        JSON.stringify({
-          maxStake: deps.cfg.maxStake.toString(),
-          edgeBps: deps.cfg.edgeBps.toString(),
-          legEdgeBps: deps.cfg.legEdgeBps.toString(),
-          quoteTtlMs: deps.cfg.quoteTtlMs,
-        }),
-      );
+      return send(200, {
+        maxStake: deps.cfg.maxStake.toString(),
+        edgeBps: deps.cfg.edgeBps.toString(),
+        legEdgeBps: deps.cfg.legEdgeBps.toString(),
+        quoteTtlMs: deps.cfg.quoteTtlMs,
+      });
     }
-    if (req.method === "POST" && (req.url === "/quote" || req.url === "/waitlist")) {
-      const url = req.url;
+    if (req.method === "POST" && req.url === "/rfq") {
+      if (req.headers.authorization !== `Bearer ${deps.cfg.makerToken}`) return send(401, { error: "unauthorized" });
       let raw = "";
       let tooLarge = false;
       req.on("data", (c) => {
@@ -386,17 +332,10 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
           return send(400, { error: "bad-json" });
         }
         try {
-          const fwd = req.headers["x-forwarded-for"];
-          const ip =
-            (Array.isArray(fwd) ? fwd[0] : fwd)?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
-          if (url === "/quote") {
-            const r = await handleQuote(deps, body, ip);
-            return send(r.status, r.json);
-          }
-          const r = await handleWaitlist(deps, body, ip);
+          const r = await handleQuote(deps, body);
           send(r.status, r.json);
         } catch (err) {
-          console.error(new Date().toISOString(), `${url} handler error`, err);
+          console.error(new Date().toISOString(), "/rfq handler error", err);
           send(500, { error: "internal" });
         }
       });
@@ -404,6 +343,6 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
     }
     send(404, { error: "not-found" });
   });
-  server.listen(port);
+  server.listen(port, "127.0.0.1");
   return server;
 }

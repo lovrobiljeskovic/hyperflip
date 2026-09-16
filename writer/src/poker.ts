@@ -1,7 +1,7 @@
 import { parseAbiItem, type Address, type PublicClient } from "viem";
 import { parlayVaultAbi } from "./abi.js";
 import { ExposureBook } from "./exposure.js";
-import type { Metrics } from "./server.js";
+import type { Metrics } from "./maker.js";
 import { parlayIsDead, readLegStates, type LegState } from "./settlement.js";
 import { blockRanges } from "./pure.js";
 import type { QuoteLeg } from "./quotes.js";
