@@ -48,9 +48,9 @@ export function SiteFooter() {
             </a>
           </div>
         </div>
-        <p className="mono text-[10px] uppercase tracking-[.12em] text-dim">
+        <p className="max-w-[80ch] text-[11px] leading-relaxed text-dim/85">
           HyperEVM testnet beta · Operated by the Hyperflip team (unincorporated) ·{" "}
-          <a href={`mailto:${official.email}`} className={`normal-case ${link}`}>{official.email}</a>
+          <a href={`mailto:${official.email}`} className={link}>{official.email}</a>
           {" "}· Only {official.domains.join(" and ")} are ours. We never DM first and never ask for a seed phrase.
         </p>
       </div>
