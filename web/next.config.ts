@@ -30,6 +30,13 @@ const nextConfig: NextConfig = {
         destination: "/",
         permanent: true,
       },
+      // Legal/identity pages live on the apex; keep scanners probing app. from 404ing.
+      ...["/terms", "/privacy", "/risk", "/security", "/official", "/.well-known/security.txt"].map((path) => ({
+        source: path,
+        has: [{ type: "host" as const, value: "app\\.hyperflip\\.xyz" }],
+        destination: `https://hyperflip.xyz${path}`,
+        permanent: true,
+      })),
       ...aliases.map((host) => ({
         source: "/:path*",
         has: [{ type: "host" as const, value: host.replaceAll(".", "\\.") }],

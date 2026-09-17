@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import { AppHeader } from "../app-header";
 import { Providers } from "../providers";
+import { SiteFooter } from "../site-footer";
 
 export const metadata: Metadata = { robots: { index: false, follow: true } };
 
 export default function TradingLayout({ children }: { children: React.ReactNode }) {
-  return <Providers><AppHeader />{children}</Providers>;
+  return <Providers><AppHeader />{children}<SiteFooter /></Providers>;
 }
