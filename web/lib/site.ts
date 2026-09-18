@@ -16,3 +16,8 @@ export const siteUrl =
 export function appCanonical(path = "/"): string {
   return new URL(appHref(path), siteUrl).href;
 }
+
+/** Absolute apex URL in production so app.hyperflip.xyz footers land on hyperflip.xyz pages. */
+export function siteHref(path: string): string {
+  return `${process.env.NEXT_PUBLIC_SITE_ORIGIN || ""}${path}`;
+}
