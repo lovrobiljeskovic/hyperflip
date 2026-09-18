@@ -1,0 +1,14 @@
+{
+  "at": "2026-09-18T08:13:17.451542+00:00",
+  "head": "30a614c061afd03d4d225f8d538cd75633fd0709",
+  "branch": "new-design",
+  "status": "## new-design...hyperflip/new-design [ahead 2]\n M docs/s8a-handoff.md\n M docs/s8a-laptop.md\n M docs/s8a-testnet-evidence.md\n M script/spike/FINDINGS-hedge.md\n M web/app/(trading)/layout.tsx\n M web/app/page.tsx\n M web/app/sitemap.ts\n M web/lib/site.ts\n M web/next.config.ts\n M writer/src/index.ts\n M writer/src/poker.ts\n M writer/src/relay.ts\n M writer/test/poker.test.ts\n M writer/test/relay.test.ts\n?? docs/evidence/\n?? docs/s8a-overnight-review.md\n?? docs/s8b-server.md\n?? docs/superpowers/plans/2026-09-17-independent-positions-index.md\n?? ops/systemd/maker-v2@.service\n?? ops/systemd/observe-settlement-v2.service\n?? ops/systemd/relay-v2.service\n?? web/app/(legal)/\n?? web/app/site-footer.tsx\n?? web/public/.well-known/\n?? writer/src/observe-settlement.ts\n?? writer/test/observe-settlement.test.ts\n",
+  "laptopMakers": {
+    "8791": {
+      "listening": false
+    },
+    "8792": {
+      "listening": false
+    }
+  }
+}

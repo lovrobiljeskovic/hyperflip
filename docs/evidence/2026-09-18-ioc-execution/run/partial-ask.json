@@ -1,0 +1,354 @@
+{
+  "step": "partial-ask",
+  "network": "testnet",
+  "account": "0x171070FE2E9f5bB1738Ecf6979C24057EBe1576D",
+  "action": {
+    "type": "order",
+    "orders": [
+      {
+        "a": 100194680,
+        "b": false,
+        "p": "0.5",
+        "s": "5",
+        "r": false,
+        "t": {
+          "limit": {
+            "tif": "Gtc"
+          }
+        },
+        "c": "0x00000000000000000000002f2c72bd63"
+      }
+    ],
+    "grouping": "na"
+  },
+  "nonce": 1789722119157,
+  "expiresAfter": 1789722134157,
+  "before": {
+    "atMs": 1789722116008,
+    "account": "0x171070FE2E9f5bB1738Ecf6979C24057EBe1576D",
+    "balance": {
+      "balances": [
+        {
+          "coin": "USDC",
+          "token": 0,
+          "total": "10.98470019",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "HYPE",
+          "token": 1105,
+          "total": "0.05826445",
+          "hold": "0.0",
+          "entryNtl": "1.71058406"
+        },
+        {
+          "coin": "TZERO",
+          "token": 1204,
+          "total": "0.0",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "USDEEE",
+          "token": 1295,
+          "total": "0.0",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "USDZZ",
+          "token": 1328,
+          "total": "0.0",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "NQ",
+          "token": 1424,
+          "total": "0.0",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "DENIM",
+          "token": 1434,
+          "total": "0.0",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "HORSE",
+          "token": 1435,
+          "total": "0.0",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "USDH",
+          "token": 1452,
+          "total": "0.0",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "TUSDC",
+          "token": 1493,
+          "total": "0.0",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "XAG",
+          "token": 1508,
+          "total": "0.0",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "TGUSD",
+          "token": 1535,
+          "total": "0.0",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "USDYP",
+          "token": 1576,
+          "total": "0.0",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "EZSUSD",
+          "token": 1583,
+          "total": "0.0",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "USDPR",
+          "token": 3032,
+          "total": "0.0",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "+200380",
+          "total": "0.0",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "+200381",
+          "total": "0.0",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "+194680",
+          "total": "5.0",
+          "hold": "0.0",
+          "entryNtl": "2.5"
+        },
+        {
+          "coin": "+194681",
+          "total": "15.0",
+          "hold": "0.0",
+          "entryNtl": "7.5"
+        }
+      ],
+      "tokenToAvailableAfterMaintenance": [
+        [
+          0,
+          "10.98470019"
+        ]
+      ]
+    },
+    "openOrders": [],
+    "fills": [
+      {
+        "coin": "#194680",
+        "px": "0.5",
+        "sz": "10.0",
+        "side": "A",
+        "time": 1789722063015,
+        "startPosition": "15.0",
+        "dir": "Sell",
+        "closedPnl": "0.0",
+        "hash": "0x85dd2a2bf5b113ab875604299722d5010200421190b4327d29a5d57eb4b4ed96",
+        "oid": 60421891715,
+        "crossed": false,
+        "fee": "0.004",
+        "tid": 137409145810040,
+        "cloid": "0x00000000000000000000002f2c72bd61",
+        "feeToken": "USDC",
+        "twapId": null
+      },
+      {
+        "coin": "#194681",
+        "px": "0.5",
+        "sz": "15.0",
+        "side": "B",
+        "time": 1789721965217,
+        "startPosition": "0.0",
+        "dir": "Split Outcome",
+        "closedPnl": "0.0",
+        "hash": "0x76a6d0d0e928de2f78200429971c56010c00e8b6842bfd011a6f7c23a82cb81a",
+        "oid": 60421834252,
+        "crossed": true,
+        "fee": "0.0",
+        "tid": 624869085441097,
+        "feeToken": "USDC",
+        "twapId": null
+      },
+      {
+        "coin": "#194680",
+        "px": "0.5",
+        "sz": "15.0",
+        "side": "B",
+        "time": 1789721965217,
+        "startPosition": "0.0",
+        "dir": "Split Outcome",
+        "closedPnl": "0.0",
+        "hash": "0x76a6d0d0e928de2f78200429971c56010c00e8b6842bfd011a6f7c23a82cb81a",
+        "oid": 60421834250,
+        "crossed": true,
+        "fee": "0.0",
+        "tid": 175561867444247,
+        "feeToken": "USDC",
+        "twapId": null
+      },
+      {
+        "coin": "#194671",
+        "px": "0.45",
+        "sz": "10.0",
+        "side": "A",
+        "time": 1789566316055,
+        "startPosition": "10.0",
+        "dir": "Sell",
+        "closedPnl": "-0.5",
+        "hash": "0xda5e595309d9b953dbd8042971fafe0107007138a4dcd8257e2704a5c8dd933e",
+        "oid": 60271976504,
+        "crossed": false,
+        "fee": "0.0036",
+        "tid": 644297488205236,
+        "feeToken": "USDC",
+        "twapId": null
+      },
+      {
+        "coin": "#194670",
+        "px": "0.55",
+        "sz": "10.0",
+        "side": "A",
+        "time": 1789565950112,
+        "startPosition": "10.0",
+        "dir": "Sell",
+        "closedPnl": "0.5",
+        "hash": "0x4609020e6cd60dda4782042971e33c01010019f407d92cace9d1ad612bd9e7c4",
+        "oid": 60271685672,
+        "crossed": true,
+        "fee": "0.0077",
+        "tid": 504304077997163,
+        "feeToken": "USDC",
+        "twapId": null
+      },
+      {
+        "coin": "#194671",
+        "px": "0.5",
+        "sz": "10.0",
+        "side": "B",
+        "time": 1789565922363,
+        "startPosition": "0.0",
+        "dir": "Split Outcome",
+        "closedPnl": "0.0",
+        "hash": "0x785165a76570c53379cb042971e19b00008c7d8d0073e4051c1a10fa24749f1e",
+        "oid": 60271654715,
+        "crossed": true,
+        "fee": "0.0",
+        "tid": 867036422669561,
+        "feeToken": "USDC",
+        "twapId": null
+      },
+      {
+        "coin": "#194670",
+        "px": "0.5",
+        "sz": "10.0",
+        "side": "B",
+        "time": 1789565922363,
+        "startPosition": "0.0",
+        "dir": "Split Outcome",
+        "closedPnl": "0.0",
+        "hash": "0x785165a76570c53379cb042971e19b00008c7d8d0073e4051c1a10fa24749f1e",
+        "oid": 60271654713,
+        "crossed": true,
+        "fee": "0.0",
+        "tid": 117674925936777,
+        "feeToken": "USDC",
+        "twapId": null
+      },
+      {
+        "coin": "@1035",
+        "px": "29.0",
+        "sz": "0.17",
+        "side": "A",
+        "time": 1786911626010,
+        "startPosition": "0.22836445",
+        "dir": "Sell",
+        "closedPnl": "-0.06102441",
+        "hash": "0x38f02ede23579b193a6904270a936901080046c3be5ab9ebdcb8da30e25b7503",
+        "oid": 57937998623,
+        "crossed": true,
+        "fee": "0.003451",
+        "tid": 826529905461583,
+        "feeToken": "USDC",
+        "twapId": null
+      },
+      {
+        "coin": "@1035",
+        "px": "29.0",
+        "sz": "0.43",
+        "side": "A",
+        "time": 1786911626010,
+        "startPosition": "0.65836445",
+        "dir": "Sell",
+        "closedPnl": "-0.15435587",
+        "hash": "0x38f02ede23579b193a6904270a936901080046c3be5ab9ebdcb8da30e25b7503",
+        "oid": 57937998623,
+        "crossed": true,
+        "fee": "0.008729",
+        "tid": 411774370366847,
+        "feeToken": "USDC",
+        "twapId": null
+      },
+      {
+        "coin": "@1035",
+        "px": "31.61",
+        "sz": "0.03",
+        "side": "A",
+        "time": 1786910779978,
+        "startPosition": "0.03836445",
+        "dir": "Sell",
+        "closedPnl": "0.00000001",
+        "hash": "0xd2640935adc90c71d3dd04270a660400009f211b48cc2b43762cb4886ccce65c",
+        "oid": 57937620257,
+        "crossed": true,
+        "fee": "0.00066381",
+        "tid": 438168418505486,
+        "feeToken": "USDC",
+        "twapId": null
+      }
+    ],
+    "book": {
+      "coin": "#194680",
+      "time": 1789722116650,
+      "levels": [
+        [],
+        []
+      ]
+    },
+    "order": {
+      "status": "unknownOid"
+    }
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "network": "testnet",
+  "outcome": 19468,
+  "probeMaxNotional": "15",
+  "probeFeeBudget": "0.03",
+  "counterpartySplit": "15",
+  "steps": [
+    {
+      "step": "split",
+      "account": "0x171070FE2E9f5bB1738Ecf6979C24057EBe1576D",
+      "action": {
+        "type": "userOutcome",
+        "splitOutcome": {
+          "outcome": 19468,
+          "amount": "15"
+        }
+      }
+    },
+    {
+      "step": "full-ask",
+      "account": "0x171070FE2E9f5bB1738Ecf6979C24057EBe1576D",
+      "action": {
+        "type": "order",
+        "orders": [
+          {
+            "a": 100194680,
+            "b": false,
+            "p": "0.5",
+            "s": "10",
+            "r": false,
+            "t": {
+              "limit": {
+                "tif": "Gtc"
+              }
+            },
+            "c": "0x00000000000000000000002f2c72bd61"
+          }
+        ],
+        "grouping": "na"
+      }
+    },
+    {
+      "step": "full-buy",
+      "account": "0x614992bbbe2BA4a35DC625b29FC66dCbCfe9FA6E",
+      "action": {
+        "type": "order",
+        "orders": [
+          {
+            "a": 100194680,
+            "b": true,
+            "p": "0.5",
+            "s": "10",
+            "r": false,
+            "t": {
+              "limit": {
+                "tif": "Ioc"
+              }
+            },
+            "c": "0x00000000000000000000002f2c72bd62"
+          }
+        ],
+        "grouping": "na"
+      }
+    },
+    {
+      "step": "partial-ask",
+      "account": "0x171070FE2E9f5bB1738Ecf6979C24057EBe1576D",
+      "action": {
+        "type": "order",
+        "orders": [
+          {
+            "a": 100194680,
+            "b": false,
+            "p": "0.5",
+            "s": "5",
+            "r": false,
+            "t": {
+              "limit": {
+                "tif": "Gtc"
+              }
+            },
+            "c": "0x00000000000000000000002f2c72bd63"
+          }
+        ],
+        "grouping": "na"
+      }
+    },
+    {
+      "step": "partial-buy",
+      "account": "0x614992bbbe2BA4a35DC625b29FC66dCbCfe9FA6E",
+      "action": {
+        "type": "order",
+        "orders": [
+          {
+            "a": 100194680,
+            "b": true,
+            "p": "0.5",
+            "s": "10",
+            "r": false,
+            "t": {
+              "limit": {
+                "tif": "Ioc"
+              }
+            },
+            "c": "0x00000000000000000000002f2c72bd64"
+          }
+        ],
+        "grouping": "na"
+      }
+    },
+    {
+      "step": "empty-buy",
+      "account": "0x614992bbbe2BA4a35DC625b29FC66dCbCfe9FA6E",
+      "action": {
+        "type": "order",
+        "orders": [
+          {
+            "a": 100194680,
+            "b": true,
+            "p": "0.5",
+            "s": "10",
+            "r": false,
+            "t": {
+              "limit": {
+                "tif": "Ioc"
+              }
+            },
+            "c": "0x00000000000000000000002f2c72bd65"
+          }
+        ],
+        "grouping": "na"
+      }
+    }
+  ]
+}

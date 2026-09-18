@@ -78,11 +78,23 @@ Verify against the code before relying on any single line number.
   (`writer/src/infoApi.ts` header).
 - Outcome status: 1 = ACTIVE, 2 = SETTLED, 3 = PRUNED. `settledValue` scale 1e8;
   `fractionWad = settledValue × 1e18 / 1e8`.
-- **Core prunes a settled outcome within ~10 minutes** (2→3 observed). The keeper
-  must fire settle() promptly on status 2 and cache the fraction, because after
+- **Pruning delay varies; do not assume a ten-minute SLA.** An earlier testnet
+  outcome reached 2→3 in roughly ten minutes; outcome 19467 on September 18
+  took **109m04s–111m04s** within the observer's read windows. Fresh status-3
+  reads corroborated pruning. The keeper must fire settle() promptly on status 2
+  and cache the fraction, because after
   pruning the only way to settle is to relay a fraction observed pre-prune
   (`keeper/src/keeper.ts:397-447`). The settlement-fraction cache
   (`SETTLEMENT_CACHE_PATH`) must survive restarts — on a container, mount it.
+- **Settlement credit can be net of a fee.** Testnet probe 19467 held 10 YES +
+  10 NO: 10 USDC gross, **0.014 USDC settlement fee** in `userFills`, **9.986
+  USDC net**. Token-0 total rose from 9 to 18.986 and survived status 3. This
+  fixture's status/credit changes first appear in the same one-minute sample;
+  exact credit delay/order is unresolved. Outcome-token reads failed with
+  `rpc-error`/−32003 after settlement, not proven explicit EVM reverts or zero
+  balances. No kickoff/in-play order behavior was tested. These are testnet
+  observations, not mainnet guarantees; see
+  [September 18 evidence](s8a-testnet-evidence.md#overnight-review--2026-09-18-08050814-utc--10051014-zagreb).
 
 ## Keeper attestation trust model
 

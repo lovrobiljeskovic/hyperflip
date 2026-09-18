@@ -1,0 +1,279 @@
+{
+  "at": "2026-09-18T08:12:05.365982+00:00",
+  "journals": {
+    "maker-v2@a": {
+      "markers": {
+        "timeout": 18,
+        "rpc-error": 36,
+        "error-marker": 38,
+        "poker-tick-failed": 5,
+        "rate-limit": 2
+      },
+      "markerRanges": {
+        "timeout": {
+          "first_us": "1789690609420231",
+          "last_us": "1789690865860330"
+        },
+        "rpc-error": {
+          "first_us": "1789690609420231",
+          "last_us": "1789713956631063"
+        },
+        "error-marker": {
+          "first_us": "1789690609420231",
+          "last_us": "1789713956631063"
+        },
+        "poker-tick-failed": {
+          "first_us": "1789690611481293",
+          "last_us": "1789690678160400"
+        },
+        "rate-limit": {
+          "first_us": "1789690644753067",
+          "last_us": "1789690662873794"
+        }
+      },
+      "settlements": [],
+      "unparsedShapes": {
+        "other": 334,
+        "blank": 35,
+        "object-field": 1065,
+        "stack": 85,
+        "brace": 190
+      }
+    },
+    "maker-v2@b": {
+      "markers": {
+        "timeout": 15,
+        "rpc-error": 28,
+        "error-marker": 30,
+        "poker-tick-failed": 4,
+        "rate-limit": 2
+      },
+      "markerRanges": {
+        "timeout": {
+          "first_us": "1789690607133692",
+          "last_us": "1789690660708043"
+        },
+        "rpc-error": {
+          "first_us": "1789690607133692",
+          "last_us": "1789715810936563"
+        },
+        "error-marker": {
+          "first_us": "1789690607133692",
+          "last_us": "1789715810936563"
+        },
+        "poker-tick-failed": {
+          "first_us": "1789690609197701",
+          "last_us": "1789690660700429"
+        },
+        "rate-limit": {
+          "first_us": "1789690642500423",
+          "last_us": "1789690660669226"
+        }
+      },
+      "settlements": [],
+      "unparsedShapes": {
+        "other": 276,
+        "blank": 28,
+        "object-field": 852,
+        "stack": 68,
+        "brace": 152
+      }
+    },
+    "relay-v2": {
+      "markers": {
+        "rpc-error": 6,
+        "error-marker": 19
+      },
+      "markerRanges": {
+        "rpc-error": {
+          "first_us": "1789690633122683",
+          "last_us": "1789690633124765"
+        },
+        "error-marker": {
+          "first_us": "1789690633122683",
+          "last_us": "1789690633134331"
+        }
+      },
+      "settlements": [],
+      "unparsedShapes": {
+        "other": 95,
+        "blank": 7,
+        "object-field": 225,
+        "stack": 11,
+        "brace": 41
+      }
+    },
+    "keeper": {
+      "markers": {
+        "alert": 17
+      },
+      "markerRanges": {
+        "alert": {
+          "first_us": "1789682672321646",
+          "last_us": "1789718638532893"
+        }
+      },
+      "settlements": [
+        {
+          "at": "2026-09-17T22:05:35.147Z",
+          "vault": "0x98a50485c12985efcc8a3a3b62aad46007c843cc",
+          "fractionWad": "1000000000000000000",
+          "hash": "0x0f4a02b26e271437d8605e238562c22ded864fedd7fe28d7b41e36144fca6b6d"
+        },
+        {
+          "at": "2026-09-18T02:02:41.097Z",
+          "vault": "0x8df391c00d18c3366ef5a39f0d7dd9ce567009a0",
+          "fractionWad": "1000000000000000000",
+          "hash": "0x43fac99d06c213258b908bfa3dcc5b2495f174b2eb8724e5340f705efeab787e"
+        },
+        {
+          "at": "2026-09-18T02:19:10.066Z",
+          "vault": "0x714203bfb4f51b74e9ac539a4919f4ac5e88b2c8",
+          "fractionWad": "0",
+          "hash": "0x91cc675b803d211590057b7c2f258ecd67b8a4264c35d6cbbe37d3f4ae188bec"
+        },
+        {
+          "at": "2026-09-18T03:07:21.255Z",
+          "vault": "0xbf69eaac8469ee8769f86bebe6f529b35df5f804",
+          "fractionWad": "0",
+          "hash": "0x588935764c0aa2fa57e5a6eb0925529ce55af3291dbc6f272a666ea681b91ff6"
+        },
+        {
+          "at": "2026-09-18T03:10:23.338Z",
+          "vault": "0x56faeaed361eacaced23be131504105bac729818",
+          "fractionWad": "1000000000000000000",
+          "hash": "0xb3716b3309c3143b4d9e95cae63f13bd19c134399b1b0afcca028aa60e6240cd"
+        },
+        {
+          "at": "2026-09-18T03:32:20.918Z",
+          "vault": "0x960e2a12d26478fafed77e3da0295452379ab9ff",
+          "fractionWad": "0",
+          "hash": "0x1ade1432a0c05316431b8b6d24cc9781e443d63f534db25a94d965a3bfe46a01"
+        },
+        {
+          "at": "2026-09-18T04:12:36.455Z",
+          "vault": "0xae7a3c27cf8468d5547461c8d2b978335ad9ee95",
+          "fractionWad": "0",
+          "hash": "0x25c52a9132908a35df917e165f659c8f6b0fe6de0598a3997c414f497d6636a8"
+        },
+        {
+          "at": "2026-09-18T08:02:27.348Z",
+          "vault": "0xa3294456f7d3e67e7a93fe682f81e2784c75cdc7",
+          "fractionWad": "1000000000000000000",
+          "hash": "0x246069c96c3e5ea0b7ef3e308ad335dcdf3ba82235313e663e7c8d8e4d366db0"
+        },
+        {
+          "at": "2026-09-18T08:02:33.655Z",
+          "vault": "0xbbcf890609428fc1d86e34d7ddaa7aea71ea825c",
+          "fractionWad": "0",
+          "hash": "0x7a7b97c25400fa2412f630896731c118823af4f26fc0953b25f4e38bca25d808"
+        },
+        {
+          "at": "2026-09-18T08:04:03.722Z",
+          "vault": "0x983d8e0503ea81fe629a684171b7818389a332c2",
+          "fractionWad": "0",
+          "hash": "0xda8d9b95dd0b0a47386f0ba4c6a2dad23c1dedf1cb360a81adb7e5cc904bdb0e"
+        }
+      ],
+      "unparsedShapes": {}
+    },
+    "rotate": {
+      "markers": {
+        "error-marker": 4
+      },
+      "markerRanges": {
+        "error-marker": {
+          "first_us": "1789719002858418",
+          "last_us": "1789719003462200"
+        }
+      },
+      "settlements": [],
+      "unparsedShapes": {}
+    },
+    "systemd-journald": {
+      "markers": {},
+      "markerRanges": {},
+      "settlements": [],
+      "unparsedShapes": {}
+    }
+  },
+  "rotationRestartRulePresent": true,
+  "rotationRegistryMtimeGuardPresent": true,
+  "positions": {
+    "a": {
+      "http": 200,
+      "body": [
+        {
+          "id": "5",
+          "block": "64540525"
+        },
+        {
+          "id": "4",
+          "block": "64449961"
+        },
+        {
+          "id": "3",
+          "block": "64449940"
+        },
+        {
+          "id": "2",
+          "block": "64448147"
+        },
+        {
+          "id": "1",
+          "block": "64447715"
+        }
+      ]
+    },
+    "b": {
+      "http": 200,
+      "body": [
+        {
+          "id": "5",
+          "block": "64540525"
+        },
+        {
+          "id": "4",
+          "block": "64449961"
+        },
+        {
+          "id": "3",
+          "block": "64449940"
+        },
+        {
+          "id": "2",
+          "block": "64448147"
+        },
+        {
+          "id": "1",
+          "block": "64447715"
+        }
+      ]
+    },
+    "relay": {
+      "http": 200,
+      "body": [
+        {
+          "id": "5",
+          "block": "64540525"
+        },
+        {
+          "id": "4",
+          "block": "64449961"
+        },
+        {
+          "id": "3",
+          "block": "64449940"
+        },
+        {
+          "id": "2",
+          "block": "64448147"
+        },
+        {
+          "id": "1",
+          "block": "64447715"
+        }
+      ]
+    }
+  }
+}

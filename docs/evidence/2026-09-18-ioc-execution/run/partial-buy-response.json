@@ -1,0 +1,18 @@
+{
+  "status": "ok",
+  "response": {
+    "type": "order",
+    "data": {
+      "statuses": [
+        {
+          "filled": {
+            "totalSz": "5.0",
+            "avgPx": "0.5",
+            "oid": 60422048731,
+            "cloid": "0x00000000000000000000002f2c72bd64"
+          }
+        }
+      ]
+    }
+  }
+}

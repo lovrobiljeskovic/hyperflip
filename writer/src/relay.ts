@@ -347,15 +347,18 @@ function pickPublic(h: unknown): Record<string, unknown> {
 
 export function startRelay(deps: RelayDeps, port: number, health: () => unknown): http.Server {
   const { cfg } = deps;
-  // ponytail: makers[0] stands in for "the house" on /limits and /parlays (every maker's
-  // index is unfiltered); per-maker proxying when a second pricing policy exists.
+  // Every maker indexes all tickets. Prefer configured order, but survive one going down.
+  // ponytail: /limits uses one maker's policy; aggregate when pricing policies diverge.
   const proxy = async (path: string): Promise<{ status: number; json: unknown }> => {
-    try {
-      const r = await fetch(cfg.makers[0].url + path, { signal: AbortSignal.timeout(2000) });
-      return { status: r.status, json: await r.json() };
-    } catch {
-      return { status: 503, json: { error: "maker-unreachable" } };
+    for (const maker of cfg.makers) {
+      try {
+        const r = await fetch(maker.url + path, { signal: AbortSignal.timeout(2000) });
+        const json = await r.json();
+        if (r.status >= 500 || r.status === 429) continue;
+        return { status: r.status, json };
+      } catch { /* Try the next maker after transport, timeout, or invalid JSON failures. */ }
     }
+    return { status: 503, json: { error: "maker-unreachable" } };
   };
   const server = http.createServer((req, res) => {
     req.on("error", (err) => {
@@ -439,6 +442,6 @@ export function startRelay(deps: RelayDeps, port: number, health: () => unknown)
     }
     send(404, { error: "not-found" });
   });
-  server.listen(port);
+  server.listen(port, process.env.RELAY_HOST);
   return server;
 }

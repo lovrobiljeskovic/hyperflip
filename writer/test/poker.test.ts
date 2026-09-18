@@ -145,12 +145,16 @@ test("fetchEvents: a failed chunk keeps earlier chunks and resumes there next ti
   // chunk discarded the whole batch and left nextBlock untouched, so a cold start far
   // behind head never completed a tick and the poker stayed blind to every open parlay.
   const requested: bigint[] = [];
+  const requestedAt: number[] = [];
   let failFrom: bigint | null = 200n;
   const publicClient = {
     getBlockNumber: async () => 250n,
     getLogs: async ({ event, fromBlock, toBlock }: { event: { name: string }; fromBlock: bigint; toBlock: bigint }) => {
-      assert(toBlock - fromBlock + 1n <= 100n, "public RPC rejects larger ranges");
-      if (event.name === "ParlayMinted") requested.push(fromBlock);
+      assert(toBlock - fromBlock + 1n <= 100n, "stay within the verified RPC range");
+      if (event.name === "ParlayMinted") {
+        requested.push(fromBlock);
+        requestedAt.push(Date.now());
+      }
       if (fromBlock === failFrom) throw new Error("rate limited");
       if (event.name === "ParlayMinted" && fromBlock === 0n) {
         return [{ args: { id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n, taker: T }, blockNumber: 5n }];
@@ -174,6 +178,9 @@ test("fetchEvents: a failed chunk keeps earlier chunks and resumes there next ti
   await poker.tick();
   assert.equal(poker.openCount(), 1); // chunk 0's mint survived the chunk-2 failure
   assert.deepEqual(requested, [0n, 100n, 200n]); // stopped at the failure, no retry storm
+  for (let i = 1; i < requestedAt.length; i++) {
+    assert(requestedAt[i] - requestedAt[i - 1] >= 900, "catch-up must pause between chunks (100 ms timer tolerance)");
+  }
 
   failFrom = null;
   requested.length = 0;
@@ -183,6 +190,44 @@ test("fetchEvents: a failed chunk keeps earlier chunks and resumes there next ti
   requested.length = 0;
   await poker.tick();
   assert.deepEqual(requested, []); // the final partial chunk reached the head
+});
+
+test("catch-up checkpoints after 30 seconds and resumes after restart", async (t) => {
+  let now = 0;
+  t.mock.method(Date, "now", () => now);
+  const requested: bigint[] = [];
+  const indexFile = path.join(mkdtempSync(path.join(os.tmpdir(), "parlay-catchup-")), "parlays.json");
+  const deps = (): PokerDeps => ({
+    publicClient: {
+      getBlockNumber: async () => 250n,
+      getLogs: async ({ event, fromBlock, toBlock }: { event: { name: string }; fromBlock: bigint; toBlock: bigint }) => {
+        assert(toBlock - fromBlock + 1n <= 100n);
+        if (event.name === "ParlayMinted") {
+          requested.push(fromBlock);
+          now += 15_000;
+          if (fromBlock === 0n) return [{ args: { id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n, taker: T }, blockNumber: 5n }];
+        }
+        return [];
+      },
+    } as unknown as PokerDeps["publicClient"],
+    parlayVault: VAULT, exposure: new ExposureBook(), metrics: newMetrics(),
+    fromBlock: 0n, indexFile, indexFromBlock: 0n,
+    resolve: async () => {}, log: () => {},
+    fetchOpenParlays: async () => ({ open: [], headBlock: 250n }),
+    fetchLegs: async () => [{ vault: V1, isYes: true }],
+    fetchLegStates: async () => new Map(),
+  });
+  const first = new Poker(deps());
+  await first.seed();
+  await first.tick();
+  assert.deepEqual(requested, [0n, 100n]);
+
+  requested.length = 0;
+  const second = new Poker(deps());
+  assert.deepEqual(second.parlaysOf(T), [{ id: 1n, block: 5n }]);
+  await second.seed();
+  await second.tick();
+  assert.deepEqual(requested, [200n]);
 });
 
 // mainnet-hardening P1-6: a restart with N open parlays on-chain must rebuild `open`

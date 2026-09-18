@@ -1,0 +1,14 @@
+$ python3 tools/hedge-ioc-spike.py selftest
+PASS: full/partial fill, cap/hold guards, unknown/rejection handling, persisted timeout recovery, duplicate-send refusal; max probe notional 15 USDC
+
+$ python3 docs/evidence/2026-09-18-ioc-execution/verify.py
+PASS saved reconciliation: split
+PASS saved reconciliation: full-ask
+PASS saved reconciliation: full-buy
+PASS saved reconciliation: partial-ask
+PASS saved reconciliation: partial-buy
+PASS saved reconciliation: empty-buy
+PASS discarded-response recovery and fresh-process duplicate refusal; no cleanup needed
+PASS partial API status filled means only 5/10 filled; empty IOC has terminal no-match status
+PASS both accounts: no open orders/holds; info balances match independent Core precompile reads
+PASS accounting: split 15, buyer cost 7.50, buyer fee 0, seller fee 0.006 USDC; within approved caps

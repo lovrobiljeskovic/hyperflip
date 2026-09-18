@@ -1,0 +1,90 @@
+{
+  "at": "2026-09-18T08:13:17.190954+00:00",
+  "units": "Id=maker-v2@a.service\nActiveState=active\nSubState=running\nMainPID=681856\nNRestarts=0\n\nId=maker-v2@b.service\nActiveState=active\nSubState=running\nMainPID=682271\nNRestarts=0\n\nId=relay-v2.service\nActiveState=active\nSubState=running\nMainPID=682275\nNRestarts=0\n\nId=observe-settlement-v2.service\nActiveState=active\nSubState=running\nMainPID=682267\nNRestarts=0\n\nId=writer.service\nActiveState=active\nSubState=running\nMainPID=688080\nNRestarts=0\n\nId=keeper.service\nActiveState=active\nSubState=running\nMainPID=688077\nNRestarts=0\n\nId=caddy.service\nActiveState=active\nSubState=running\nMainPID=4895\nNRestarts=0\n",
+  "indexes": {
+    "a": {
+      "scannedTo": "64584162",
+      "parlays": [
+        [
+          "1",
+          "0xC1b15e354D5E4561B5692735070d874727001e48",
+          "64447715"
+        ],
+        [
+          "2",
+          "0xC1b15e354D5E4561B5692735070d874727001e48",
+          "64448147"
+        ],
+        [
+          "3",
+          "0xC1b15e354D5E4561B5692735070d874727001e48",
+          "64449940"
+        ],
+        [
+          "4",
+          "0xC1b15e354D5E4561B5692735070d874727001e48",
+          "64449961"
+        ],
+        [
+          "5",
+          "0xC1b15e354D5E4561B5692735070d874727001e48",
+          "64540525"
+        ]
+      ]
+    },
+    "b": {
+      "scannedTo": "64584162",
+      "parlays": [
+        [
+          "1",
+          "0xC1b15e354D5E4561B5692735070d874727001e48",
+          "64447715"
+        ],
+        [
+          "2",
+          "0xC1b15e354D5E4561B5692735070d874727001e48",
+          "64448147"
+        ],
+        [
+          "3",
+          "0xC1b15e354D5E4561B5692735070d874727001e48",
+          "64449940"
+        ],
+        [
+          "4",
+          "0xC1b15e354D5E4561B5692735070d874727001e48",
+          "64449961"
+        ],
+        [
+          "5",
+          "0xC1b15e354D5E4561B5692735070d874727001e48",
+          "64540525"
+        ]
+      ]
+    }
+  },
+  "caddyV1Health": {
+    "curlExit": 0,
+    "ok": true,
+    "seeded": true,
+    "openParlays": 10
+  },
+  "a": {
+    "http": 200,
+    "ok": true,
+    "seeded": true,
+    "openParlays": 3
+  },
+  "b": {
+    "http": 200,
+    "ok": true,
+    "seeded": true,
+    "openParlays": 1
+  },
+  "relay": {
+    "http": 200,
+    "ok": true,
+    "seeded": null,
+    "openParlays": null
+  }
+}

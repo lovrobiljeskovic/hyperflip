@@ -256,9 +256,10 @@ test("waitlist-issued code passes the invite gate", async () => {
 // --- HTTP ---
 
 /** Stands in for a loopback maker on the proxied GET routes; /rfq goes through the askMaker fake. */
-async function stubMaker(): Promise<{ url: string; close(): void }> {
+async function stubMaker(status = 200): Promise<{ url: string; close(): void }> {
   const server = http.createServer((req, res) => {
     res.setHeader("content-type", "application/json");
+    if (status !== 200) { res.statusCode = status; return res.end(JSON.stringify({ error: "unavailable" })); }
     if (req.url === "/limits") return res.end(JSON.stringify({ maxStake: "10000000", edgeBps: "725", legEdgeBps: "150", quoteTtlMs: 15000 }));
     if (req.url?.startsWith("/parlays?")) {
       const taker = new URL(req.url, "http://m").searchParams.get("taker");
@@ -323,6 +324,27 @@ test("HTTP smoke: /quote, /health, /metrics, /limits, /parlays, bad-json, unknow
     server.close();
     maker.close();
   }
+});
+
+test("HTTP: positions and limits fall back when the first maker is unreachable or returns 503", async () => {
+  const healthy = await stubMaker();
+  const unhealthy = await stubMaker(503);
+  try {
+    for (const url of ["http://127.0.0.1:1", unhealthy.url]) {
+      const { base, server } = await relayUp(deps({}, { cfg: cfg({ makers: [
+        { maker: MAKER_A, url }, { maker: MAKER_B, url: healthy.url },
+      ] }) }));
+      try {
+        const parlays = await fetch(`${base}/parlays?taker=${TAKER}`);
+        assert.equal(parlays.status, 200);
+        assert.deepEqual(await parlays.json(), [{ id: "7", block: "120" }]);
+        const limits = await fetch(`${base}/limits`);
+        assert.equal(limits.status, 200);
+        assert.equal(((await limits.json()) as { makers: number }).makers, 2);
+        assert.equal((await fetch(`${base}/parlays?taker=nope`)).status, 400);
+      } finally { server.close(); }
+    }
+  } finally { healthy.close(); unhealthy.close(); }
 });
 
 test("HTTP: unreachable maker on a proxied route is 503 maker-unreachable; /health reports it down", async () => {

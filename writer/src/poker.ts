@@ -1,4 +1,5 @@
 import { parseAbiItem, type Address, type PublicClient } from "viem";
+import { setTimeout } from "node:timers/promises";
 import { parlayVaultAbi } from "./abi.js";
 import { ExposureBook } from "./exposure.js";
 import type { Metrics } from "./maker.js";
@@ -196,9 +197,10 @@ export class Poker {
     if (toBlock < fromBlock) return { minted: [], resolvedIds: [], toBlock: fromBlock - 1n };
     const minted: MintedEvent[] = [];
     const resolvedIds: bigint[] = [];
-    // Keep ranges small enough for public dRPC. Retain completed chunks so a
+    // The S8a RPC accepts 100-block ranges. Retain completed chunks so a
     // failed request resumes there next tick without losing exposure updates.
     let scanned = fromBlock - 1n;
+    const startedAt = Date.now();
     for (const r of blockRanges(fromBlock, toBlock, 100n)) {
       try {
         const [mintLogs, resolveLogs] = await Promise.all([
@@ -218,6 +220,10 @@ export class Poker {
         );
         resolvedIds.push(...resolveLogs.map((l) => l.args.id!));
         scanned = r.to;
+        // Yield long catch-ups so tick() saves progress and the watchdog stays live.
+        if (Date.now() - startedAt >= 30_000) break;
+        // Leave RPC capacity for quotes instead of bursting through the backlog.
+        if (scanned < toBlock) await setTimeout(1_000);
       } catch (err) {
         this.deps.log({
           event: "scan-truncated",

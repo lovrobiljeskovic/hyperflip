@@ -1,0 +1,4 @@
+PASS: full/partial fill, cap/hold guards, unknown/rejection handling, persisted timeout recovery, duplicate-send refusal; max probe notional 15 USDC
+PASS: explicit execution guard; no intent/signed request on unsigned invocation
+PASS read-only preflight: chain 998; outcome 19468 active; owner correct; zero existing target shares/holds
+PENDING: user approval; all signed IOC scenarios and independent post-trade precompile confirmation

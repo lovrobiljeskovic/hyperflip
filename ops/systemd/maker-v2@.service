@@ -1,0 +1,27 @@
+[Unit]
+Description=Hyperflip testnet v2 maker %i
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=hype
+WorkingDirectory=/opt/hype-v2/writer
+EnvironmentFile=/opt/hype-v2/.env
+EnvironmentFile=/opt/hype-v2/maker-%i.env
+Environment=NPM_CONFIG_CACHE=/opt/hype-v2/state/npm-cache
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=15
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+CPUWeight=20
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/hype-v2/state
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+All figures: USDC; current cash and purchase costs are separate.
+Example | exact terminal requirement | best one-leg bound | extra cash
+One ticket; no hedge | 80 | 80 | 0
+One ticket; A YES pays 50 net | 30 | 30 | 0
+Two tickets share A; liabilities 80+40; A hedge 50 | 70 | 70 | 0
+One ticket; A and B hedges each pay 50 | 0 | 30 | 30
+A&B and A&not-B; liabilities 80 each; A hedge 50 | 30 | 80 | 50
+One ticket; A YES pays 80 net | 0 | 0 | 0
+A already won; only B unresolved; B hedge 50 | 30 | 30 | 0
+PASS duplicate-credit counterexample: two 80 liabilities need 110, not 60, with one 50 hedge
+PASS wrong-side hedge: 100 A-NO payoff provides zero relief for A-YES & B-YES
+PASS all 3645 binary portfolios / 13041 assignments: exact <= assignment bound <= full maker liabilities
+LIMIT: terminal binary model only; not a full solvency/withdrawal/claim proof.

@@ -1,0 +1,27 @@
+[Unit]
+Description=Hyperflip testnet v2 RFQ relay
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=hype
+WorkingDirectory=/opt/hype-v2/writer
+EnvironmentFile=/opt/hype-v2/.env
+Environment=RELAY_HOST=127.0.0.1
+Environment=NPM_CONFIG_CACHE=/opt/hype-v2/state/npm-cache
+ExecStart=/usr/bin/npm run start:relay
+Restart=always
+RestartSec=15
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+CPUWeight=20
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/hype-v2/state
+
+[Install]
+WantedBy=multi-user.target

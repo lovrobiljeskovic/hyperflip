@@ -1,0 +1,115 @@
+{
+  "rows": 614,
+  "observations": 612,
+  "first": "2026-09-17T21:55:05.777Z",
+  "last": "2026-09-18T08:06:33.603Z",
+  "maxSampleStartGapSeconds": 62.885,
+  "transitions": {
+    "settled": {
+      "lastPre": {
+        "name": "outcome",
+        "startedAt": "2026-09-18T04:09:23.704Z",
+        "observedAt": "2026-09-18T04:09:23.842Z",
+        "ok": true,
+        "status": 1,
+        "settledValue": "0",
+        "question": 4294967295
+      },
+      "firstPost": {
+        "name": "outcome",
+        "startedAt": "2026-09-18T04:10:23.750Z",
+        "observedAt": "2026-09-18T04:10:23.885Z",
+        "ok": true,
+        "status": 2,
+        "settledValue": "0",
+        "question": 4294967295
+      }
+    },
+    "credited": {
+      "lastPre": {
+        "name": "0",
+        "startedAt": "2026-09-18T04:09:23.842Z",
+        "observedAt": "2026-09-18T04:09:23.961Z",
+        "ok": true,
+        "total": "900000000",
+        "hold": "0",
+        "entryNtl": "0"
+      },
+      "firstPost": {
+        "name": "0",
+        "startedAt": "2026-09-18T04:10:23.885Z",
+        "observedAt": "2026-09-18T04:10:24.003Z",
+        "ok": true,
+        "total": "1898600000",
+        "hold": "0",
+        "entryNtl": "0"
+      }
+    },
+    "pruned": {
+      "lastPre": {
+        "name": "outcome",
+        "startedAt": "2026-09-18T05:59:27.853Z",
+        "observedAt": "2026-09-18T05:59:27.995Z",
+        "ok": true,
+        "status": 2,
+        "settledValue": "0",
+        "question": 4294967295
+      },
+      "firstPost": {
+        "name": "outcome",
+        "startedAt": "2026-09-18T06:00:27.866Z",
+        "observedAt": "2026-09-18T06:00:28.002Z",
+        "ok": true,
+        "status": 3,
+        "settledValue": "0",
+        "question": 4294967295
+      }
+    },
+    "yesReadFailure": {
+      "lastPre": {
+        "name": "100194670",
+        "startedAt": "2026-09-18T04:09:23.961Z",
+        "observedAt": "2026-09-18T04:09:24.074Z",
+        "ok": true,
+        "total": "1000000",
+        "hold": "0",
+        "entryNtl": "550000000"
+      },
+      "firstPost": {
+        "name": "100194670",
+        "startedAt": "2026-09-18T04:10:24.003Z",
+        "observedAt": "2026-09-18T04:10:24.142Z",
+        "ok": false,
+        "error": "rpc-error"
+      }
+    },
+    "noReadFailure": {
+      "lastPre": {
+        "name": "100194671",
+        "startedAt": "2026-09-18T04:09:24.074Z",
+        "observedAt": "2026-09-18T04:09:24.185Z",
+        "ok": true,
+        "total": "1000000",
+        "hold": "0",
+        "entryNtl": "450000000"
+      },
+      "firstPost": {
+        "name": "100194671",
+        "startedAt": "2026-09-18T04:10:24.142Z",
+        "observedAt": "2026-09-18T04:10:24.294Z",
+        "ok": false,
+        "error": "rpc-error"
+      }
+    }
+  },
+  "errors": {
+    "outcome": 1,
+    "0": 1,
+    "100194670": 238,
+    "100194671": 238
+  },
+  "settledToPrunedSecondsBounds": [
+    6543.968,
+    6664.298
+  ]
+}

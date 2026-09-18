@@ -1,5 +1,11 @@
 # S8a: v2 on the laptop
 
+**September 17/18 server handover:** A/B, relay, and the S2b observer now run
+under systemd on the authorized server. Keep laptop makers stopped while server
+makers run. Read [the server handoff](s8b-server.md) before using any restart
+commands below. Original `.env.s8a*` and local state remain intact; these laptop
+steps are retained for reference, not an instruction to run duplicate wallets.
+
 **Resuming the September 16 session?** Read [the handoff](s8a-handoff.md)
 first. Deployment, maker approvals, and the first mint are already complete;
 do not repeat the deployment steps. G1 settlement evidence is still pending.
@@ -376,7 +382,7 @@ path returning funds to the winning maker. Minting alone does not complete S8a.
     DEPLOYMENT_FILE="$PWD/registry/deployment.testnet-v2.json" \
     NEXT_PUBLIC_PARLAY_VAULT="" NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK="" NEXT_PUBLIC_CHAIN_ID="" \
     NEXT_PUBLIC_WRITER_URL=http://localhost:8787 \
-    NEXT_PUBLIC_RPC_URL=https://hyperliquid-testnet.drpc.org \
+    NEXT_PUBLIC_RPC_URL=https://rpc.hyperliquid-testnet.xyz/evm \
     NEXT_PUBLIC_INFO_API=https://api.hyperliquid-testnet.xyz/info \
     npm run dev --prefix web -- --hostname localhost --port 3000
     ```
@@ -385,6 +391,11 @@ path returning funds to the winning maker. Minting alone does not complete S8a.
     `http://localhost:3000`. Without a Privy ID the app can render and read chain
     state, but Connect Wallet does nothing. Keep the explicit port: CORS allows
     port 3000. Restart the dev server after changing these environment settings.
+
+    The browser uses the public testnet RPC for current contract reads and mint
+    timestamps. Keep the private backend `WRITER_RPC` out of `NEXT_PUBLIC_*`:
+    those values are embedded in browser JavaScript. The public endpoint does
+    not pass the backend deployment-history guard; it is not a backend substitute.
 
 11. **Quote and mint through the browser.** Connect the funded taker wallet on
     chain 998, enter invite code `S8A-LAPTOP`, select two live outcomes from

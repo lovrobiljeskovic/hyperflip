@@ -1,0 +1,27 @@
+[Unit]
+Description=Read-only S2b testnet settlement observer (outcome 19467)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=hype
+WorkingDirectory=/opt/hype-v2/writer
+EnvironmentFile=/opt/hype-v2/observer.env
+ExecStart=/usr/bin/node --import tsx src/observe-settlement.ts
+Restart=always
+RestartSec=15
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+CPUWeight=20
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/hype-v2/state
+StandardOutput=append:/opt/hype-v2/state/settlement-19467.jsonl
+StandardError=append:/opt/hype-v2/state/settlement-19467.jsonl
+
+[Install]
+WantedBy=multi-user.target

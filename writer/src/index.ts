@@ -140,7 +140,11 @@ async function main(): Promise<void> {
         functionName: "resolveParlay",
         args: [id],
       });
-      await publicClient.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
+      console.log(JSON.stringify({
+        at: new Date().toISOString(), event: "parlay-resolution-receipt", id: id.toString(),
+        hash, block: receipt.blockNumber.toString(), status: receipt.status,
+      }));
     },
     log: (msg) => console.log(JSON.stringify({ at: new Date().toISOString(), ...msg })),
   });

@@ -1,0 +1,6 @@
+{
+  "exitCode": 1,
+  "expectedRefusal": "STOP: intent already exists: use reconcile; sending again is forbidden; inspect saved public evidence; do not resend.",
+  "keyFileRead": false,
+  "networkCall": false
+}

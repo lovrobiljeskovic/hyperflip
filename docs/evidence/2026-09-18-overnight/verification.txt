@@ -1,0 +1,8 @@
+PASS G1: successful Dead(3) receipt; maker A sender; full 959514 USDC units paid to stored A
+PASS losing leg: keeper settlement succeeded before resolution; fraction 0 at resolution block
+PASS tickets: 1/2/4/5 Open, 3 Dead; retained B journal contains no poke/receipt/failure attempt
+PASS S2b item 4: gross 10 - fee 0.014 = net 9.986 USDC; final 18.986; fresh status 3
+PASS observer: 612 samples, two starts; max start gap 62.885s; errors {'outcome': 1, '0': 1, '100194670': 238, '100194671': 238}
+GAP: token reads fail with rpc-error; no zero-balance/revert proof or kickoff order/cancel observations
+PASS current health: A/B/relay HTTP 200; indexes advancing with all five IDs; v1 via Caddy healthy; laptop makers off
+PASS event: ESPN final BUF 41, DET 31

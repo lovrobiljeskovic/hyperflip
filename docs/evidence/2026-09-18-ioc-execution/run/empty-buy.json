@@ -1,0 +1,178 @@
+{
+  "step": "empty-buy",
+  "network": "testnet",
+  "account": "0x614992bbbe2BA4a35DC625b29FC66dCbCfe9FA6E",
+  "action": {
+    "type": "order",
+    "orders": [
+      {
+        "a": 100194680,
+        "b": true,
+        "p": "0.5",
+        "s": "10",
+        "r": false,
+        "t": {
+          "limit": {
+            "tif": "Ioc"
+          }
+        },
+        "c": "0x00000000000000000000002f2c72bd65"
+      }
+    ],
+    "grouping": "na"
+  },
+  "nonce": 1789722218834,
+  "expiresAfter": 1789722233834,
+  "before": {
+    "atMs": 1789722215422,
+    "account": "0x614992bbbe2BA4a35DC625b29FC66dCbCfe9FA6E",
+    "balance": {
+      "balances": [
+        {
+          "coin": "USDC",
+          "token": 0,
+          "total": "11.486",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "+200380",
+          "total": "0.0",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "+200381",
+          "total": "0.0",
+          "hold": "0.0",
+          "entryNtl": "0.0"
+        },
+        {
+          "coin": "+194680",
+          "total": "15.0",
+          "hold": "0.0",
+          "entryNtl": "7.5"
+        }
+      ]
+    },
+    "openOrders": [],
+    "fills": [
+      {
+        "coin": "#194680",
+        "px": "0.5",
+        "sz": "5.0",
+        "side": "B",
+        "time": 1789722169323,
+        "startPosition": "10.0",
+        "dir": "Buy",
+        "closedPnl": "0.0",
+        "hash": "0xcfe91bb0fd8f0ad5d16204299729fa010e003396988229a773b1c703bc82e4c0",
+        "oid": 60422048731,
+        "crossed": true,
+        "fee": "0.0",
+        "tid": 1064735327896331,
+        "cloid": "0x00000000000000000000002f2c72bd64",
+        "feeToken": "USDC",
+        "twapId": null
+      },
+      {
+        "coin": "#194680",
+        "px": "0.5",
+        "sz": "10.0",
+        "side": "B",
+        "time": 1789722063015,
+        "startPosition": "0.0",
+        "dir": "Buy",
+        "closedPnl": "0.0",
+        "hash": "0x85dd2a2bf5b113ab875604299722d5010200421190b4327d29a5d57eb4b4ed96",
+        "oid": 60421939998,
+        "crossed": true,
+        "fee": "0.0",
+        "tid": 137409145810040,
+        "cloid": "0x00000000000000000000002f2c72bd62",
+        "feeToken": "USDC",
+        "twapId": null
+      },
+      {
+        "coin": "#194671",
+        "px": "1.0",
+        "sz": "10.0",
+        "side": "A",
+        "time": 1789704605427,
+        "startPosition": "10.0",
+        "dir": "Settlement",
+        "closedPnl": "5.5",
+        "hash": "0xbcd71a3402122bf8be50042992d30601030032199d154aca609fc586c11605e3",
+        "oid": 60405282200,
+        "crossed": true,
+        "fee": "0.014",
+        "tid": 1014030883999550,
+        "feeToken": "USDC",
+        "twapId": null
+      },
+      {
+        "coin": "#194670",
+        "px": "0.0",
+        "sz": "10.0",
+        "side": "A",
+        "time": 1789704605427,
+        "startPosition": "10.0",
+        "dir": "Settlement",
+        "closedPnl": "-5.5",
+        "hash": "0xbcd71a3402122bf8be50042992d30601030032199d154aca609fc586c11605e3",
+        "oid": 60405282198,
+        "crossed": true,
+        "fee": "0.0",
+        "tid": 952856280476762,
+        "feeToken": "USDC",
+        "twapId": null
+      },
+      {
+        "coin": "#194671",
+        "px": "0.45",
+        "sz": "10.0",
+        "side": "B",
+        "time": 1789566316055,
+        "startPosition": "0.0",
+        "dir": "Buy",
+        "closedPnl": "0.0",
+        "hash": "0xda5e595309d9b953dbd8042971fafe0107007138a4dcd8257e2704a5c8dd933e",
+        "oid": 60272061771,
+        "crossed": true,
+        "fee": "0.0",
+        "tid": 644297488205236,
+        "feeToken": "USDC",
+        "twapId": null
+      },
+      {
+        "coin": "#194670",
+        "px": "0.55",
+        "sz": "10.0",
+        "side": "B",
+        "time": 1789565950112,
+        "startPosition": "0.0",
+        "dir": "Buy",
+        "closedPnl": "0.0",
+        "hash": "0x4609020e6cd60dda4782042971e33c01010019f407d92cace9d1ad612bd9e7c4",
+        "oid": 60271266560,
+        "crossed": false,
+        "fee": "0.0",
+        "tid": 504304077997163,
+        "cloid": "0x00000000000000000000000000000001",
+        "feeToken": "USDC",
+        "twapId": null
+      }
+    ],
+    "book": {
+      "coin": "#194680",
+      "time": 1789722216705,
+      "levels": [
+        [],
+        []
+      ]
+    },
+    "order": {
+      "status": "unknownOid"
+    }
+  }
+}

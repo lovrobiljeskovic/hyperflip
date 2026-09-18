@@ -1,0 +1,77 @@
+{
+  "at": "2026-09-18T08:10:31.476Z",
+  "providers": {
+    "configured": [
+      {
+        "label": "outcome",
+        "startedAt": "2026-09-18T08:10:31.481Z",
+        "http": 200,
+        "result": "0x0000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffffffff",
+        "observedAt": "2026-09-18T08:10:31.828Z"
+      },
+      {
+        "label": "0",
+        "startedAt": "2026-09-18T08:10:31.828Z",
+        "http": 200,
+        "result": "0x00000000000000000000000000000000000000000000000000000000712a564000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "observedAt": "2026-09-18T08:10:31.957Z"
+      },
+      {
+        "label": "100194670",
+        "startedAt": "2026-09-18T08:10:31.957Z",
+        "http": 200,
+        "error": {
+          "code": -32003,
+          "executionReverted": false,
+          "invalidToken": false,
+          "pruned": false,
+          "messageLength": 73
+        },
+        "observedAt": "2026-09-18T08:10:32.078Z"
+      },
+      {
+        "label": "100194671",
+        "startedAt": "2026-09-18T08:10:32.078Z",
+        "http": 200,
+        "error": {
+          "code": -32003,
+          "executionReverted": false,
+          "invalidToken": false,
+          "pruned": false,
+          "messageLength": 73
+        },
+        "observedAt": "2026-09-18T08:10:32.195Z"
+      }
+    ],
+    "official": [
+      {
+        "label": "outcome",
+        "startedAt": "2026-09-18T08:10:32.196Z",
+        "http": 502,
+        "transportError": true,
+        "observedAt": "2026-09-18T08:10:32.481Z"
+      },
+      {
+        "label": "0",
+        "startedAt": "2026-09-18T08:10:32.481Z",
+        "http": 502,
+        "transportError": true,
+        "observedAt": "2026-09-18T08:10:32.756Z"
+      },
+      {
+        "label": "100194670",
+        "startedAt": "2026-09-18T08:10:32.756Z",
+        "http": 502,
+        "transportError": true,
+        "observedAt": "2026-09-18T08:10:33.011Z"
+      },
+      {
+        "label": "100194671",
+        "startedAt": "2026-09-18T08:10:33.011Z",
+        "http": 502,
+        "transportError": true,
+        "observedAt": "2026-09-18T08:10:33.266Z"
+      }
+    ]
+  }
+}
