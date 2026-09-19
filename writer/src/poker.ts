@@ -2,7 +2,7 @@ import { parseAbiItem, type Address, type PublicClient } from "viem";
 import { parlayVaultAbi } from "./abi.js";
 import { ExposureBook } from "./exposure.js";
 import type { Metrics } from "./server.js";
-import { parlayIsDead, readLegStates, type LegState } from "./settlement.js";
+import { parlayIsDead, parlayIsVoid, readLegStates, type LegState } from "./settlement.js";
 import { blockRanges } from "./pure.js";
 import type { QuoteLeg } from "./quotes.js";
 import { readOptionalFile, replaceFile } from "../../services/files.mjs";
@@ -55,8 +55,9 @@ const RESOLVED = parseAbiItem("event ParlayResolved(uint256 indexed id, uint8 st
 
 /** Dead-parlay poker (spec §5). Owns ParlayMinted/ParlayResolved sync: converts
  * reservations to open exposure on mint, releases on resolve, and pokes
- * resolveParlay on any open parlay with a lost settled leg — DEAD tickets have no
- * incentivized caller, and unresolved ones lock house bankroll and exposure caps.
+ * resolveParlay on any open parlay that can no longer pay out — DEAD tickets have no
+ * incentivized caller and VOID ones only a weakly incentivized taker, and unresolved
+ * ones lock house bankroll and exposure caps.
  * Idempotent per tick; failures retry next tick. */
 export class Poker {
   private open = new Map<bigint, QuoteLeg[]>();
@@ -256,8 +257,9 @@ export class Poker {
       ? await this.deps.fetchLegStates(vaults)
       : await readLegStates(this.deps.publicClient, vaults);
     for (const [id, legs] of this.open) {
-      if (parlayIsDead(legs, states)) {
-        log({ event: "poking-dead-parlay", id: id.toString() });
+      const dead = parlayIsDead(legs, states);
+      if (dead || parlayIsVoid(legs, states)) {
+        log({ event: dead ? "poking-dead-parlay" : "poking-void-parlay", id: id.toString() });
         try {
           await this.deps.resolve(id);
           // open-set removal happens when the ParlayResolved event lands next tick.

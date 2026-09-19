@@ -28,12 +28,29 @@ export async function readLegStates(
 }
 
 /** Mirrors ParlayVault.resolveParlay's lost rule: YES lost iff settled fraction == 0,
- * NO lost iff == 1e18. Fractional settlements are the VOID path — the poker leaves
- * those to the taker (premium refund incentive); it only pokes for house capital. */
+ * NO lost iff == 1e18. */
 export function parlayIsDead(legs: QuoteLeg[], states: Map<string, LegState>): boolean {
-  return legs.some((l) => {
+  return legs.some((l) => legLost(l, states.get(l.vault.toLowerCase())));
+}
+
+/** VOID path: every leg settled, none lost, at least one fractional. resolveParlay
+ * then refunds the taker's premium and returns the rest to the writer, so the taker
+ * has an incentive to call it — but nothing forces them to, and until someone does
+ * the house's contribution stays escrowed and inside the exposure caps. The poker
+ * pokes these too; the taker still gets the refund, it just doesn't gate it. */
+export function parlayIsVoid(legs: QuoteLeg[], states: Map<string, LegState>): boolean {
+  let fractional = false;
+  for (const l of legs) {
     const s = states.get(l.vault.toLowerCase());
     if (!s?.settled) return false;
-    return l.isYes ? s.fractionWad === 0n : s.fractionWad === WAD;
-  });
+    if (legLost(l, s)) return false;
+    const hit = l.isYes ? s.fractionWad === WAD : s.fractionWad === 0n;
+    if (!hit) fractional = true;
+  }
+  return fractional;
+}
+
+function legLost(l: QuoteLeg, s: LegState | undefined): boolean {
+  if (!s?.settled) return false;
+  return l.isYes ? s.fractionWad === 0n : s.fractionWad === WAD;
 }

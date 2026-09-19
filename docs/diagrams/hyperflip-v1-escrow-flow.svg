@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1180" viewBox="0 0 1500 1180" font-family="'Architects Daughter','Comic Sans MS','Segoe Print',cursive">
+  <defs>
+    <filter id="rough" x="-5%" y="-5%" width="110%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.018" numOctaves="3" seed="7" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="2.4" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#111"/>
+    </marker>
+  </defs>
+
+  <rect width="1500" height="1180" fill="#fff"/>
+
+  <!-- shapes -->
+  <g fill="none" stroke="#111" stroke-width="2" stroke-linecap="round">
+    <rect x="20" y="20" width="1460" height="1140" rx="14"/>
+
+    <!-- lifelines -->
+    <g stroke="#9aa0a6" stroke-width="1.5">
+      <line x1="130" y1="198" x2="130" y2="1110"/>
+      <line x1="340" y1="198" x2="340" y2="1110"/>
+      <line x1="565" y1="198" x2="565" y2="1110"/>
+      <line x1="800" y1="198" x2="800" y2="1110"/>
+      <line x1="1035" y1="198" x2="1035" y2="1110"/>
+      <line x1="1285" y1="198" x2="1285" y2="1110"/>
+    </g>
+
+    <!-- actor boxes -->
+    <g fill="#fff">
+      <rect x="60" y="140" width="140" height="58"/>
+      <rect x="250" y="140" width="180" height="58"/>
+      <rect x="470" y="140" width="190" height="58"/>
+      <rect x="700" y="140" width="200" height="58"/>
+      <rect x="950" y="140" width="170" height="58"/>
+      <rect x="1170" y="140" width="230" height="58"/>
+    </g>
+
+    <!-- messages -->
+    <g marker-end="url(#ah)" stroke-width="2.2">
+      <line x1="139" y1="245" x2="331" y2="245"/>
+      <line x1="349" y1="300" x2="556" y2="300"/>
+      <line x1="574" y1="355" x2="791" y2="355"/>
+      <line x1="791" y1="405" x2="574" y2="405"/>
+      <line x1="556" y1="630" x2="349" y2="630"/>
+      <line x1="331" y1="680" x2="139" y2="680"/>
+      <line x1="139" y1="730" x2="1026" y2="730"/>
+      <line x1="1026" y1="780" x2="574" y2="780"/>
+      <line x1="1026" y1="845" x2="139" y2="845"/>
+      <line x1="1044" y1="915" x2="1276" y2="915"/>
+      <line x1="574" y1="960" x2="1026" y2="960"/>
+      <line x1="1026" y1="1005" x2="139" y2="1005"/>
+    </g>
+
+    <!-- compute bubble + note -->
+    <ellipse cx="565" cy="490" rx="120" ry="52" stroke-dasharray="3 7" fill="#fff"/>
+    <path d="M685 505 L760 514" stroke-dasharray="3 7"/>
+    <rect x="760" y="430" width="680" height="165" stroke-dasharray="10 8" fill="#fff"/>
+
+    <!-- settle separator -->
+    <line x1="200" y1="880" x2="1400" y2="880" stroke-dasharray="2 8"/>
+
+    <!-- outcome note -->
+    <rect x="700" y="1040" width="740" height="105" stroke-dasharray="10 8" fill="#fff"/>
+
+    <!-- step badges -->
+    <g fill="#f1f3f4">
+      <rect x="121" y="236" width="18" height="18"/>
+      <rect x="331" y="291" width="18" height="18"/>
+      <rect x="556" y="346" width="18" height="18"/>
+      <rect x="791" y="396" width="18" height="18"/>
+      <rect x="556" y="621" width="18" height="18"/>
+      <rect x="331" y="671" width="18" height="18"/>
+      <rect x="121" y="721" width="18" height="18"/>
+      <rect x="1026" y="771" width="18" height="18"/>
+      <rect x="1026" y="836" width="18" height="18"/>
+      <rect x="1026" y="906" width="18" height="18"/>
+      <rect x="556" y="951" width="18" height="18"/>
+      <rect x="1026" y="996" width="18" height="18"/>
+    </g>
+  </g>
+
+  <!-- text -->
+  <g fill="#111" text-anchor="middle">
+    <text x="60" y="80" text-anchor="start" font-size="30">Hyperflip v1 — House-Escrow Slip Flow</text>
+    <text x="60" y="110" text-anchor="start" font-size="17" fill="#555">One maker (the house), full payout escrowed per slip, no hedge and no cross-margin</text>
+
+    <g font-size="17">
+      <text x="130" y="175">User</text>
+      <text x="340" y="175">Hyperflip web</text>
+      <text x="565" y="175">Writer (house)</text>
+      <text x="800" y="175">HIP-4 order book</text>
+      <text x="1035" y="175">ParlayVault</text>
+      <text x="1285" y="175">Leg OutcomeVaults</text>
+    </g>
+
+    <g font-size="15">
+      <text x="235" y="231">Build slip: 2 legs, stake $10</text>
+      <text x="452" y="286">POST /quote {legs, stake}</text>
+      <text x="682" y="324">read leg prices + depth</text>
+      <text x="682" y="344">(precompile mid, book fallback)</text>
+      <text x="682" y="391">p₁ = 0.50, p₂ = 0.50</text>
+
+      <text x="565" y="478">Prices combo,</text>
+      <text x="565" y="500">checks stake / leg / exposure</text>
+      <text x="565" y="522">caps against bankroll</text>
+
+      <text x="1100" y="468">fair p̂ = 0.50 · 0.50 = 0.25   (independence assumption)</text>
+      <text x="1100" y="505">fair payout = $10 / 0.25 = $40</text>
+      <text x="1100" y="542">less pricing margin ⇒ quoted payout $36</text>
+      <text x="1100" y="579">⇒ house contributes $36 − $10 = $26</text>
+
+      <text x="452" y="600">signed EIP-712 quote: premium $10,</text>
+      <text x="452" y="616">maxPayout $36, quoteId, deadline</text>
+      <text x="235" y="666">show slip: risk $10 to win $36</text>
+      <text x="582" y="716">approve USDC · mint(quote, sig) — stake $10 pulled</text>
+      <text x="800" y="766">transferFrom house allowance: $26</text>
+      <text x="800" y="800" font-style="italic" fill="#555">vault now escrows the whole $36 payout, isolated to this slip</text>
+      <text x="582" y="831">slip NFT minted (payout receipt)</text>
+
+      <text x="800" y="874" fill="#555">games finish · legs settle on HIP-4</text>
+
+      <text x="1160" y="901">settled() / settleFractionWad()</text>
+      <text x="800" y="946">resolveParlay(id) — keeper pokes dead + void slips</text>
+      <text x="582" y="991">claim(id): $36 to current token owner</text>
+
+      <text x="1070" y="1075">Won — every leg hits: holder claims the $36</text>
+      <text x="1070" y="1105">Dead — any leg lost: full $36 pot back to house</text>
+      <text x="1070" y="1135">Void — fractional leg, none lost: $10 back to user, $26 to house</text>
+    </g>
+
+    <g font-size="15" text-anchor="start" fill="#555">
+      <text x="60" y="1075">No cross-margin, no hedge leg in v1: each slip is collateralised</text>
+      <text x="60" y="1100">on its own at 100% of max payout, so the house never borrows</text>
+      <text x="60" y="1125">against offsetting risk across slips.</text>
+    </g>
+
+    <g font-size="12" fill="#333">
+      <text x="130" y="249">1</text><text x="340" y="304">2</text><text x="565" y="359">3</text>
+      <text x="800" y="409">4</text><text x="565" y="634">5</text><text x="340" y="684">6</text>
+      <text x="130" y="734">7</text><text x="1035" y="784">8</text><text x="1035" y="849">9</text>
+      <text x="1035" y="919">10</text><text x="565" y="964">11</text><text x="1035" y="1009">12</text>
+    </g>
+  </g>
+</svg>
