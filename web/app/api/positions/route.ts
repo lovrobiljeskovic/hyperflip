@@ -1,5 +1,5 @@
 import "server-only";
-import { createPublicClient, http } from "viem";
+import { createPublicClient, fallback, http } from "viem";
 import { hyperEvmTestnet } from "@/lib/chain";
 import { createPositionsIndex, parsePositionQuery, PositionsError } from "@/lib/positions-index";
 import { encodeRow } from "@/lib/positions-api";
@@ -14,8 +14,12 @@ export async function GET(request: Request) {
     parsePositionQuery(query);
     const endpoint = process.env.POSITIONS_SUBGRAPH_URL;
     if (!endpoint) throw new PositionsError("Positions index is not configured");
+    // Comma-separated, tried in order: one public endpoint rate-limits serverless IPs
+    // hard enough to fail the first getChainId, and rpc() rethrows that as a 503.
+    const rpcUrls = (process.env.POSITIONS_RPC_URL ?? hyperEvmTestnet.rpcUrls.default.http[0])
+      .split(",").map((url) => url.trim()).filter(Boolean);
     index ??= createPositionsIndex(createPublicClient({ chain: hyperEvmTestnet,
-      transport: http(process.env.POSITIONS_RPC_URL ?? hyperEvmTestnet.rpcUrls.default.http[0], { timeout: 8_000, retryCount: 0 }) }),
+      transport: fallback(rpcUrls.map((url) => http(url, { timeout: 8_000, retryCount: 0 }))) }),
     endpoint, process.env.POSITIONS_SUBGRAPH_TOKEN);
     const page = await index(query);
     return Response.json({ ...page, rows: page.rows.map(encodeRow) }, { headers: { "Cache-Control": "no-store" } });
