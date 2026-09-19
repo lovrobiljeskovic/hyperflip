@@ -74,11 +74,27 @@ the owner's to perform; secrets never enter chat or the repository.
    mismatch does not fail at quote time — it fails at `mint` with `BAD_SIG`, so
    quoting can look healthy while every mint reverts.
 
-Gates: `/limits` shows the new bounded bankroll; one live mint succeeds; the box
-`.env` no longer contains the owner key; `journalctl -u writer` clean.
+Constraint found while planning: the box must keep an admin-capable key. The
+box's `PRIVATE_KEY` is the HIP-4 venue deployer — `tools/hip4.py:19` signs Core
+`outcomeDeploy` actions for venue `flip` with it, and Core ties the venue to that
+address — and hourly rotation also deploys OutcomeVaults with it. It is the same
+key as the ParlayVault owner, and ParlayVault has no `setOwner`, so the owner role
+cannot leave the box until Phase 2 ships a v2 (and, separately, until a Core venue
+key can be split from it).
 
-Result: box compromise costs the float and the ability to quote, not the
-bankroll and not the contract.
+That is a smaller loss than it sounds. With the bank cold and the allowance
+bounded, the worst an attacker with box root can do is `setQuoteSigner` to a key
+they hold and mint rogue tickets — capped by the float. `setWriter` does not help
+them: it only changes which address escrow is pulled *from*. So the float is the
+blast radius either way, which is why Phase 1 is still worth doing before the
+redeploys.
+
+Gates: `/limits` shows the new bounded bankroll; one live mint succeeds; the box
+`.env` no longer contains the bank-controlling allowance (the bank key itself was
+never there); `journalctl -u writer` clean.
+
+Result: box compromise costs the float and the ability to quote — not the
+bankroll, and not the contract's ownership.
 
 ## Phase 2 — ParlayVault v2, leg allow-list
 
