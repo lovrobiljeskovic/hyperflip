@@ -9,6 +9,21 @@ forge build
 forge test
 ```
 
+## Knowledge base
+
+Project history, architecture, decisions, operational facts, release records and known gotchas
+live in the Obsidian vault at `~/Documents/Obsidian Vault/Hyperflip` (start at `00 Index.md`).
+**Read the matching note before re-deriving any of that**, and treat notes as point-in-time —
+verify file:line claims against the code.
+
+Keep it current as part of finishing work, the same way you write a memory one-liner:
+
+- Update `Roadmap/Current State.md` first, then the note the work touched — a new gotcha into
+  `Gotchas.md`, a new choice into `Decisions/Decision Log.md`, a deploy into
+  `Operations/Release History.md`.
+- After writing a new spec or plan, run `bash "$HOME/Documents/Obsidian Vault/Hyperflip/kb-sync.sh"`
+  to refresh the verbatim `Archive/`.
+
 ## Architecture Overview
 
 HyperEVM outcome composability layer: wraps HIP-4 binary outcome markets as ERC-20s (oYES/oNO) via CoreWriter split/merge. Design spec: `~/docs/superpowers/specs/2026-08-12-hyperevm-outcome-composability-design.md`.

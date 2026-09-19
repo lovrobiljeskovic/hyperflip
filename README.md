@@ -85,5 +85,6 @@ See [DEPLOY.md](DEPLOY.md) for persistent state, RPC requirements, rotation, and
 service operations. Production deployment and contract broadcasts are separate
 from local verification.
 
-See [CLEANUP_HANDOFF.md](CLEANUP_HANDOFF.md) for the sports release checkpoint and
-the two remaining cleanup batches.
+Project history, decisions, operational facts and release records live in the
+knowledge base at `~/Documents/Obsidian Vault/Hyperflip` (start at `00 Index.md`);
+its `Archive/` keeps the original specs, plans and rollout records verbatim.
