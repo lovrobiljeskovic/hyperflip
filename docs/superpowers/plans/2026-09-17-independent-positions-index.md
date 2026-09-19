@@ -454,8 +454,10 @@ with 22 rows and `failed: 0`, four wallets returned their correct counts, an
 unused address returned 0 rows rather than 503, and `app.hyperflip.xyz` (which
 `hyperflip.xyz/positions` 308s to) serves the same deployment.
 
-§5 is still not started: the writer keeps serving `GET /parlays` for the poker's
-own exposure accounting. Note the legacy path had silently lost history — for
+§5 is still not started: the writer keeps serving `GET /parlays` as the app's
+rollback path. That index is not what exposure runs on — `ExposureBook` is fed by
+`Poker.seed()` reading `parlay(id)` for every open id plus the live
+ParlayMinted/ParlayResolved scan, so retiring the index does not touch the caps. Note the legacy path had silently lost history — for
 one taker it returned ids 21–28 while the index returns 3–17 and 21–28, all
 confirmed on chain — so the index is a strict superset, which is the point of
 the change. Rollback remains `NEXT_PUBLIC_POSITIONS_SOURCE=legacy` plus a
