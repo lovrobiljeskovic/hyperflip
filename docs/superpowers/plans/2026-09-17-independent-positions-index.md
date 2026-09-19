@@ -414,3 +414,49 @@ Still unexercised in production: no Void ticket has existed since the deploy, so
 the poke path has only unit coverage. The first one appears as a
 `poking-void-parlay` line in `journalctl -u writer`; a `poke-failed` carrying
 `NOT_OPEN` beside it means the taker reclaimed first, which is intended.
+
+## Hosted deploy record (September 19, 2026)
+
+The index is live and the app reads it in production.
+
+Goldsky project `hyperflip`, Starter plan, subgraph
+`hyperflip-positions-testnet/0.1.0`, network slug `hyperevm-testnet` (the
+dashboard also exposes `hyperevm_testnet.*` datasets, which confirmed testnet
+access before deploying). Backfill covered 2,809,414 blocks from `startBlock`
+61906227 and caught up to head in roughly 20 minutes with
+`hasIndexingErrors: false` throughout. `subgraph.yaml` was regenerated back to
+`--local` afterwards, because `scripts/verify.sh` pins that network; the hosted
+manifest is a build artifact and must be regenerated before any redeploy.
+
+Parity against chain state, all 28 tickets, 0 mismatches: premium, maxPayout,
+status, `owner` versus `ownerOf`, burn state versus an absent owner,
+`burnHolder` presence, resolution-block consistency, and every
+`mintTransaction` receipt's block and success. Chain statuses at the time were
+Open 10, Won 2, Dead 15, Void 1. Contrary to the plan's caution, the Won, Void
+and burn paths are all exercised by real tickets (16 and 6 Won-and-burned, 3
+Void-and-burned). The remaining gap is secondary transfers: 28 wallet
+associations for 28 tickets means `handleTransfer`'s non-burn branch is still
+unit-tested only.
+
+Production configuration on the `overround` Vercel project:
+`NEXT_PUBLIC_POSITIONS_SOURCE=subgraph` (Config), `POSITIONS_SUBGRAPH_URL` and
+`POSITIONS_RPC_URL` (Secret). The flag is compiled in, so both env changes had
+to land before the deploy.
+
+The first flip surfaced a real defect. `POSITIONS_RPC_URL` held a single public
+endpoint, `rpc()` in `web/lib/positions-index.ts` rethrows raw provider errors,
+and `route.ts` maps anything that is not a `PositionsError` to a generic 503 —
+so rate-limiting of Vercel's shared IPs took the whole positions page down in
+fast 503 bursts while Goldsky was healthy. Fixed in `14de319`: the variable now
+takes the same comma-separated list the writer and keeper use, wrapped in viem
+`fallback()`. After redeploy, 12 consecutive `limit=50` requests returned 200
+with 22 rows and `failed: 0`, four wallets returned their correct counts, an
+unused address returned 0 rows rather than 503, and `app.hyperflip.xyz` (which
+`hyperflip.xyz/positions` 308s to) serves the same deployment.
+
+§5 is still not started: the writer keeps serving `GET /parlays` for the poker's
+own exposure accounting. Note the legacy path had silently lost history — for
+one taker it returned ids 21–28 while the index returns 3–17 and 21–28, all
+confirmed on chain — so the index is a strict superset, which is the point of
+the change. Rollback remains `NEXT_PUBLIC_POSITIONS_SOURCE=legacy` plus a
+redeploy.
