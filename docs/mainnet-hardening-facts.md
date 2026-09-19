@@ -14,6 +14,11 @@ Verify against the code before relying on any single line number.
   mint (`src/ParlayVault.sol:171`). `premium == stake`. Pausing the house = revoking
   the allowance; there is no pause switch. Any exposure-accounting change must keep
   this as the ceiling — the in-memory book only refines *below* it.
+  Accurate today, but **not settled for mainnet**: an allowance meters cumulative
+  volume rather than open exposure, and resolution never restores it. Replacing it
+  with a collateral vault that enforces caps on chain is Phase 4 of
+  `superpowers/plans/2026-09-19-key-custody-and-vault-hardening.md`; treat this
+  ceiling as the current invariant, not as a decided end state.
 - **`ExposureBook` is in-memory and lost on restart by design** (`writer/src/exposure.ts:12-16`).
   Reservations expire within `quoteTtlMs` + a grace period (`writer/src/exposure.ts`
   `reservationGraceMs`, mainnet-hardening P1-7); open per-market/cluster exposure is

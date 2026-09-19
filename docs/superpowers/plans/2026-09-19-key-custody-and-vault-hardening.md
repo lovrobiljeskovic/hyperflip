@@ -140,3 +140,47 @@ full per-market exposure book publicly.
 
 Mainnet, including read-only probes. Retiring the writer's `/parlays` index
 (§5 of the positions-index plan). Any change to the quote pricing model.
+
+## Phase 4 — pre-mainnet: collateral vault with on-chain caps
+
+Not scheduled, and explicitly not to be worked while the no-mainnet rule stands.
+Recorded here because Phase 1's float is a testnet control that does not survive
+real volume, and the reasons are structural rather than a matter of sizing.
+
+An ERC-20 allowance is a cumulative budget, not an exposure limit. Each mint
+consumes `maxPayout - premium` of it (`ParlayVault.sol:172`) and resolution never
+restores it — a Dead ticket returns USDC to the bank while the allowance stays
+spent. So the float meters lifetime volume. Against today's 8.23 USDC of open
+house risk that is invisible, but at a few hundred tickets a day it forces either
+constant re-approval from the cold key or a float so large it is no longer a loss
+cap.
+
+The hot signing key is the other half. Quotes are signed in milliseconds, so a
+hot key cannot be avoided; what a stolen one can do therefore has to be bounded
+by the contract, not by the service. The target shape is a house collateral vault
+that holds the bankroll and enforces on-chain what `writer/src/exposure.ts`
+currently enforces in memory: maximum open exposure, per-market and per-cluster
+caps, escrow pulled per time window, and a guardian pause. A compromised signer
+then costs one window's limit, and `ParlayVault.sol:17`'s "there is no pause
+switch" stops being true.
+
+That also removes a scaling constraint worth stating plainly: `ExposureBook`
+lives in one process and is rebuilt by `Poker.seed()` at boot, so two writer
+instances would each believe they own the full caps and jointly oversubscribe the
+bankroll. Redundant quoting needs either shared exposure state or leader
+election — or caps on chain, which makes the contract the source of truth and
+multiple instances safe by construction. Phase 2's leg allow-list is a down
+payment on the same idea.
+
+Two further mainnet blockers, listed so they are not rediscovered late. Full
+`maxPayout` escrow per ticket means locked capital equals the sum of all open max
+payouts; that is the beta's only user-checkable solvency guarantee and it is
+honest, but it is capital-expensive, and netting correlated legs or pooling LP
+capital is a product decision rather than a bug. And settlement still rests on a
+single keeper-attested fraction with `keeper` immutable per vault: Phase 3 makes
+the authority rotatable, while mainnet wants the spec's §7 precompile path or
+several attesters with a threshold.
+
+This section replaces no invariant on its own. `docs/mainnet-hardening-facts.md`
+records the allowance as the hard solvency ceiling, which is accurate today; a
+Phase 4 design has to supersede it deliberately, with its own review.
