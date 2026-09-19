@@ -9,21 +9,19 @@ OutcomeVault results through its own RPC; the writer service is not on that read
 
 The owner approved these isolated, pinned development dependencies:
 `@graphprotocol/graph-cli@0.98.1`, `@graphprotocol/graph-ts@0.38.2`, and
-`matchstick-as@0.6.0`. Install from this directory:
+`matchstick-as@0.6.0`. Install the committed lockfile from this directory:
 
 ```sh
-npm install --no-save   # see the lockfile note below
+npm ci
 npm run check
 ```
 
-Lockfile note: `npm ci` currently rejects the committed `package-lock.json`
-("lock file's @types/node@12.20.55 does not satisfy @types/node@26.6.2"). A
-floating `@types/node: >=18` peer inside the Graph CLI's transitive tree now
-resolves above the hoisted pin the lockfile recorded. The same failure happens
-with the untouched lockfile on `new-design`, so it is not a port artifact.
-`npm install --no-save` installs a working tree without rewriting the lockfile.
-Repairing it hoists `@types/node` to 26.6.2 and adds transitive dev
-`undici-types@8.9.0`; that is a dependency change and needs owner approval.
+Lockfile note: the lockfile as first written rejected `npm ci` ("lock file's
+@types/node@12.20.55 does not satisfy @types/node@26.6.2") because a floating
+`@types/node: >=18` peer in the Graph CLI's transitive tree resolves above the
+hoisted pin it recorded. Regenerated on owner approval, 2026-09-19: hoisted
+`@types/node` is 26.6.2 with transitive dev `undici-types@8.9.0`, jayson keeps
+its nested 12.20.55, and the three approved Graph versions are unchanged.
 
 `generate.mjs` derives event ABIs and identity from the existing repository.
 The checked-in `local` network is deliberately **not deployable to Goldsky**.
@@ -147,8 +145,10 @@ comes from the `parlay(id)` read the API already makes.
   provider-failure 503, static label asset and positions HTML.
 - Matchstick reported `All 4 tests passed!` on macOS arm64 against the v1
   vault and v1 event signature. Its first run downloads the pinned 0.6.0 binary.
-- `npm audit` still reports build-tool findings in this isolated dev tree; no
-  versions were changed. These packages are not in the web runtime.
+- The lockfile was regenerated so `npm ci` succeeds; a clean `npm ci` plus
+  `npm run check` passed afterwards. `npm audit` still reports build-tool
+  findings in this isolated dev tree; no versions were changed with
+  `audit fix --force`. These packages are not in the web runtime.
 - Nothing was deployed. No hosted subgraph exists, no Goldsky account action was
   taken, and `/opt/hype/writer` and the Hetzner box were not touched.
 - Local Graph Node rollback/reindex, hosted provider parity and browser
