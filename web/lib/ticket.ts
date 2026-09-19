@@ -1,7 +1,8 @@
-import { erc20Abi, parseUnits, type PublicClient } from "viem";
+import { erc20Abi, parseEventLogs, parseUnits, type PublicClient } from "viem";
 import type { UseWriteContractReturnType } from "wagmi";
 import { requestQuote, type QuoteResult, type WriterQuote } from "./writer";
-import { PARLAY_VAULT, parlayVaultAbi } from "./contracts";
+import { PARLAY_VAULT, parlayVaultAbi, parlayMintedEvent } from "./contracts";
+import { rememberPosition, type PositionReceipt } from "./position-receipts";
 import { hyperEvmTestnet } from "./chain";
 import { secondsLeft, USDC_DECIMALS } from "./format";
 
@@ -77,7 +78,7 @@ export async function mintTicket({ client, write, usdc, quote, sig, input, curre
   input: Parameters<typeof requestQuote>[0];
   current: () => boolean;
   onQuote: (result: QuoteResult) => void;
-}): Promise<boolean> {
+}): Promise<PositionReceipt | false> {
   function check() {
     if (!current()) throw new Error("Ticket changed; review the current ticket before minting.");
   }
@@ -109,9 +110,12 @@ export async function mintTicket({ client, write, usdc, quote, sig, input, curre
   check();
   const hash = await write({ address: PARLAY_VAULT, abi: parlayVaultAbi, functionName: "mint", args, account: quote.taker, chainId: hyperEvmTestnet.id });
   const receipt = await client.waitForTransactionReceipt({ hash });
-  check();
   if (receipt.status !== "success") throw new Error("QUOTE_EXPIRED (mint reverted on-chain)");
-  return true;
+  const minted = parseEventLogs({ abi: [parlayMintedEvent], logs: receipt.logs.filter(l => l.address.toLowerCase() === PARLAY_VAULT.toLowerCase()) })
+    .find(l => l.args.taker.toLowerCase() === quote.taker.toLowerCase() &&
+      l.args.quoteId === quote.quoteId && l.args.premium === premium && l.args.maxPayout === BigInt(quote.maxPayout));
+  // A confirmed mint stays confirmed even if the wallet changes or indexing lags.
+  return rememberPosition(quote.taker, receipt, "mint", minted?.args.id ?? null);
 }
 
 export function quoteMatches(quote: WriterQuote, input: Parameters<typeof requestQuote>[0]): boolean {

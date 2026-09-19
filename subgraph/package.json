@@ -1,0 +1,17 @@
+{
+  "name": "hyperflip-positions-subgraph",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "generate": "node generate.mjs --local",
+    "codegen": "node generate.mjs --check && graph codegen",
+    "build": "graph build",
+    "test": "graph test -v 0.6.0",
+    "check": "npm run codegen && npm run build && npm test"
+  },
+  "devDependencies": {
+    "@graphprotocol/graph-cli": "0.98.1",
+    "@graphprotocol/graph-ts": "0.38.2",
+    "matchstick-as": "0.6.0"
+  }
+}

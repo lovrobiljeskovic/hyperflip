@@ -5,9 +5,11 @@ forge fmt --check
 forge build --sizes
 node scripts/abis.mjs --check
 node scripts/deployment.mjs --check
+node scripts/position-markets.mjs --check
+node subgraph/generate.mjs --check
 node scripts/check-service-packages.mjs
 forge test
-for project in keeper writer; do
+for project in keeper writer subgraph; do
   (cd "$project" && npm run check)
 done
 (

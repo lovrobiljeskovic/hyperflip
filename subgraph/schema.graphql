@@ -1,0 +1,37 @@
+type Deployment @entity(immutable: true) {
+  id: ID!
+  chainId: BigInt!
+  vault: Bytes!
+  startBlock: BigInt!
+  schemaVersion: Int!
+}
+
+type Ticket @entity(immutable: false) {
+  id: ID!
+  deployment: Deployment!
+  number: BigInt!
+  taker: Bytes!
+  owner: Bytes
+  quoteId: Bytes!
+  premium: BigInt!
+  maxPayout: BigInt!
+  status: Int!
+  burned: Boolean!
+  mintBlock: BigInt!
+  mintHash: Bytes!
+  mintTransaction: Bytes!
+  mintTimestamp: BigInt!
+  resolutionBlock: BigInt
+  resolutionTransaction: Bytes
+  burnHolder: Bytes
+  burnBlock: BigInt
+  burnTransaction: Bytes
+}
+
+type WalletTicket @entity(immutable: true) {
+  id: ID!
+  deployment: Deployment!
+  wallet: Bytes!
+  number: BigInt!
+  ticket: Ticket!
+}

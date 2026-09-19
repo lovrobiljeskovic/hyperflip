@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 import { loadDeployment } from "./deployment/deployment.mts";
 
 const deployment = loadDeployment(process.env, true);
+if (process.env.NEXT_PUBLIC_POSITIONS_SOURCE && !["legacy", "subgraph"].includes(process.env.NEXT_PUBLIC_POSITIONS_SOURCE)) {
+  throw new Error("NEXT_PUBLIC_POSITIONS_SOURCE must be legacy or subgraph");
+}
 
 const nextConfig: NextConfig = {
   turbopack: {

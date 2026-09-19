@@ -1,6 +1,8 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { mintTicket, TicketSession } from "./ticket";
 import { requestQuote, type QuoteResult } from "./writer";
+import { encodeAbiParameters, encodeEventTopics, type TransactionReceipt } from "viem";
+import { PARLAY_VAULT, parlayMintedEvent } from "./contracts";
 
 vi.mock("./writer", () => ({ requestQuote: vi.fn() }));
 const taker = `0x${"1".repeat(40)}` as const;
@@ -35,10 +37,13 @@ test("superseded quotes and changed ticket contexts cannot become current", asyn
 
 function setup(allowance = 0n) {
   const calls: string[] = [];
+  const receipt = { status: "success", transactionHash: `0x${"b".repeat(64)}`, blockHash: `0x${"c".repeat(64)}`, blockNumber: 100n,
+    logs: [{ address: PARLAY_VAULT, topics: encodeEventTopics({ abi: [parlayMintedEvent], args: { id: 1n, taker } }),
+      data: encodeAbiParameters([{ type: "bytes32" }, { type: "uint96" }, { type: "uint96" }], [result().quote.quoteId, 1000000n, 2000000n]) }] } as unknown as TransactionReceipt;
   const client = {
     readContract: async ({ functionName }: { functionName: string }) => { calls.push(functionName); return functionName === "allowance" ? allowance : 1000000n; },
     simulateContract: vi.fn(async () => { calls.push("simulate"); }),
-    waitForTransactionReceipt: vi.fn(async () => { calls.push("receipt"); return { status: "success" }; }),
+    waitForTransactionReceipt: vi.fn(async () => { calls.push("receipt"); return receipt; }),
   };
   const write = vi.fn(async ({ functionName }: { functionName: string }) => { calls.push(functionName); return "0x1"; });
   const fresh = result();
@@ -49,7 +54,7 @@ function setup(allowance = 0n) {
 
 test("mint preserves exact approval, fresh quote, simulation and receipt order", async () => {
   const { calls, args, write, fresh } = setup();
-  expect(await mintTicket(args)).toBe(true);
+  expect(await mintTicket(args)).toMatchObject({ id: "1", block: "100", kind: "mint" });
   expect(calls).toEqual(["allowance", "balanceOf", "approve", "receipt", "requote", "simulate", "mint", "receipt"]);
   expect(write.mock.calls[0][0]).toMatchObject({ functionName: "approve", args: [expect.any(String), 1000000n], account: taker, chainId: 998 });
   expect(write.mock.calls[1][0]).toMatchObject({ functionName: "mint", args: [expect.objectContaining({ premium: 1000000n, maxPayout: 2000000n, quoteId: fresh.quote.quoteId }), fresh.sig] });
@@ -59,7 +64,7 @@ test("wallet/context changes, quote failure and receipt reverts stop minting", a
   const changed = setup();
   let current = true;
   changed.args.current = () => current;
-  changed.client.waitForTransactionReceipt.mockImplementationOnce(async () => { current = false; return { status: "success" }; });
+  changed.client.waitForTransactionReceipt.mockImplementationOnce(async () => { current = false; return { status: "success" } as TransactionReceipt; });
   await expect(mintTicket(changed.args)).rejects.toThrow("Ticket changed");
   expect(changed.calls).not.toContain("mint");
 
@@ -69,7 +74,7 @@ test("wallet/context changes, quote failure and receipt reverts stop minting", a
   expect(failed.calls).not.toContain("mint");
 
   const reverted = setup(1000000n);
-  reverted.client.waitForTransactionReceipt.mockResolvedValueOnce({ status: "reverted" });
+  reverted.client.waitForTransactionReceipt.mockResolvedValueOnce({ status: "reverted" } as TransactionReceipt);
   await expect(mintTicket(reverted.args)).rejects.toThrow("QUOTE_EXPIRED");
   const rejected = setup();
   rejected.write.mockRejectedValueOnce(new Error("User rejected"));

@@ -4,19 +4,21 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useAccount, usePublicClient, useWriteContract } from "wagmi";
 import { usePositions } from "./use-positions";
-import { deriveRow, type Row, type LegVerdict } from "@/lib/positions";
-import { PARLAY_VAULT, STATUS, parlayVaultAbi } from "@/lib/contracts";
+import { INDEXED_POSITIONS, deriveRow, loadRow, summarizePositions, type Row, type LegVerdict } from "@/lib/positions";
+import { PARLAY_VAULT, parlayVaultAbi } from "@/lib/contracts";
 import { formatUsdc, kickoff, multiplier, pct1, shortError } from "@/lib/format";
 import { hyperEvmTestnet, tradeUrl } from "@/lib/chain";
 import { fetchMarkets, type Market, sideLabel } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { useConnectAction, useWalletState } from "@/lib/wallet";
 import { appHref } from "@/lib/site";
+import { rememberPosition } from "@/lib/position-receipts";
 
 const EXPLORER = hyperEvmTestnet.blockExplorers.default.url;
 
 const VERDICT_STYLE: Record<LegVerdict, { label: string; className: string }> = {
   pending: { label: "Pending", className: "text-dim" },
+  unknown: { label: "Unavailable", className: "text-dim" },
   hit: { label: "Hit", className: "text-yes" },
   lost: { label: "Lost", className: "text-no" },
   fractional: { label: "Partial", className: "text-fg" },
@@ -29,6 +31,7 @@ const DOT_CLASS: Record<LegVerdict, string> = {
   hit: "bg-yes",
   lost: "bg-no",
   pending: "bg-line",
+  unknown: "border border-dim",
   fractional: "bg-[linear-gradient(90deg,#35D07A_50%,#262C38_50%)]",
 };
 
@@ -140,22 +143,8 @@ function LegTable({
   );
 }
 
-function SummaryStrip({ rows }: { rows: Row[] }) {
-  let staked = 0n;
-  let open = 0;
-  let claimable = 0n;
-  let won = 0n;
-  for (const r of rows) {
-    staked += r.parlay.premium;
-    const v = deriveRow(r);
-    if (v.statusLabel === "Claimable") {
-      claimable += r.parlay.maxPayout;
-      open++;
-    } else if (v.action === null && r.parlay.status === STATUS.Open) {
-      if (v.statusLabel.endsWith("settled")) open++;
-    }
-    if (r.parlay.status === STATUS.Won && r.burned) won += r.parlay.maxPayout;
-  }
+function SummaryStrip({ rows, wallet }: { rows: Row[]; wallet: string }) {
+  const { staked, open, claimable, won } = summarizePositions(rows, wallet);
   const cells = [
     { label: "Tickets", value: String(rows.length), className: "" },
     { label: "Total staked", value: `${formatUsdc(staked)} USDC`, className: "" },
@@ -197,7 +186,7 @@ function PositionsContent() {
   const { writeContractAsync } = useWriteContract();
   const connect = useConnectAction();
 
-  const { rows, error, load, reloadRow } = usePositions(publicClient, address);
+  const { rows, error, notice, loading, hasMore, load, loadMore, reloadRow } = usePositions(publicClient, address);
   const actionInFlight = useRef(false);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -209,7 +198,7 @@ function PositionsContent() {
 
   // Registry metadata supplies sports labels; addresses remain the fallback.
   useEffect(() => {
-    fetchMarkets(true)
+    (INDEXED_POSITIONS ? fetch("/position-markets.json").then(r => { if (!r.ok) throw new Error("Market labels unavailable"); return r.json() as Promise<Market[]>; }) : fetchMarkets(true))
       .then(setMarkets)
       .catch(() => {});
   }, []);
@@ -225,6 +214,10 @@ function PositionsContent() {
     setPending({ id, kind });
     setActionError(null);
     try {
+      const fresh = await loadRow(publicClient, row);
+      if (deriveRow(fresh, address).action?.kind !== kind) throw new Error("Position changed. Refresh before trying again.");
+      await publicClient.simulateContract({ address: PARLAY_VAULT, abi: parlayVaultAbi,
+        functionName: kind === "claim" ? "claim" : "resolveParlay", args: [id], account: address });
       const hash = await writeContractAsync({
         address: PARLAY_VAULT,
         abi: parlayVaultAbi,
@@ -234,9 +227,10 @@ function PositionsContent() {
         chainId: hyperEvmTestnet.id,
       });
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      if (!mounted.current) return;
       if (receipt.status !== "success") throw new Error("Transaction reverted; retry after refreshing the position.");
-      await reloadRow(row);
+      rememberPosition(address, receipt, kind, id, row.block);
+      if (!mounted.current) return;
+      await reloadRow(row, receipt);
     } catch (err) {
       if (mounted.current) setActionError({ id, msg: shortError(err) });
     } finally {
@@ -253,8 +247,13 @@ function PositionsContent() {
           Your slips
         </h1>
         <p className="mt-1 text-[15px] text-dim">
-          Read straight from chain - slip mints, leg settlement, and claims.
+          Your ticket history, outcomes, and claims.
         </p>
+
+        {isConnected && <div className="mt-4 flex items-center gap-3 text-sm">
+          <button type="button" disabled={loading} onClick={() => void load()} className="underline disabled:opacity-50">{loading ? "Updating…" : "Refresh"}</button>
+          {notice && <p role="status" className="text-dim">{notice}</p>}
+        </div>}
 
         {!ready ? (
           <LoadingSkeleton />
@@ -295,13 +294,14 @@ function PositionsContent() {
         ) : (
           <>
             {error && <p role="alert" className="mt-4 text-no">Some positions could not be loaded. <button className="underline" onClick={() => void load()}>Retry</button></p>}
-            <SummaryStrip rows={rows} />
+            <p className="mt-5 text-xs text-dim">Summary of loaded tickets</p>
+            <SummaryStrip rows={rows} wallet={address!} />
 
             {/* Mobile: one card per slip; the table needs 860px and horizontal
                 scrolling a slip list shouldn't. */}
             <div className="mt-4 flex flex-col gap-3 md:hidden">
               {rows.map((row) => {
-                const view = deriveRow(row);
+                const view = deriveRow(row, address);
                 const isPending = pending?.id === row.id;
                 const rowError = actionError?.id === row.id ? actionError.msg : null;
                 const isOpen = expanded === row.id;
@@ -401,7 +401,7 @@ function PositionsContent() {
                 </thead>
                 <tbody className="mono text-[12px]">
                   {rows.map((row, i) => {
-                    const view = deriveRow(row);
+                    const view = deriveRow(row, address);
                     const isPending = pending?.id === row.id;
                     const rowError = actionError?.id === row.id ? actionError.msg : null;
                     const isOpen = expanded === row.id;
@@ -479,6 +479,7 @@ function PositionsContent() {
               </table>
             </div>
             <DotLegend />
+            {hasMore && <button type="button" disabled={loading} onClick={() => void loadMore()} className="mt-6 rounded-card border border-line px-4 py-2 disabled:opacity-50">{loading ? "Loading…" : "Load more"}</button>}
           </>
         )}
       </main>

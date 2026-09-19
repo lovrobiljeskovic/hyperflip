@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { ContractFunctionRevertedError, encodeErrorResult } from "viem";
-import { deriveRow, loadPositions, loadRow, type Row } from "./positions";
+import { deriveRow, loadPositions, loadRow, summarizePositions, type Row } from "./positions";
 import { DEPLOY_BLOCK, parlayVaultAbi, STATUS } from "./contracts";
 import { fetchParlays } from "./writer";
 
@@ -36,6 +36,8 @@ test("position statuses retain claim, resolve, lost and refunded behavior", () =
   for (const [legVerdicts, label, kind] of [
     [["pending"], "0 of 1 settled", undefined], [["hit"], "Claimable", "claim"],
     [["lost"], "Lost", undefined], [["fractional"], "Voidable", "resolve"],
+    [["fractional", "pending"], "Voidable", "resolve"], [["fractional", "lost"], "Lost", undefined],
+    [["unknown", "hit"], "Updating outcomes", undefined],
   ] as const) {
     const view = deriveRow({ ...row, parlay: { ...parlay, status: STATUS.Open }, legVerdicts: [...legVerdicts] });
     expect(view.statusLabel).toBe(label);
@@ -43,6 +45,17 @@ test("position statuses retain claim, resolve, lost and refunded behavior", () =
   }
   expect(deriveRow({ ...row, parlay: { ...parlay, status: STATUS.Dead } }).statusLabel).toBe("Lost");
   expect(deriveRow({ ...row, parlay: { ...parlay, status: STATUS.Void } }).statusLabel).toContain("premium refunded");
+});
+
+test("transfers do not give the previous holder actions or the recipient's payout", () => {
+  const other = `0x${"2".repeat(40)}` as const;
+  const transferred = { ...row, owner: other, taker: vault };
+  expect(deriveRow(transferred, vault).statusLabel).toBe("Transferred out");
+  expect(deriveRow(transferred, other).action?.kind).toBe("claim");
+  const claimed = { ...transferred, burned: true, owner: null, burnHolder: other };
+  expect(deriveRow(claimed, vault).statusLabel).toBe("Paid to later owner");
+  expect(summarizePositions([claimed], vault)).toMatchObject({ staked: 1000000n, won: 0n, claimable: 0n });
+  expect(summarizePositions([claimed], other)).toMatchObject({ staked: 0n, won: 2000000n, claimable: 0n });
 });
 
 test("partial row failures retain other positions with bounded concurrency", async () => {
