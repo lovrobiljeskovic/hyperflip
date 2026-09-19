@@ -388,3 +388,29 @@ Gates run locally: `bash scripts/verify.sh` green (Solidity 172, keeper 26,
 writer 123, subgraph 4, web 46, tooling 16, plus the Next production build),
 `node web/scripts/check-positions-http.mjs` green, Matchstick 4/4 against the v1
 vault and event signature. Nothing was deployed; no hosted subgraph exists.
+
+## Writer deploy record (September 19, 2026)
+
+`daf0eeb` is live on the box. `main` pushed to `hyperflip/main` at `b6f4d8a`;
+deploy was `rsync -av writer/src/ root@91.99.94.25:/opt/hype/writer/src/` plus
+`systemctl restart writer`, the keeper deliberately left running. The commit
+changes only `writer/src`, so the `DEPLOY.md` tarball and `npm ci` were not
+needed.
+
+Pre-deploy state: 10 open parlays (`nextId` 28), of which 0 classified Void and
+0 Dead — every settled leg was a hit, the rest unsettled. So the first tick was
+expected to broadcast nothing, and `/limits` bankroll `1012972339` / reserved `0`
+and the six non-zero per-market exposures are unchanged after the restart. That
+is the designed no-op, not a failed deploy.
+
+Verified on the box instead: `grep -c parlayIsVoid writer/src/poker.ts` = 2 and
+`poking-void-parlay` = 1, synced mtimes 15:46 UTC against
+`ActiveEnterTimestamp=16:33:13 UTC`, `systemctl is-active keeper writer caddy`
+all active, `/health` `seeded: true`, `openParlays` 10, no `poke-failed`, and
+`WRITER_URL=https://writer.hyperflip.xyz node tools/smoke.mjs` reporting
+`live 129/129, priced 22, open 10`.
+
+Still unexercised in production: no Void ticket has existed since the deploy, so
+the poke path has only unit coverage. The first one appears as a
+`poking-void-parlay` line in `journalctl -u writer`; a `poke-failed` carrying
+`NOT_OPEN` beside it means the taker reclaimed first, which is intended.
