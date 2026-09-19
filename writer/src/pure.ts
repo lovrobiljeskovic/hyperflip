@@ -63,3 +63,15 @@ export function lowBankrollAlerter(threshold: bigint): (room: bigint) => boolean
     return true;
   };
 }
+
+/** Rate-limiter key for a request. Caddy APPENDS the real peer to whatever
+ * `X-Forwarded-For` the client sent, so the leftmost entry is attacker-controlled
+ * — reading it let a client rotate the key per request and defeat both the quote
+ * and bad-invite limiters. The rightmost entry is the hop our proxy observed.
+ * ponytail: assumes exactly one trusted proxy (Caddy on loopback); with a second
+ * one in front, drop a fixed count of trailing hops instead. */
+export function clientIp(forwarded: string | string[] | undefined, socketAddress?: string): string {
+  const header = Array.isArray(forwarded) ? forwarded[forwarded.length - 1] : forwarded;
+  const hops = (header ?? "").split(",").map((hop) => hop.trim()).filter(Boolean);
+  return hops[hops.length - 1] ?? socketAddress ?? "unknown";
+}

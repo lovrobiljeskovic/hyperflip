@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bankrollRoom, blockRanges, isStalled, lowBankrollAlerter, stallThresholdMs } from "../src/pure.js";
+import { bankrollRoom, blockRanges, clientIp, isStalled, lowBankrollAlerter, stallThresholdMs } from "../src/pure.js";
 
 test("blockRanges: single range when span fits", () => {
   assert.deepEqual(blockRanges(10n, 20n, 1000n), [{ from: 10n, to: 20n }]);
@@ -54,4 +54,14 @@ test("lowBankrollAlerter fires once per dip and re-arms on recovery", () => {
   assert.equal(alert(10n), false);
   assert.equal(alert(100n), false);
   assert.equal(alert(99n), true);
+});
+
+test("clientIp reads the proxy-observed hop, not the client's header", () => {
+  // Caddy appends the real peer, so a spoofed leftmost entry must not become the key.
+  assert.equal(clientIp("1.2.3.4, 203.0.113.7"), "203.0.113.7");
+  assert.equal(clientIp("203.0.113.7"), "203.0.113.7");
+  // Repeated headers arrive as an array; the last one is the one our proxy set.
+  assert.equal(clientIp(["1.2.3.4", "9.9.9.9, 203.0.113.7"]), "203.0.113.7");
+  assert.equal(clientIp(undefined, "198.51.100.2"), "198.51.100.2");
+  assert.equal(clientIp("", undefined), "unknown");
 });

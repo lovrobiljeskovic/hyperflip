@@ -156,8 +156,9 @@ async function main(): Promise<void> {
   });
   startServer(deps, cfg.port, () => {
     const now = Date.now();
-    const perMarket: Record<string, string> = {};
-    for (const v of cfg.markets.keys()) perMarket[v] = exposure.perMarket(v, now).toString();
+    // Per-market exposure is deliberately not published: /health is public, and the
+    // book is a cap map an attacker would otherwise get for free. Read it from the
+    // quote-rejected log lines instead.
     const priceFreshnessMs = buildPriceFreshness(cfg.markets.values(), (coin) => legPriceFetcher.ageMs(coin));
     return {
       ok: true,
@@ -168,7 +169,6 @@ async function main(): Promise<void> {
       perMarketCap: cfg.perMarketCap.toString(),
       reservedGlobal: exposure.reservedGlobal(now).toString(),
       bankroll: lastBankroll?.toString() ?? null,
-      perMarket,
     };
   });
   console.log(JSON.stringify({ at: new Date().toISOString(), event: "writer-listening", port: cfg.port }));

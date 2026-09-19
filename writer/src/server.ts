@@ -3,7 +3,7 @@ import { isAddress, keccak256, type Address, type Hex } from "viem";
 import type { WriterConfig } from "./config.js";
 import { ExposureBook } from "./exposure.js";
 import { dominatingLeg, edgeBreakdown, independentJointProbWad, priceParlay, totalEdgeBps } from "./pricing.js";
-import { WAD } from "./pure.js";
+import { clientIp, WAD } from "./pure.js";
 import { quoteDigest, type ParlayQuote, type QuoteLeg, type QuoteRecord } from "./quotes.js";
 import type { LegPriceObservation } from "./infoApi.js";
 import { isValidEmail, type RateLimiter, type Waitlist } from "./waitlist.js";
@@ -391,9 +391,7 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
           return send(400, { error: "bad-json" });
         }
         try {
-          const fwd = req.headers["x-forwarded-for"];
-          const ip =
-            (Array.isArray(fwd) ? fwd[0] : fwd)?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
+          const ip = clientIp(req.headers["x-forwarded-for"], req.socket.remoteAddress);
           if (url === "/quote") {
             const r = await handleQuote(deps, body, ip);
             return send(r.status, r.json);
