@@ -570,4 +570,7 @@ test("GET /markets overlays the live prior on priorYes and leaves other rows unt
   const out = JSON.parse(marketsJson({ cfg: c, livePriorYes: (v) => (v.toLowerCase() === V1.toLowerCase() ? 0.77 : undefined) }));
   assert.deepEqual(out.markets, [{ vault: V1, priorYes: 0.77 }, { vault: V2 }]);
   assert.equal(marketsJson({ cfg: c, livePriorYes: () => undefined }), c.registryJson);
+  // null = unquotable (in play off-feed, or final): the stale registry prior comes off.
+  const stripped = JSON.parse(marketsJson({ cfg: c, livePriorYes: () => null }));
+  assert.deepEqual(stripped.markets, [{ vault: V1 }, { vault: V2 }]);
 });

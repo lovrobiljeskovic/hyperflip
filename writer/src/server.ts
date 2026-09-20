@@ -45,8 +45,11 @@ export interface QuoteDeps {
   quoteLimiter?: RateLimiter;
 
   ready?: () => boolean;
-  /** Live P(YES) for a vault, overlaid on /markets so the app shows what we quote. */
-  livePriorYes?(vault: Address): number | undefined;
+  /** P(YES) for a vault as the quote path would price it, overlaid on /markets so the
+   * app shows what we quote: a number replaces the registry prior, `null` strips it
+   * (in play with no fresh feed, or final - the leg is unquotable, so the app drops
+   * the row), `undefined` leaves the row as written. */
+  livePriorYes?(vault: Address): number | null | undefined;
   /** Mint refs for a taker, from the poker's index (GET /parlays?taker=). */
   parlaysOf?(taker: Address): { id: bigint; block: bigint }[];
 }
@@ -329,8 +332,12 @@ export function marketsJson(deps: Pick<QuoteDeps, "cfg" | "livePriorYes">): stri
   let changed = false;
   const markets = list.map((m) => {
     const live = typeof m.vault === "string" ? deps.livePriorYes!(m.vault as Address) : undefined;
-    if (live === undefined) return m;
+    if (live === undefined || (live === null && m.priorYes === undefined)) return m;
     changed = true;
+    if (live === null) {
+      const { priorYes: _stale, ...rest } = m;
+      return rest;
+    }
     return { ...m, priorYes: live };
   });
   if (!changed) return deps.cfg.registryJson;

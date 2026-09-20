@@ -85,15 +85,19 @@ async function main(): Promise<void> {
     priorByCoin.set(m.coinYes, { wad: yesWad, startMs: m.startMs });
     priorByCoin.set(m.coinNo, { wad: WAD - yesWad, startMs: m.startMs });
   }
+  // Live feed first; the registry prior only pregame. In play with no fresh sample
+  // (or final) the leg is unpriced - and /markets says so, or the app keeps showing
+  // a settled game at its pregame line.
+  const prior = (coin: string): bigint | undefined => {
+    const live = livePrior.prior(coin);
+    if (live !== undefined) return live;
+    const p = priorByCoin.get(coin);
+    return p && (p.startMs === undefined || Date.now() < p.startMs) ? p.wad : undefined;
+  };
   const legPriceFetcher = makeLegPriceFetcher({
     fetchBook: (coin) => fetchBestAskWad(cfg.infoApiUrl, coin, cfg.minBookDepthWad),
     readSpotPx: (coin) => readSpotPxWad(publicClient, BigInt(coin.slice(1))),
-    prior: (coin) => {
-      const live = livePrior.prior(coin);
-      if (live !== undefined) return live;
-      const p = priorByCoin.get(coin);
-      return p && (p.startMs === undefined || Date.now() < p.startMs) ? p.wad : undefined;
-    },
+    prior,
     staleMs: cfg.spotPxStaleMs,
     now: () => Date.now(),
     onBookError: (coin, err) =>
@@ -141,7 +145,12 @@ async function main(): Promise<void> {
     badInviteLimiter: new RateLimiter(20, 60 * 60 * 1000),
     quoteLimiter: new RateLimiter(300, 60 * 60 * 1000),
     parlaysOf: (taker) => poker.parlaysOf(taker),
-    livePriorYes: (vault) => livePrior.priorYes(vault),
+    livePriorYes: (vault) => {
+      const m = cfg.markets.get(vault.toLowerCase());
+      if (!m) return undefined;
+      const wad = prior(m.coinYes);
+      return wad === undefined ? null : Number(wad / 10n ** 12n) / 1e6;
+    },
   };
   if (!cfg.resendApiKey) {
     console.warn(JSON.stringify({ event: "waitlist-disabled", reason: "RESEND_API_KEY unset" }));

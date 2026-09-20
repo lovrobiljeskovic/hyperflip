@@ -8,7 +8,7 @@ import { INDEXED_POSITIONS, deriveRow, loadRow, summarizePositions, type Row, ty
 import { PARLAY_VAULT, parlayVaultAbi } from "@/lib/contracts";
 import { formatUsdc, kickoff, multiplier, pct1, shortError } from "@/lib/format";
 import { hyperEvmTestnet, tradeUrl } from "@/lib/chain";
-import { fetchMarkets, type Market, sideLabel } from "@/lib/writer";
+import { fetchMarkets, type Market, marketMid, sideLabel } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { useConnectAction, useWalletState } from "@/lib/wallet";
 import { appHref } from "@/lib/site";
@@ -101,12 +101,9 @@ function LegTable({
       {row.parlay.legs.map((leg, i) => {
         const m = markets.get(leg.vault.toLowerCase());
         const coin = m ? (leg.isYes ? m.coinYes : m.coinNo) : undefined;
-        const raw = coin === undefined ? undefined : mids[coin];
-        const n = raw === undefined ? NaN : Number(raw);
-        // Only a value strictly inside (0, 1) is a probability - the same
-        // domain priceBreakdown() enforces. allMids carries every coin on
-        // the venue, so anything else is not this leg's price.
-        const live = Number.isFinite(n) && n > 0 && n < 1 ? n : null;
+        // Same rule as the board: allMids prints 0.5 for every untraded book,
+        // which is a placeholder, not a price.
+        const live = m && coin !== undefined ? marketMid(mids, m, coin) : null;
         const verdict = VERDICT_STYLE[row.legVerdicts[i]];
         return (
           // flex-wrap: on mobile the meta line's basis-full pushes it to a

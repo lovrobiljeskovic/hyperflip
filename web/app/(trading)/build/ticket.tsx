@@ -7,6 +7,7 @@ import type { BuilderLeg } from "@/lib/ticket";
 import { formatUnits } from "viem";
 import {
   joinWaitlist,
+  marketMid,
   WAITLIST_ERRORS,
   type QuoteResult,
   type WriterLimits,
@@ -35,12 +36,8 @@ const legLabel = (leg: BuilderLeg): string => leg.label ?? (leg.isYes ? "YES" : 
 const STAKE_PRESETS = [25, 50, 100];
 
 function midPct(mids: Record<string, string>, coin: string): string {
-  const raw = mids[coin];
-  if (raw === undefined) return "-";
-  const n = Number(raw);
-  // Only a value strictly inside (0, 1) is a probability - the same domain
-  // priceBreakdown() enforces. allMids carries every coin on the venue.
-  return Number.isFinite(n) && n > 0 && n < 1 ? impliedPct(n) : "-";
+  const n = marketMid(mids, {}, coin);
+  return n === null ? "-" : impliedPct(n);
 }
 
 function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: BuilderLeg[] = []): string {
@@ -295,11 +292,7 @@ export function Ticket({
   // Every leg must carry a real probability - treating an unpriced leg as
   // certain would overstate the multiplier, so the figure goes unavailable
   // instead.
-  const sampleProbs = legs.map((l) => {
-    const raw = mids[l.coin];
-    const n = raw === undefined ? NaN : Number(raw);
-    return Number.isFinite(n) && n > 0 && n < 1 ? n : null;
-  });
+  const sampleProbs = legs.map((l) => marketMid(mids, {}, l.coin));
   const combinedImplied =
     legs.length && sampleProbs.every((p) => p !== null) ? (sampleProbs as number[]).reduce((acc, p) => acc * p, 1) : 0;
   const sampleMultiplier = combinedImplied > 0 ? 1 / combinedImplied : null;
