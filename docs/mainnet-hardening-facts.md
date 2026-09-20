@@ -9,10 +9,12 @@ Verify against the code before relying on any single line number.
 
 ## Solvency & exposure model
 
-- **The on-chain writer allowance is the hard solvency cap.** `ParlayVault.mintParlay`
-  escrows the **full `maxPayout − premium`** from the writer's ERC-20 allowance at
-  mint (`src/ParlayVault.sol:171`). `premium == stake`. Pausing the house = revoking
-  the allowance; there is no pause switch. Any exposure-accounting change must keep
+- **The writer wallet's spendable USDC (`min(allowance, balance)`) is the hard solvency cap.**
+  `ParlayVault.mint` escrows the **full `maxPayout − premium`** from the writer's
+  ERC-20 allowance at mint (`src/ParlayVault.sol:171`). `premium == stake`. Since
+  2026-09-20 the allowance is unbounded and the *balance* is the bound: the bank holds
+  a 250 USDC float, the rest sits in a cold reserve. Pausing the house = revoking
+  the allowance or emptying the bank; there is no pause switch. Any exposure-accounting change must keep
   this as the ceiling — the in-memory book only refines *below* it.
   Accurate today, but **not settled for mainnet**: an allowance meters cumulative
   volume rather than open exposure, and resolution never restores it. Replacing it
