@@ -18,7 +18,9 @@ test("sports rotation dry-run is read-only and records landed vaults even if cle
       writeFileSync(join(root, ".env"), "");
       const registryFile = join(root, "registry/markets.json");
       const retired = { vault: "0xold", title: "Past game", coinYes: "#10", expiryMs: 1, category: "sports" };
-      const registry = { network: "testnet", markets: [retired], archived: [] };
+      // Settled on-chain long before its registry deadline: archived all the same.
+      const settled = { vault: "0xDone", title: "Settled game", coinYes: "#12", expiryMs: Date.UTC(2027, 0, 1), category: "sports" };
+      const registry = { network: "testnet", markets: [retired, settled], archived: [] };
       writeFileSync(registryFile, JSON.stringify(registry));
       const preload = join(root, "fixture.mjs");
       writeFileSync(preload, `
@@ -42,6 +44,7 @@ syncBuiltinESMExports();
 globalThis.fetch = async (_url, init) => {
   const request = JSON.parse(init.body);
   if (request.method === "eth_getTransactionReceipt") return Response.json({ result: { status: "0x1" } });
+  if (request.method === "eth_call") return Response.json({ result: request.params[0].to === "0xDone" ? "0x" + "1".padStart(64, "0") : "0x" + "0".repeat(64) });
   if (request.type === "allMids") return Response.json({ "#20": "0.6" });
   if (request.type === "outcomeMeta") return Response.json({ questions: [], outcomes: [{
     outcome: 2, name: "template:sportsContestWinner", quoteToken: "USDC",
@@ -66,7 +69,7 @@ globalThis.fetch = async (_url, init) => {
         assert.equal(updated.markets.length, 1);
         assert.equal(updated.markets[0].category, "sports");
         assert.equal(updated.markets[0].vault, "0xnew");
-        assert.deepEqual(updated.archived, [retired]);
+        assert.deepEqual(updated.archived, [retired, settled]);
       }
     } finally { rmSync(root, { recursive: true, force: true }); }
   }

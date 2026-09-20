@@ -26,6 +26,33 @@ export async function info(type, extra = {}) {
   return res.json();
 }
 
+/** Vaults whose `settled()` is true, lowercase. Registry `expiryMs` is the vault deadline
+ * (kickoff + days), so without this a settled game stays listed until the deadline. An RPC
+ * failure counts as not settled: the vault just waits for the next hourly run. */
+export async function settledVaults(vaults) {
+  const rpcs = deployRpcs();
+  const out = new Set();
+  const call = async (vault) => {
+    for (const rpc of rpcs) {
+      try {
+        const res = await fetch(rpc, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: vault, data: "0x8f775839" }, "latest"] }), // settled()
+        });
+        const { result } = await res.json();
+        if (typeof result !== "string") continue;
+        if (BigInt(result) === 1n) out.add(vault.toLowerCase());
+        return;
+      } catch {} // RPC flake — try the next
+    }
+    console.warn(`settled() unreadable for ${vault} — keeping it this run`);
+  };
+  // ponytail: 8 at a time on public RPCs; batch JSON-RPC if the registry grows past a few hundred.
+  for (let i = 0; i < vaults.length; i += 8) await Promise.all(vaults.slice(i, i + 8).map(call));
+  return out;
+}
+
 export function bigBlocks(flag) {
   execFileSync("uv", ["run", "tools/bigblocks.py", flag], { cwd: ROOT, stdio: "inherit" });
 }
