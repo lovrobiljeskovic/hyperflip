@@ -36,6 +36,13 @@ export interface WriterConfig {
   spotPxStaleMs: number;
   minBookDepthWad: bigint;
   lockoutMs: number;
+  /** In-play per-market cap as a fraction of perMarketCap (bps). */
+  inPlayCapBps: bigint;
+  /** Live prior poll interval; 0 disables the feed. */
+  livePriorPollMs: number;
+  livePriorStaleMs: number;
+  livePriorJumpWad: bigint;
+  livePriorSuspendMs: number;
   pokerIntervalMs: number;
   deployBlock: bigint;
   markets: Map<string, MarketInfo>;
@@ -140,6 +147,11 @@ export function loadConfig(): WriterConfig {
     // ponytail: testnet depth floor; measure liquidity before a real-money launch.
     minBookDepthWad: parseDecimalToUnits(process.env.MIN_BOOK_DEPTH ?? "50", 18),
     lockoutMs: Number(process.env.LOCKOUT_MS ?? 600_000),
+    inPlayCapBps: BigInt(process.env.IN_PLAY_CAP_BPS ?? 5000),
+    livePriorPollMs: Number(process.env.LIVE_PRIOR_POLL_MS ?? 15_000),
+    livePriorStaleMs: Number(process.env.LIVE_PRIOR_STALE_MS ?? 60_000),
+    livePriorJumpWad: parseDecimalToUnits(process.env.LIVE_PRIOR_JUMP ?? "0.10", 18),
+    livePriorSuspendMs: Number(process.env.LIVE_PRIOR_SUSPEND_MS ?? 30_000),
     pokerIntervalMs,
     inviteCodes: parseInviteCodes(requireEnv("INVITE_CODES")),
     resendApiKey: process.env.RESEND_API_KEY,

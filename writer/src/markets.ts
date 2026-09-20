@@ -21,6 +21,7 @@ export interface MarketInfo {
   groupTitle?: string;
   /** House prior P(YES) for markets we deployed; used when the Core book is empty. */
   priorYes?: number;
+  sport?: string;
   title: string;
   category: string;
 }
@@ -67,6 +68,7 @@ export function parseMarkets(raw: string): Map<string, MarketInfo> {
       sideNo: optionalString(market, "sideNo"),
       group: optionalString(market, "group"),
       groupTitle: optionalString(market, "groupTitle"),
+      ...(market.sport !== undefined && market.sport !== null ? { sport: optionalString(market, "sport") } : {}),
       ...(priorYes !== undefined ? { priorYes } : {}),
     });
   }

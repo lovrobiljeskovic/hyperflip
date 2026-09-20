@@ -3,7 +3,7 @@ import { isAddress, keccak256, type Address, type Hex } from "viem";
 import type { WriterConfig } from "./config.js";
 import { ExposureBook } from "./exposure.js";
 import { dominatingLeg, edgeBreakdown, independentJointProbWad, priceParlay, totalEdgeBps } from "./pricing.js";
-import { clientIp, WAD } from "./pure.js";
+import { BPS, clientIp, WAD } from "./pure.js";
 import { quoteDigest, type ParlayQuote, type QuoteLeg, type QuoteRecord } from "./quotes.js";
 import type { LegPriceObservation } from "./infoApi.js";
 import { isValidEmail, type RateLimiter, type Waitlist } from "./waitlist.js";
@@ -45,6 +45,8 @@ export interface QuoteDeps {
   quoteLimiter?: RateLimiter;
 
   ready?: () => boolean;
+  /** Live P(YES) for a vault, overlaid on /markets so the app shows what we quote. */
+  livePriorYes?(vault: Address): number | undefined;
   /** Mint refs for a taker, from the poker's index (GET /parlays?taker=). */
   parlaysOf?(taker: Address): { id: bigint; block: bigint }[];
 }
@@ -193,7 +195,10 @@ export async function handleQuote(
   const now = deps.now();
   const risk = priced.maxPayout - priced.premium;
   // Keep check and reserve synchronous to prevent overlapping quotes exceeding caps.
-  const check = exposure.check(risk, vaults, allowance, cfg.perMarketCap, now, cfg.perClusterCap, v.inviteCode, cfg.perCodeReservedCap);
+  // ponytail: one cap for the whole ticket; any in-play leg shrinks it to the in-play cap.
+  const inPlay = v.legs.some((l) => { const s = cfg.markets.get(l.vault.toLowerCase())?.startMs; return s !== undefined && now >= s; });
+  const marketCap = inPlay ? (cfg.perMarketCap * cfg.inPlayCapBps) / BPS : cfg.perMarketCap;
+  const check = exposure.check(risk, vaults, allowance, marketCap, now, cfg.perClusterCap, v.inviteCode, cfg.perCodeReservedCap);
   if (!check.ok) {
     reject(metrics, check.reason);
     console.log(JSON.stringify({ at: new Date(now).toISOString(), event: "quote-rejected", reason: check.reason, risk: risk.toString() }));
@@ -315,6 +320,23 @@ function lockedCors(req: http.IncomingMessage, allowlist: string[]): Record<stri
   return { Vary: "Origin", ...(origin ? { "Access-Control-Allow-Origin": origin } : {}) };
 }
 
+/** Registry JSON with live priors overlaid on `priorYes`, so the board mirrors the quote. */
+export function marketsJson(deps: Pick<QuoteDeps, "cfg" | "livePriorYes">): string {
+  if (!deps.livePriorYes) return deps.cfg.registryJson;
+  const registry = JSON.parse(deps.cfg.registryJson);
+  const list: Record<string, unknown>[] | undefined = Array.isArray(registry) ? registry : registry?.markets;
+  if (!Array.isArray(list)) return deps.cfg.registryJson;
+  let changed = false;
+  const markets = list.map((m) => {
+    const live = typeof m.vault === "string" ? deps.livePriorYes!(m.vault as Address) : undefined;
+    if (live === undefined) return m;
+    changed = true;
+    return { ...m, priorYes: live };
+  });
+  if (!changed) return deps.cfg.registryJson;
+  return JSON.stringify(Array.isArray(registry) ? markets : { ...registry, markets });
+}
+
 export function startServer(deps: QuoteDeps, port: number, health: () => unknown): http.Server {
   const server = http.createServer((req, res) => {
     req.on("error", (err) => {
@@ -347,7 +369,7 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
     }
     if (req.method === "GET" && req.url === "/markets") {
       res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
-      return res.end(deps.cfg.registryJson);
+      return res.end(marketsJson(deps));
     }
     if (req.method === "GET" && req.url === "/limits") {
       // Caps are on house risk (maxPayout - premium). bankroll is the cached

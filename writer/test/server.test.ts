@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import type { Address, Hex } from "viem";
-import { handleQuote, sameGameLeg, validateQuoteRequest, newMetrics, startServer, type QuoteDeps } from "../src/server.js";
+import { handleQuote, marketsJson, sameGameLeg, validateQuoteRequest, newMetrics, startServer, type QuoteDeps } from "../src/server.js";
 import { ExposureBook } from "../src/exposure.js";
 import { RateLimiter } from "../src/waitlist.js";
 import { WAD } from "../src/pure.js";
@@ -24,7 +24,8 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     legEdgeBps: 0n, quoteTtlMs: 30_000,
     spotPxStaleMs: 60_000,
     minBookDepthWad: 0n,
-    lockoutMs: 600_000, pokerIntervalMs: 15_000, deployBlock: 0n,
+    lockoutMs: 600_000, inPlayCapBps: 5000n, livePriorPollMs: 0, livePriorStaleMs: 60_000, livePriorJumpWad: WAD / 10n, livePriorSuspendMs: 30_000,
+    pokerIntervalMs: 15_000, deployBlock: 0n,
     inviteCodes: new Set(["beta-test"]),
     waitlistFile: "/dev/null",
     corsOrigins: ["https://overround.xyz"],
@@ -548,4 +549,25 @@ test("a parlay paying less than one leg alone is refused", async () => {
   });
   assert.deepEqual(await handleQuote(d, goodBody), { status: 400, json: { error: "dominated", vault: V1 } });
   assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
+});
+
+test("in-play leg halves the per-market cap (IN_PLAY_CAP_BPS)", async () => {
+  // Cap 100 USDC; a 2-leg coin-flip ticket at stake 10 risks 30. Pregame it fits; in play (cap 50) it still fits,
+  // so push the stake to 20 -> risk 60: fits the 100 cap pregame, exceeds the 50 cap in play.
+  const pregame = deps({ cfg: cfg({ perMarketCap: 100_000_000n, maxStake: 100_000_000n }) });
+  const okRes = await handleQuote(pregame, body({ legs: [legOn(V1, true), legOn(V2, true)] }) as never, "1.1.1.1");
+  assert.equal(okRes.status, 200);
+  const live = cfg({ perMarketCap: 100_000_000n, maxStake: 100_000_000n });
+  live.markets.set(V1.toLowerCase(), { ...live.markets.get(V1.toLowerCase())!, startMs: 900_000 }); // kicked off before now=1_000_000
+  const inPlay = deps({ cfg: live });
+  const res = await handleQuote(inPlay, { ...body({ legs: [legOn(V1, true), legOn(V2, true)] }), stake: "20000000" } as never, "1.1.1.1");
+  assert.equal(res.status, 409);
+  assert.equal((res.json as { error: string }).error, "market-cap");
+});
+
+test("GET /markets overlays the live prior on priorYes and leaves other rows untouched", () => {
+  const c = cfg({ registryJson: JSON.stringify({ markets: [{ vault: V1, priorYes: 0.4 }, { vault: V2 }], archived: [] }) });
+  const out = JSON.parse(marketsJson({ cfg: c, livePriorYes: (v) => (v.toLowerCase() === V1.toLowerCase() ? 0.77 : undefined) }));
+  assert.deepEqual(out.markets, [{ vault: V1, priorYes: 0.77 }, { vault: V2 }]);
+  assert.equal(marketsJson({ cfg: c, livePriorYes: () => undefined }), c.registryJson);
 });

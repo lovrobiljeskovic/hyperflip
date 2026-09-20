@@ -8,6 +8,7 @@ import { loadConfig, syncedPerCodeReservedCap } from "./config.js";
 import { ExposureBook } from "./exposure.js";
 import { fetchBestAskWad } from "./infoApi.js";
 import { buildPriceFreshness, makeLegPriceFetcher, readSpotPxWad } from "./spotPx.js";
+import { defaultFetchJson, LivePrior } from "./livePrior.js";
 import { Poker } from "./poker.js";
 import { bankrollRoom, isStalled, lowBankrollAlerter, parseDecimalToUnits, stallThresholdMs, WAD } from "./pure.js";
 import { signQuote, type ParlayQuote, type QuoteLeg } from "./quotes.js";
@@ -66,8 +67,17 @@ async function main(): Promise<void> {
   const exposure = new ExposureBook((v) => cfg.markets.get(v)?.cluster, cfg.pokerIntervalMs * 2);
   const metrics = newMetrics();
   let lastQuoteJournalAppendMs: number | null = null;
-  // House priors: pre-kickoff only. In play the prior is stale by construction, so the
-  // leg falls through to the book / spotPx path and its existing refusals.
+  // Live feed first (Polymarket mid, then ESPN win probability); the registry prior is
+  // the pre-kickoff fallback only, since in play it is stale by construction.
+  const livePrior = new LivePrior({
+    markets: cfg.markets.values(),
+    fetchJson: defaultFetchJson,
+    now: () => Date.now(),
+    staleMs: cfg.livePriorStaleMs,
+    jumpWad: cfg.livePriorJumpWad,
+    suspendMs: cfg.livePriorSuspendMs,
+    log: (msg) => console.log(JSON.stringify({ at: new Date().toISOString(), ...msg })),
+  });
   const priorByCoin = new Map<string, { wad: bigint; startMs?: number }>();
   for (const m of cfg.markets.values()) {
     if (m.priorYes === undefined) continue;
@@ -79,6 +89,8 @@ async function main(): Promise<void> {
     fetchBook: (coin) => fetchBestAskWad(cfg.infoApiUrl, coin, cfg.minBookDepthWad),
     readSpotPx: (coin) => readSpotPxWad(publicClient, BigInt(coin.slice(1))),
     prior: (coin) => {
+      const live = livePrior.prior(coin);
+      if (live !== undefined) return live;
       const p = priorByCoin.get(coin);
       return p && (p.startMs === undefined || Date.now() < p.startMs) ? p.wad : undefined;
     },
@@ -129,6 +141,7 @@ async function main(): Promise<void> {
     badInviteLimiter: new RateLimiter(20, 60 * 60 * 1000),
     quoteLimiter: new RateLimiter(300, 60 * 60 * 1000),
     parlaysOf: (taker) => poker.parlaysOf(taker),
+    livePriorYes: (vault) => livePrior.priorYes(vault),
   };
   if (!cfg.resendApiKey) {
     console.warn(JSON.stringify({ event: "waitlist-disabled", reason: "RESEND_API_KEY unset" }));
@@ -166,6 +179,7 @@ async function main(): Promise<void> {
       seeded,
       openParlays: poker.openCount(),
       priceFreshnessMs,
+      livePrior: livePrior.status(),
       perMarketCap: cfg.perMarketCap.toString(),
       reservedGlobal: exposure.reservedGlobal(now).toString(),
       bankroll: lastBankroll?.toString() ?? null,
@@ -178,6 +192,19 @@ async function main(): Promise<void> {
   seeded = true;
   // Prime /limits.bankroll so the app shows it before the first quote.
   await deps.readAllowance().catch((err) => console.error(new Date().toISOString(), "boot readAllowance failed", err));
+
+  if (cfg.livePriorPollMs > 0) {
+    const liveTick = async () => {
+      try {
+        await livePrior.tick();
+      } catch (err) {
+        console.error(new Date().toISOString(), "live prior tick failed", err);
+      } finally {
+        setTimeout(liveTick, cfg.livePriorPollMs);
+      }
+    };
+    void liveTick();
+  }
 
   // ponytail: disabling polling weakens exposure caps; keep it enabled for a funded writer.
   if (cfg.pokerIntervalMs > 0) {
