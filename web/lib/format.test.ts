@@ -71,12 +71,12 @@ describe("edgeSteps", () => {
   const wad = (p: number) => (BigInt(Math.round(p * 1e6)) * 10n ** 18n / 1_000_000n).toString();
 
   it("applies each edge component in turn, cumulatively", () => {
-    const bd = priceBreakdown([wad(0.5), wad(0.5)], "500", "300", 1_000_000n, 3_703_703n)!;
+    const bd = priceBreakdown([wad(0.5), wad(0.5)], "500", "300", 1_000_000n, 3_773_584n)!;
     const { afterEdge, afterLegs, modelled } = edgeSteps(bd);
     expect(bd.fairMultiplier).toBeCloseTo(4, 6);
-    expect(afterEdge).toBeCloseTo(4 / 1.05, 6);
-    expect(afterLegs).toBeCloseTo(4 / 1.08, 6);
-    expect(modelled).toBeCloseTo(4 / 1.08, 6);
+    expect(afterEdge).toBeCloseTo(1 / (0.25 + 0.25 * 0.75 * 0.05), 6);
+    expect(afterLegs).toBeCloseTo(1 / (0.25 + 0.25 * 0.75 * 0.08), 6);
+    expect(modelled).toBeCloseTo(1 / (0.25 + 0.25 * 0.75 * 0.08), 6);
     expect(afterEdge).toBeGreaterThan(afterLegs);
     expect(modelled).toBeCloseTo(bd.actualMultiplier, 3);
   });

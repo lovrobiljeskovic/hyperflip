@@ -31,7 +31,10 @@ export function priceParlay(
   if (stake <= 0n) return { ok: false, reason: "bad-stake" };
   if (jointProbWad <= 0n) return { ok: false, reason: "cannot-win" };
   if (jointProbWad >= WAD) return { ok: false, reason: "bad-joint-prob" };
-  const priceWad = (jointProbWad * (BPS + edgeBps)) / BPS;
+  // Edge is charged on p(1-p), like an exchange taker fee: full at coin flips,
+  // vanishing at both extremes so favourites still pay out and longshots
+  // are not taxed twice. Takeout as a share of stake is edge x (1 - p).
+  const priceWad = jointProbWad + (jointProbWad * (WAD - jointProbWad) * edgeBps) / (WAD * BPS);
   if (priceWad >= WAD) return { ok: false, reason: "no-payout" };
   if (priceWad === 0n) return { ok: false, reason: "cannot-win" };
   let maxPayout = (stake * WAD) / priceWad;

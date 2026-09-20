@@ -57,7 +57,9 @@ export function edgeSteps(bd: PriceBreakdown): {
   afterLegs: number;
   modelled: number;
 } {
-  const at = (bps: number) => bd.fairMultiplier / (1 + bps);
+  // Mirrors the writer: price = p + p(1-p) x edge, so the edge fades at both extremes.
+  const p = 1 / bd.fairMultiplier;
+  const at = (edge: number) => 1 / (p + p * (1 - p) * edge);
   return {
     afterEdge: at(bd.edgePct),
     afterLegs: at(bd.edgePct + bd.legPct),

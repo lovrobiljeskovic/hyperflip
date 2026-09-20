@@ -13,10 +13,23 @@ test("joint 0.25, zero edge: 4x payout", () => {
 });
 
 test("edge shrinks payout, rounds down (house-favorable)", () => {
-  // price = 0.25 * 1.05 = 0.2625; payout = 1_000_000 / 0.2625 = 3_809_523.8... -> 3_809_523
+  // price = 0.25 + 0.25 * 0.75 * 0.05 = 0.259375; payout = 1_000_000 / 0.259375 = 3_855_421.6... -> 3_855_421
   const r = priceParlay(QUARTER, 1_000_000n, 500n, 100n);
   assert.ok(r.ok);
-  assert.equal(r.maxPayout, 3_809_523n);
+  assert.equal(r.maxPayout, 3_855_421n);
+});
+
+test("edge is p(1-p)-shaped: a heavy favourite still pays, takeout vanishes at the extremes", () => {
+  // p = 0.95, edge 5%: price = 0.95 + 0.95 * 0.05 * 0.05 = 0.952375 -> 1.05x, not 1.0025x
+  const fav = priceParlay((WAD * 95n) / 100n, 1_000_000n, 500n, 100n);
+  assert.ok(fav.ok);
+  assert.equal(fav.maxPayout, 1_050_006n);
+  // takeout as a share of stake = edge * (1 - p): 2.5% at a coin flip, 4.75% at p = 0.05
+  const flip = priceParlay(WAD / 2n, 1_000_000n, 500n, 100n);
+  const dog = priceParlay(WAD / 20n, 1_000_000n, 500n, 100n);
+  assert.ok(flip.ok && dog.ok);
+  assert.equal(flip.maxPayout, 1_951_219n); // 1 / 0.5125
+  assert.equal(dog.maxPayout, 19_093_078n); // 1 / 0.052375
 });
 
 test("a higher joint probability pays less — the whole point of correlation", () => {
@@ -37,9 +50,10 @@ test("rejects a joint probability outside (0,1)", () => {
   assert.equal(priceParlay(0n, 1_000_000n, 0n, 100n).ok, false);
 });
 
-test("rejects when edge pushes the price to >= 1", () => {
+test("edge can never push the price to >= 1; a 0.99 joint still pays over 1x", () => {
   const r = priceParlay((WAD * 99n) / 100n, 1_000_000n, 200n, 100n);
-  assert.equal(r.ok, false);
+  assert.ok(r.ok);
+  assert.ok(r.maxPayout > 1_000_000n);
 });
 
 test("rejects a non-positive stake", () => {

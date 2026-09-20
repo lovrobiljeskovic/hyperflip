@@ -142,14 +142,14 @@ export function loadConfig(): WriterConfig {
       ? BigInt(process.env.PER_CODE_RESERVED_CAP)
       : defaultPerCodeReservedCap(maxStake, minPremiumBps),
     legEdgeBps: BigInt(process.env.LEG_EDGE_BPS ?? 300),
-    quoteTtlMs: Number(process.env.QUOTE_TTL_MS ?? 30_000),
+    quoteTtlMs: Number(process.env.QUOTE_TTL_MS ?? 10_000),
     spotPxStaleMs,
     // ponytail: testnet depth floor; measure liquidity before a real-money launch.
     minBookDepthWad: parseDecimalToUnits(process.env.MIN_BOOK_DEPTH ?? "50", 18),
     lockoutMs: Number(process.env.LOCKOUT_MS ?? 600_000),
     inPlayCapBps: BigInt(process.env.IN_PLAY_CAP_BPS ?? 5000),
-    livePriorPollMs: Number(process.env.LIVE_PRIOR_POLL_MS ?? 15_000),
-    livePriorStaleMs: Number(process.env.LIVE_PRIOR_STALE_MS ?? 60_000),
+    livePriorPollMs: Number(process.env.LIVE_PRIOR_POLL_MS ?? 3_000),
+    livePriorStaleMs: Number(process.env.LIVE_PRIOR_STALE_MS ?? 15_000),
     livePriorJumpWad: parseDecimalToUnits(process.env.LIVE_PRIOR_JUMP ?? "0.10", 18),
     livePriorSuspendMs: Number(process.env.LIVE_PRIOR_SUSPEND_MS ?? 30_000),
     pokerIntervalMs,
