@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchCloses, type Point, type Range } from "@/lib/candles";
+import { EMPTY_BOOK, fetchBook, fetchCloses, type Book, type Point, type Range } from "@/lib/candles";
 import { pct1 } from "@/lib/format";
+import { sideLabel, type Market } from "@/lib/writer";
 
 const RANGES: Range[] = ["1D", "ALL"];
 /* Drawing space. The svg stretches to the row (preserveAspectRatio none) and
@@ -10,18 +11,40 @@ const RANGES: Range[] = ["1D", "ALL"];
    HTML around the svg so nothing gets stretched. */
 const W = 600;
 const H = 120;
+const BOOK_POLL_MS = 5000;
 
 function stamp(t: number): string {
   return new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-/** YES close price over time for one market, 0-100% axis. Expanded under a
- * board row; owns its 1D / ALL toggle and its fetch. */
-export function MarketChart({ coin, title }: { coin: string; title?: string }) {
+/** Close price over time plus the live Core book for one side of a market,
+ * 0-100% axis. Expanded under a board row; owns its side and range toggles
+ * and its fetches. Each HIP-4 side is its own coin with its own book, so the
+ * side toggle swaps both chart and book. */
+export function MarketChart({ market, title }: { market: Market; title?: string }) {
+  const [isYes, setIsYes] = useState(true);
+  const coin = isYes ? market.coinYes : market.coinNo;
   const [range, setRange] = useState<Range>("1D");
+  const [book, setBook] = useState<Book>(EMPTY_BOOK);
   const [points, setPoints] = useState<Point[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [hover, setHover] = useState<number | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      const b = await fetchBook(coin);
+      if (!live) return;
+      setBook(b);
+      timer = setTimeout(poll, BOOK_POLL_MS);
+    };
+    void poll();
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [coin]);
 
   useEffect(() => {
     let live = true;
@@ -65,8 +88,23 @@ export function MarketChart({ coin, title }: { coin: string; title?: string }) {
               <span className="text-fg">{pct1(last.c)}</span> last trade
             </>
           ) : (
-            "yes price"
+            "price"
           )}
+        </span>
+        <span className="flex gap-1" role="group" aria-label="Side">
+          {[true, false].map((yes) => (
+            <button
+              key={String(yes)}
+              type="button"
+              aria-pressed={isYes === yes}
+              onClick={() => setIsYes(yes)}
+              className={`max-w-24 truncate rounded-[4px] border px-2 py-0.5 transition-colors ${
+                isYes === yes ? `border-accent bg-accent/10 ${yes ? "text-yes" : "text-no"}` : "border-line text-dim hover:border-dim hover:text-fg"
+              }`}
+            >
+              {sideLabel(market, yes)}
+            </button>
+          ))}
         </span>
         <span className="flex gap-1" role="group" aria-label="Chart range">
           {RANGES.map((r) => (
@@ -128,6 +166,50 @@ export function MarketChart({ coin, title }: { coin: string; title?: string }) {
           <span>{stamp(points[points.length - 1].t)}</span>
         </div>
       )}
+      <BookView book={book} />
+    </div>
+  );
+}
+
+function sz(n: number): string {
+  return n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+}
+
+/** Top five levels a side, best at the top, spread between. Sizes are
+ * outcome shares (one share pays 1 USDC on the right answer). */
+function BookView({ book }: { book: Book }) {
+  const bid = book.bids[0]?.px;
+  const ask = book.asks[0]?.px;
+  const rows = Math.max(book.bids.length, book.asks.length);
+  if (rows === 0) return <p className="mono mt-3 border-t border-line pt-3 text-center text-[10px] uppercase tracking-[0.14em] text-dim">Empty book</p>;
+  return (
+    <div className="mono mt-3 border-t border-line pt-2 text-[10px]">
+      <div className="flex justify-between uppercase tracking-[0.14em] text-dim">
+        <span>Bids</span>
+        <span>
+          Spread{" "}
+          <span className="text-fg">{bid !== undefined && ask !== undefined ? pct1(ask - bid) : "—"}</span>
+        </span>
+        <span>Asks</span>
+      </div>
+      <div className="mt-1 grid grid-cols-2 gap-x-4">
+        <ol>
+          {book.bids.map((l) => (
+            <li key={l.px} className="flex justify-between">
+              <span className="text-yes">{pct1(l.px)}</span>
+              <span className="text-dim">{sz(l.sz)}</span>
+            </li>
+          ))}
+        </ol>
+        <ol>
+          {book.asks.map((l) => (
+            <li key={l.px} className="flex justify-between">
+              <span className="text-dim">{sz(l.sz)}</span>
+              <span className="text-no">{pct1(l.px)}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
     </div>
   );
 }

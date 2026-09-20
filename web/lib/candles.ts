@@ -46,3 +46,40 @@ export async function fetchCloses(coin: string, range: Range, now = Date.now()):
     return [];
   }
 }
+
+export interface Level {
+  px: number;
+  sz: number;
+}
+/** Top of the Core book for one side coin: bids and asks, best first. */
+export interface Book {
+  bids: Level[];
+  asks: Level[];
+}
+export const EMPTY_BOOK: Book = { bids: [], asks: [] };
+
+/** l2Book -> {bids, asks}, best first, junk rows dropped. `depth` caps each side. */
+export function parseBook(value: unknown, depth = 5): Book {
+  const levels = (value as { levels?: unknown })?.levels;
+  if (!Array.isArray(levels) || levels.length < 2) return EMPTY_BOOK;
+  const side = (rows: unknown): Level[] =>
+    (Array.isArray(rows) ? rows : [])
+      .map((r) => ({ px: Number(r?.px), sz: Number(r?.sz) }))
+      .filter((l) => Number.isFinite(l.px) && Number.isFinite(l.sz) && l.sz > 0)
+      .slice(0, depth);
+  return { bids: side(levels[0]), asks: side(levels[1]) };
+}
+
+/** Never throws: an unreachable book shows as empty. */
+export async function fetchBook(coin: string): Promise<Book> {
+  try {
+    const r = await fetch(INFO_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "l2Book", coin }),
+    });
+    return r.ok ? parseBook(await r.json()) : EMPTY_BOOK;
+  } catch {
+    return EMPTY_BOOK;
+  }
+}

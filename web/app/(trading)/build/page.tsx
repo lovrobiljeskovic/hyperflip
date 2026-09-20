@@ -153,7 +153,7 @@ function BoardRow({
       </span>
       {open && (
         <div className="cursor-default sm:col-span-full">
-          <MarketChart coin={market.coinYes} />
+          <MarketChart market={market} />
         </div>
       )}
     </div>
@@ -277,7 +277,7 @@ function GroupRow({
       {open && (
         <div className="grid cursor-default grid-cols-1 gap-2 sm:grid-cols-2">
           {priced.map(({ m }) => (
-            <MarketChart key={m.vault} coin={m.coinYes} title={m.title} />
+            <MarketChart key={m.vault} market={m} title={m.title} />
           ))}
         </div>
       )}
