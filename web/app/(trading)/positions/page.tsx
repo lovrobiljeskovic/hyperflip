@@ -8,7 +8,8 @@ import { INDEXED_POSITIONS, deriveRow, loadRow, summarizePositions, type Row, ty
 import { PARLAY_VAULT, parlayVaultAbi } from "@/lib/contracts";
 import { formatUsdc, kickoff, multiplier, pct1, shortError } from "@/lib/format";
 import { hyperEvmTestnet, tradeUrl } from "@/lib/chain";
-import { fetchMarkets, type Market, marketMid, sideLabel } from "@/lib/writer";
+import { fetchMarkets, type Market, marketMid, sideLabel, withMarketVolumes } from "@/lib/writer";
+import { fetchMarketVolumes } from "@/lib/info";
 import { useMids } from "@/lib/mids";
 import { useConnectAction, useWalletState } from "@/lib/wallet";
 import { appHref } from "@/lib/site";
@@ -195,8 +196,12 @@ function PositionsContent() {
 
   // Registry metadata supplies sports labels; addresses remain the fallback.
   useEffect(() => {
-    (INDEXED_POSITIONS ? fetch("/position-markets.json").then(r => { if (!r.ok) throw new Error("Market labels unavailable"); return r.json() as Promise<Market[]>; }) : fetchMarkets(true))
-      .then(setMarkets)
+    // Volumes too, so a book trading at exactly 0.5 prices the same as on /build.
+    Promise.all([
+      INDEXED_POSITIONS ? fetch("/position-markets.json").then(r => { if (!r.ok) throw new Error("Market labels unavailable"); return r.json() as Promise<Market[]>; }) : fetchMarkets(true),
+      fetchMarketVolumes(),
+    ])
+      .then(([ms, volumes]) => setMarkets(withMarketVolumes(ms, volumes)))
       .catch(() => {});
   }, []);
   const marketsByVault = useMemo(
