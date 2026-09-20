@@ -159,25 +159,31 @@ test("mainnetYesCoin matches both teams on the UTC kickoff day, either participa
   assert.equal(mainnetYesCoin(mnMeta.outcomes, { ...MARKET, title: "New York Jets vs Atlanta Falcons" }), null);
 });
 
-test("mainnet book mid is the second source: used when Polymarket is missing, skipped when wide, off when unset", async () => {
+test("mainnet book mid is the first source: beats Polymarket, wide book falls through to Polymarket then ESPN, off when unset", async () => {
   let book = mnBook("0.42792", "0.42793");
-  const routes = { "gamma": () => [], "outcomeMeta": () => mnMeta, "l2Book": () => book, "espn": () => espnBoard("in", 0.9) };
+  const routes = { "gamma": () => gamma, "midpoint": () => ({ mid: "0.435" }), "outcomeMeta": () => mnMeta, "l2Book": () => book, "espn": () => espnBoard("in", 0.9) };
   const h = harness(routes, { mainnet: true });
   await h.live.tick();
   assert.equal(h.live.prior("#194630"), toWad(0.427925));
   assert.equal(h.live.status()["#194630"].source, "mainnet");
   assert.ok(h.calls.some((u) => u === `${MAINNET}#l2Book`));
+  assert.ok(!h.calls.some((u) => u.includes("midpoint")));
   assert.ok(!h.calls.some((u) => u.includes("espn")));
   assert.equal(h.calls.filter((u) => u.endsWith("#outcomeMeta")).length, 1);
-  // Wide book: nobody's price, ESPN takes over.
+  // Wide book: nobody's price, Polymarket takes over.
   book = mnBook("0.10", "0.90");
   await h.live.tick();
-  assert.equal(h.live.status()["#194630"].source, "espn");
+  assert.equal(h.live.status()["#194630"].source, "polymarket");
+  assert.equal(h.live.prior("#194630"), toWad(0.435)); // within the jump guard of the last mainnet mid
   assert.equal(h.calls.filter((u) => u.endsWith("#outcomeMeta")).length, 1);
-  // Mainnet off: never asked.
+  // Wide book and no Polymarket market: ESPN.
+  const noPm = harness({ ...routes, "gamma": () => [] }, { mainnet: true });
+  await noPm.live.tick();
+  assert.equal(noPm.live.status()["#194630"].source, "espn");
+  // Mainnet off: never asked, Polymarket first as before.
   const off = harness(routes);
   await off.live.tick();
-  assert.equal(off.live.status()["#194630"].source, "espn");
+  assert.equal(off.live.status()["#194630"].source, "polymarket");
   assert.ok(!off.calls.some((u) => u.startsWith(MAINNET)));
 });
 

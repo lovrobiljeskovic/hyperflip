@@ -5,11 +5,14 @@ import { WAD } from "./pure.js";
  * feed that moves with the score instead of an empty Core book or a frozen pregame line.
  *
  * Source order per market, every tick:
- *   1. Polymarket moneyline midpoint (real-money book, ticks in play; Gamma slug is
- *      `nfl-<away>-<home>-<UTC date>`, the YES token is the away team = `sideYes`).
- *   2. HyperCore mainnet HIP-4 book midpoint (D41: read-only info API, no signer). The game
+ *   1. HyperCore mainnet HIP-4 book midpoint (D41: read-only info API, no signer). The game
  *      is matched by both team names + UTC kickoff date against mainnet `outcomeMeta`; the
- *      YES coin is the participant named first in our title. A wide book is skipped.
+ *      YES coin is the participant named first in our title. A wide book (> 3c) is skipped,
+ *      so a thin in-play book falls through to Polymarket. First since 2026-09-20 (D43): Core
+ *      is the intended main venue, so its book is what we test against. Unset
+ *      `MAINNET_INFO_URL` = Polymarket first, as before.
+ *   2. Polymarket moneyline midpoint (real-money book, ticks in play; Gamma slug is
+ *      `nfl-<away>-<home>-<UTC date>`, the YES token is the away team = `sideYes`).
  *   3. ESPN scoreboard `situation.lastPlay.probability` (model win probability, in play only).
  * None needs a key. Pregame, when no live sample is fresh, the caller falls back to
  * the registry `priorYes`; in play a missing sample leaves the leg `unpriced-leg`.
@@ -180,7 +183,7 @@ export class LivePrior {
         const s = this.states.get(m.vault.toLowerCase())!;
         if (s.final || (m.expiryMs !== undefined && now >= m.expiryMs)) return;
         try {
-          const sample = (await this.polymarket(m, s)) ?? (await this.mainnet(m, s, mainnetMeta)) ?? (await this.espnSample(m, s, board));
+          const sample = (await this.mainnet(m, s, mainnetMeta)) ?? (await this.polymarket(m, s)) ?? (await this.espnSample(m, s, board));
           if (sample) this.record(m, s, sample);
         } catch (err) {
           this.opts.log?.({ event: "live-prior-failed", vault: m.vault, error: (err as Error).message.slice(0, 200) });
