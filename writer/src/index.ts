@@ -67,7 +67,7 @@ async function main(): Promise<void> {
   const exposure = new ExposureBook((v) => cfg.markets.get(v)?.cluster, cfg.pokerIntervalMs * 2);
   const metrics = newMetrics();
   let lastQuoteJournalAppendMs: number | null = null;
-  // Live feed first (Polymarket mid, then ESPN win probability); the registry prior is
+  // Live feed first (Polymarket mid, then mainnet book mid, then ESPN win probability); the registry prior is
   // the pre-kickoff fallback only, since in play it is stale by construction.
   const livePrior = new LivePrior({
     markets: cfg.markets.values(),
@@ -76,6 +76,7 @@ async function main(): Promise<void> {
     staleMs: cfg.livePriorStaleMs,
     jumpWad: cfg.livePriorJumpWad,
     suspendMs: cfg.livePriorSuspendMs,
+    mainnetInfoUrl: cfg.mainnetInfoUrl,
     log: (msg) => console.log(JSON.stringify({ at: new Date().toISOString(), ...msg })),
   });
   const priorByCoin = new Map<string, { wad: bigint; startMs?: number }>();

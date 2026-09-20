@@ -43,6 +43,8 @@ export interface WriterConfig {
   livePriorStaleMs: number;
   livePriorJumpWad: bigint;
   livePriorSuspendMs: number;
+  /** Mainnet info API for the live-prior book source (D41, read-only); unset = off. */
+  mainnetInfoUrl?: string;
   pokerIntervalMs: number;
   deployBlock: bigint;
   markets: Map<string, MarketInfo>;
@@ -152,6 +154,7 @@ export function loadConfig(): WriterConfig {
     livePriorStaleMs: Number(process.env.LIVE_PRIOR_STALE_MS ?? 15_000),
     livePriorJumpWad: parseDecimalToUnits(process.env.LIVE_PRIOR_JUMP ?? "0.10", 18),
     livePriorSuspendMs: Number(process.env.LIVE_PRIOR_SUSPEND_MS ?? 30_000),
+    ...(process.env.MAINNET_INFO_URL ? { mainnetInfoUrl: process.env.MAINNET_INFO_URL } : {}),
     pokerIntervalMs,
     inviteCodes: parseInviteCodes(requireEnv("INVITE_CODES")),
     resendApiKey: process.env.RESEND_API_KEY,

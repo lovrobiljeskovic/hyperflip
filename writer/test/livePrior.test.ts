@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Address } from "viem";
-import { espnDate, LivePrior, pmSlug, toWad, yesOutcomeIndex } from "../src/livePrior.js";
+import { espnDate, LivePrior, mainnetYesCoin, pmSlug, toWad, yesOutcomeIndex } from "../src/livePrior.js";
 import type { MarketInfo } from "../src/markets.js";
 import { WAD } from "../src/pure.js";
 
@@ -23,18 +23,29 @@ const espnBoard = (state: "pre" | "in" | "post", away?: number) => ({
   }],
 });
 
-function harness(routes: Record<string, () => unknown>, opts: Partial<{ staleMs: number; jumpWad: bigint; suspendMs: number }> = {}) {
+const MAINNET = "https://mainnet.test/info";
+const MN_DESC = (a: string, b: string) => `competition:NFL|contestType:Match|participantA:${a}|participantB:${b}|scheduledStart:20260920-1700|season:2026|sport:Football`;
+const mnMeta = { outcomes: [
+  { outcome: 1, name: "template:priceTouch", description: "perp:HYPE" },
+  { outcome: 3898, name: "template:sportsContestWinner", description: MN_DESC("Tampa Bay Buccaneers", "Cleveland Browns") },
+  { outcome: 3904, name: "template:sportsContestWinner", description: MN_DESC("Atlanta Falcons", "Carolina Panthers") },
+] };
+const mnBook = (bid: string, ask: string) => ({ levels: [[{ px: bid, sz: "100" }], [{ px: ask, sz: "100" }]] });
+
+function harness(routes: Record<string, (body?: unknown) => unknown>, opts: Partial<{ staleMs: number; jumpWad: bigint; suspendMs: number; mainnet: boolean }> = {}) {
   let now = KICKOFF + 60_000;
   const calls: string[] = [];
   const log: Record<string, unknown>[] = [];
   const live = new LivePrior({
     markets: [MARKET],
-    fetchJson: async (url) => {
-      calls.push(url);
-      const key = Object.keys(routes).find((k) => url.includes(k));
+    fetchJson: async (url, body) => {
+      const type = (body as { type?: string } | undefined)?.type;
+      calls.push(type ? `${url}#${type}` : url);
+      const key = Object.keys(routes).find((k) => (type ?? url).includes(k));
       if (!key) throw new Error(`no route for ${url}`);
-      return routes[key]();
+      return routes[key](body);
     },
+    ...(opts.mainnet ? { mainnetInfoUrl: MAINNET } : {}),
     now: () => now,
     staleMs: opts.staleMs ?? 60_000,
     jumpWad: opts.jumpWad ?? WAD / 10n,
@@ -138,4 +149,50 @@ test("non-NFL rows are not tracked; a 404 midpoint (settled market) drops the to
   assert.equal(h.log.filter((m) => m.event === "live-prior-failed").length, 0);
   await h.live.tick();
   assert.equal(h.calls.filter((u) => u.includes("midpoint")).length, 1, "token dropped after the 404, no second midpoint call");
+});
+
+test("mainnetYesCoin matches both teams on the UTC kickoff day, either participant order", () => {
+  // Our away team (Panthers) is participant B on this deployer, so YES is the +1 coin.
+  assert.equal(mainnetYesCoin(mnMeta.outcomes, MARKET), "#39041");
+  assert.equal(mainnetYesCoin([{ outcome: 7, name: "template:sportsContestWinner", description: MN_DESC("Carolina Panthers", "Atlanta Falcons") }], MARKET), "#70");
+  assert.equal(mainnetYesCoin(mnMeta.outcomes, { ...MARKET, startMs: KICKOFF + 86400_000 }), null);
+  assert.equal(mainnetYesCoin(mnMeta.outcomes, { ...MARKET, title: "New York Jets vs Atlanta Falcons" }), null);
+});
+
+test("mainnet book mid is the second source: used when Polymarket is missing, skipped when wide, off when unset", async () => {
+  let book = mnBook("0.42792", "0.42793");
+  const routes = { "gamma": () => [], "outcomeMeta": () => mnMeta, "l2Book": () => book, "espn": () => espnBoard("in", 0.9) };
+  const h = harness(routes, { mainnet: true });
+  await h.live.tick();
+  assert.equal(h.live.prior("#194630"), toWad(0.427925));
+  assert.equal(h.live.status()["#194630"].source, "mainnet");
+  assert.ok(h.calls.some((u) => u === `${MAINNET}#l2Book`));
+  assert.ok(!h.calls.some((u) => u.includes("espn")));
+  assert.equal(h.calls.filter((u) => u.endsWith("#outcomeMeta")).length, 1);
+  // Wide book: nobody's price, ESPN takes over.
+  book = mnBook("0.10", "0.90");
+  await h.live.tick();
+  assert.equal(h.live.status()["#194630"].source, "espn");
+  assert.equal(h.calls.filter((u) => u.endsWith("#outcomeMeta")).length, 1);
+  // Mainnet off: never asked.
+  const off = harness(routes);
+  await off.live.tick();
+  assert.equal(off.live.status()["#194630"].source, "espn");
+  assert.ok(!off.calls.some((u) => u.startsWith(MAINNET)));
+});
+
+test("a pruned mainnet coin (l2Book error) drops the coin and re-resolves after the retry window", async () => {
+  let fail = false;
+  const h = harness({ "gamma": () => [], "outcomeMeta": () => mnMeta, "l2Book": () => { if (fail) throw new Error("HTTP 500"); return mnBook("0.4", "0.41"); }, "espn": () => espnBoard("pre") }, { mainnet: true });
+  await h.live.tick();
+  assert.equal(h.live.status()["#194630"].source, "mainnet");
+  fail = true;
+  await h.live.tick();
+  await h.live.tick();
+  assert.equal(h.calls.filter((u) => u.endsWith("#l2Book")).length, 2);
+  h.advance(10 * 60_000 + 1);
+  fail = false;
+  await h.live.tick();
+  assert.equal(h.calls.filter((u) => u.endsWith("#outcomeMeta")).length, 2);
+  assert.equal(h.calls.filter((u) => u.endsWith("#l2Book")).length, 3);
 });
