@@ -28,3 +28,6 @@ writer/waitlist.json
 .superpowers/
 # Taker index for GET /parlays (rebuilt from PARLAY_INDEX_FROM_BLOCK if deleted)
 writer/parlays.json
+
+# Mainnet depth samples (D41 measurement, runtime data)
+depth-samples.jsonl
