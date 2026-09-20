@@ -6,6 +6,7 @@ import { tradeUrl } from "@/lib/chain";
 import { useMids } from "@/lib/mids";
 import { formatVolume, kickoff, oddsLabel, pct1 } from "@/lib/format";
 import { Ticket, type BuilderLeg } from "./ticket";
+import { MarketChart } from "./market-chart";
 
 /** Matches ParlayVault.MAX_LEGS (src/ParlayVault.sol:58) and the writer's own
  * bound (writer/src/server.ts:49). Display only - the cap is enforced on-chain
@@ -90,13 +91,15 @@ function BoardRow({
   onPick: (market: Market, isYes: boolean) => void;
 }) {
   const current = legs.find((l) => l.vault === market.vault);
+  const [open, setOpen] = useState(false);
   // aria-label overrides the button's text, so the price has to be spoken here
   // or a screen reader never hears it - the price IS the control.
   const yes = marketMid(mids, market, market.coinYes);
   const no = marketMid(mids, market, market.coinNo);
   return (
     <div
-      className={`border-t border-line px-4 py-3 sm:grid sm:grid-cols-[1fr_124px_124px_84px_76px] sm:items-center sm:gap-x-3 sm:px-5 ${
+      onClick={toggleRow(setOpen)}
+      className={`cursor-pointer border-t border-line px-4 py-3 sm:grid sm:grid-cols-[1fr_124px_124px_84px_76px] sm:items-center sm:gap-x-3 sm:px-5 ${
         current ? "bg-accent/[0.07]" : ""
       }`}
     >
@@ -105,8 +108,11 @@ function BoardRow({
           <SportBadge sport={market.sport} />
         </span>
         <div className="min-w-0">
-          <p className="truncate text-[13px]">
-            <MarketLink coin={market.coinYes}>{market.title}</MarketLink>
+          <p className="flex items-center gap-2 text-[13px]">
+            <span className="truncate">
+              <MarketLink coin={market.coinYes}>{market.title}</MarketLink>
+            </span>
+            <Chevron open={open} onToggle={() => setOpen((o) => !o)} label={`${market.title} price chart`} />
           </p>
           <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">
             {categoryLine(market)}
@@ -145,7 +151,39 @@ function BoardRow({
       <span className="mono hidden text-right text-[12px] text-dim sm:block">
         {kickoff(market)}
       </span>
+      {open && (
+        <div className="cursor-default sm:col-span-full">
+          <MarketChart coin={market.coinYes} />
+        </div>
+      )}
     </div>
+  );
+}
+
+/** Row click expands the chart, except on the row's own controls (price
+ * cells, the Core-book link, the chevron), which keep their job. */
+function toggleRow(setOpen: (f: (o: boolean) => boolean) => void) {
+  return (e: React.MouseEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest("button, a")) return;
+    setOpen((o) => !o);
+  };
+}
+
+/** The keyboard's way in: the row itself is a div, so this button carries
+ * aria-expanded and the focus target. */
+function Chevron({ open, onToggle, label }: { open: boolean; onToggle: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      aria-label={`${open ? "Hide" : "Show"} ${label}`}
+      onClick={onToggle}
+      className={`mono shrink-0 rounded-[4px] border border-line px-1.5 text-[9px] text-dim transition-[transform,color,border-color] hover:border-dim hover:text-fg ${
+        open ? "rotate-180" : ""
+      }`}
+    >
+      ▾
+    </button>
   );
 }
 
@@ -193,16 +231,20 @@ function GroupRow({
     .map((m) => ({ m, mid: marketMid(mids, m, m.coinYes) }))
     .sort((a, b) => (b.mid ?? -1) - (a.mid ?? -1));
   const volume = members.reduce((acc, m) => acc + (m.volume24h ?? 0), 0);
+  const [open, setOpen] = useState(false);
   return (
-    <div className={`border-t border-line px-4 py-3 sm:px-5 ${current ? "bg-accent/[0.07]" : ""}`}>
+    <div onClick={toggleRow(setOpen)} className={`cursor-pointer border-t border-line px-4 py-3 sm:px-5 ${current ? "bg-accent/[0.07]" : ""}`}>
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
           <span className="shrink-0">
             <SportBadge sport={head.sport} />
           </span>
           <div className="min-w-0">
-            <p className="truncate text-[13px]">
-              <MarketLink coin={head.coinYes}>{title}</MarketLink>
+            <p className="flex items-center gap-2 text-[13px]">
+              <span className="truncate">
+                <MarketLink coin={head.coinYes}>{title}</MarketLink>
+              </span>
+              <Chevron open={open} onToggle={() => setOpen((o) => !o)} label={`${title} price charts`} />
             </p>
             <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">
               {categoryLine(head)}
@@ -230,6 +272,15 @@ function GroupRow({
           />
         ))}
       </div>
+      {/* One small chart per outcome rather than lines sharing an axis: the
+          brand palette has no categorical set, and each outcome reads alone. */}
+      {open && (
+        <div className="grid cursor-default grid-cols-1 gap-2 sm:grid-cols-2">
+          {priced.map(({ m }) => (
+            <MarketChart key={m.vault} coin={m.coinYes} title={m.title} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
