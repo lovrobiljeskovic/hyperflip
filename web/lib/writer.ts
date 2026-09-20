@@ -138,10 +138,19 @@ export async function fetchMarketBoard(): Promise<Market[]> {
   return withMarketVolumes(markets, volumes);
 }
 
-export function compareMarketVolume(left: Market, right: Market, ascending: boolean): number {
-  if (left.volume24h === undefined) return right.volume24h === undefined ? 0 : 1;
-  if (right.volume24h === undefined) return -1;
-  return (left.volume24h - right.volume24h) * (ascending ? 1 : -1);
+/** Soonest kickoff first; markets with neither start nor deadline sink to the
+ * bottom. A grouped question is a season, so it ranks on its settlement
+ * deadline rather than a start months ago. The board's only sort now that
+ * volume is hidden. */
+export function kickoffKey(m: Pick<Market, "startMs" | "expiryMs" | "group">): number | undefined {
+  return (m.group === undefined ? m.startMs : undefined) ?? m.expiryMs;
+}
+export function compareKickoff(left: Market, right: Market, soonestFirst = true): number {
+  const ka = kickoffKey(left);
+  const kb = kickoffKey(right);
+  if (ka === undefined) return kb === undefined ? 0 : 1;
+  if (kb === undefined) return -1;
+  return (ka - kb) * (soonestFirst ? 1 : -1);
 }
 
 export interface WriterLimits {

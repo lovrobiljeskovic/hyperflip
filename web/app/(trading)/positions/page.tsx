@@ -6,7 +6,9 @@ import { useAccount, usePublicClient, useWriteContract } from "wagmi";
 import { usePositions } from "./use-positions";
 import { INDEXED_POSITIONS, deriveRow, loadRow, summarizePositions, type Row, type LegVerdict } from "@/lib/positions";
 import { PARLAY_VAULT, parlayVaultAbi } from "@/lib/contracts";
-import { formatUsdc, kickoff, multiplier, pct1, shortError } from "@/lib/format";
+import { formatUsdc, multiplier, pct1, shortError, USDC_DECIMALS } from "@/lib/format";
+import { CountUp, Kickoff } from "@/app/live";
+import { formatUnits } from "viem";
 import { hyperEvmTestnet, tradeUrl } from "@/lib/chain";
 import { fetchMarkets, type Market, marketMid, sideLabel, withMarketVolumes } from "@/lib/writer";
 import { fetchMarketVolumes } from "@/lib/info";
@@ -96,7 +98,7 @@ function LegTable({
         <span className="w-10 sm:w-16">Side</span>
         <span className="flex-1">Market</span>
         <span className="w-16 text-right">Live</span>
-        <span className="w-16 text-right">Kickoff</span>
+        <span className="w-32 text-right">Kickoff</span>
         <span className="w-20 text-right">Outcome</span>
       </div>
       {row.parlay.legs.map((leg, i) => {
@@ -129,10 +131,10 @@ function LegTable({
             <span className="hidden w-16 text-right text-dim sm:block">
               {live === null ? "-" : pct1(live)}
             </span>
-            <span className="hidden w-16 text-right text-dim sm:block">{m ? kickoff(m) : "-"}</span>
+            <span className="hidden w-32 justify-end sm:flex">{m ? <Kickoff market={m} /> : <span className="text-dim">-</span>}</span>
             <span className={`text-right sm:w-20 ${verdict.className}`}>{verdict.label}</span>
-            <span className="basis-full pl-14 text-[10px] text-dim sm:hidden">
-              {live === null ? "-" : pct1(live)} live · kickoff {m ? kickoff(m) : "-"}
+            <span className="flex basis-full items-center gap-2 pl-14 text-[10px] text-dim sm:hidden">
+              {live === null ? "-" : pct1(live)} live · {m ? <Kickoff market={m} align="left" /> : "-"}
             </span>
           </div>
         );
@@ -143,19 +145,24 @@ function LegTable({
 
 function SummaryStrip({ rows, wallet }: { rows: Row[]; wallet: string }) {
   const { staked, open, claimable, won } = summarizePositions(rows, wallet);
+  const usdc = (v: bigint) => Number(formatUnits(v, USDC_DECIMALS));
+  const usdc2 = (x: number) => `${x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDC`;
+  const whole = (x: number) => String(Math.round(x));
   const cells = [
-    { label: "Tickets", value: String(rows.length), className: "" },
-    { label: "Total staked", value: `${formatUsdc(staked)} USDC`, className: "" },
-    { label: "Open", value: String(open), className: "" },
-    { label: "Claimable", value: `${formatUsdc(claimable)} USDC`, className: claimable > 0n ? "text-accent" : "" },
-    { label: "Claimed", value: `${formatUsdc(won)} USDC`, className: won > 0n ? "text-yes" : "" },
+    { label: "Tickets", value: rows.length, format: whole, className: "" },
+    { label: "Total staked", value: usdc(staked), format: usdc2, className: "" },
+    { label: "Open", value: open, format: whole, className: "" },
+    { label: "Claimable", value: usdc(claimable), format: usdc2, className: claimable > 0n ? "text-accent" : "" },
+    { label: "Claimed", value: usdc(won), format: usdc2, className: won > 0n ? "text-yes" : "" },
   ];
   return (
     <div className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-card border border-line bg-line sm:grid-cols-3 lg:grid-cols-5">
       {cells.map((c) => (
         <div key={c.label} className="bg-panel px-[18px] py-[14px]">
           <p className="mono text-[10px] uppercase tracking-[0.16em] text-dim">{c.label}</p>
-          <p className={`mono mt-1 text-[16px] ${c.className}`}>{c.value}</p>
+          <p className={`mono mt-1 text-[16px] ${c.className}`}>
+            <CountUp value={c.value} format={c.format} />
+          </p>
         </div>
       ))}
     </div>

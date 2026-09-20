@@ -1,12 +1,12 @@
 "use client";
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { compareMarketVolume, fetchMarketBoard, groupMarkets, isPriced, marketMid, onlySports, sideLabel, sportLabel, type Market } from "@/lib/writer";
+import { compareKickoff, fetchMarketBoard, groupMarkets, isPriced, marketMid, onlySports, sideLabel, sportLabel, type Market } from "@/lib/writer";
 import { tradeUrl } from "@/lib/chain";
 import { useMids } from "@/lib/mids";
-import { formatVolume, kickoff, oddsLabel, pct1 } from "@/lib/format";
+import { oddsLabel, pct1 } from "@/lib/format";
+import { Kickoff } from "@/app/live";
 import { Ticket, type BuilderLeg } from "./ticket";
-import { MarketChart } from "./market-chart";
 
 /** Matches ParlayVault.MAX_LEGS (src/ParlayVault.sol:58) and the writer's own
  * bound (writer/src/server.ts:49). Display only - the cap is enforced on-chain
@@ -91,15 +91,13 @@ function BoardRow({
   onPick: (market: Market, isYes: boolean) => void;
 }) {
   const current = legs.find((l) => l.vault === market.vault);
-  const [open, setOpen] = useState(false);
   // aria-label overrides the button's text, so the price has to be spoken here
   // or a screen reader never hears it - the price IS the control.
   const yes = marketMid(mids, market, market.coinYes);
   const no = marketMid(mids, market, market.coinNo);
   return (
     <div
-      onClick={toggleRow(setOpen)}
-      className={`cursor-pointer border-t border-line px-4 py-3 sm:grid sm:grid-cols-[1fr_124px_124px_84px_76px] sm:items-center sm:gap-x-3 sm:px-5 ${
+      className={`border-t border-line px-4 py-3 sm:grid sm:grid-cols-[1fr_124px_124px_132px] sm:items-center sm:gap-x-3 sm:px-5 ${
         current ? "bg-accent/[0.07]" : ""
       }`}
     >
@@ -108,22 +106,14 @@ function BoardRow({
           <SportBadge sport={market.sport} />
         </span>
         <div className="min-w-0">
-          <p className="flex items-center gap-2 text-[13px]">
-            <span className="truncate">
-              <MarketLink coin={market.coinYes}>{market.title}</MarketLink>
-            </span>
-            <Chevron open={open} onToggle={() => setOpen((o) => !o)} label={`${market.title} price chart`} />
+          <p className="truncate text-[13px]">
+            <MarketLink coin={market.coinYes}>{market.title}</MarketLink>
           </p>
-          <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">
-            {categoryLine(market)}
-            <span className="sm:hidden">
-              {" · "}
-              {formatVolume(market.volume24h)}
-              {" · "}
-              {kickoff(market)}
-            </span>
-          </p>
+          <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">{categoryLine(market)}</p>
         </div>
+        <span className="ml-auto shrink-0 sm:hidden">
+          <Kickoff market={market} />
+        </span>
       </div>
       {/* Mobile: two half-width buttons under the title; sm+: `contents`
           dissolves the wrapper so the cells land in the outer 4-col grid. */}
@@ -145,45 +135,10 @@ function BoardRow({
           onPick={() => onPick(market, false)}
         />
       </div>
-      <span className="mono hidden text-right text-[12px] text-dim sm:block">
-        {formatVolume(market.volume24h)}
+      <span className="hidden justify-self-end sm:block">
+        <Kickoff market={market} />
       </span>
-      <span className="mono hidden text-right text-[12px] text-dim sm:block">
-        {kickoff(market)}
-      </span>
-      {open && (
-        <div className="cursor-default sm:col-span-full">
-          <MarketChart market={market} />
-        </div>
-      )}
     </div>
-  );
-}
-
-/** Row click expands the chart, except on the row's own controls (price
- * cells, the Core-book link, the chevron), which keep their job. */
-function toggleRow(setOpen: (f: (o: boolean) => boolean) => void) {
-  return (e: React.MouseEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest("button, a")) return;
-    setOpen((o) => !o);
-  };
-}
-
-/** The keyboard's way in: the row itself is a div, so this button carries
- * aria-expanded and the focus target. */
-function Chevron({ open, onToggle, label }: { open: boolean; onToggle: () => void; label: string }) {
-  return (
-    <button
-      type="button"
-      aria-expanded={open}
-      aria-label={`${open ? "Hide" : "Show"} ${label}`}
-      onClick={onToggle}
-      className={`mono shrink-0 rounded-[4px] border border-line px-1.5 text-[9px] text-dim transition-[transform,color,border-color] hover:border-dim hover:text-fg ${
-        open ? "rotate-180" : ""
-      }`}
-    >
-      ▾
-    </button>
   );
 }
 
@@ -230,33 +185,27 @@ function GroupRow({
   const priced = members
     .map((m) => ({ m, mid: marketMid(mids, m, m.coinYes) }))
     .sort((a, b) => (b.mid ?? -1) - (a.mid ?? -1));
-  const volume = members.reduce((acc, m) => acc + (m.volume24h ?? 0), 0);
-  const [open, setOpen] = useState(false);
   return (
-    <div onClick={toggleRow(setOpen)} className={`cursor-pointer border-t border-line px-4 py-3 sm:px-5 ${current ? "bg-accent/[0.07]" : ""}`}>
+    <div className={`border-t border-line px-4 py-3 sm:px-5 ${current ? "bg-accent/[0.07]" : ""}`}>
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
           <span className="shrink-0">
             <SportBadge sport={head.sport} />
           </span>
           <div className="min-w-0">
-            <p className="flex items-center gap-2 text-[13px]">
-              <span className="truncate">
-                <MarketLink coin={head.coinYes}>{title}</MarketLink>
-              </span>
-              <Chevron open={open} onToggle={() => setOpen((o) => !o)} label={`${title} price charts`} />
+            <p className="truncate text-[13px]">
+              <MarketLink coin={head.coinYes}>{title}</MarketLink>
             </p>
             <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">
               {categoryLine(head)}
               {" · "}
               {members.length} outcomes
-              {" · "}
-              {formatVolume(volume)}
-              {" · "}
-              {kickoff(head)}
             </p>
           </div>
         </div>
+        <span className="shrink-0">
+          <Kickoff market={head} />
+        </span>
       </div>
       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
         {priced.map(({ m, mid }) => (
@@ -272,15 +221,6 @@ function GroupRow({
           />
         ))}
       </div>
-      {/* One small chart per outcome rather than lines sharing an axis: the
-          brand palette has no categorical set, and each outcome reads alone. */}
-      {open && (
-        <div className="grid cursor-default grid-cols-1 gap-2 sm:grid-cols-2">
-          {priced.map(({ m }) => (
-            <MarketChart key={m.vault} market={m} title={m.title} />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -329,9 +269,7 @@ export default function BuildPage() {
     };
   }, []);
   const [tab, setTab] = useState("all");
-  const [sort, setSort] = useState<"volume" | "expiry">("volume");
-  const [volumeAsc, setVolumeAsc] = useState(false);
-  const [expiryAsc, setExpiryAsc] = useState(true);
+  const [soonestFirst, setSoonestFirst] = useState(true);
   const mids = useMids();
 
   const load = useCallback(async () => {
@@ -359,18 +297,8 @@ export default function BuildPage() {
   const tabs = useMemo(() => ["all", ...new Set(live.map(sportLabel))], [live]);
   const board = useMemo(() => {
     // Games past kickoff stay: the writer quotes in-play until expiry.
-    const filtered = live.filter((m) => tab === "all" || sportLabel(m) === tab);
-    if (sort === "volume") return filtered.sort((a, b) => compareMarketVolume(a, b, volumeAsc));
-    // Sort by kickoff (deadline when absent); markets with neither sink to the bottom.
-    const key = (m: Market) => m.startMs ?? m.expiryMs;
-    return filtered.sort((a, b) => {
-      const ka = key(a);
-      const kb = key(b);
-      if (ka === undefined) return kb === undefined ? 0 : 1;
-      if (kb === undefined) return -1;
-      return (ka - kb) * (expiryAsc ? 1 : -1);
-    });
-  }, [live, tab, sort, volumeAsc, expiryAsc]);
+    return live.filter((m) => tab === "all" || sportLabel(m) === tab).sort((a, b) => compareKickoff(a, b, soonestFirst));
+  }, [live, tab, soonestFirst]);
 
   useEffect(() => {
     void load();
@@ -443,36 +371,16 @@ export default function BuildPage() {
               <p className="rounded-card border border-line bg-panel p-6 text-dim">No quotable markets right now.</p>
             ) : (
               <div className="overflow-hidden rounded-[12px] border border-line bg-panel/30">
-                <div className="mono flex justify-between gap-x-3 bg-panel px-4 py-3 text-[9px] uppercase tracking-[0.16em] text-dim sm:grid sm:grid-cols-[1fr_124px_124px_84px_76px] sm:px-5">
+                <div className="mono flex justify-between gap-x-3 bg-panel px-4 py-3 text-[9px] uppercase tracking-[0.16em] text-dim sm:grid sm:grid-cols-[1fr_124px_124px_132px] sm:px-5">
                   <span>Market</span>
                   <span className="col-span-2 hidden pr-2 text-right sm:block">Sides</span>
                   <button
                     type="button"
-                    onClick={() => {
-                      if (sort === "volume") setVolumeAsc((v) => !v);
-                      else {
-                        setSort("volume");
-                        setVolumeAsc(false);
-                      }
-                    }}
-                    aria-label={`Sort by 24 hour volume, ${sort === "volume" && volumeAsc ? "lowest" : "highest"} first`}
-                    className="hidden text-right uppercase tracking-[0.16em] transition-colors hover:text-fg sm:block"
-                  >
-                    24h vol {sort === "volume" ? (volumeAsc ? "↑" : "↓") : ""}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (sort === "expiry") setExpiryAsc((v) => !v);
-                      else {
-                        setSort("expiry");
-                        setExpiryAsc(true);
-                      }
-                    }}
-                    aria-label={`Sort by kickoff, ${sort === "expiry" && expiryAsc ? "soonest" : "latest"} first`}
+                    onClick={() => setSoonestFirst((v) => !v)}
+                    aria-label={`Sort by kickoff, ${soonestFirst ? "soonest" : "latest"} first`}
                     className="text-right uppercase tracking-[0.16em] transition-colors hover:text-fg"
                   >
-                    Kickoff {sort === "expiry" ? (expiryAsc ? "↑" : "↓") : ""}
+                    Kickoff {soonestFirst ? "↑" : "↓"}
                   </button>
                 </div>
                 {groupMarkets(board).map((entry) =>

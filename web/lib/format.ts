@@ -9,17 +9,6 @@ export function formatUsdc(v: bigint): string {
   });
 }
 
-export function formatVolume(value: number | undefined): string {
-  if (value === undefined) return "—";
-  if (value === 0) return "$0";
-  const [divisor, suffix] =
-    value >= 999_950_000 ? [1_000_000_000, "B"] :
-    value >= 999_950 ? [1_000_000, "M"] :
-    value >= 1_000 ? [1_000, "K"] : [1, ""];
-  const rounded = Math.round((value / divisor) * 10) / 10;
-  return `$${suffix ? rounded : Math.round(rounded)}${suffix}`;
-}
-
 export function multiplier(premium: bigint, maxPayout: bigint): string {
   if (premium === 0n) return "—";
   return `${(Number(maxPayout) / Number(premium)).toFixed(2)}x`;
@@ -89,12 +78,21 @@ export function priceBreakdown(
   };
 }
 
-export function until(ms: number): string {
-  const s = (ms - Date.now()) / 1000;
+/** Time left as the two largest units, so a countdown visibly ticks. */
+export function until(ms: number, now = Date.now()): string {
+  const s = (ms - now) / 1000;
   if (s <= 0) return "expired";
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  if (s < 86_400) return `${Math.floor(s / 3600)}h`;
-  return `${Math.floor(s / 86_400)}d`;
+  const m = Math.floor(s / 60) % 60;
+  const h = Math.floor(s / 3600) % 24;
+  const d = Math.floor(s / 86_400);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m ${Math.floor(s % 60)}s`;
+}
+
+/** Exact calendar time, "Sep 20, 1:00 PM", in the viewer's zone unless told otherwise. */
+export function whenLabel(ms: number, timeZone?: string): string {
+  return new Date(ms).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone });
 }
 
 export function pct1(mid: number): string {
@@ -116,16 +114,3 @@ export function shortError(err: unknown): string {
   return firstLine.length > 140 ? `${firstLine.slice(0, 140)}…` : firstLine;
 }
 
-/** Kickoff countdown, "live" once the game has started. Falls back to the resolution
- * deadline for markets that carry no start time. */
-/** Expected settlement date, UTC so server and client render the same string. */
-export function settles(m: { expiryMs?: number }): string {
-  return m.expiryMs
-    ? new Date(m.expiryMs).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
-    : "-";
-}
-
-export function kickoff(m: { startMs?: number; expiryMs?: number }): string {
-  if (m.startMs) return m.startMs > Date.now() ? until(m.startMs) : "live";
-  return m.expiryMs ? until(m.expiryMs) : "-";
-}

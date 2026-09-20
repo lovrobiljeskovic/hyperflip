@@ -1,7 +1,6 @@
 import { describe, expect, it, test, vi } from "vitest";
 import {
   edgeSteps,
-  formatVolume,
   formatUsdc,
   multiplier,
   impliedPct,
@@ -10,21 +9,14 @@ import {
   quotedOverround,
   secondsLeft,
   shortAddress,
-  kickoff,
   until,
+  whenLabel,
 } from "./format";
 
 test("formatUsdc renders 6-decimal base units at 2dp with grouping", () => {
   expect(formatUsdc(1_000_000n)).toBe("1.00");
   expect(formatUsdc(316_200_000n)).toBe("316.20");
   expect(formatUsdc(1_234_567_890n)).toBe("1,234.57");
-});
-
-test("formatVolume renders compact 24h USDC notional", () => {
-  expect(formatVolume(0)).toBe("$0");
-  expect(formatVolume(218)).toBe("$218");
-  expect(formatVolume(1_234)).toBe("$1.2K");
-  expect(formatVolume(undefined)).toBe("—");
 });
 
 test("multiplier is maxPayout/premium at 2dp", () => {
@@ -89,18 +81,24 @@ describe("edgeSteps", () => {
   });
 });
 
-test("until counts down in the largest useful unit", () => {
+test("until counts down in the two largest units so it visibly ticks", () => {
+  const now = Date.UTC(2026, 0, 1);
+  expect(until(now - 1000, now)).toBe("expired");
+  expect(until(now, now)).toBe("expired");
+  expect(until(now + 18 * 60_000 + 5000, now)).toBe("18m 5s");
+  expect(until(now + 4 * 3_600_000 + 9 * 60_000, now)).toBe("4h 9m");
+  expect(until(now + 11 * 86_400_000 + 60_000, now)).toBe("11d 0h");
+  expect(until(now + 3_600_000, now)).toBe("1h 0m");
+  expect(until(now + 86_400_000 + 3 * 3_600_000, now)).toBe("1d 3h");
   vi.useFakeTimers();
-  vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-  const now = Date.now();
-  expect(until(now - 1000)).toBe("expired");
-  expect(until(now)).toBe("expired");
-  expect(until(now + 18 * 60_000)).toBe("18m");
-  expect(until(now + 4 * 3_600_000)).toBe("4h");
-  expect(until(now + 11 * 86_400_000 + 60_000)).toBe("11d");
-  expect(until(now + 3_600_000)).toBe("1h");
-  expect(until(now + 86_400_000)).toBe("1d");
+  vi.setSystemTime(new Date(now));
+  expect(until(now + 90_000)).toBe("1m 30s");
   vi.useRealTimers();
+});
+
+test("whenLabel is the exact calendar time in the given zone", () => {
+  expect(whenLabel(Date.UTC(2026, 8, 20, 17, 0), "UTC")).toBe("Sep 20, 5:00 PM");
+  expect(whenLabel(Date.UTC(2026, 8, 20, 17, 0), "America/New_York")).toBe("Sep 20, 1:00 PM");
 });
 
 test("pct1 renders a mid at one decimal place", () => {
@@ -121,12 +119,4 @@ test("quotedOverround is how far fair odds exceed the quoted odds", () => {
   expect(quotedOverround(bd)).toBeCloseTo(0.0538, 4);
   expect(quotedOverround({ ...bd, actualMultiplier: 3.33 })).toBe(0);
   expect(quotedOverround({ ...bd, actualMultiplier: 0 })).toBe(0);
-});
-
-test("kickoff counts down to start, reads live after it, falls back to expiry", () => {
-  const now = Date.now();
-  expect(kickoff({ startMs: now + 2 * 86_400_000 + 1000, expiryMs: now + 5 * 86_400_000 })).toBe("2d");
-  expect(kickoff({ startMs: now - 1000, expiryMs: now + 5 * 86_400_000 })).toBe("live");
-  expect(kickoff({ expiryMs: now + 3 * 86_400_000 + 1000 })).toBe("3d");
-  expect(kickoff({})).toBe("-");
 });

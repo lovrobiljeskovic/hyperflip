@@ -27,6 +27,7 @@ import {
 } from "@/lib/format";
 import { hyperEvmTestnet, tradeUrl } from "@/lib/chain";
 import { Overround } from "@/app/overround-motif";
+import { CountUp } from "@/app/live";
 
 export type { BuilderLeg } from "@/lib/ticket";
 const legLabel = (leg: BuilderLeg): string => leg.label ?? (leg.isYes ? "YES" : "NO");
@@ -89,6 +90,7 @@ function DetailRow({
 
 const pct = (x: number) => `${(x * 100).toFixed(2)}%`;
 const mult = (x: number) => `${x.toFixed(2)}x`;
+const usdc2 = (x: number) => x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const signedMult = (x: number) => `${x < 0 ? "\u2212" : "+"}${Math.abs(x).toFixed(2)}x`;
 
 function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown }) {
@@ -360,9 +362,11 @@ export function Ticket({
           </div>
           <div className="mt-3 flex items-end justify-between border-t border-line pt-4">
             <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Max payout</span>
-            <span className="mono text-[30px] leading-none text-accent">
-              {samplePayout === null ? "-" : samplePayout.toFixed(2)}
-            </span>
+            {samplePayout === null ? (
+              <span className="mono text-[30px] leading-none text-accent">-</span>
+            ) : (
+              <CountUp value={samplePayout} format={(x) => x.toFixed(2)} className="mono text-[30px] leading-none text-accent" />
+            )}
           </div>
         </div>
       ) : (
@@ -416,11 +420,11 @@ export function Ticket({
                 {bd ? mult(bd.fairMultiplier) : "-"}
               </DetailRow>
               <DetailRow label="Quoted" className="text-[20px] leading-none text-accent">
-                {multiplier(premium, maxPayout)}
+                {premium === 0n ? multiplier(premium, maxPayout) : <CountUp value={multiplierNum(premium, maxPayout)} format={mult} />}
               </DetailRow>
               <div className="mt-3 flex items-end justify-between border-t border-line pt-4">
                 <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Max payout</span>
-                <span className="mono text-[30px] leading-none text-accent">{formatUsdc(maxPayout)}</span>
+                <CountUp value={Number(formatUnits(maxPayout, USDC_DECIMALS))} format={usdc2} className="mono text-[30px] leading-none text-accent" />
               </div>
 
               {/* open by default: the multiplier's derivation is the point of the

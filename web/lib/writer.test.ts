@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { compareMarketVolume, currentPricing, fetchLimits, fetchMarkets, groupMarkets, isPriced, marketMid, sportLabel, requestQuote, sideLabel, withMarketVolumes, type Market } from "./writer";
+import { compareKickoff, kickoffKey, currentPricing, fetchLimits, fetchMarkets, groupMarkets, isPriced, marketMid, sportLabel, requestQuote, sideLabel, withMarketVolumes, type Market } from "./writer";
 
 test("public pricing follows writer configuration and never invents missing fees", async () => {
   const limits = { maxStake: "1000000", edgeBps: "725", legEdgeBps: "150", quoteTtlMs: 30000 };
@@ -95,14 +95,12 @@ test("withMarketVolumes uses Hyperliquid's side-0 market volume", () => {
   expect(withMarketVolumes([MARKET], { "#101": 7.25 })[0].volume24h).toBeUndefined();
 });
 
-test("compareMarketVolume sorts highest first and always sinks unknown volume", () => {
-  const markets = [
-    { ...MARKET, vault: "0x2222222222222222222222222222222222222222", volume24h: undefined },
-    { ...MARKET, vault: "0x3333333333333333333333333333333333333333", volume24h: 4 },
-    { ...MARKET, vault: "0x4444444444444444444444444444444444444444", volume24h: 9 },
-  ] satisfies Market[];
-  expect([...markets].sort((a, b) => compareMarketVolume(a, b, false)).map((m) => m.volume24h)).toEqual([9, 4, undefined]);
-  expect([...markets].sort((a, b) => compareMarketVolume(a, b, true)).map((m) => m.volume24h)).toEqual([4, 9, undefined]);
+test("compareKickoff sorts soonest first, falls back to expiry, sinks markets with neither", () => {
+  const m = (startMs?: number, expiryMs?: number, group?: string) => ({ startMs, expiryMs, group }) as Market;
+  // The grouped season started at 1 but settles at 40: it ranks on 40.
+  const markets = [m(30), m(undefined, 20), m(), m(10), m(1, 40, "q1")];
+  expect([...markets].sort((a, b) => compareKickoff(a, b)).map(kickoffKey)).toEqual([10, 20, 30, 40, undefined]);
+  expect([...markets].sort((a, b) => compareKickoff(a, b, false)).map(kickoffKey)).toEqual([40, 30, 20, 10, undefined]);
 });
 
 test("sideLabel uses registry side names and falls back to YES/NO", () => {

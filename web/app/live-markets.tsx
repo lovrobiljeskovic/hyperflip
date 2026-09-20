@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { appHref } from "@/lib/site";
-import { compareMarketVolume, fetchMarketBoard, isPriced, marketMid, onlySports, sideLabel, type Market } from "@/lib/writer";
+import { compareKickoff, fetchMarketBoard, isPriced, marketMid, onlySports, sideLabel, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
-import { oddsLabel, pct1, settles } from "@/lib/format";
+import { oddsLabel, pct1 } from "@/lib/format";
+import { CountUp, Kickoff } from "./live";
 
 /* One registry fetch shared by the hero slip, the stat line, and the board.
    ponytail: module-level promise cache, cleared on failure so a client-side
@@ -124,7 +125,7 @@ function BoardRow({ market, mids }: { market: Market; mids: Record<string, strin
           : "";
   return (
     <div
-      className={`grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-2 px-5 py-[15px] sm:grid-cols-[1fr_110px_110px_130px] ${lead}`}
+      className={`grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-2 px-5 py-[15px] sm:grid-cols-[1fr_110px_110px_150px] ${lead}`}
     >
       <div className="col-span-2 sm:col-span-1">
         <p className="text-[12px] leading-snug">{market.title}</p>
@@ -132,9 +133,8 @@ function BoardRow({ market, mids }: { market: Market; mids: Record<string, strin
       </div>
       <OddsCell side="YES" mid={yes} />
       <OddsCell side="NO" mid={no} />
-      <div className="mono col-span-2 text-right text-[11px] text-dim sm:col-span-1">
-        <span className="sm:hidden">Settles </span>
-        {settles(market)}
+      <div className="col-span-2 flex justify-end sm:col-span-1">
+        <Kickoff market={market} />
       </div>
     </div>
   );
@@ -195,7 +195,7 @@ export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
   // Same cut as the builder: unexpired and priced on both sides.
   const pricedAll = [...state.markets]
     .filter((m) => (m.expiryMs ?? Infinity) >= Date.now() && isPriced(mids, m))
-    .sort((a, b) => compareMarketVolume(a, b, false));
+    .sort((a, b) => compareKickoff(a, b));
   // One row per question first (five different games beats five sides of one
   // futures market), then fill from the rest if the registry is narrow.
   const seen = new Set<string>();
@@ -219,11 +219,11 @@ export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
 
   return (
     <Slab>
-      <div className="mono hidden grid-cols-[1fr_110px_110px_130px] gap-x-4 border-b border-line px-5 py-3 text-[9px] uppercase tracking-[0.14em] text-dim sm:grid">
+      <div className="mono hidden grid-cols-[1fr_110px_110px_150px] gap-x-4 border-b border-line px-5 py-3 text-[9px] uppercase tracking-[0.14em] text-dim sm:grid">
         <span>Market</span>
         <span className="text-right">Yes</span>
         <span className="text-right">No</span>
-        <span className="text-right">Settles</span>
+        <span className="text-right">Kickoff</span>
       </div>
       <div className="flex flex-col divide-y divide-line">
         {priced.map((m) => (
@@ -258,7 +258,7 @@ export function LiveMarketRail({ board }: { board: BoardSnapshot }) {
     );
   }
 
-  const markets = [...state.markets].sort((a, b) => compareMarketVolume(a, b, false)).slice(0, 6);
+  const markets = [...state.markets].sort((a, b) => compareKickoff(a, b)).slice(0, 6);
   const items = markets.map((market) => ({
     vault: market.vault,
     title: market.title,
@@ -399,7 +399,7 @@ export function HeroSlip({ board }: { board: BoardSnapshot }) {
           <Line i={3 + legs.length}>
             <div className="mt-3 flex items-end justify-between">
               <span className="mono text-[9px] uppercase tracking-[0.14em] text-dim">Multiplier</span>
-              <span className="mono text-[28px] leading-none text-accent">{`${fair.toFixed(2)}×`}</span>
+              <CountUp value={fair} format={(x) => `${x.toFixed(2)}×`} className="mono text-[28px] leading-none text-accent" />
             </div>
           </Line>
 
