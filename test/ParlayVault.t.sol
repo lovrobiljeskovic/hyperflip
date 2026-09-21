@@ -22,6 +22,8 @@ contract ParlayVaultTest is BaseTest {
         house = makeAddr("house");
         vaultB = newVault(4);
         plv = new ParlayVault(IERC20(address(quote)), house, signer, 100); // 1% floor
+        plv.allowLeg(address(vault));
+        plv.allowLeg(address(vaultB));
         quote.mint(house, 10_000e5);
         vm.prank(house);
         quote.approve(address(plv), type(uint256).max);
@@ -88,6 +90,48 @@ contract ParlayVaultTest is BaseTest {
         vm.expectRevert("NOT_OWNER");
         plv.setMinPremiumBps(1);
         vm.stopPrank();
+    }
+
+    /// Key custody Phase 2: an unlisted leg cannot be minted against, the
+    /// registrar can only add, and only the owner rotates roles.
+    function test_legAllowList() public {
+        OutcomeVault rogue = newVault(9);
+        ParlayVault.Quote memory q = makeQuote();
+        q.legs[1] = ParlayVault.Leg(address(rogue), true);
+        bytes memory sig = signQuote(q);
+        vm.prank(user);
+        vm.expectRevert("LEG_NOT_ALLOWED");
+        plv.mint(q, sig);
+
+        address registrar = makeAddr("registrar");
+        vm.prank(registrar);
+        vm.expectRevert("NOT_REGISTRAR");
+        plv.allowLeg(address(rogue));
+        vm.prank(registrar);
+        vm.expectRevert("NOT_OWNER");
+        plv.setLegRegistrar(registrar);
+
+        plv.setLegRegistrar(registrar);
+        vm.prank(registrar);
+        plv.allowLeg(address(rogue));
+        assertTrue(plv.allowedLeg(address(rogue)));
+        vm.prank(user);
+        plv.mint(q, sig);
+    }
+
+    function test_setOwner() public {
+        vm.prank(user);
+        vm.expectRevert("NOT_OWNER");
+        plv.setOwner(user);
+        vm.expectRevert("ZERO_OWNER");
+        plv.setOwner(address(0));
+        plv.setOwner(user);
+        assertEq(plv.owner(), user);
+        vm.expectRevert("NOT_OWNER");
+        plv.setWriter(user);
+        vm.prank(user);
+        plv.setWriter(user);
+        assertEq(plv.writer(), user);
     }
 
     function test_setQuoteSignerRejectsZero() public {

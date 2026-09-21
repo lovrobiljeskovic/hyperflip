@@ -49,6 +49,7 @@ contract OutcomeLegTest is ParlayVaultTest {
         inbox = new MockInbox();
         relay = new SettlementRelay(inbox);
         leg = new OutcomeLeg(address(vaultB), address(relay));
+        plv.allowLeg(address(leg));
         aliasedRelay = address(uint160(address(relay)) + uint160(0x1111000000000000000000000000000000001111));
     }
 

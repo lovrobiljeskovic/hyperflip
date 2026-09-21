@@ -68,6 +68,11 @@ contract ParlayVault is ERC721, EIP712 {
     address public writer;
     address public quoteSigner;
     uint16 public minPremiumBps;
+    /// Key custody Phase 2: the online rotation key may only *add* legs. Its
+    /// worst case is "lists a vault", never "moves money" — a signer-only
+    /// compromise cannot mint against an attacker's leg.
+    address public legRegistrar;
+    mapping(address => bool) public allowedLeg;
 
     mapping(uint256 => Parlay) internal _parlays;
     mapping(bytes32 => bool) public usedQuotes;
@@ -78,6 +83,9 @@ contract ParlayVault is ERC721, EIP712 {
     event QuoteSignerChanged(address indexed quoteSigner);
     event WriterChanged(address indexed writer);
     event MinPremiumBpsChanged(uint16 minPremiumBps);
+    event LegRegistrarChanged(address indexed legRegistrar);
+    event LegAllowed(address indexed leg);
+    event OwnerChanged(address indexed owner);
 
     constructor(IERC20 usdc_, address writer_, address quoteSigner_, uint16 minPremiumBps_)
         ERC721("Parlay Position", "PARLAY")
@@ -114,6 +122,27 @@ contract ParlayVault is ERC721, EIP712 {
         require(minPremiumBps_ < 10_000, "BAD_BPS");
         minPremiumBps = minPremiumBps_;
         emit MinPremiumBpsChanged(minPremiumBps_);
+    }
+
+    function setLegRegistrar(address legRegistrar_) external {
+        require(msg.sender == owner, "NOT_OWNER");
+        legRegistrar = legRegistrar_;
+        emit LegRegistrarChanged(legRegistrar_);
+    }
+
+    /// Add-only by design: there is no removal, so the registrar key cannot
+    /// strand open tickets or gate the house out of its own legs.
+    function allowLeg(address leg) external {
+        require(msg.sender == owner || msg.sender == legRegistrar, "NOT_REGISTRAR");
+        allowedLeg[leg] = true;
+        emit LegAllowed(leg);
+    }
+
+    function setOwner(address owner_) external {
+        require(msg.sender == owner, "NOT_OWNER");
+        require(owner_ != address(0), "ZERO_OWNER");
+        owner = owner_;
+        emit OwnerChanged(owner_);
     }
 
     /// Explicit getter: the auto-generated one cannot return the legs array.
@@ -161,6 +190,7 @@ contract ParlayVault is ERC721, EIP712 {
         id = ++nextId;
         Parlay storage p = _parlays[id];
         for (uint256 i; i < q.legs.length; i++) {
+            require(allowedLeg[q.legs[i].vault], "LEG_NOT_ALLOWED");
             require(!IOutcomeLeg(q.legs[i].vault).settled(), "LEG_SETTLED");
             p.legs.push(q.legs[i]);
         }

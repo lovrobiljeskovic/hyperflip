@@ -10,6 +10,8 @@ import {ParlayVault} from "../src/ParlayVault.sol";
 ///
 /// Required env: QUOTE_TOKEN_ADDRESS (USDC), WRITER_ADDRESS (house bankroll
 /// wallet), QUOTE_SIGNER_ADDRESS, MIN_PREMIUM_BPS.
+/// Optional env: LEG_REGISTRAR_ADDRESS (online key that lists new legs),
+/// OWNER_ADDRESS (cold key; ownership is handed over in the same broadcast).
 ///
 /// MIN_PREMIUM_BPS for the testnet beta: 100 (1%). Caps any single parlay at
 /// 100x premium; long parlays (~5 legs at ~2x each = ~32x) still fit. The
@@ -33,6 +35,10 @@ contract DeployParlay is Script {
 
         vm.startBroadcast();
         vault = new ParlayVault(usdc, writer, quoteSigner, uint16(minPremiumBps));
+        address registrar = vm.envOr("LEG_REGISTRAR_ADDRESS", address(0));
+        if (registrar != address(0)) vault.setLegRegistrar(registrar);
+        address owner = vm.envOr("OWNER_ADDRESS", address(0));
+        if (owner != address(0)) vault.setOwner(owner);
         vm.stopBroadcast();
 
         console.log("parlayVault", address(vault));
