@@ -35,13 +35,15 @@ async function getJson(url) {
 async function espnFixtures() {
   const base = `https://site.api.espn.com/apis/site/v2/sports/${LEAGUE.path}/scoreboard`;
   const byWeek = (w) => getJson(`${base}?week=${w}&seasontype=${LEAGUE.seasontype}&dates=${LEAGUE.season}`);
-  let board = process.env.HOUSE_WEEK ? await byWeek(process.env.HOUSE_WEEK) : await getJson(base);
-  // ESPN's "current week" lags until midweek; once every game of it has kicked off, look at the next one.
-  if (!process.env.HOUSE_WEEK && board.week?.number && !(board.events ?? []).some((e) => Date.parse(e.date) > Date.now())) {
-    board = await byWeek(board.week.number + 1);
-  }
+  const board = process.env.HOUSE_WEEK ? await byWeek(process.env.HOUSE_WEEK) : await getJson(base);
   const weekNo = Number(process.env.HOUSE_WEEK ?? board.week?.number);
-  const fixtures = await Promise.all((board.events ?? []).map(async (event) => {
+  // A slot freed by Sunday's finals should be refilled at once, not on Tuesday when ESPN's
+  // "current week" finally advances: fetch the next week too. plan()'s horizon still bounds
+  // how far ahead a game may be listed, so this only widens the candidate pool.
+  const boards = [{ week: weekNo, board }];
+  if (weekNo) boards.push({ week: weekNo + 1, board: await byWeek(weekNo + 1).catch(() => ({ events: [] })) });
+  const events = boards.flatMap(({ week, board: b }) => (b.events ?? []).map((event) => ({ week, event })));
+  const fixtures = await Promise.all(events.map(async ({ week, event }) => {
     let moneyline;
     try {
       const odds = await getJson(`https://sports.core.api.espn.com/v2/sports/${LEAGUE.path.replace("/", "/leagues/")}/events/${event.id}/competitions/${event.id}/odds`);
@@ -52,7 +54,7 @@ async function espnFixtures() {
     } catch (err) {
       console.log(`odds unavailable for ${event.name}: ${err.message}`);
     }
-    return fixtureFromEspn(event, moneyline);
+    return { ...fixtureFromEspn(event, moneyline), week };
   }));
   return { weekNo, fixtures };
 }
@@ -88,7 +90,7 @@ for (const s of p.toSettle) {
 let registered = 0;
 for (const fx of p.toRegister) {
   try {
-    hip4(registerAction(fx, weekNo));
+    hip4(registerAction(fx, fx.week ?? weekNo));
     registered++;
   } catch (err) {
     console.log(`register failed for ${fx.away.name} @ ${fx.home.name}: ${err.message} — retry next run`);
