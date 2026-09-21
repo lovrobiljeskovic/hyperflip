@@ -1,10 +1,13 @@
 import { test } from "node:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import type { Address, Hex } from "viem";
 import { handleQuote, marketsJson, sameGameLeg, validateQuoteRequest, newMetrics, startServer, type QuoteDeps } from "../src/server.js";
 import { ExposureBook } from "../src/exposure.js";
-import { RateLimiter } from "../src/waitlist.js";
+import { RateLimiter, Waitlist } from "../src/waitlist.js";
 import { WAD } from "../src/pure.js";
 import type { WriterConfig } from "../src/config.js";
 import { quoteDigest, type QuoteRecord } from "../src/quotes.js";
@@ -573,4 +576,51 @@ test("GET /markets overlays the live prior on priorYes and leaves other rows unt
   // null = unquotable (in play off-feed, or final): the stale registry prior comes off.
   const stripped = JSON.parse(marketsJson({ cfg: c, livePriorYes: () => null }));
   assert.deepEqual(stripped.markets, [{ vault: V1 }, { vault: V2 }]);
+});
+
+
+test("HTTP waitlist: sheet admission requires a server credential and pending users cannot quote", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "waitlist-http-"));
+  const file = join(directory, "waitlist.json");
+  const waitlist = new Waitlist(file);
+  const sent: string[] = [];
+  const d = deps({ cfg: cfg({ waitlistAdminToken: "operator-test-token" }), waitlist,
+    sendInvite: async (_email, code) => { sent.push(code); } });
+  const server = startServer(d, 0, () => ({ ok: true }));
+  await new Promise<void>(resolve => server.once("listening", resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const headers = { authorization: "Bearer operator-test-token", "content-type": "application/json" };
+  try {
+    for (const method of ["GET", "POST"]) {
+      for (const authorization of ["", "Bearer incorrect-test-token"]) {
+        const r = await fetch(`${base}/integrations/google-sheets/admit`, { method, headers: { authorization } });
+        assert.equal(r.status, 401);
+      }
+    }
+    d.cfg.waitlistAdminToken = undefined;
+    assert.equal((await fetch(`${base}/integrations/google-sheets/admit`, { headers })).status, 401);
+    d.cfg.waitlistAdminToken = "operator-test-token";
+    assert.equal((await fetch(`${base}/admin/waitlist`, { headers })).status, 404);
+    const signup = await fetch(`${base}/waitlist`, { method: "POST", body: JSON.stringify({ email: "a@b.co" }) });
+    assert.deepEqual(await signup.json(), { ok: true });
+    assert.equal(sent.length, 0);
+    const pending = JSON.parse(readFileSync(file, "utf8"))[0];
+    assert.equal(pending.code, null);
+    assert.equal((await handleQuote(d, { ...goodBody, inviteCode: pending.code })).status, 403);
+    const admitted = await fetch(`${base}/integrations/google-sheets/admit`, {
+      method: "POST", headers, body: JSON.stringify({ cohort: "cohort-1", count: 1, emails: ["a@b.co"] }),
+    });
+    assert.equal(admitted.status, 200);
+    assert.equal(admitted.headers.get("cache-control"), "no-store");
+    const result = await admitted.json() as { sent: number; entries: { email: string; admitted: boolean; code?: string }[] };
+    assert.equal(result.sent, 1);
+    assert.equal(result.entries[0].email, "a@b.co");
+    assert.equal(result.entries[0].admitted, true);
+    assert.equal(result.entries[0].code, undefined);
+    assert.equal((await handleQuote(d, { ...goodBody, inviteCode: sent[0] })).status, 200);
+
+  } finally {
+    server.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

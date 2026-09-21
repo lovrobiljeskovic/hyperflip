@@ -1,4 +1,5 @@
 import http from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import { isAddress, keccak256, type Address, type Hex } from "viem";
 import type { WriterConfig } from "./config.js";
 import { ExposureBook } from "./exposure.js";
@@ -6,7 +7,7 @@ import { dominatingLeg, edgeBreakdown, independentJointProbWad, priceParlay, tot
 import { BPS, clientIp, WAD } from "./pure.js";
 import { quoteDigest, type ParlayQuote, type QuoteLeg, type QuoteRecord } from "./quotes.js";
 import type { LegPriceObservation } from "./infoApi.js";
-import { isValidEmail, type RateLimiter, type Waitlist } from "./waitlist.js";
+import { isValidEmail, validCohort, type RateLimiter, type Waitlist } from "./waitlist.js";
 
 export interface Metrics {
   quoted: number;
@@ -39,6 +40,7 @@ export interface QuoteDeps {
   waitlist?: Waitlist;
   sendInvite?(email: string, code: string): Promise<void>;
   signupLimiter?: RateLimiter;
+  syncWaitlist?(): Promise<void>;
 
   badInviteLimiter?: RateLimiter;
 
@@ -287,25 +289,57 @@ export async function handleWaitlist(
   body: unknown,
   ip: string,
 ): Promise<{ status: number; json: unknown }> {
-  const { waitlist, sendInvite, signupLimiter } = deps;
-  if (!waitlist || !sendInvite) return { status: 503, json: { error: "waitlist-unavailable" } };
+  const { waitlist, signupLimiter } = deps;
+  if (!waitlist) return { status: 503, json: { error: "waitlist-unavailable" } };
   const raw = (body as { email?: unknown })?.email;
   if (typeof raw !== "string" || !isValidEmail(raw.trim())) {
     return { status: 400, json: { error: "bad-email" } };
   }
   if (signupLimiter && !signupLimiter.allow(ip)) return { status: 429, json: { error: "rate-limited" } };
   const email = raw.trim().toLowerCase();
-  const { code, isNew } = waitlist.signup(email);
-  try {
-    await sendInvite(email, code);
-  } catch (err) {
-    console.error(new Date().toISOString(), "invite email failed", err);
-    return { status: 502, json: { error: "email-failed" } };
-  }
+  const { isNew } = waitlist.signup(email);
+  // The signup is already durable. A Google outage must not lose it or grant access.
+  if (deps.syncWaitlist) void deps.syncWaitlist().catch(() => {
+    console.error(JSON.stringify({ event: "google-sheets-sync-failed", reason: "Signup queued for retry" }));
+  });
   console.log(
     JSON.stringify({ at: new Date(deps.now()).toISOString(), event: "waitlist-signup", isNew, total: waitlist.size() }),
   );
   return { status: 200, json: { ok: true } };
+}
+
+export function handleAccess(deps: QuoteDeps, body: unknown, ip: string) {
+  if (!deps.waitlist) return { status: 503, json: { error: "waitlist-unavailable" } };
+  const code = (body as { inviteCode?: unknown } | null)?.inviteCode;
+  // App access requires an admitted signup, not a standalone environment code.
+  if (typeof code !== "string" || !code || code.length > 256 || !deps.waitlist.has(code)) {
+    if (deps.badInviteLimiter && !deps.badInviteLimiter.allow(ip)) {
+      return { status: 429, json: { error: "rate-limited" } };
+    }
+    return { status: 403, json: { error: "not-admitted" } };
+  }
+  return { status: 200, json: { ok: true } };
+}
+
+export async function handleAdmission(deps: QuoteDeps, body: unknown) {
+  if (!deps.waitlist || !deps.sendInvite) return { status: 503, json: { error: "admission-unavailable" } };
+  const b = body as { cohort?: unknown; count?: unknown; emails?: unknown } | null;
+  if (!validCohort(b?.cohort) || typeof b?.count !== "number" || !Number.isSafeInteger(b.count) || b.count < 1 || b.count > 100) {
+    return { status: 400, json: { error: "bad-cohort" } };
+  }
+  try {
+    const result = await deps.waitlist.admit(b.cohort, b.count, deps.sendInvite, b.emails as string[]);
+    const entries = deps.waitlist.review().filter(e => (b.emails as string[]).includes(e.email))
+      .map(({ email, admitted, cohort, emailedAt }) => ({ email, admitted, cohort, emailedAt }));
+    return { status: result.failed ? 502 : 200, json: { ...result, entries } };
+  } catch (error) {
+    const reason = (error as Error).message;
+    if (reason === "bad-selection") return { status: 400, json: { error: reason } };
+    if (["admission-in-progress", "not-enough-pending"].includes(reason)) {
+      return { status: 409, json: { error: reason } };
+    }
+    throw error;
+  }
 }
 
 const MAX_BODY = 64 * 1024;
@@ -357,6 +391,15 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
       res.writeHead(status, { "Content-Type": "application/json", ...lockedCors(req, deps.cfg.corsOrigins) });
       res.end(JSON.stringify(json));
     };
+    if (req.url === "/integrations/google-sheets/admit" && req.method !== "OPTIONS") {
+      res.setHeader("Cache-Control", "no-store");
+      const token = deps.cfg.waitlistAdminToken;
+      const expected = Buffer.from(`Bearer ${token ?? ""}`);
+      const provided = Buffer.from(req.headers.authorization ?? "");
+      if (!token || provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
+        return send(401, { error: "unauthorized" });
+      }
+    }
     if (req.method === "OPTIONS") {
       const cors = req.url === "/markets" ? { "Access-Control-Allow-Origin": "*" } : lockedCors(req, deps.cfg.corsOrigins);
       res.writeHead(204, {
@@ -398,8 +441,9 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
         }),
       );
     }
-    if (req.method === "POST" && (req.url === "/quote" || req.url === "/waitlist")) {
+    if (req.method === "POST" && (req.url === "/quote" || req.url === "/waitlist" || req.url === "/access" || req.url === "/integrations/google-sheets/admit")) {
       const url = req.url;
+      if (url === "/access") res.setHeader("Cache-Control", "no-store");
       let raw = "";
       let tooLarge = false;
       req.on("data", (c) => {
@@ -421,11 +465,15 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
         }
         try {
           const ip = clientIp(req.headers["x-forwarded-for"], req.socket.remoteAddress);
+          if (url === "/access") {
+            const r = handleAccess(deps, body, ip);
+            return send(r.status, r.json);
+          }
           if (url === "/quote") {
             const r = await handleQuote(deps, body, ip);
             return send(r.status, r.json);
           }
-          const r = await handleWaitlist(deps, body, ip);
+          const r = url === "/integrations/google-sheets/admit" ? await handleAdmission(deps, body) : await handleWaitlist(deps, body, ip);
           send(r.status, r.json);
         } catch (err) {
           console.error(new Date().toISOString(), `${url} handler error`, err);

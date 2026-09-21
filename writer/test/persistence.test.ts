@@ -12,18 +12,18 @@ test("waitlist rejects damaged state and failed saves never issue an in-memory c
   const file = join(directory, "waitlist.json");
   try {
     const waitlist = new Waitlist(file);
-    const first = waitlist.signup("first@example.com");
+    waitlist.signup("first@example.com");
     const original = fs.readFileSync(file, "utf8");
     const fail = t.mock.method(fs, "renameSync", () => { throw new Error("disk failure"); });
     syncBuiltinESMExports();
     assert.throws(() => waitlist.signup("second@example.com"), /disk failure/);
     assert.equal(waitlist.size(), 1);
-    assert(waitlist.has(first.code));
+    assert.equal(waitlist.review().filter(e => !e.admitted).length, 1);
     assert.equal(fs.readFileSync(file, "utf8"), original);
     fail.mock.restore(); syncBuiltinESMExports();
     assert.throws(() => waitlist.signup("second@example.com"), /restart/);
     const restarted = new Waitlist(file);
-    assert.equal(restarted.signup("first@example.com").code, first.code);
+    assert.equal(restarted.signup("first@example.com").isNew, false);
     assert(restarted.signup("second@example.com").isNew);
     const sync = fs.fsyncSync;
     const lateFailure = t.mock.method(fs, "fsyncSync", (fd: number) => {
@@ -33,15 +33,33 @@ test("waitlist rejects damaged state and failed saves never issue an in-memory c
     syncBuiltinESMExports();
     assert.throws(() => restarted.signup("third@example.com"), /directory flush/);
     assert.equal(restarted.size(), 2);
-    const savedCode = JSON.parse(fs.readFileSync(file, "utf8"))[2].code;
+    assert.equal(JSON.parse(fs.readFileSync(file, "utf8"))[2].code, null);
     lateFailure.mock.restore(); syncBuiltinESMExports();
     assert.throws(() => restarted.signup("third@example.com"), /restart/);
-    assert.equal(new Waitlist(file).signup("third@example.com").code, savedCode);
+    assert.equal(new Waitlist(file).signup("third@example.com").isNew, false);
     for (const raw of ["{", "null", "{}", '[{"email":"bad"}]', '[{"email":"a@b.co","code":"code","ts":"bad"}]']) {
       fs.writeFileSync(file, raw);
       assert.throws(() => new Waitlist(file), /Invalid waitlist/);
       assert.equal(fs.readFileSync(file, "utf8"), raw);
     }
+  } finally {
+    t.mock.restoreAll(); syncBuiltinESMExports();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("failed admission save grants no access and sends no email", async (t) => {
+  const directory = fs.mkdtempSync(join(tmpdir(), "admission-failure-"));
+  const file = join(directory, "waitlist.json");
+  try {
+    const wl = new Waitlist(file);
+    wl.signup("a@b.co");
+    const original = fs.readFileSync(file, "utf8");
+    t.mock.method(fs, "renameSync", () => { throw new Error("disk failure"); });
+    syncBuiltinESMExports();
+    await assert.rejects(wl.admit("beta", 1, async () => { assert.fail("must not send"); }, ["a@b.co"]), /disk failure/);
+    assert.equal(wl.review().filter(e => e.admitted).length, 0);
+    assert.equal(fs.readFileSync(file, "utf8"), original);
   } finally {
     t.mock.restoreAll(); syncBuiltinESMExports();
     fs.rmSync(directory, { recursive: true, force: true });

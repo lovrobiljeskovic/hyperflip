@@ -18,6 +18,11 @@ const tickets = Array.from({length: 21}, (_, i) => ({ ticket: { id: `998:${deplo
 const fixture = createServer(async (req, res) => {
   let raw = ''; for await (const chunk of req) raw += chunk;
   res.setHeader('content-type', 'application/json');
+  if (req.url === '/access') {
+    const allowed = JSON.parse(raw).inviteCode === 'http-fixture-admitted';
+    res.statusCode = allowed ? 200 : 403;
+    return res.end(JSON.stringify({ ok: allowed }));
+  }
   if (req.url === '/graphql') {
     const input = JSON.parse(raw);
     if (fail) return res.end(JSON.stringify({ errors: [{ message: 'fixture provider unavailable' }] }));
@@ -37,21 +42,23 @@ fixture.listen(0, '127.0.0.1'); await once(fixture, 'listening');
 const fixtureUrl = `http://127.0.0.1:${fixture.address().port}`;
 const reserve = createServer(); reserve.listen(0, '127.0.0.1'); await once(reserve, 'listening');
 const port = reserve.address().port; await new Promise(resolve => reserve.close(resolve));
-const app = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '-p', String(port), '-H', '127.0.0.1'], { cwd: `${root}/web`, env: { ...process.env, NEXT_TELEMETRY_DISABLED:'1', DEPLOYMENT_FILE:`${root}/tools/fixtures/deployment.json`, NEXT_PUBLIC_CHAIN_ID:'998', NEXT_PUBLIC_PARLAY_VAULT:deployment.parlayVault, NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK:'1', NEXT_PUBLIC_POSITIONS_SOURCE:'subgraph', POSITIONS_SUBGRAPH_URL:`${fixtureUrl}/graphql`, POSITIONS_RPC_URL:`${fixtureUrl}/rpc` }, stdio: ['ignore', 'ignore', 'ignore'] });
+const app = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '-p', String(port), '-H', '127.0.0.1'], { cwd: `${root}/web`, env: { ...process.env, NEXT_TELEMETRY_DISABLED:'1', WRITER_URL:fixtureUrl, DEPLOYMENT_FILE:`${root}/tools/fixtures/deployment.json`, NEXT_PUBLIC_CHAIN_ID:'998', NEXT_PUBLIC_PARLAY_VAULT:deployment.parlayVault, NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK:'1', NEXT_PUBLIC_POSITIONS_SOURCE:'subgraph', POSITIONS_SUBGRAPH_URL:`${fixtureUrl}/graphql`, POSITIONS_RPC_URL:`${fixtureUrl}/rpc` }, stdio: ['ignore', 'ignore', 'ignore'] });
 try {
   const url = `http://127.0.0.1:${port}`;
   for (let attempt = 0; ; attempt++) { try { await fetch(`${url}/api/positions?wallet=bad`); break; } catch { if (attempt > 100) throw new Error('Local app did not start'); await new Promise(resolve => setTimeout(resolve, 100)); } }
-  assert.equal((await fetch(`${url}/api/positions?wallet=bad`)).status, 400);
-  const response = await fetch(`${url}/api/positions?wallet=${wallet}`);
+  assert.equal((await fetch(`${url}/api/positions?wallet=bad`)).status, 403);
+  const admitted = target => fetch(target, { headers: { cookie: 'hyperflip-access=http-fixture-admitted' } });
+  assert.equal((await admitted(`${url}/api/positions?wallet=bad`)).status, 400);
+  const response = await admitted(`${url}/api/positions?wallet=${wallet}`);
   assert.equal(response.status, 200, await response.clone().text());
   const first = await response.json(); assert.equal(first.rows.length, 20); assert.equal(first.next, '2');
   assert.equal(first.rows[0].owner, wallet); assert.deepEqual(first.rows[0].legVerdicts, ['pending']);
-  const second = await (await fetch(`${url}/api/positions?wallet=${wallet}&before=2&block=100&snapshot=${hash}`)).json();
+  const second = await (await admitted(`${url}/api/positions?wallet=${wallet}&before=2&block=100&snapshot=${hash}`)).json();
   assert.equal(second.rows.length, 1); assert.equal(second.next, null);
   assert.equal(counts.eth_call, 22); // 21 unique tickets + one shared outcome, across two pages.
   fail = true;
-  assert.equal((await fetch(`${url}/api/positions?wallet=${leg}`)).status, 503);
+  assert.equal((await admitted(`${url}/api/positions?wallet=${leg}`)).status, 503);
   assert.equal((await fetch(`${url}/position-markets.json`)).status, 200);
-  const html = await (await fetch(`${url}/positions`)).text(); assert.match(html, /Your slips/);
-  console.log('PASS: production HTTP route: 400 validation, 20+1 paginated tickets, deduped outcomes (22 eth_call), provider failure 503, static labels, positions HTML');
+  const html = await (await admitted(`${url}/positions`)).text(); assert.match(html, /Your slips/);
+  console.log('PASS: production HTTP route: 403 admission gate, 400 validation, 20+1 paginated tickets, deduped outcomes (22 eth_call), provider failure 503, static labels, positions HTML');
 } finally { app.kill('SIGTERM'); await once(app, 'exit'); await new Promise(resolve => fixture.close(resolve)); }

@@ -15,6 +15,7 @@ import { signQuote, type ParlayQuote, type QuoteLeg } from "./quotes.js";
 import { newMetrics, startServer, type QuoteDeps } from "./server.js";
 import { readLegStates } from "./settlement.js";
 import { RateLimiter, sendInviteEmail, Waitlist } from "./waitlist.js";
+import { GoogleSheetsWaitlist } from "./googleSheets.js";
 
 const RECEIPT_TIMEOUT_MS = 60_000;
 
@@ -154,7 +155,7 @@ async function main(): Promise<void> {
     },
   };
   if (!cfg.resendApiKey) {
-    console.warn(JSON.stringify({ event: "waitlist-disabled", reason: "RESEND_API_KEY unset" }));
+    console.warn(JSON.stringify({ event: "admission-email-disabled", reason: "RESEND_API_KEY unset" }));
   }
 
   const poker = new Poker({
@@ -196,6 +197,22 @@ async function main(): Promise<void> {
     };
   });
   console.log(JSON.stringify({ at: new Date().toISOString(), event: "writer-listening", port: cfg.port }));
+
+  if (cfg.googleSheets) {
+    const sheets = new GoogleSheetsWaitlist(cfg.googleSheets, deps.waitlist!);
+    deps.syncWaitlist = () => sheets.sync();
+    const sync = async () => {
+      try {
+        await sheets.sync();
+      } catch (error) {
+        console.error(JSON.stringify({ event: "google-sheets-sync-failed", reason: (error as Error).message }));
+      } finally {
+        // Only retry unsent signups; idle ticks make no Google requests.
+        setTimeout(sync, 60_000).unref();
+      }
+    };
+    void sync();
+  }
 
   // Quotes stay disabled until existing on-chain exposure is loaded.
   await poker.seed();

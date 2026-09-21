@@ -130,8 +130,7 @@ function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown })
   );
 }
 
-/** Inline invite entry - save a code, or get one emailed via the waitlist -
- * so a tester never has to leave the builder. */
+/** Join the waitlist or enter a code received after admission. */
 function InviteEntry({ onSave }: { onSave: (code: string) => void }) {
   const [code, setCode] = useState("");
   const [email, setEmail] = useState("");
@@ -145,7 +144,7 @@ function InviteEntry({ onSave }: { onSave: (code: string) => void }) {
 
   return (
     <div className="mt-4 flex flex-col gap-3">
-      <p className="mono text-[11px] text-dim">Saved your invite on the website? Enter it here once to use it in the app.</p>
+      <p className="mono text-[11px] text-dim">Access opens in cohorts. Join the waitlist below, or enter the invite code from your admission email.</p>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -170,7 +169,7 @@ function InviteEntry({ onSave }: { onSave: (code: string) => void }) {
         </button>
       </form>
       {waitState === "sent" ? (
-        <p className="mono text-[11px] text-yes">Invite sent - check your email, then paste the code above.</p>
+        <p role="status" className="mono text-[11px] text-yes">You’re on the waitlist. We’ll email your invite code when you’re admitted.</p>
       ) : (
         <form
           onSubmit={async (e) => {
@@ -195,14 +194,16 @@ function InviteEntry({ onSave }: { onSave: (code: string) => void }) {
               autoComplete="email"
               spellCheck={false}
               placeholder="No code? your@email.com"
-              aria-label="Email for a beta invite"
+              aria-label="Email for the waitlist"
+              aria-invalid={!!waitError}
+              aria-describedby={waitError ? "builder-waitlist-error" : undefined}
               className={inputClass}
             />
             <button type="submit" disabled={waitState === "sending"} className={buttonClass}>
-              {waitState === "sending" ? "Sending…" : "Get invite"}
+              {waitState === "sending" ? "Joining…" : "Join waitlist"}
             </button>
           </div>
-          {waitError && <p className="text-xs text-no">{waitError}</p>}
+          {waitError && <p id="builder-waitlist-error" role="alert" className="text-xs text-no">{waitError}</p>}
         </form>
       )}
     </div>

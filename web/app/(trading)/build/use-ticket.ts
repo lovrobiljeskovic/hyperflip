@@ -218,12 +218,12 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
   }
 
   function computeCta(): Cta {
+    if (!inviteCode) return { kind: "invite" };
     if (legs.length < MIN_LEGS) return { kind: "disabled", label: "Add 2 legs to price a ticket" };
     if (!walletReady) return { kind: "disabled", label: "Checking wallet…" };
     if (!isConnected) return { kind: "connect", label: "Connect wallet" };
     if (chainId !== undefined && chainId !== hyperEvmTestnet.id)
       return { kind: "switch-chain", label: `Switch to ${hyperEvmTestnet.name}` };
-    if (!inviteCode) return { kind: "invite" };
     if (usdcBalance === 0n) return { kind: "external", label: "Get testnet USDC →", href: HL_DRIP, hint: DRIP_HINT };
     if (gas !== undefined && gas.value === 0n)
       return { kind: "external", label: "Get HYPE for gas →", href: HL_DRIP, hint: DRIP_HINT };

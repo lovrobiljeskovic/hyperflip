@@ -81,7 +81,7 @@ Preserve these files across deployments, backups, and host replacement:
 | File | Purpose |
 | --- | --- |
 | `keeper/settlement-cache.json` | Settlement fractions observed before Core pruning |
-| `writer/waitlist.json` | Signup emails and issued invite codes |
+| `writer/waitlist.json` | Pending signups, cohort admissions, invite codes and email-send timestamps |
 | `writer/quotes.jsonl` | Signed-quote audit records |
 | `registry/markets.json` | Current deployed markets and historical vault metadata |
 
@@ -123,13 +123,78 @@ deadlines to expire, then restart one writer and wait for exposure reconstructio
 A complete final JSON record missing only its newline may have that newline added
 after inspection. Corrupt waitlist/cache recovery requires a verified backup or
 manual repair, retaining all known codes and fractions. Never restore stale state
-over a running service. These changes retain the existing JSON/JSONL formats;
-code rollback uses the current state files, not old snapshots.
+over a running service. Code rollback uses current state files with compatible
+readers, not old snapshots; see the waitlist compatibility note below.
 
 Sports quote journals use `schemaVersion: 1` with quote identity, book observations,
 probability, edge, and signed terms. Earlier journal records remain untouched;
 readers must distinguish their schema versions. Archived branch data requires
 its corresponding readers.
+
+## Waitlist and manual cohorts
+
+Both signup forms record a normalized email and signup timestamp. Signup does
+not issue a code or send an email, and works without `RESEND_API_KEY`. Existing
+codes recorded in the waitlist remain valid. `INVITE_CODES` alone does not grant
+app access. The public site and waitlist stay available; the app requires admission
+before it loads, including direct builder, positions and pricing links.
+
+Review signups and approve cohorts in a private Google Sheet. Follow
+[Google Sheets setup](ops/google-sheets-waitlist/README.md) to install the script,
+authorize its edit trigger, and configure server-only `GOOGLE_SHEETS_WEB_APP_URL`,
+`GOOGLE_SHEETS_SYNC_SECRET`, `WAITLIST_ADMIN_TOKEN`, and `RESEND_API_KEY`.
+No admin page or token entry is exposed in the frontend. Restart the writer after
+changing config. Use HTTPS for the frontend and writer; allow the frontend origin
+in `CORS_ORIGINS` and set its existing `NEXT_PUBLIC_WRITER_URL`.
+
+Signups export immediately after the writer saves them. Failed exports retry once
+per minute; idle retries make no Google calls. Existing signups export on first
+connection. Invite codes remain only in the writer's persistent file, never the
+sheet. Repeat signups re-export the existing record, restoring a deleted sheet
+row without changing its approval, code or signup date. Set a Cohort and check
+Approved in Sheets to admit users. An edit trigger
+starts admission without polling; the sheet's Waitlist menu retries failed requests
+or emails. Adding more users to the same cohort is allowed. Only checked emails
+are submitted, and the backend requires an explicit selection.
+
+Admission persists before emailing codes. Retries skip recorded sends and reuse
+the same codes. Unchecking Approved after admission does not revoke access.
+Admission can keep running after a timeout; retry safely from Sheets.
+Concurrent admissions return `admission-in-progress`.
+`Emailed` means accepted by the provider, not confirmed inbox delivery.
+Provider deduplication uses the same invite code as the idempotency key
+(24-hour window); a crash after send but before save can cause a repeat email
+outside that window, always with the same code.
+
+Counts are unique normalized email signups, not verified people or active
+traders. Legacy environment codes have no signup record and are excluded.
+Use counts as inputs to bankroll planning with your own activity and risk
+assumptions. No bankroll estimate or funding change is made automatically.
+
+The script uses authenticated `POST /integrations/google-sheets/admit` with
+`{"cohort":"beta-001","count":2,"emails":["a@example.com","b@example.com"]}`.
+It requires the server-to-server admin bearer token and returns per-email delivery
+status with `Cache-Control: no-store`, never codes. Omitting `emails` is rejected.
+The old `/admin/waitlist` endpoint and page are removed. Do not edit the state file
+while the writer is running.
+
+Old writer versions cannot read pending rows (`code: null`). Before rollback,
+use a compatible writer version; never restore an old state backup over newer
+signups or admission records.
+
+App visitors enter their admission code at `/access`. The frontend verifies it
+with the writer's `POST /access` endpoint and sets a host-only, HttpOnly, SameSite
+cookie (Secure over HTTPS, 30-day lifetime). The server rechecks that code before
+each protected request; missing/invalid sessions go to `/access`, and unavailable
+verification fails closed. The positions API returns 403/503 instead of app data.
+Public assets and the access form remain reachable. A local-storage value alone
+cannot unlock the app.
+
+The frontend server must reach the writer. It uses server-only `WRITER_URL` when
+set, otherwise `NEXT_PUBLIC_WRITER_URL`. Deploy the writer's access endpoint before
+the frontend gate. Admission codes remain bearer credentials: knowing a code
+proves access, not a wallet or identity. No production change is made by local
+preview testing.
 
 ## RPC and supervision
 

@@ -3,9 +3,18 @@ import { readOptionalFile, replaceFile } from "../../services/files.mjs";
 
 export interface WaitlistEntry {
   email: string;
-  code: string;
+  code: string | null;
+  cohort?: string;
+  admittedAt?: number;
+  emailedAt?: number;
+  /** Destination URL acknowledged by the private Sheets integration. */
+  sheetSyncedTo?: string;
   /** ms epoch of signup — the funding-metrics growth curve lives here. */
   ts: number;
+}
+
+export function validCohort(value: unknown): value is string {
+  return typeof value === "string" && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(value);
 }
 
 /** Pragmatic format check, not RFC 5321 — Resend bounces anything undeliverable. */
@@ -13,11 +22,12 @@ export function isValidEmail(email: string): boolean {
   return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-/** Disk-backed email→invite-code store. One JSON array, rewritten atomically on
- * every signup — fine at beta scale (thousands, not millions). */
+/** ponytail: one writer owns this file; atomic array rewrites suit thousands of
+ * signups. Move to a shared database before running multiple writers. */
 export class Waitlist {
   private entries: WaitlistEntry[];
   private failed = false;
+  private admitting = false;
   private codes = new Set<string>();
   private byEmail = new Map<string, WaitlistEntry>();
 
@@ -31,9 +41,18 @@ export class Waitlist {
       if (!Array.isArray(this.entries)) throw new Error();
       for (const e of this.entries) {
         if (!e || typeof e.email !== "string" || !isValidEmail(e.email) || e.email !== e.email.trim().toLowerCase() ||
-            typeof e.code !== "string" || !e.code.trim() || !Number.isFinite(e.ts) || e.ts < 0 ||
-            this.byEmail.has(e.email) || this.codes.has(e.code)) throw new Error();
-        this.codes.add(e.code);
+            !(e.code === null || (typeof e.code === "string" && e.code.trim())) ||
+            !Number.isSafeInteger(e.ts) || e.ts < 0 || !Number.isFinite(new Date(e.ts).getTime()) ||
+            this.byEmail.has(e.email) || (e.code !== null && this.codes.has(e.code)) ||
+            (e.sheetSyncedTo !== undefined && typeof e.sheetSyncedTo !== "string")) throw new Error();
+        if (e.code === null || e.cohort === undefined) {
+          if (e.cohort !== undefined || e.admittedAt !== undefined || e.emailedAt !== undefined) throw new Error();
+        } else if (!validCohort(e.cohort) || !Number.isSafeInteger(e.admittedAt) || e.admittedAt! < e.ts ||
+                   (e.emailedAt !== undefined && (!Number.isSafeInteger(e.emailedAt) || e.emailedAt < e.admittedAt!))) {
+          throw new Error();
+        }
+        // Legacy rows already had access; never silently revoke their codes.
+        if (e.code !== null) this.codes.add(e.code);
         this.byEmail.set(e.email, e);
       }
     } catch { throw new Error("Invalid waitlist; preserve and repair it before restarting"); }
@@ -47,31 +66,87 @@ export class Waitlist {
     return this.entries.length;
   }
 
-  /** Idempotent: a repeat signup returns the same code so the email can simply
-   * be re-sent instead of leaking one code per retry. */
-  signup(rawEmail: string): { code: string; isNew: boolean } {
+  private save(entries: WaitlistEntry[]): void {
+    if (this.failed) throw new Error("Waitlist save failed; inspect the file and restart before writing");
+    try { replaceFile(this.file, JSON.stringify(entries, null, 2)); }
+    catch (error) { this.failed = true; throw error; }
+    this.entries = entries;
+    this.byEmail = new Map(entries.map(e => [e.email, e]));
+    this.codes = new Set(entries.flatMap(e => e.code === null ? [] : [e.code]));
+  }
+
+  /** Signup never creates or returns an access code, including for existing users. */
+  signup(rawEmail: string): { isNew: boolean } {
     if (this.failed) throw new Error("Waitlist save failed; inspect the file and restart before signup");
     const email = rawEmail.trim().toLowerCase();
     if (!isValidEmail(email)) throw new Error("Invalid email");
     const existing = this.byEmail.get(email);
-    if (existing) return { code: existing.code, isNew: false };
-    let code: string;
-    do { code = `OVR-${crypto.randomBytes(3).toString("hex").toUpperCase()}`; } while (this.codes.has(code));
-    const entry: WaitlistEntry = { email, code, ts: this.now() };
-    try { replaceFile(this.file, JSON.stringify([...this.entries, entry], null, 2)); }
-    catch (error) {
-      this.failed = true;
-      throw error;
+    if (existing) {
+      // Re-export on repeat signup in case its row was deleted from the sheet.
+      if (existing.sheetSyncedTo !== undefined) this.save(this.entries.map(e => {
+        if (e.email !== email) return e;
+        const { sheetSyncedTo, ...pending } = e;
+        return pending;
+      }));
+      return { isNew: false };
     }
-    this.entries.push(entry);
-    this.codes.add(code);
-    this.byEmail.set(email, entry);
-    return { code, isNew: true };
+    this.save([...this.entries, { email, code: null, ts: this.now() }]);
+    return { isNew: true };
+  }
+
+  review() {
+    return [...this.entries].sort((a, b) => a.ts - b.ts).map(({ code, ...e }) => ({
+      ...e, admitted: code !== null,
+    }));
+  }
+
+  markSheetSynced(emails: string[], destination: string): void {
+    if (!destination || emails.some(email => !this.byEmail.has(email))) throw new Error("Invalid sheet signup mapping");
+    const synced = new Set(emails);
+    this.save(this.entries.map(e => synced.has(e.email) ? { ...e, sheetSyncedTo: destination } : e));
+  }
+
+  async admit(cohort: string, count: number, send: (email: string, code: string) => Promise<void>, emails: string[]) {
+    if (!validCohort(cohort) || !Number.isSafeInteger(count) || count < 1 || count > 100) throw new Error("bad-cohort");
+    if (!Array.isArray(emails) || emails.length !== count || new Set(emails).size !== count ||
+        emails.some(e => typeof e !== "string" || !isValidEmail(e) || e !== e.trim().toLowerCase())) throw new Error("bad-selection");
+    if (this.failed) throw new Error("Waitlist save failed; inspect the file and restart before admission");
+    if (this.admitting) throw new Error("admission-in-progress");
+    this.admitting = true;
+    try {
+      const requested = new Set(emails);
+      let members = this.entries.filter(e => requested.has(e.email));
+      if (members.length !== count || members.some(e => e.code !== null && e.cohort !== cohort)) throw new Error("not-enough-pending");
+      const pending = members.filter(e => e.code === null);
+      if (pending.length) {
+        const selected = new Set(pending.map(e => e.email));
+        const codes = new Set(this.codes);
+        const admittedAt = this.now();
+        this.save(this.entries.map(e => {
+          if (!selected.has(e.email)) return e;
+          let code: string;
+          do { code = `OVR-${crypto.randomBytes(16).toString("hex").toUpperCase()}`; } while (codes.has(code));
+          codes.add(code);
+          return { ...e, code, cohort, admittedAt };
+        }));
+        members = this.entries.filter(e => requested.has(e.email));
+      }
+      let sent = 0;
+      let failed = 0;
+      for (const e of members) {
+        if (e.emailedAt !== undefined) continue;
+        try { await send(e.email, e.code!); }
+        catch { failed++; continue; }
+        this.save(this.entries.map(row => row.email === e.email ? { ...row, emailedAt: this.now() } : row));
+        sent++;
+      }
+      return { cohort, admitted: members.length, sent, failed };
+    } finally { this.admitting = false; }
   }
 }
 
 /** Sliding-window per-IP limiter for the public signup endpoint — guards the
- * Resend quota and the disk file, nothing more.
+ * disk file from repeated writes.
  * ponytail: in-memory, resets on restart; move to disk if abuse ever matters. */
 export class RateLimiter {
   private hits = new Map<string, number[]>();
@@ -99,19 +174,21 @@ export class RateLimiter {
 export async function sendInviteEmail(apiKey: string, to: string, code: string): Promise<void> {
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "Idempotency-Key": `invite-${code}` },
+    signal: AbortSignal.timeout(10_000),
     body: JSON.stringify({
-      from: "Overround <invites@overround.xyz>",
+      from: "Hyperflip <invites@hyperflip.xyz>",
       to: [to],
-      subject: "Your Overround beta invite",
+      subject: "Your Hyperflip beta invite",
       text: [
+        "You’re off the waitlist. Your cohort now has beta access.",
         `Your invite code: ${code}`,
         "",
-        "Paste it into the builder at https://overround.xyz/build and it rides along with every quote you request.",
+        "Enter it at https://app.hyperflip.xyz/access to unlock the app.",
         "",
         "Testnet funds: claim mock USDC at https://app.hyperliquid-testnet.xyz/drip, then transfer from Core to EVM for gas and stakes.",
       ].join("\n"),
     }),
   });
-  if (!r.ok) throw new Error(`resend ${r.status}: ${await r.text()}`);
+  if (!r.ok) throw new Error(`resend ${r.status}`);
 }

@@ -79,7 +79,7 @@ export default async function Home() {
                 to="counter"
                 className="rounded-[8px] border border-line px-6 py-3.5 font-medium text-fg transition-colors hover:border-dim"
               >
-                Request an invite
+                Join the waitlist
               </ScrollLink>
             </div>
           </div>
@@ -101,9 +101,9 @@ export default async function Home() {
 
         <section id="counter" className="section-reveal mx-auto grid w-full max-w-[1280px] scroll-mt-20 gap-10 px-4 py-20 sm:px-6 lg:grid-cols-[.85fr_1.15fr] lg:py-28">
           <div>
-            <h2 className="display max-w-[10ch] text-[clamp(2.5rem,5vw,4.6rem)]">Get early access.</h2>
+            <h2 className="display max-w-[10ch] text-[clamp(2.5rem,5vw,4.6rem)]">Join the waitlist.</h2>
             <p className="mt-5 max-w-[40ch] leading-relaxed text-dim">
-              Hyperflip is in invite-only testnet beta. Browse markets now without connecting a wallet. Request an invite and we’ll email you a code to get quotes and mint combos.
+              Hyperflip is opening testnet beta access in cohorts. Join the waitlist and we’ll email your invite code when you’re admitted. App access opens with your invitation.
             </p>
           </div>
           <InviteForm />

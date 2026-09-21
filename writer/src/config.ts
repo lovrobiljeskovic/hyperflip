@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { isAddress, type Address } from "viem";
 import { parseMarkets, type MarketInfo } from "./markets.js";
 import { BPS, parseDecimalToUnits } from "./pure.js";
+import { googleSheetsConfig, type GoogleSheetsConfig } from "./googleSheets.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 loadDotenv({ path: path.resolve(here, "../../.env") });
@@ -52,6 +53,8 @@ export interface WriterConfig {
   inviteCodes: Set<string>;
   resendApiKey?: string;
   waitlistFile: string;
+  waitlistAdminToken?: string;
+  googleSheets?: GoogleSheetsConfig;
   parlayIndexFile?: string;
   parlayIndexFromBlock?: bigint;
   corsOrigins: string[];
@@ -156,7 +159,9 @@ export function loadConfig(): WriterConfig {
     livePriorSuspendMs: Number(process.env.LIVE_PRIOR_SUSPEND_MS ?? 30_000),
     ...(process.env.MAINNET_INFO_URL ? { mainnetInfoUrl: process.env.MAINNET_INFO_URL } : {}),
     pokerIntervalMs,
-    inviteCodes: parseInviteCodes(requireEnv("INVITE_CODES")),
+    inviteCodes: parseInviteCodes(process.env.INVITE_CODES ?? ""),
+    waitlistAdminToken: process.env.WAITLIST_ADMIN_TOKEN,
+    googleSheets: googleSheetsConfig(process.env),
     resendApiKey: process.env.RESEND_API_KEY,
     waitlistFile: path.resolve(here, "../..", process.env.WAITLIST_FILE ?? "writer/waitlist.json"),
     parlayIndexFile: path.resolve(here, "../..", process.env.PARLAY_INDEX_FILE ?? "writer/parlays.json"),

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { appHref } from "@/lib/site";
 import { joinWaitlist, WAITLIST_ERRORS } from "@/lib/writer";
 
-export function InviteForm() {
+export function InviteForm({ showAppLink = true }: { showAppLink?: boolean }) {
   const [email, setEmail] = useState("");
   const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
   const [error, setError] = useState("");
@@ -27,13 +27,13 @@ export function InviteForm() {
     <div className="rounded-[12px] border border-line bg-panel p-6 text-left">
       {state === "sent" ? (
         <div role="status">
-          <p className="mono text-[11px] uppercase tracking-wide text-yes">Invite sent</p>
-          <p className="mt-2 text-[15px] leading-relaxed">Check your email for the code, then enter it in the app.</p>
+          <p className="mono text-[11px] uppercase tracking-wide text-yes">You’re on the waitlist</p>
+          <p className="mt-2 text-[15px] leading-relaxed">We’re opening access in cohorts. We’ll email your invite code when you’re admitted.</p>
         </div>
       ) : (
         <form onSubmit={submit} noValidate>
           <label htmlFor="waitlist-email" className="mono text-[10px] uppercase tracking-[0.16em] text-dim">
-            Join the beta
+            Join the waitlist
           </label>
           <div className="mt-2 flex flex-col gap-3 sm:flex-row">
             <input
@@ -50,15 +50,15 @@ export function InviteForm() {
               placeholder="you@example.com"
             />
             <button type="submit" disabled={state === "sending"} className="mono rounded-[8px] bg-accent px-6 py-3 text-[12px] uppercase tracking-wide text-on-accent disabled:cursor-not-allowed disabled:opacity-60">
-              {state === "sending" ? "Sending…" : "Request an invite"}
+              {state === "sending" ? "Joining…" : "Join the waitlist"}
             </button>
           </div>
           {error && <p id="waitlist-error" role="alert" className="mt-2 text-sm text-no">{error}</p>}
         </form>
       )}
-      <Link href={appHref()} prefetch={false} className="mt-5 inline-block text-sm text-accent underline underline-offset-4">
+      {showAppLink && <Link href={appHref()} prefetch={false} className="mt-5 inline-block text-sm text-accent underline underline-offset-4">
         Already have a code? Open the app
-      </Link>
+      </Link>}
     </div>
   );
 }
