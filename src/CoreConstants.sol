@@ -113,11 +113,12 @@ library CoreConstants {
         return uint64(w);
     }
 
-    /// Order-book asset id (coin `#<id>`, token name `+<id>`), confirmed by
-    /// docs: 100_000_000 + 10*outcome + side. This is NOT a spot token index —
-    /// there is no spot-balance read for outcome tokens (FINDINGS.md
-    /// kill-switch: 0x801 reverts for every candidate outcome encoding, and
-    /// spotClearinghouseState lists outcome coins with no numeric token id).
+    /// Encoded outcome asset id (coin `#<id>`, token name `+<id>`), confirmed by
+    /// docs: 100_000_000 + 10*outcome + side. Since 2026-08-25 the 0x801
+    /// spot-balance precompile accepts this id (testnet-verified; the keeper
+    /// reads outcome balances through it), so `spotBalance(vault, this)` is a
+    /// live outcome-token balance read. The 2026-08-14 kill-switch finding
+    /// (0x801 reverted for every encoding) is obsolete.
     function outcomeTokenIndex(uint32 outcome, bool yes) internal pure returns (uint64) {
         return 100_000_000 + 10 * uint64(outcome) + (yes ? 0 : 1);
     }

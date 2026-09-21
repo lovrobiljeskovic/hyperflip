@@ -1,0 +1,149 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1200" viewBox="0 0 1500 1200" font-family="'Architects Daughter','Comic Sans MS','Segoe Print',cursive">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#111"/>
+    </marker>
+  </defs>
+
+  <rect width="1500" height="1200" fill="#fff"/>
+
+  <!-- chain bands -->
+  <g stroke-width="1.5" stroke-dasharray="6 6">
+    <rect x="605" y="122" width="410" height="1000" rx="10" fill="#eef4ff" stroke="#6b8dd6"/>
+    <rect x="1030" y="122" width="410" height="1000" rx="10" fill="#f3fbf1" stroke="#7fb37a"/>
+  </g>
+
+  <!-- shapes -->
+  <g fill="none" stroke="#111" stroke-width="2" stroke-linecap="round">
+    <rect x="20" y="20" width="1460" height="1160" rx="14"/>
+
+    <!-- lifelines -->
+    <g stroke="#9aa0a6" stroke-width="1.5">
+      <line x1="110" y1="198" x2="110" y2="1000"/>
+      <line x1="300" y1="198" x2="300" y2="1000"/>
+      <line x1="490" y1="198" x2="490" y2="1000"/>
+      <line x1="700" y1="198" x2="700" y2="1000"/>
+      <line x1="910" y1="198" x2="910" y2="1000"/>
+      <line x1="1120" y1="198" x2="1120" y2="1000"/>
+      <line x1="1330" y1="198" x2="1330" y2="1000"/>
+    </g>
+
+    <!-- actor boxes -->
+    <g fill="#fff">
+      <rect x="40" y="150" width="140" height="48"/>
+      <rect x="225" y="150" width="150" height="48"/>
+      <rect x="410" y="150" width="160" height="48"/>
+      <rect x="620" y="150" width="160" height="48"/>
+      <rect x="830" y="150" width="160" height="48"/>
+      <rect x="1040" y="150" width="160" height="48"/>
+      <rect x="1250" y="150" width="160" height="48"/>
+    </g>
+
+    <!-- messages -->
+    <g marker-end="url(#ah)" stroke-width="2.2">
+      <line x1="119" y1="245" x2="291" y2="245"/>
+      <line x1="309" y1="295" x2="481" y2="295"/>
+      <line x1="481" y1="470" x2="309" y2="470"/>
+      <line x1="119" y1="520" x2="691" y2="520"/>
+      <line x1="709" y1="565" x2="901" y2="565"/>
+      <line x1="119" y1="665" x2="1321" y2="665"/>
+      <line x1="119" y1="735" x2="1111" y2="735"/>
+      <line x1="1129" y1="770" x2="1321" y2="770"/>
+      <line x1="1111" y1="820" x2="919" y2="820"/>
+      <line x1="499" y1="895" x2="691" y2="895"/>
+      <line x1="709" y1="930" x2="901" y2="930"/>
+      <line x1="119" y1="975" x2="691" y2="975"/>
+    </g>
+
+    <!-- writer compute bubble -->
+    <ellipse cx="490" cy="378" rx="135" ry="52" stroke-dasharray="3 7" fill="#fff"/>
+
+    <!-- settle separator -->
+    <line x1="200" y1="610" x2="1420" y2="610" stroke-dasharray="2 8"/>
+
+    <!-- notes -->
+    <rect x="40" y="1030" width="620" height="120" stroke-dasharray="10 8" fill="#fff"/>
+    <rect x="700" y="1030" width="740" height="120" stroke-dasharray="10 8" fill="#fff"/>
+
+    <!-- step badges -->
+    <g fill="#f1f3f4">
+      <rect x="101" y="236" width="18" height="18"/>
+      <rect x="291" y="286" width="18" height="18"/>
+      <rect x="481" y="461" width="18" height="18"/>
+      <rect x="101" y="511" width="18" height="18"/>
+      <rect x="691" y="556" width="18" height="18"/>
+      <rect x="101" y="656" width="18" height="18"/>
+      <rect x="101" y="726" width="18" height="18"/>
+      <rect x="1111" y="761" width="18" height="18"/>
+      <rect x="1111" y="811" width="18" height="18"/>
+      <rect x="481" y="886" width="18" height="18"/>
+      <rect x="691" y="921" width="18" height="18"/>
+      <rect x="101" y="966" width="18" height="18"/>
+    </g>
+  </g>
+
+  <!-- text -->
+  <g fill="#111" text-anchor="middle">
+    <text x="40" y="70" text-anchor="start" font-size="30">Hyperflip Season 1 — Slips on Elysium, settlement from HyperEVM</text>
+    <text x="40" y="100" text-anchor="start" font-size="17" fill="#555">Tickets mint and resolve on Elysium; every OutcomeVault stays on 998 as the Core account and the settlement source</text>
+
+    <g font-size="16" font-weight="bold">
+      <text x="810" y="143" fill="#3b5fa8">Elysium (Kinetiq L2)</text>
+      <text x="1235" y="143" fill="#3f7a3a">HyperEVM (998)</text>
+    </g>
+
+    <g font-size="17">
+      <text x="110" y="181">User / anyone</text>
+      <text x="300" y="181">Hyperflip web</text>
+      <text x="490" y="181">Writer (house)</text>
+      <text x="700" y="181">ParlayVault</text>
+      <text x="910" y="181">OutcomeLeg</text>
+      <text x="1120" y="181">SettlementRelay</text>
+      <text x="1330" y="181">OutcomeVault</text>
+    </g>
+
+    <g font-size="15">
+      <text x="205" y="231">build slip (USDC bridged in)</text>
+      <text x="395" y="281">POST /quote {legs, stake}</text>
+
+      <text x="490" y="360">prices off the Core book</text>
+      <text x="490" y="382">over HTTP, checks caps</text>
+      <text x="490" y="404" fill="#555">(chain-independent)</text>
+
+      <text x="395" y="456">signed EIP-712 quote</text>
+      <text x="405" y="506">approve USDC · mint(quote, sig) — full payout escrowed</text>
+      <text x="805" y="551">settled() must be false</text>
+
+      <text x="810" y="604" fill="#555">games finish · Core settles the outcome (status 2)</text>
+
+      <text x="720" y="651">settle(): reads 0x814, stores the fraction forever</text>
+      <text x="720" y="686" font-style="italic" fill="#555">permissionless inside the prune window; keeper relays only after a prune</text>
+      <text x="615" y="721">relay(vault, leg): reads the stored fraction, pays retryable fees</text>
+      <text x="1225" y="756">settled() / settleFractionWad()</text>
+      <text x="1015" y="806">retryable ticket, ~1 min</text>
+      <text x="1015" y="840" font-style="italic" fill="#555">leg accepts only the relay's bridge alias, once</text>
+      <text x="595" y="881">resolveParlay(id) — poker</text>
+      <text x="805" y="916">settled() / settleFractionWad()</text>
+      <text x="405" y="961">claim(id): payout to token owner</text>
+    </g>
+
+    <g font-size="15" text-anchor="start">
+      <text x="60" y="1060">Won / Dead / Void exactly as v1. Nothing on 998 changes:</text>
+      <text x="60" y="1085">custody, split/merge and house market deployment stay there.</text>
+      <text x="60" y="1110" fill="#555">Users bridge USDC 998 → Elysium (canonical bridge, ~1 min) before minting.</text>
+      <text x="60" y="1135" fill="#555">Fallback if Elysium testnet slips: the same flow on 998 alone.</text>
+
+      <text x="720" y="1060">Trust added over 998: the canonical bridge. Nobody attests a result.</text>
+      <text x="720" y="1085">OutcomeLeg holds no Core balance; Elysium contracts cannot.</text>
+      <text x="720" y="1110" fill="#555">Phase two (Elysium read precompile): OutcomeLeg.settle() reads outcome</text>
+      <text x="720" y="1135" fill="#555">status directly; the relay path stays as the fallback.</text>
+    </g>
+
+    <g font-size="12" fill="#333">
+      <text x="110" y="249">1</text><text x="300" y="299">2</text><text x="490" y="474">3</text>
+      <text x="110" y="524">4</text><text x="700" y="569">5</text><text x="110" y="669">6</text>
+      <text x="110" y="739">7</text><text x="1120" y="774">8</text><text x="1120" y="824">9</text>
+      <text x="490" y="899">10</text><text x="700" y="934">11</text><text x="110" y="979">12</text>
+    </g>
+  </g>
+</svg>

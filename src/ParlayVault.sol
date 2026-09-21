@@ -6,7 +6,7 @@ import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "openzeppelin-contracts/contracts/utils/cryptography/EIP712.sol";
-import {OutcomeVault} from "./OutcomeVault.sol";
+import {IOutcomeLeg} from "./IOutcomeLeg.sol";
 
 /// Layer-2 parlay over Layer-1 OutcomeVaults (design spec:
 /// ~/docs/superpowers/specs/2026-08-17-parlay-contract-design.md).
@@ -161,7 +161,7 @@ contract ParlayVault is ERC721, EIP712 {
         id = ++nextId;
         Parlay storage p = _parlays[id];
         for (uint256 i; i < q.legs.length; i++) {
-            require(!OutcomeVault(q.legs[i].vault).settled(), "LEG_SETTLED");
+            require(!IOutcomeLeg(q.legs[i].vault).settled(), "LEG_SETTLED");
             p.legs.push(q.legs[i]);
         }
         p.writer = writer;
@@ -194,7 +194,7 @@ contract ParlayVault is ERC721, EIP712 {
         // getter state-mutating, this loop must be restructured to write
         // status before any external call.
         for (uint256 i; i < p.legs.length; i++) {
-            OutcomeVault v = OutcomeVault(p.legs[i].vault);
+            IOutcomeLeg v = IOutcomeLeg(p.legs[i].vault);
             if (!v.settled()) {
                 allSettled = false;
                 continue;
