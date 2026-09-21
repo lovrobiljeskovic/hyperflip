@@ -435,6 +435,54 @@ contract OutcomeVaultTest is BaseTest {
         vault.settle(1e18);
     }
 
+    /// Key custody Phase 3: the settle authority rotates without a redeploy.
+    /// The old keeper loses the pruned branch the moment the new one gains it.
+    function test_SetKeeperRotatesSettleAuthority() public {
+        vm.prank(other);
+        vm.expectRevert(bytes("NOT_OWNER"));
+        vault.setKeeper(other);
+
+        vault.setKeeper(other);
+        assertEq(vault.keeper(), other);
+
+        outcomeStatus.set(CoreConstants.OUTCOME_SETTLED, 0.6e8, QUESTION);
+        outcomeStatus.prune();
+        vm.expectRevert(bytes("NOT_KEEPER"));
+        vault.settle(0.6e18); // old keeper == address(this)
+        vm.prank(other);
+        vault.settle(0.6e18);
+        assertEq(vault.settleFractionWad(), 0.6e18);
+    }
+
+    /// A rotated keeper is still bound by the live-market rule.
+    function test_RotatedKeeperCannotSettleLiveMarket() public {
+        vault.setKeeper(other);
+        outcomeStatus.set(CoreConstants.OUTCOME_ACTIVE, 0, QUESTION);
+        vm.prank(other);
+        vm.expectRevert(bytes("NOT_SETTLED_ON_CORE"));
+        vault.settle(1e18);
+    }
+
+    function test_SetOwnerTransfersEveryOwnerPower() public {
+        vm.prank(other);
+        vm.expectRevert(bytes("NOT_OWNER"));
+        vault.setOwner(other);
+        vm.expectRevert(bytes("ZERO_ADDRESS"));
+        vault.setOwner(address(0));
+
+        vault.setOwner(other);
+        assertEq(vault.owner(), other);
+        vm.expectRevert(bytes("NOT_OWNER"));
+        vault.setKeeper(user);
+        vm.expectRevert(bytes("NOT_OWNER"));
+        vault.setVerifier(verifier);
+        vm.expectRevert(bytes("NOT_OWNER"));
+        vault.setOwner(address(this));
+        vm.prank(other);
+        vault.setKeeper(user);
+        assertEq(vault.keeper(), user);
+    }
+
     function test_SettleFractionAboveOneReverts() public {
         vm.expectRevert(bytes("BAD_FRACTION"));
         vault.settle(1e18 + 1);

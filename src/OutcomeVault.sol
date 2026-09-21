@@ -59,7 +59,10 @@ contract OutcomeVault {
     uint256 public immutable evmUnitsPerShare;
     uint32 public immutable question;
     uint32 public immutable outcome;
-    address public immutable keeper;
+    /// Settle authority for the pruned branch only. Rotatable by the owner
+    /// (key custody Phase 3) so a lost or compromised keeper key is swapped,
+    /// not redeployed around.
+    address public keeper;
     OutcomeToken public immutable oYes;
     OutcomeToken public immutable oNo;
 
@@ -124,6 +127,8 @@ contract OutcomeVault {
     /// Everything a keeper needs to attest: opKey is keccak256(abi.encode(vault, opId)).
     event OpQueued(uint256 indexed opId, OpType opType, uint32 question, uint32 outcome, uint64 weiAmount);
     event VerifierChanged(address indexed verifier);
+    event KeeperChanged(address indexed keeper);
+    event OwnerChanged(address indexed owner);
     event Payout(address indexed user, uint64 requestedWei, uint64 creditedWei);
 
     constructor(
@@ -164,6 +169,21 @@ contract OutcomeVault {
         require(msg.sender == owner, "NOT_OWNER");
         verifier = verifier_;
         emit VerifierChanged(address(verifier_));
+    }
+
+    function setKeeper(address keeper_) external {
+        require(msg.sender == owner, "NOT_OWNER");
+        keeper = keeper_;
+        emit KeeperChanged(keeper_);
+    }
+
+    /// Deployer starts as owner (rotation deploys from the box key); the deploy
+    /// script hands ownership to the cold key in the same broadcast.
+    function setOwner(address owner_) external {
+        require(msg.sender == owner, "NOT_OWNER");
+        require(owner_ != address(0), "ZERO_ADDRESS");
+        owner = owner_;
+        emit OwnerChanged(owner_);
     }
 
     /// Escape hatch for both outbound trackers. An unsolicited Core credit can

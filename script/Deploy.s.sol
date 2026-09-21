@@ -21,7 +21,8 @@ import {OutcomeVault} from "../src/OutcomeVault.sol";
 /// FINDINGS.md), QUOTE_DECIMALS (default 6 — real USDC), VERIFIER_ADDRESS
 /// (reuse an already-deployed shared verifier instead of deploying a fresh
 /// one), MIN_DELAY_SECONDS (applied only to a freshly deployed verifier;
-/// KeeperVerifier's own default is 10 minutes).
+/// KeeperVerifier's own default is 10 minutes), OWNER_ADDRESS (vault owner
+/// after deploy — the cold key; unset leaves the broadcaster as owner).
 ///
 /// Run: `forge script script/Deploy.s.sol --rpc-url $TESTNET_RPC --sig
 /// "run()"` for a dry run (needs --rpc-url: the constructor checks live code
@@ -36,6 +37,12 @@ contract Deploy is Script {
         uint256 deployerKey = vm.envOr("PRIVATE_KEY", uint256(0));
         if (deployerKey != 0) vm.startBroadcast(deployerKey);
         else vm.startBroadcast();
+    }
+
+    /// Same stack reason: reads OWNER_ADDRESS here, not in run().
+    function _handOff(OutcomeVault vault) internal {
+        address owner = vm.envOr("OWNER_ADDRESS", address(0));
+        if (owner != address(0)) vault.setOwner(owner);
     }
 
     function run() external returns (OutcomeVault vault, KeeperVerifier verifier) {
@@ -72,6 +79,7 @@ contract Deploy is Script {
             marketSymbol,
             quoteDecimals
         );
+        _handOff(vault);
 
         vm.stopBroadcast();
 

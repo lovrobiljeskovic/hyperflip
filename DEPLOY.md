@@ -199,8 +199,10 @@ this revision together; the app no longer displays model adjustments.
 ## Sports market rotation
 
 Run rotation from a separate checkout with Foundry and `uv` installed. Its root
-`.env` needs `PRIVATE_KEY`, `TESTNET_RPC`, and `KEEPER_ADDRESS`. The keeper address
-is immutable in each new OutcomeVault, so verify it before broadcasting.
+`.env` needs `PRIVATE_KEY`, `TESTNET_RPC`, `KEEPER_ADDRESS`, and `OWNER_ADDRESS` (the
+cold key; the deploy script hands each new vault to it in the same broadcast). The
+keeper address is rotatable by the owner (`setKeeper`), but a wrong address still
+costs a rotation ceremony, so verify both before broadcasting.
 
 ```bash
 node tools/rotate-markets.mjs --dry-run
