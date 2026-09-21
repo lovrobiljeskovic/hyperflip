@@ -1,11 +1,11 @@
 // Launch-day smoke: is the writer up, is the board live and priced, does a real
 // 2-leg quote come back? One line out, exit 1 on any failure.
-//   INVITE_CODE=OVR-XXXX node tools/smoke.mjs
-// Env: WRITER_URL (default hosted writer), TAKER (any address), INVITE_CODE.
+//   node tools/smoke.mjs (set PRIVY_ACCESS_TOKEN privately for an authenticated quote)
+// Env: WRITER_URL (default hosted writer), TAKER (verified linked wallet), PRIVY_ACCESS_TOKEN.
 const WRITER = process.env.WRITER_URL ?? "https://writer.hyperflip.xyz";
 const INFO = "https://api.hyperliquid-testnet.xyz/info";
 const TAKER = process.env.TAKER ?? "0x1111111111111111111111111111111111111111";
-const CODE = process.env.INVITE_CODE;
+const TOKEN = process.env.PRIVY_ACCESS_TOKEN;
 const now = Date.now();
 
 const fail = (msg) => {
@@ -30,8 +30,9 @@ const mids = (await json(INFO, { method: "POST", headers: { "Content-Type": "app
 const priced = live.filter((x) => mids[x.coinYes] !== undefined && Number(mids[x.coinYes]) !== 0.5);
 if (priced.length < 2) fail(`${live.length} live but only ${priced.length} priced (allMids)`);
 
-let quote = "skipped (no INVITE_CODE)";
-if (CODE) {
+let quote = "skipped (no PRIVY_ACCESS_TOKEN)";
+if (TOKEN) {
+  if (!process.env.TAKER) fail("TAKER must be a verified wallet linked to the admitted account");
   const maxStake = BigInt((await json(`${WRITER}/limits`)).body.maxStake ?? "1000000");
   const stake = maxStake < 1_000_000n ? maxStake : 1_000_000n;
   // Legs must come from different games (same-game is refused); try a few pairs.
@@ -41,7 +42,7 @@ if (CODE) {
     const b = priced.find((x) => x.group !== a.group && x.underlying !== a.underlying);
     if (!b) continue;
     const legs = [a, b].map((x) => ({ vault: x.vault, isYes: true }));
-    const r = await json(`${WRITER}/quote`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ taker: TAKER, legs, stake: stake.toString(), inviteCode: CODE }) });
+    const r = await json(`${WRITER}/quote`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ taker: TAKER, legs, stake: stake.toString() }) });
     if (r.status === 200 && r.body.quote) {
       const q = r.body.quote;
       quote = `${(Number(q.maxPayout) / Number(q.premium)).toFixed(2)}x on ${a.title} + ${b.title}`;

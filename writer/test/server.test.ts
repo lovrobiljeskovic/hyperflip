@@ -1,11 +1,11 @@
-import { test } from "node:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { test, after } from "node:test";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import type { Address, Hex } from "viem";
-import { handleQuote, marketsJson, sameGameLeg, validateQuoteRequest, newMetrics, startServer, type QuoteDeps } from "../src/server.js";
+import { handleQuote as authenticatedQuote, marketsJson, sameGameLeg, validateQuoteRequest, newMetrics, startServer, type QuoteDeps } from "../src/server.js";
 import { ExposureBook } from "../src/exposure.js";
 import { RateLimiter, Waitlist } from "../src/waitlist.js";
 import { WAD } from "../src/pure.js";
@@ -29,7 +29,6 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     minBookDepthWad: 0n,
     lockoutMs: 600_000, inPlayCapBps: 5000n, livePriorPollMs: 0, livePriorStaleMs: 60_000, livePriorJumpWad: WAD / 10n, livePriorSuspendMs: 30_000,
     pokerIntervalMs: 15_000, deployBlock: 0n,
-    inviteCodes: new Set(["beta-test"]),
     waitlistFile: "/dev/null",
     corsOrigins: ["https://overround.xyz"],
     markets: new Map([
@@ -49,9 +48,23 @@ function body(overrides: { legs: { vault: Address; isYes: boolean }[] }): typeof
   return { ...goodBody, ...overrides };
 }
 
+const authDirectory = mkdtempSync(join(tmpdir(), "quote-auth-"));
+after(() => rmSync(authDirectory, { recursive: true, force: true }));
+let authFixture = 0;
+const handleQuote = (d: QuoteDeps, body: unknown, ip = "unknown", authorization = "Bearer test-token") => authenticatedQuote(d, body, ip, authorization);
 function deps(overrides: Partial<QuoteDeps> = {}): QuoteDeps {
   const c = overrides.cfg ?? cfg();
+  const file = join(authDirectory, `${authFixture++}.json`);
+  writeFileSync(file, JSON.stringify([
+    { email: "a@b.co", code: "historical-code", ts: 0 },
+    { email: "other@b.co", code: "historical-code-2", ts: 0 },
+  ]));
   return {
+    waitlist: new Waitlist(file),
+    authenticate: async token => token === "test-token" || token === "other-token" ? {
+      userId: token === "test-token" ? "did:privy:first" : "did:privy:second",
+      emails: [token === "test-token" ? "a@b.co" : "other@b.co"], wallets: [TAKER.toLowerCase(), V1.toLowerCase()],
+    } : null,
     cfg: c,
     exposure: new ExposureBook((v) => c.markets.get(v)?.cluster),
     chainId: 31337,
@@ -67,7 +80,7 @@ function deps(overrides: Partial<QuoteDeps> = {}): QuoteDeps {
   };
 }
 
-const goodBody = { taker: TAKER, legs: [{ vault: V1, isYes: true }, { vault: V2, isYes: false }], stake: "1000000", inviteCode: "beta-test" };
+const goodBody = { taker: TAKER, legs: [{ vault: V1, isYes: true }, { vault: V2, isYes: false }], stake: "1000000" };
 
 test("happy path: returns signed quote, reserves exposure", async () => {
   const d = deps();
@@ -90,26 +103,19 @@ test("cluster cap: 409 when cluster exposure would exceed perClusterCap", async 
   assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
 });
 
-test("quote without invite code is 403", async () => {
+test("direct quotes reject missing auth, forged identity and shared legacy codes", async () => {
   const d = deps();
-  const { inviteCode: _drop, ...withoutInvite } = goodBody;
-  const r = await handleQuote(d, withoutInvite);
-  assert.equal(r.status, 403);
-  assert.deepEqual(r.json, { error: "bad-invite" });
-  assert.equal(d.metrics.rejected["bad-invite"], 1);
+  for (const authorization of [undefined, "Bearer historical-code", "Bearer environment-only"]) {
+    const r = await authenticatedQuote(d, { ...goodBody, inviteCode: "historical-code", email: "a@b.co", userId: "did:privy:first" }, "ip", authorization);
+    assert.equal(r.status, 401);
+  }
+  assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
 });
 
-test("quote with unknown invite code is 403", async () => {
-  const r = await handleQuote(deps(), { ...goodBody, inviteCode: "wrong" });
-  assert.equal(r.status, 403);
-});
-
-test("bad-invite attempts over the limit are 429; valid codes never consume a slot", async () => {
+test("invalid tokens are rate limited; authenticated requests do not consume a slot", async () => {
   const d = deps({ badInviteLimiter: new RateLimiter(2, 1000, () => 0) });
   assert.equal((await handleQuote(d, goodBody)).status, 200);
-  assert.equal((await handleQuote(d, { ...goodBody, inviteCode: "wrong" })).status, 403);
-  assert.equal((await handleQuote(d, { ...goodBody, inviteCode: "wrong" })).status, 403);
-  assert.equal((await handleQuote(d, { ...goodBody, inviteCode: "wrong" })).status, 429);
+  for (const status of [401, 401, 429]) assert.equal((await handleQuote(d, goodBody, "unknown", "Bearer wrong")).status, status);
   assert.equal((await handleQuote(d, goodBody)).status, 200);
 });
 
@@ -120,14 +126,6 @@ test("quote limiter caps all quotes per IP, keyed separately", async () => {
   assert.equal(r.status, 429);
   assert.deepEqual(r.json, { error: "rate-limited" });
   assert.equal((await handleQuote(d, goodBody, "5.6.7.8")).status, 200);
-});
-
-test("waitlist-issued code passes the invite gate", () => {
-  const c = cfg();
-  const body = { ...goodBody, inviteCode: "OVR-ABC123" };
-  assert.equal((validateQuoteRequest(body, c, 0) as { reason: string }).reason, "bad-invite");
-  const v = validateQuoteRequest(body, c, 0, new Set(["OVR-ABC123"]));
-  assert.ok(v.ok);
 });
 
 test("validation: unknown vault, leg count, stake cap, lockout", () => {
@@ -173,9 +171,9 @@ test("at-capacity: 409, metrics counted", async () => {
   assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
 });
 
-test("quota-cap: 409 once one invite code's unminted reservations hit their cap; a second code is unaffected", async () => {
+test("quota-cap: 409 once one account's unminted reservations hit their cap; a second account is unaffected", async () => {
   const OTHER_TAKER = "0x4444444444444444444444444444444444444444" as Address;
-  const d = deps({ cfg: cfg({ perCodeReservedCap: 3_000_000n, inviteCodes: new Set(["beta-test", "beta-test-2"]) }) });
+  const d = deps({ cfg: cfg({ perCodeReservedCap: 3_000_000n }) });
   const first = await handleQuote(d, goodBody);
   assert.equal(first.status, 200);
   const second = await handleQuote(d, goodBody);
@@ -183,8 +181,9 @@ test("quota-cap: 409 once one invite code's unminted reservations hit their cap;
   assert.deepEqual(second.json, { error: "quota-cap", maxStake: "0" });
   assert.equal(d.metrics.rejected["quota-cap"], 1);
   const spoofed = await handleQuote(d, { ...goodBody, taker: OTHER_TAKER });
-  assert.equal(spoofed.status, 409);
-  const otherCode = await handleQuote(d, { ...goodBody, inviteCode: "beta-test-2" });
+  assert.equal(spoofed.status, 403);
+  assert.equal((await handleQuote(d, { ...goodBody, taker: V1 })).status, 409);
+  const otherCode = await handleQuote(d, goodBody, "unknown", "Bearer other-token");
   assert.equal(otherCode.status, 200);
 });
 
@@ -270,7 +269,7 @@ test("HTTP smoke: /quote, /health, /metrics, bad-json, unknown route", async () 
 
     const quoteRes = await fetch(`${base}/quote`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { authorization: "Bearer test-token", "content-type": "application/json" },
       body: JSON.stringify(goodBody),
     });
     assert.equal(quoteRes.status, 200);
@@ -383,7 +382,7 @@ test("POST /quote: disallowed origin still gets Vary: Origin (response is origin
   try {
     const r = await fetch(`http://127.0.0.1:${port}/quote`, {
       method: "POST",
-      headers: { "content-type": "application/json", origin: "https://evil.example" },
+      headers: { authorization: "Bearer test-token", "content-type": "application/json", origin: "https://evil.example" },
       body: JSON.stringify(goodBody),
     });
     assert.equal(r.headers.get("access-control-allow-origin"), null);
@@ -400,7 +399,7 @@ test("POST /quote: allowed origin gets ACAO echo", async () => {
   try {
     const r = await fetch(`http://127.0.0.1:${port}/quote`, {
       method: "POST",
-      headers: { "content-type": "application/json", origin: "https://overround.xyz" },
+      headers: { authorization: "Bearer test-token", "content-type": "application/json", origin: "https://overround.xyz" },
       body: JSON.stringify(goodBody),
     });
     assert.equal(r.status, 200);
@@ -417,7 +416,7 @@ test("POST /quote: disallowed origin gets no ACAO (browser would block) but requ
   try {
     const r = await fetch(`http://127.0.0.1:${port}/quote`, {
       method: "POST",
-      headers: { "content-type": "application/json", origin: "https://evil.example" },
+      headers: { authorization: "Bearer test-token", "content-type": "application/json", origin: "https://evil.example" },
       body: JSON.stringify(goodBody),
     });
     assert.equal(r.status, 200); // CORS is browser-enforcement only — fetch() here ignores it, like curl would.
@@ -434,7 +433,7 @@ test("POST /quote: no Origin header (CLI/curl caller) is unaffected — no ACAO,
   try {
     const r = await fetch(`http://127.0.0.1:${port}/quote`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { authorization: "Bearer test-token", "content-type": "application/json" },
       body: JSON.stringify(goodBody),
     });
     assert.equal(r.status, 200);
@@ -464,7 +463,7 @@ test("HTTP smoke: oversized body rejected with 413, server keeps serving", async
 
     const quoteRes = await fetch(`${base}/quote`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { authorization: "Bearer test-token", "content-type": "application/json" },
       body: JSON.stringify(goodBody),
     });
     assert.equal(quoteRes.status, 200);
@@ -585,7 +584,7 @@ test("HTTP waitlist: sheet admission requires a server credential and pending us
   const waitlist = new Waitlist(file);
   const sent: string[] = [];
   const d = deps({ cfg: cfg({ waitlistAdminToken: "operator-test-token" }), waitlist,
-    sendInvite: async (_email, code) => { sent.push(code); } });
+    sendInvite: async email => { sent.push(email); } });
   const server = startServer(d, 0, () => ({ ok: true }));
   await new Promise<void>(resolve => server.once("listening", resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -606,7 +605,7 @@ test("HTTP waitlist: sheet admission requires a server credential and pending us
     assert.equal(sent.length, 0);
     const pending = JSON.parse(readFileSync(file, "utf8"))[0];
     assert.equal(pending.code, null);
-    assert.equal((await handleQuote(d, { ...goodBody, inviteCode: pending.code })).status, 403);
+    assert.equal((await handleQuote(d, goodBody)).status, 403);
     const admitted = await fetch(`${base}/integrations/google-sheets/admit`, {
       method: "POST", headers, body: JSON.stringify({ cohort: "cohort-1", count: 1, emails: ["a@b.co"] }),
     });
@@ -617,7 +616,7 @@ test("HTTP waitlist: sheet admission requires a server credential and pending us
     assert.equal(result.entries[0].email, "a@b.co");
     assert.equal(result.entries[0].admitted, true);
     assert.equal(result.entries[0].code, undefined);
-    assert.equal((await handleQuote(d, { ...goodBody, inviteCode: sent[0] })).status, 200);
+    assert.equal((await handleQuote(d, goodBody)).status, 200);
 
   } finally {
     server.close();

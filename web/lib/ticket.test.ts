@@ -7,7 +7,7 @@ import { PARLAY_VAULT, parlayMintedEvent } from "./contracts";
 vi.mock("./writer", () => ({ requestQuote: vi.fn() }));
 const taker = `0x${"1".repeat(40)}` as const;
 const vault = `0x${"2".repeat(40)}` as const;
-const input = { taker, legs: [{ vault, isYes: true }], stake: "1000000", inviteCode: "invite" };
+const input = { taker, legs: [{ vault, isYes: true }], stake: "1000000" };
 const result = (): Extract<QuoteResult, { ok: true }> => ({ ok: true, sig: "0x1234", quote: {
   taker, legs: input.legs, premium: input.stake, maxPayout: "2000000", deadline: String(Math.floor(Date.now() / 1000) + 30), quoteId: `0x${"a".repeat(64)}`,
 } });
@@ -15,7 +15,7 @@ beforeEach(() => vi.resetAllMocks());
 
 test("superseded quotes and changed ticket contexts cannot become current", async () => {
   const session = new TicketSession();
-  for (const key of ["selections", "stake", "wallet", "chain", "invite"]) {
+  for (const key of ["selections", "stake", "wallet", "chain", "account", "linkedWallet"]) {
     session.select("original");
     let finish!: (value: QuoteResult) => void;
     vi.mocked(requestQuote).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));

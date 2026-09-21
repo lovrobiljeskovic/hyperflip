@@ -106,3 +106,30 @@ test("journal preserves old schemas, flushes append, and blocks writes after a p
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("failed account claim never grants access and malformed bindings fail closed", async t => {
+  const directory = fs.mkdtempSync(join(tmpdir(), "claim-failure-"));
+  const file = join(directory, "waitlist.json");
+  try {
+    const wl = new Waitlist(file);
+    wl.signup("a@b.co");
+    await wl.admit("beta", 1, async () => {}, ["a@b.co"]);
+    const original = fs.readFileSync(file, "utf8");
+    const fail = t.mock.method(fs, "renameSync", () => { throw new Error("disk failure"); });
+    syncBuiltinESMExports();
+    assert.throws(() => wl.claim("did:privy:first", ["a@b.co"]), /disk failure/);
+    assert.equal(fs.readFileSync(file, "utf8"), original);
+    fail.mock.restore(); syncBuiltinESMExports();
+    assert.throws(() => wl.claim("did:privy:first", ["a@b.co"]), /restart/);
+    const restarted = new Waitlist(file);
+    assert(restarted.claim("did:privy:first", ["a@b.co"]));
+    assert.equal(restarted.claim("did:privy:second", ["a@b.co"]), false);
+    for (const privyUserId of [["did:privy:first"], "invalid", 12]) {
+      fs.writeFileSync(file, JSON.stringify(JSON.parse(original).map((e: object) => ({ ...e, privyUserId }))));
+      assert.throws(() => new Waitlist(file), /Invalid waitlist/);
+    }
+  } finally {
+    t.mock.restoreAll(); syncBuiltinESMExports();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

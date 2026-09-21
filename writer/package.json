@@ -11,6 +11,7 @@
     "check": "npm run typecheck && npm run test"
   },
   "dependencies": {
+    "@privy-io/node": "^0.34.0",
     "dotenv": "^17.4.2",
     "viem": "^2.55.16"
   },

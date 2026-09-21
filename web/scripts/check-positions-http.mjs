@@ -19,7 +19,7 @@ const fixture = createServer(async (req, res) => {
   let raw = ''; for await (const chunk of req) raw += chunk;
   res.setHeader('content-type', 'application/json');
   if (req.url === '/access') {
-    const allowed = JSON.parse(raw).inviteCode === 'http-fixture-admitted';
+    const allowed = req.headers.authorization === 'Bearer http-fixture-admitted';
     res.statusCode = allowed ? 200 : 403;
     return res.end(JSON.stringify({ ok: allowed }));
   }
@@ -47,7 +47,7 @@ try {
   const url = `http://127.0.0.1:${port}`;
   for (let attempt = 0; ; attempt++) { try { await fetch(`${url}/api/positions?wallet=bad`); break; } catch { if (attempt > 100) throw new Error('Local app did not start'); await new Promise(resolve => setTimeout(resolve, 100)); } }
   assert.equal((await fetch(`${url}/api/positions?wallet=bad`)).status, 403);
-  const admitted = target => fetch(target, { headers: { cookie: 'hyperflip-access=http-fixture-admitted' } });
+  const admitted = target => fetch(target, { headers: { cookie: 'hyperflip-session=http-fixture-admitted' } });
   assert.equal((await admitted(`${url}/api/positions?wallet=bad`)).status, 400);
   const response = await admitted(`${url}/api/positions?wallet=${wallet}`);
   assert.equal(response.status, 200, await response.clone().text());

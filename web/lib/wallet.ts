@@ -25,6 +25,8 @@ export function useWalletState(): {
   ready: boolean;
   isConnected: boolean;
   address?: `0x${string}`;
+  isLinked: boolean;
+  accountId?: string;
 } {
   const { address, isConnected } = useAccount();
   const [mounted, setMounted] = useState(false);
@@ -33,9 +35,9 @@ export function useWalletState(): {
   // Wallet providers can restore synchronously in the browser, while SSR can
   // only render the disconnected placeholder. Hold both to that placeholder
   // through the first client render so their hydration trees stay identical.
-  if (!PRIVY_ENABLED) return { ready: mounted, isConnected, address };
+  if (!PRIVY_ENABLED) return { ready: mounted, isConnected, address, isLinked: false };
   /* eslint-disable react-hooks/rules-of-hooks */
-  const { ready: privyReady } = usePrivy();
+  const { ready: privyReady, user, authenticated } = usePrivy();
   const { ready: walletsReady, wallets } = useWallets();
   const [timedOut, setTimedOut] = useState(false);
 
@@ -55,6 +57,8 @@ export function useWalletState(): {
     ready: mounted && ((privyReady && walletsReady && !syncing) || timedOut),
     isConnected,
     address,
+    accountId: user?.id,
+    isLinked: authenticated && !!user?.linkedAccounts.some(a => a.type === "wallet" && a.chainType === "ethereum" && a.address.toLowerCase() === address?.toLowerCase()),
   };
 }
 
@@ -70,8 +74,10 @@ export function useWalletState(): {
 export function useConnectAction(): () => void {
   if (!PRIVY_ENABLED) return () => {};
   // eslint-disable-next-line react-hooks/rules-of-hooks
-  const { authenticated, login, connectWallet } = usePrivy();
-  return () => (authenticated ? connectWallet() : login());
+  const { authenticated, login, connectWallet, linkWallet, user } = usePrivy();
+  const { address, isConnected } = useAccount();
+  const linked = user?.linkedAccounts.some(a => a.type === "wallet" && a.address.toLowerCase() === address?.toLowerCase());
+  return () => !authenticated ? login({ loginMethods: ["email"] }) : isConnected && !linked ? linkWallet() : connectWallet();
 }
 
 /** Click handler for "Disconnect". Privy owns the session, so logout() is the
@@ -84,7 +90,7 @@ export function useDisconnectAction(): () => void {
   const { logout } = usePrivy();
   return () => {
     disconnect();
-    void logout();
+    void fetch("/api/access", { method: "DELETE" }).catch(() => {}).then(() => logout());
   };
 }
 

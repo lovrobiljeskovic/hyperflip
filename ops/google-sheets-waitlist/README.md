@@ -71,7 +71,10 @@ people or active traders.
 Signup export failures leave the signup saved locally and retry once per minute.
 Idle retries make no external requests. Google never receives invite codes.
 Submitting an existing email again restores a deleted sheet row, preserving the
-original signup date, approval and invite code without sending another email.
+original signup date, approval and account binding without sending another email.
+Approved users verify their waitlist email through Privy at `/access`, then link
+their existing wallet. No invite code is generated or needed. The sheet workflow
+and columns stay the same; `Invite sent at` records the approval email delivery.
 The private approval endpoint is `POST /integrations/google-sheets/admit`, with
 the approval token as a Bearer credential and `{cohort,count,emails}` as JSON.
 The app checks codes against the writer, so Google outages don't unlock the app

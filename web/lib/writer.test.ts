@@ -1,3 +1,4 @@
+vi.mock("@privy-io/react-auth", () => ({ getAccessToken: vi.fn().mockResolvedValue("verified-token") }));
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { compareKickoff, kickoffKey, currentPricing, fetchLimits, fetchMarkets, groupMarkets, isPriced, marketMid, sportLabel, requestQuote, sideLabel, withMarketVolumes, type Market } from "./writer";
 
@@ -52,7 +53,6 @@ const REQ = {
   taker: "0x1111111111111111111111111111111111111111" as const,
   legs: [],
   stake: "1000000",
-  inviteCode: "OVR-TEST",
 };
 
 beforeEach(() => {
@@ -134,4 +134,15 @@ test("fetchMarkets filters unsupported markets from active and historical respon
   expect(await fetchMarkets(true)).toEqual([MARKET, archived]);
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify([MARKET, legacy]))));
   expect(await fetchMarkets()).toEqual([MARKET]);
+});
+
+test("quotes use the current authenticated token, never an invite code", async () => {
+  const { getAccessToken } = await import("@privy-io/react-auth");
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "wallet-not-linked" }), { status: 403 })));
+  expect(await requestQuote(REQ)).toEqual({ ok: false, status: 403, error: "wallet-not-linked" });
+  expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/quote"), expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer verified-token" }), body: JSON.stringify(REQ) }));
+  vi.mocked(getAccessToken).mockResolvedValueOnce(null);
+  vi.mocked(fetch).mockClear();
+  expect(await requestQuote(REQ)).toEqual({ ok: false, status: 401, error: "unauthenticated" });
+  expect(fetch).not.toHaveBeenCalled();
 });

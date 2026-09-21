@@ -211,16 +211,19 @@ export async function requestQuote(req: {
   taker: `0x${string}`;
   legs: { vault: `0x${string}`; isYes: boolean }[];
   stake: string;
-  inviteCode: string;
 }): Promise<QuoteResult> {
   let r: Response;
   try {
+    // Loaded only when trading; the public waitlist keeps wallet SDKs out of its initial bundle.
+    const { getAccessToken } = await import("@privy-io/react-auth");
+    const token = await getAccessToken();
+    if (!token) return { ok: false, status: 401, error: "unauthenticated" };
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10_000);
     try {
       r = await fetch(`${BASE}/quote`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(req),
         signal: controller.signal,
       });

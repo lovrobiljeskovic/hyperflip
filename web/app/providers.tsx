@@ -40,6 +40,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <PrivyProvider
       appId={privyAppId}
       config={{
+        loginMethods: ["email", "wallet"],
+        embeddedWallets: { ethereum: { createOnLogin: "off" }, solana: { createOnLogin: "off" } },
         defaultChain: hyperEvmTestnet,
         supportedChains: [hyperEvmTestnet],
         appearance: { theme: "dark", accentColor: "#C8F36A", logo: "/icon.svg" },

@@ -62,19 +62,18 @@ test("site signup exports immediately without codes; outages and lost acknowledg
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
-test("sheet edits admit only explicit emails, can grow cohorts, and retries keep the original code", async () => {
+test("sheet edits admit only explicit emails, can grow cohorts, and retries preserve approval", async () => {
   const directory = mkdtempSync(join(tmpdir(), "sheets-admit-"));
   try {
     const file = join(directory, "waitlist.json");
     const waitlist = new Waitlist(file);
     for (const email of ["first@example.com", "second@example.com", "pending@example.com"]) waitlist.signup(email);
-    const codes = new Map<string, string>();
+    const sent: string[] = [];
     let fail = true;
-    const deps = { waitlist, sendInvite: async (email: string, code: string) => {
-      if (codes.has(email)) assert.equal(code, codes.get(email));
-      codes.set(email, code);
+    const deps = { now: Date.now, waitlist, authenticate: async (token: string) => ({ userId: `did:privy:${token}`, emails: [`${token}@example.com`], wallets: [] }), sendInvite: async (email: string) => {
+      sent.push(email);
       if (fail) throw new Error("email unavailable");
-    } } as QuoteDeps;
+    } } as unknown as QuoteDeps;
     for (const body of [{ cohort: "beta", count: 1 }, { cohort: "beta", count: 1, emails: ["unknown@example.com"] },
       { cohort: "beta", count: 2, emails: ["first@example.com", "first@example.com"] }]) {
       assert((await handleAdmission(deps, body)).status >= 400);
@@ -87,15 +86,15 @@ test("sheet edits admit only explicit emails, can grow cohorts, and retries keep
     const retry = await handleAdmission(deps, first);
     assert.equal(retry.status, 200);
     assert.equal("code" in (retry.json as { entries: object[] }).entries[0], false);
-    const sentBefore = codes.size;
+    const sentBefore = sent.length;
     assert.equal((await handleAdmission(deps, first)).status, 200);
-    assert.equal(codes.size, sentBefore);
+    assert.equal(sent.length, sentBefore);
     assert.equal((await handleAdmission(deps, { ...first, emails: ["second@example.com"] })).status, 200);
     assert.equal(deps.waitlist.review().filter(e => e.cohort === "beta").length, 2);
     assert.equal(deps.waitlist.review().filter(e => !e.admitted).length, 1);
     assert.equal((await handleAdmission(deps, { ...first, cohort: "other" })).status, 409);
-    assert.equal(handleAccess(deps, { inviteCode: "pending@example.com" }, "ip").status, 403);
-    assert.equal(handleAccess(deps, { inviteCode: codes.get("first@example.com") }, "ip").status, 200);
+    assert.equal((await handleAccess(deps, "Bearer pending", "ip")).status, 403);
+    assert.equal((await handleAccess(deps, "Bearer first", "ip")).status, 200);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 

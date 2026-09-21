@@ -1,4 +1,4 @@
-import crypto from "node:crypto";
+import { createHash } from "node:crypto";
 import { readOptionalFile, replaceFile } from "../../services/files.mjs";
 
 export interface WaitlistEntry {
@@ -7,6 +7,7 @@ export interface WaitlistEntry {
   cohort?: string;
   admittedAt?: number;
   emailedAt?: number;
+  privyUserId?: string;
   /** Destination URL acknowledged by the private Sheets integration. */
   sheetSyncedTo?: string;
   /** ms epoch of signup — the funding-metrics growth curve lives here. */
@@ -28,7 +29,6 @@ export class Waitlist {
   private entries: WaitlistEntry[];
   private failed = false;
   private admitting = false;
-  private codes = new Set<string>();
   private byEmail = new Map<string, WaitlistEntry>();
 
   constructor(
@@ -39,27 +39,41 @@ export class Waitlist {
     try {
       this.entries = json === undefined ? [] : JSON.parse(json);
       if (!Array.isArray(this.entries)) throw new Error();
+      const codes = new Set<string>();
+      const accounts = new Set<string>();
       for (const e of this.entries) {
         if (!e || typeof e.email !== "string" || !isValidEmail(e.email) || e.email !== e.email.trim().toLowerCase() ||
             !(e.code === null || (typeof e.code === "string" && e.code.trim())) ||
             !Number.isSafeInteger(e.ts) || e.ts < 0 || !Number.isFinite(new Date(e.ts).getTime()) ||
-            this.byEmail.has(e.email) || (e.code !== null && this.codes.has(e.code)) ||
+            this.byEmail.has(e.email) || (e.code !== null && codes.has(e.code)) ||
             (e.sheetSyncedTo !== undefined && typeof e.sheetSyncedTo !== "string")) throw new Error();
-        if (e.code === null || e.cohort === undefined) {
-          if (e.cohort !== undefined || e.admittedAt !== undefined || e.emailedAt !== undefined) throw new Error();
+        if (e.cohort === undefined) {
+          if (e.admittedAt !== undefined || e.emailedAt !== undefined) throw new Error();
         } else if (!validCohort(e.cohort) || !Number.isSafeInteger(e.admittedAt) || e.admittedAt! < e.ts ||
                    (e.emailedAt !== undefined && (!Number.isSafeInteger(e.emailedAt) || e.emailedAt < e.admittedAt!))) {
           throw new Error();
         }
-        // Legacy rows already had access; never silently revoke their codes.
-        if (e.code !== null) this.codes.add(e.code);
+        if (e.privyUserId !== undefined) {
+          if (typeof e.privyUserId !== "string" || !/^did:privy:[a-zA-Z0-9_-]+$/.test(e.privyUserId) || !isAdmitted(e) || accounts.has(e.privyUserId)) throw new Error();
+          accounts.add(e.privyUserId);
+        }
+        // Preserve legacy approvals, but their old bearer codes no longer authorize access.
+        if (e.code !== null) codes.add(e.code);
         this.byEmail.set(e.email, e);
       }
     } catch { throw new Error("Invalid waitlist; preserve and repair it before restarting"); }
   }
 
-  has(code: string): boolean {
-    return this.codes.has(code);
+  claim(userId: string, verifiedEmails: string[]): boolean {
+    if (this.failed) throw new Error("Waitlist save failed; restart before claiming access");
+    if (!/^did:privy:[a-zA-Z0-9_-]+$/.test(userId)) throw new Error("Invalid account");
+    const bound = this.entries.find(e => e.privyUserId === userId);
+    if (bound) return isAdmitted(bound);
+    const entry = this.entries.find(e => isAdmitted(e) && !e.privyUserId && verifiedEmails.includes(e.email));
+    if (!entry) return false;
+    // One writer claims synchronously: two accounts cannot redeem the same approval.
+    this.save(this.entries.map(e => e.email === entry.email ? { ...e, privyUserId: userId } : e));
+    return true;
   }
 
   size(): number {
@@ -72,7 +86,6 @@ export class Waitlist {
     catch (error) { this.failed = true; throw error; }
     this.entries = entries;
     this.byEmail = new Map(entries.map(e => [e.email, e]));
-    this.codes = new Set(entries.flatMap(e => e.code === null ? [] : [e.code]));
   }
 
   /** Signup never creates or returns an access code, including for existing users. */
@@ -95,8 +108,8 @@ export class Waitlist {
   }
 
   review() {
-    return [...this.entries].sort((a, b) => a.ts - b.ts).map(({ code, ...e }) => ({
-      ...e, admitted: code !== null,
+    return [...this.entries].sort((a, b) => a.ts - b.ts).map(({ code, privyUserId, ...e }) => ({
+      ...e, admitted: isAdmitted({ ...e, code }),
     }));
   }
 
@@ -106,7 +119,7 @@ export class Waitlist {
     this.save(this.entries.map(e => synced.has(e.email) ? { ...e, sheetSyncedTo: destination } : e));
   }
 
-  async admit(cohort: string, count: number, send: (email: string, code: string) => Promise<void>, emails: string[]) {
+  async admit(cohort: string, count: number, send: (email: string) => Promise<void>, emails: string[]) {
     if (!validCohort(cohort) || !Number.isSafeInteger(count) || count < 1 || count > 100) throw new Error("bad-cohort");
     if (!Array.isArray(emails) || emails.length !== count || new Set(emails).size !== count ||
         emails.some(e => typeof e !== "string" || !isValidEmail(e) || e !== e.trim().toLowerCase())) throw new Error("bad-selection");
@@ -116,18 +129,14 @@ export class Waitlist {
     try {
       const requested = new Set(emails);
       let members = this.entries.filter(e => requested.has(e.email));
-      if (members.length !== count || members.some(e => e.code !== null && e.cohort !== cohort)) throw new Error("not-enough-pending");
-      const pending = members.filter(e => e.code === null);
+      if (members.length !== count || members.some(e => isAdmitted(e) && e.cohort !== cohort)) throw new Error("not-enough-pending");
+      const pending = members.filter(e => !isAdmitted(e));
       if (pending.length) {
         const selected = new Set(pending.map(e => e.email));
-        const codes = new Set(this.codes);
         const admittedAt = this.now();
         this.save(this.entries.map(e => {
           if (!selected.has(e.email)) return e;
-          let code: string;
-          do { code = `OVR-${crypto.randomBytes(16).toString("hex").toUpperCase()}`; } while (codes.has(code));
-          codes.add(code);
-          return { ...e, code, cohort, admittedAt };
+          return { ...e, cohort, admittedAt };
         }));
         members = this.entries.filter(e => requested.has(e.email));
       }
@@ -135,7 +144,7 @@ export class Waitlist {
       let failed = 0;
       for (const e of members) {
         if (e.emailedAt !== undefined) continue;
-        try { await send(e.email, e.code!); }
+        try { await send(e.email); }
         catch { failed++; continue; }
         this.save(this.entries.map(row => row.email === e.email ? { ...row, emailedAt: this.now() } : row));
         sent++;
@@ -143,6 +152,10 @@ export class Waitlist {
       return { cohort, admitted: members.length, sent, failed };
     } finally { this.admitting = false; }
   }
+}
+
+function isAdmitted(entry: Pick<WaitlistEntry, "code" | "admittedAt">): boolean {
+  return entry.admittedAt !== undefined || entry.code !== null;
 }
 
 /** Sliding-window per-IP limiter for the public signup endpoint — guards the
@@ -171,22 +184,29 @@ export class RateLimiter {
 }
 
 /** One fetch to Resend — no SDK for a single POST. Throws on non-2xx. */
-export async function sendInviteEmail(apiKey: string, to: string, code: string): Promise<void> {
+export async function sendInviteEmail(apiKey: string, to: string): Promise<void> {
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "Idempotency-Key": `invite-${code}` },
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "Idempotency-Key": `admission-${createHash("sha256").update(to).digest("hex")}` },
     signal: AbortSignal.timeout(10_000),
     body: JSON.stringify({
       from: "Hyperflip <invites@hyperflip.xyz>",
       to: [to],
-      subject: "Your Hyperflip beta invite",
+      reply_to: "contact@hyperflip.xyz",
+      subject: "Your Hyperflip access is approved",
+      // Deliberately plain: one link, one domain, no money words. Gmail placed the
+      // earlier wording (invite code, mock USDC, stakes) in spam with SPF/DKIM/DMARC
+      // all passing. Testnet setup lives on the /access page instead.
       text: [
-        "You’re off the waitlist. Your cohort now has beta access.",
-        `Your invite code: ${code}`,
+        "Hi,",
         "",
-        "Enter it at https://app.hyperflip.xyz/access to unlock the app.",
+        "Your spot on the Hyperflip waitlist has come up and your account is now approved.",
         "",
-        "Testnet funds: claim mock USDC at https://app.hyperliquid-testnet.xyz/drip, then transfer from Core to EVM for gas and stakes.",
+        "Sign in with this email address at https://app.hyperflip.xyz/access and follow the steps on that page.",
+        "",
+        "If anything does not work, contact contact@hyperflip.xyz.",
+        "",
+        "Hyperflip",
       ].join("\n"),
     }),
   });

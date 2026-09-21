@@ -28,7 +28,7 @@ export function InviteForm({ showAppLink = true }: { showAppLink?: boolean }) {
       {state === "sent" ? (
         <div role="status">
           <p className="mono text-[11px] uppercase tracking-wide text-yes">You’re on the waitlist</p>
-          <p className="mt-2 text-[15px] leading-relaxed">We’re opening access in cohorts. We’ll email your invite code when you’re admitted.</p>
+          <p className="mt-2 text-[15px] leading-relaxed">We’re opening access in cohorts. We’ll email you when your access is approved.</p>
         </div>
       ) : (
         <form onSubmit={submit} noValidate>
@@ -57,7 +57,7 @@ export function InviteForm({ showAppLink = true }: { showAppLink?: boolean }) {
         </form>
       )}
       {showAppLink && <Link href={appHref()} prefetch={false} className="mt-5 inline-block text-sm text-accent underline underline-offset-4">
-        Already have a code? Open the app
+        Already approved? Sign in
       </Link>}
     </div>
   );

@@ -3,14 +3,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseMarkets, parseInviteCodes, parseCorsOrigins, defaultPerCodeReservedCap, syncedPerCodeReservedCap, loadConfig } from "../src/config.js";
+import { parseMarkets, parseCorsOrigins, defaultPerCodeReservedCap, syncedPerCodeReservedCap, loadConfig } from "../src/config.js";
 
 const VAULT = "0x1111111111111111111111111111111111111111";
 const MARKET = { vault: VAULT, coinYes: "#1", coinNo: "#2", underlying: "q844", cluster: "WC2026", title: "Draw", category: "sports", question: 844, startMs: 1, expiryMs: 2, sideYes: "Draw", sideNo: "No draw", group: "q844", groupTitle: "Saudi Arabia vs Uruguay" };
-
-test("parseInviteCodes trims and drops empties", () => {
-  assert.deepEqual([...parseInviteCodes(" a, b,,c ")], ["a", "b", "c"]);
-});
 
 test("parseCorsOrigins trims and drops empties", () => {
   assert.deepEqual(parseCorsOrigins(" https://overround.xyz, https://overround-wine.vercel.app,, "), [
@@ -75,6 +71,7 @@ test("writer boots with only sports configuration and filters historical public 
     Object.assign(process.env, values);
     const config = loadConfig();
     assert.equal(config.parlayVault, VAULT);
+    assert.equal("inviteCodes" in config, false);
     assert.equal(config.rpcUrl, values.TESTNET_RPC);
     assert.equal(config.deployBlock, 1n);
     assert.equal(config.markets.get(VAULT)?.question, 844);

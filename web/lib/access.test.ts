@@ -2,7 +2,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { ACCESS_COOKIE, accessReturnPath, checkAdmission } from "./access";
 import { proxy } from "../proxy";
-import { POST } from "../app/api/access/route";
+import { POST, DELETE } from "../app/api/access/route";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
@@ -27,23 +27,23 @@ test("direct app links and local trading pages require a verified admission, inc
   expect((await proxy(request("/build", undefined, "localhost"))).status).toBe(307);
   for (const path of ["/access", "/api/access"]) expect((await proxy(request(path))).headers.get("x-middleware-next")).toBe("1");
   expect((await proxy(request("/", undefined, "hyperflip.xyz"))).headers.get("x-middleware-next")).toBe("1");
-  const admitted = await proxy(request("/positions", "issued-code"));
+  const admitted = await proxy(request("/positions", "verified-token"));
   expect(admitted.headers.get("x-middleware-next")).toBe("1");
   expect(admitted.headers.get("cache-control")).toBe("private, no-store");
-  expect(fetch).toHaveBeenLastCalledWith("http://writer.test/access", expect.objectContaining({ cache: "no-store", body: JSON.stringify({ inviteCode: "issued-code" }) }));
+  expect(fetch).toHaveBeenLastCalledWith("http://writer.test/access", expect.objectContaining({ cache: "no-store", headers: expect.objectContaining({ Authorization: "Bearer verified-token" }), body: "{}" }));
   writer(403, { error: "not-admitted" });
   expect((await proxy(request("/build", "made-up-cookie"))).status).toBe(307);
   writer(503, { error: "unavailable" });
-  expect((await proxy(request("/api/positions", "issued-code"))).status).toBe(503);
-  const unavailable = await proxy(request("/build", "issued-code"));
+  expect((await proxy(request("/api/positions", "verified-token"))).status).toBe(503);
+  const unavailable = await proxy(request("/build", "verified-token"));
   expect(unavailable.headers.get("location")).toContain("error=unavailable");
   expect(unavailable.headers.has("set-cookie")).toBe(false);
 });
 
-test("access login rejects cross-origin and unadmitted codes; verified codes get a protected host cookie", async () => {
+test("access login rejects cross-origin and unadmitted accounts; verified tokens get a protected host cookie", async () => {
   writer();
-  const login = (origin: string, inviteCode: unknown = "issued-code") => new NextRequest("https://app.hyperflip.xyz/api/access", {
-    method: "POST", headers: { origin, "Content-Type": "application/json" }, body: JSON.stringify({ inviteCode }),
+  const login = (origin: string, accessToken: unknown = "verified-token") => new NextRequest("https://app.hyperflip.xyz/api/access", {
+    method: "POST", headers: { origin, "Content-Type": "application/json" }, body: JSON.stringify({ accessToken }),
   });
   expect((await POST(login("https://other.example"))).status).toBe(403);
   expect(fetch).not.toHaveBeenCalled();
@@ -61,12 +61,12 @@ test("access login rejects cross-origin and unadmitted codes; verified codes get
   expect(cookie).not.toContain("Domain=");
   const local = (origin: string) => new NextRequest("http://localhost:3001/api/access", {
     method: "POST", headers: { host: "127.0.0.1:3001", origin, "Content-Type": "application/json" },
-    body: JSON.stringify({ inviteCode: "issued-code" }),
+    body: JSON.stringify({ accessToken: "verified-token" }),
   });
   expect((await POST(local("http://127.0.0.1:3001"))).status).toBe(200);
   expect((await POST(local("http://localhost:3001"))).status).toBe(403);
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-  expect(await checkAdmission("issued-code")).toBe("unavailable");
+  expect(await checkAdmission("verified-token")).toBe("unavailable");
 });
 
 test("return paths cannot escape the app or loop through the access page", () => {
@@ -74,4 +74,20 @@ test("return paths cannot escape the app or loop through the access page", () =>
     expect(accessReturnPath(path)).toBe("/build");
   }
   expect(accessReturnPath("/positions?view=open")).toBe("/positions?view=open");
+});
+
+
+test("legacy codes cannot create sessions and logout rejects cross-origin requests", async () => {
+  writer();
+  const url = "https://app.hyperflip.xyz/api/access";
+  const headers = { origin: "https://app.hyperflip.xyz", "content-type": "application/json" };
+  expect((await POST(new NextRequest(url, { method: "POST", headers, body: JSON.stringify({ inviteCode: "historical-code" }) }))).status).toBe(403);
+  expect(fetch).not.toHaveBeenCalled();
+  expect((await DELETE(new NextRequest(url, { method: "DELETE", headers: { origin: "https://other.example" } }))).status).toBe(403);
+  const cleared = await DELETE(new NextRequest(url, { method: "DELETE", headers }));
+  expect(cleared.status).toBe(200);
+  expect(cleared.headers.get("set-cookie")).toContain(`${ACCESS_COOKIE}=`);
+  expect(cleared.headers.get("set-cookie")).toContain("Expires=Thu, 01 Jan 1970");
+  writer(401, { error: "unauthenticated" });
+  expect(await checkAdmission("expired-token")).toBe("denied");
 });

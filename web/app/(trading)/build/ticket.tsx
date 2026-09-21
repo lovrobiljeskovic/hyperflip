@@ -1,14 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
 import { useTicket } from "./use-ticket";
 import type { BuilderLeg } from "@/lib/ticket";
 import { formatUnits } from "viem";
 import {
-  joinWaitlist,
   marketMid,
-  WAITLIST_ERRORS,
   type QuoteResult,
   type WriterLimits,
 } from "@/lib/writer";
@@ -54,11 +51,11 @@ function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: BuilderLeg
   if (res.error === "rpc-down") return "Chain RPC is rate-limiting the writer - retry in a moment.";
   if (res.status === 0 || res.status === 503) return "Writer unreachable - retrying.";
   if (res.status === 429) return "Too many quotes too fast - pausing a moment.";
-  if (res.status === 403) return "Invite code rejected - enter a valid one below.";
+  if (res.status === 401 || res.status === 403) return "Verify your approved account and link this wallet to continue.";
   if (res.status === 409) {
     if (res.error === "leg-settled") return "A leg just settled - remove it and requote.";
     if (res.error === "quota-cap")
-      return "This invite code has hit its open-ticket quota - wait ~a minute for reservations to clear or use another code.";
+      return "This account has hit its open-ticket quota - wait for reservations to clear.";
     const fit = res.maxStake === undefined ? 0n : BigInt(res.maxStake);
     if (fit > 0n) return `Payout too large for the house limit - stake up to ${formatUsdc(fit)} USDC on this ticket.`;
     if (res.error === "at-capacity") return "House bankroll is fully committed - try again shortly.";
@@ -130,86 +127,6 @@ function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown })
   );
 }
 
-/** Join the waitlist or enter a code received after admission. */
-function InviteEntry({ onSave }: { onSave: (code: string) => void }) {
-  const [code, setCode] = useState("");
-  const [email, setEmail] = useState("");
-  const [waitState, setWaitState] = useState<"idle" | "sending" | "sent">("idle");
-  const [waitError, setWaitError] = useState("");
-
-  const inputClass =
-    "w-full rounded-card border border-line bg-panel px-3 py-2 mono text-sm text-fg placeholder:text-dim focus:border-accent";
-  const buttonClass =
-    "shrink-0 rounded-card bg-accent px-4 py-2 mono text-[11px] uppercase tracking-[0.1em] text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
-
-  return (
-    <div className="mt-4 flex flex-col gap-3">
-      <p className="mono text-[11px] text-dim">Access opens in cohorts. Join the waitlist below, or enter the invite code from your admission email.</p>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          const trimmed = code.trim();
-          if (!trimmed) return;
-          localStorage.setItem("inviteCode", trimmed);
-          onSave(trimmed);
-        }}
-        className="flex gap-2"
-      >
-        <input
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="Invite code"
-          aria-label="Invite code"
-          className={inputClass}
-        />
-        <button type="submit" className={buttonClass}>
-          Save
-        </button>
-      </form>
-      {waitState === "sent" ? (
-        <p role="status" className="mono text-[11px] text-yes">You’re on the waitlist. We’ll email your invite code when you’re admitted.</p>
-      ) : (
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setWaitError("");
-            setWaitState("sending");
-            const res = await joinWaitlist(email.trim());
-            if (res.ok) setWaitState("sent");
-            else {
-              setWaitState("idle");
-              setWaitError(WAITLIST_ERRORS[res.error] ?? res.error);
-            }
-          }}
-          noValidate
-          className="flex flex-col gap-1"
-        >
-          <div className="flex gap-2">
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              type="email"
-              autoComplete="email"
-              spellCheck={false}
-              placeholder="No code? your@email.com"
-              aria-label="Email for the waitlist"
-              aria-invalid={!!waitError}
-              aria-describedby={waitError ? "builder-waitlist-error" : undefined}
-              className={inputClass}
-            />
-            <button type="submit" disabled={waitState === "sending"} className={buttonClass}>
-              {waitState === "sending" ? "Joining…" : "Join waitlist"}
-            </button>
-          </div>
-          {waitError && <p id="builder-waitlist-error" role="alert" className="text-xs text-no">{waitError}</p>}
-        </form>
-      )}
-    </div>
-  );
-}
-
 /** What the house can take right now, so a taker sizes a stake that quotes
  * instead of bouncing off a 409. Caps are on house risk (payout minus stake). */
 function HouseLimits({ limits, maxStake }: { limits: WriterLimits | null; maxStake: bigint }) {
@@ -226,7 +143,7 @@ function HouseLimits({ limits, maxStake }: { limits: WriterLimits | null; maxSta
         <DetailRow label="House bankroll available">{available ?? "-"}</DetailRow>
         <DetailRow label="Max house risk per market">{usdc(limits?.perMarketCap)}</DetailRow>
         <DetailRow label="Max house risk per competition">{usdc(limits?.perClusterCap)}</DetailRow>
-        <DetailRow label="Open-quote budget per invite code">{usdc(limits?.perCodeReservedCap)}</DetailRow>
+        <DetailRow label="Open-quote budget per account">{usdc(limits?.perCodeReservedCap)}</DetailRow>
         <p className="mt-1 text-[10px] leading-relaxed">
           Risk is your max payout minus your stake. A quote that would push any of these over its cap comes back with the largest stake that fits.
         </p>
@@ -255,7 +172,7 @@ export function Ticket({
   const mids = useMids();
   const printing = usePrinting();
   const { stake, setStake, quoteResult, ttlLeft, ttlSeconds, mintState, mintErrorMsg, mintErrorDetail,
-    setInviteCode, maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain } = useTicket(legs, display);
+    maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain } = useTicket(legs, display);
 
   // Quote-derived display values. premium/maxPayout are the signed truth;
   // `bd` re-derives the writer's pricing steps for the breakdown accordion.
@@ -490,7 +407,7 @@ export function Ticket({
                   Use {formatUsdc(BigInt(quoteResult.maxStake))} USDC
                 </button>
               )}
-              {quoteResult.status === 403 && <InviteEntry onSave={setInviteCode} />}
+              {quoteResult.status === 403 && <Link href="/access" prefetch={false} className="text-accent underline">Verify your account</Link>}
             </div>
           )}
         </>
@@ -532,7 +449,6 @@ export function Ticket({
               {cta.label}
             </button>
           )}
-          {cta.kind === "invite" && <InviteEntry onSave={setInviteCode} />}
           {cta.kind === "done" && (
             <Link
               href={cta.href}

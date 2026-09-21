@@ -16,6 +16,7 @@ import { newMetrics, startServer, type QuoteDeps } from "./server.js";
 import { readLegStates } from "./settlement.js";
 import { RateLimiter, sendInviteEmail, Waitlist } from "./waitlist.js";
 import { GoogleSheetsWaitlist } from "./googleSheets.js";
+import { privyAuthenticator } from "./auth.js";
 
 const RECEIPT_TIMEOUT_MS = 60_000;
 
@@ -141,10 +142,11 @@ async function main(): Promise<void> {
     ready: () => seeded,
     waitlist: new Waitlist(cfg.waitlistFile),
     sendInvite: cfg.resendApiKey
-      ? (email, code) => sendInviteEmail(cfg.resendApiKey!, email, code)
+      ? (email) => sendInviteEmail(cfg.resendApiKey!, email)
       : undefined,
     signupLimiter: new RateLimiter(5, 60 * 60 * 1000),
     badInviteLimiter: new RateLimiter(20, 60 * 60 * 1000),
+    authenticate: cfg.privyAppId && cfg.privyAppSecret ? privyAuthenticator(cfg.privyAppId, cfg.privyAppSecret) : undefined,
     quoteLimiter: new RateLimiter(300, 60 * 60 * 1000),
     parlaysOf: (taker) => poker.parlaysOf(taker),
     livePriorYes: (vault) => {

@@ -81,7 +81,7 @@ Preserve these files across deployments, backups, and host replacement:
 | File | Purpose |
 | --- | --- |
 | `keeper/settlement-cache.json` | Settlement fractions observed before Core pruning |
-| `writer/waitlist.json` | Pending signups, cohort admissions, invite codes and email-send timestamps |
+| `writer/waitlist.json` | Pending signups, cohort admissions, Privy account bindings and email-send timestamps |
 | `writer/quotes.jsonl` | Signed-quote audit records |
 | `registry/markets.json` | Current deployed markets and historical vault metadata |
 
@@ -105,8 +105,7 @@ with its ownership and permissions; leftover `*.tmp` files are uncommitted write
 not automatic recovery candidates.
 
 A failed signup save disables further signup in that process; fix the disk and
-restart so memory reloads whichever complete file reached disk. Existing invite
-codes continue to work. A keeper save failure retains the fraction in memory and
+restart so memory reloads whichever complete file reached disk. Access checks also fail closed until the writer restarts. A keeper save failure retains the fraction in memory and
 alerts while continuing the existing settlement attempt. Repair storage promptly:
 a restart cannot recover an observation that never reached disk. Keep the keeper
 running while investigating a save failure when possible.
@@ -122,7 +121,7 @@ not silently discard bytes. Restore a validated file, wait for outstanding quote
 deadlines to expire, then restart one writer and wait for exposure reconstruction.
 A complete final JSON record missing only its newline may have that newline added
 after inspection. Corrupt waitlist/cache recovery requires a verified backup or
-manual repair, retaining all known codes and fractions. Never restore stale state
+manual repair, retaining all known admissions, account bindings and fractions. Never restore stale state
 over a running service. Code rollback uses current state files with compatible
 readers, not old snapshots; see the waitlist compatibility note below.
 
@@ -133,68 +132,66 @@ its corresponding readers.
 
 ## Waitlist and manual cohorts
 
-Both signup forms record a normalized email and signup timestamp. Signup does
-not issue a code or send an email, and works without `RESEND_API_KEY`. Existing
-codes recorded in the waitlist remain valid. `INVITE_CODES` alone does not grant
-app access. The public site and waitlist stay available; the app requires admission
-before it loads, including direct builder, positions and pricing links.
+Both signup forms record a normalized email and signup timestamp without requiring
+login or a wallet. Signup sends no email and works without `RESEND_API_KEY`.
+Review and approve cohorts in a private Google Sheet using
+[Google Sheets setup](ops/google-sheets-waitlist/README.md). No admin page or token
+entry is exposed in the frontend.
 
-Review signups and approve cohorts in a private Google Sheet. Follow
-[Google Sheets setup](ops/google-sheets-waitlist/README.md) to install the script,
-authorize its edit trigger, and configure server-only `GOOGLE_SHEETS_WEB_APP_URL`,
-`GOOGLE_SHEETS_SYNC_SECRET`, `WAITLIST_ADMIN_TOKEN`, and `RESEND_API_KEY`.
-No admin page or token entry is exposed in the frontend. Restart the writer after
-changing config. Use HTTPS for the frontend and writer; allow the frontend origin
-in `CORS_ORIGINS` and set its existing `NEXT_PUBLIC_WRITER_URL`.
+Configure server-only `GOOGLE_SHEETS_WEB_APP_URL`, `GOOGLE_SHEETS_SYNC_SECRET`,
+`WAITLIST_ADMIN_TOKEN`, `RESEND_API_KEY`, `PRIVY_APP_ID` and `PRIVY_APP_SECRET`.
+The Privy app ID must match the frontend's `NEXT_PUBLIC_PRIVY_APP_ID`. Enable email
+and external-wallet login in that Privy app. The frontend disables automatic
+Ethereum and Solana embedded-wallet creation. Keep the secret on the writer only;
+never use a `NEXT_PUBLIC_` variable for it. Restart the writer after config changes.
 
-Signups export immediately after the writer saves them. Failed exports retry once
-per minute; idle retries make no Google calls. Existing signups export on first
-connection. Invite codes remain only in the writer's persistent file, never the
-sheet. Repeat signups re-export the existing record, restoring a deleted sheet
-row without changing its approval, code or signup date. Set a Cohort and check
-Approved in Sheets to admit users. An edit trigger
-starts admission without polling; the sheet's Waitlist menu retries failed requests
-or emails. Adding more users to the same cohort is allowed. Only checked emails
-are submitted, and the backend requires an explicit selection.
+Signups export immediately after durable save. Failed exports retry once per minute;
+idle retries make no Google calls. Repeat signups restore deleted sheet rows without
+changing the original signup date, approval or delivery status. Set a Cohort and
+check Approved to admit selected users. The edit trigger submits explicit emails
+to authenticated `POST /integrations/google-sheets/admit`; the Waitlist menu retries
+failed requests or deliveries. Unchecking Approved does not revoke admission.
 
-Admission persists before emailing codes. Retries skip recorded sends and reuse
-the same codes. Unchecking Approved after admission does not revoke access.
-Admission can keep running after a timeout; retry safely from Sheets.
-Concurrent admissions return `admission-in-progress`.
-`Emailed` means accepted by the provider, not confirmed inbox delivery.
-Provider deduplication uses the same invite code as the idempotency key
-(24-hour window); a crash after send but before save can cause a repeat email
-outside that window, always with the same code.
+Admission persists before the approval email sends. The message links to `/access`
+and asks the recipient to verify their waitlist email through Privy. Retries skip
+recorded sends; provider deduplication uses a hash of the email (24-hour window).
+A crash after sending but before saving can repeat the email outside that window.
+`Emailed` means provider acceptance, not confirmed inbox delivery. Concurrent
+admissions return `admission-in-progress`. Counts represent unique email signups,
+not verified people or active traders; bankroll planning remains a manual decision.
 
-Counts are unique normalized email signups, not verified people or active
-traders. Legacy environment codes have no signup record and are excluded.
-Use counts as inputs to bankroll planning with your own activity and risk
-assumptions. No bankroll estimate or funding change is made automatically.
+The writer verifies each Privy access token and fetches the account's current
+verified email and wallet links from Privy. A verified approved email claims its
+admission once, atomically binding it to the Privy user ID. Subsequent logins use
+that ID, even if the account's email changes. Another account cannot claim the
+same approval. The user links their existing wallet by proving ownership through
+Privy; a connection alone does not authorize quotes. Every quote requires a taker
+wallet currently verified on the admitted account. Reservation limits apply per
+account, including across multiple linked wallets (`PER_CODE_RESERVED_CAP` keeps
+its historical configuration name).
 
-The script uses authenticated `POST /integrations/google-sheets/admit` with
-`{"cohort":"beta-001","count":2,"emails":["a@example.com","b@example.com"]}`.
-It requires the server-to-server admin bearer token and returns per-email delivery
-status with `Cache-Control: no-store`, never codes. Omitting `emails` is rejected.
-The old `/admin/waitlist` endpoint and page are removed. Do not edit the state file
-while the writer is running.
+Old approvals remain eligible for email verification; old invitation codes and
+`INVITE_CODES` no longer authorize app access or quotes. Existing delivery timestamps
+are preserved, so this migration does not resend old approval emails. Historical
+codes remain in the private file for compatibility but are never sent to Sheets.
+New approvals have `code: null` plus admission metadata; claims add `privyUserId`.
+**Earlier writer versions are not safe rollback targets:** they either reject new
+rows or restore bearer-code access. Preserve current state and deploy a compatible
+reader; never overwrite new signups or account claims with an old backup.
 
-Old writer versions cannot read pending rows (`code: null`). Before rollback,
-use a compatible writer version; never restore an old state backup over newer
-signups or admission records.
-
-App visitors enter their admission code at `/access`. The frontend verifies it
-with the writer's `POST /access` endpoint and sets a host-only, HttpOnly, SameSite
-cookie (Secure over HTTPS, 30-day lifetime). The server rechecks that code before
-each protected request; missing/invalid sessions go to `/access`, and unavailable
-verification fails closed. The positions API returns 403/503 instead of app data.
-Public assets and the access form remain reachable. A local-storage value alone
+`POST /api/access` exchanges a Privy access token for a host-only HttpOnly,
+SameSite=Lax cookie (Secure over HTTPS, maximum one hour). The writer revalidates
+it on each protected app request; missing, expired or invalid tokens return users
+to `/access` to refresh sign-in. Provider failures fail closed. The positions API
+returns 403/503 instead of data. Logout clears the cookie. The public site, static
+assets and access page remain reachable. Old cookies and local-storage codes
 cannot unlock the app.
 
-The frontend server must reach the writer. It uses server-only `WRITER_URL` when
-set, otherwise `NEXT_PUBLIC_WRITER_URL`. Deploy the writer's access endpoint before
-the frontend gate. Admission codes remain bearer credentials: knowing a code
-proves access, not a wallet or identity. No production change is made by local
-preview testing.
+The frontend uses server-only `WRITER_URL`, falling back to
+`NEXT_PUBLIC_WRITER_URL`. Use HTTPS and include the frontend origin in writer
+`CORS_ORIGINS`. Deploy writer and frontend together for this authentication change.
+Local preview testing does not change production. Test both approved and pending
+accounts, a linked external wallet, a different unlinked wallet, and logout.
 
 ## RPC and supervision
 
@@ -251,7 +248,7 @@ curl --fail http://localhost:8787/health
 WRITER_URL=http://localhost:8787 node tools/smoke.mjs
 ```
 
-With `INVITE_CODE` set, the smoke command also requests a real quote and temporarily
+With `PRIVY_ACCESS_TOKEN` and a verified linked `TAKER` set, the smoke command also requests a real quote and temporarily
 reserves exposure. Without it, the command checks health and market availability.
 `/health` must report `seeded: true`; `bankroll` is populated after a quote reads it.
 The repository tests do not broadcast transactions or validate a live deployment.

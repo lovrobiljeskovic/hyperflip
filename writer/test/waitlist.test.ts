@@ -29,12 +29,11 @@ test("cohorts admit selected emails, preserve legacy access, and retry only fail
     { email: "second@example.com", code: null, ts: 200 },
   ]));
   const wl = new Waitlist(f, () => 1000);
-  assert(wl.has("OLD-CODE"));
+  assert(wl.claim("did:privy:legacy", ["legacy@example.com"]));
   const sent: string[] = [];
   const selected = ["first@example.com", "second@example.com"];
-  const result = await wl.admit("beta-1", 2, async (email, code) => {
-    assert(wl.has(code));
-    assert.match(code, /^OVR-[0-9A-F]{32}$/);
+  const result = await wl.admit("beta-1", 2, async email => {
+    assert(wl.review().find(e => e.email === email)?.admitted);
     sent.push(email);
     if (email === "second@example.com") throw new Error("mail unavailable");
   }, selected);
@@ -50,7 +49,7 @@ test("cohorts admit selected emails, preserve legacy access, and retry only fail
     { cohort: "beta-1", admitted: 2, sent: 0, failed: 0 });
   assert.deepEqual(JSON.parse(readFileSync(f, "utf8")).map((e: { code: string | null }) => e.code), before.map((e: { code: string | null }) => e.code));
   assert.equal(reloaded.review().filter(e => !e.admitted).length, 1);
-  assert(reloaded.has("OLD-CODE"));
+  assert(reloaded.claim("did:privy:legacy", []));
 });
 
 test("signups during admission survive, concurrent admissions cannot expand a cohort", async () => {
@@ -150,16 +149,30 @@ test("selected admission admits only reviewed users and rejects stale or altered
 });
 
 
-test("app access requires an admitted record and cannot use an environment-only invite", async () => {
-  const waitlist = new Waitlist(file());
-  const deps = waitlistDeps({ waitlist, cfg: { inviteCodes: new Set(["environment-only"]) } as QuoteDeps["cfg"], badInviteLimiter: new RateLimiter(2, 1000, () => 0) });
+test("access requires verified approved email, binds once, and survives reload and email changes", async () => {
+  const f = file();
+  const waitlist = new Waitlist(f);
   waitlist.signup("pending@example.com");
-  assert.equal(handleAccess(deps, { inviteCode: "environment-only" }, "ip").status, 403);
-  assert.equal(handleAccess(deps, { inviteCode: "pending@example.com" }, "ip").status, 403);
-  assert.equal(handleAccess(deps, { inviteCode: "wrong" }, "ip").status, 429);
-  assert.equal(handleAccess(deps, null, "other-ip").status, 403);
-  let issued = "";
-  await waitlist.admit("beta", 1, async (_email, code) => { issued = code; }, ["pending@example.com"]);
-  assert.equal(handleAccess(deps, { inviteCode: issued }, "ip").status, 200);
-  assert.equal(handleAccess(waitlistDeps({}), { inviteCode: issued }, "ip").status, 503);
+  let userId = "did:privy:first";
+  let emails = ["pending@example.com"];
+  const deps = waitlistDeps({ waitlist, authenticate: async token => token === "verified-token" ? { userId, emails, wallets: [] } : null,
+    badInviteLimiter: new RateLimiter(2, 1000, () => 0) });
+  for (const token of ["environment-only", "old-invite-code"]) assert.equal((await handleAccess(deps, `Bearer ${token}`, "ip")).status, 401);
+  assert.equal((await handleAccess(deps, undefined, "ip")).status, 429);
+  assert.equal((await handleAccess(deps, "Bearer verified-token", "ip")).status, 403);
+  await waitlist.admit("beta", 1, async () => {}, emails);
+  emails = ["someone-else@example.com"];
+  assert.equal((await handleAccess(deps, "Bearer verified-token", "ip")).status, 403);
+  emails = ["pending@example.com"];
+  assert.equal((await handleAccess(deps, "Bearer verified-token", "ip")).status, 200);
+  deps.waitlist = new Waitlist(f);
+  userId = "did:privy:second";
+  assert.equal((await handleAccess(deps, "Bearer verified-token", "ip")).status, 403);
+  userId = "did:privy:first";
+  emails = [];
+  assert.equal((await handleAccess(deps, "Bearer verified-token", "ip")).status, 200);
+  assert(deps.waitlist.review().every(e => !("privyUserId" in e)));
+  deps.authenticate = async () => { throw new Error("provider unavailable"); };
+  assert.equal((await handleAccess(deps, "Bearer verified-token", "ip")).status, 503);
+  assert.equal((await handleAccess(waitlistDeps({}), "Bearer verified-token", "ip")).status, 503);
 });

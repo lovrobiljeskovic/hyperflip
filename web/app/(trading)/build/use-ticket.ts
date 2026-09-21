@@ -25,8 +25,6 @@ function shortMintError(err: unknown): string {
 type Cta =
   | { kind: "disabled"; label: string }
   | { kind: "connect"; label: string }
-  /** No saved invite code - the CTA slot renders the inline entry form. */
-  | { kind: "invite" }
   /** Off-site next step (the faucet) - opens a new tab, with a one-line hint. */
   | { kind: "external"; label: string; href: string; hint: string }
   | { kind: "done"; label: string; href: string }
@@ -35,11 +33,10 @@ type Cta =
   | { kind: "pay"; approve: { label: string; enabled: boolean; done: boolean }; mint: { label: string; enabled: boolean } };
 
 export function useTicket(legs: BuilderLeg[], display: boolean) {
-  const { ready: walletReady, address, isConnected } = useWalletState();
+  const { ready: walletReady, address, isConnected, isLinked, accountId } = useWalletState();
   const connect = useConnectAction();
 
   const [stake, setStake] = useState("");
-  const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [storedQuote, setStoredQuote] = useState<{ revision: number; result: QuoteResult } | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [ttlLeft, setTtlLeft] = useState(0);
@@ -52,7 +49,7 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
   const { writeContractAsync } = useWriteContract();
   const { chainId } = useAccount();
   const session = useRef(new TicketSession()).current;
-  session.select(JSON.stringify([legs.map(l => [l.vault.toLowerCase(), l.isYes]), stake, address?.toLowerCase(), chainId, inviteCode, display]));
+  session.select(JSON.stringify([legs.map(l => [l.vault.toLowerCase(), l.isYes]), stake, address?.toLowerCase(), chainId, accountId, isLinked, display]));
   const revision = session.revision;
   const quoteResult = storedQuote?.revision === revision ? storedQuote.result : null;
   const setQuoteResult = useCallback((result: QuoteResult | null) => {
@@ -74,11 +71,6 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
     args: address ? [address, PARLAY_VAULT] : undefined,
     query: { enabled: !display && !!usdcAddr && !!address },
   });
-
-  useEffect(() => {
-    if (display) return;
-    setInviteCode(localStorage.getItem("inviteCode"));
-  }, [display]);
 
   const [maxStake, setMaxStake] = useState<bigint | null>(null);
   const [limits, setLimits] = useState<WriterLimits | null>(null);
@@ -103,7 +95,7 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
 
   const runQuote = useCallback(async () => {
     if (display || session.minting || session.revision !== revision || chainId !== hyperEvmTestnet.id) return;
-    if (legs.length < MIN_LEGS || !address || !inviteCode) return;
+    if (legs.length < MIN_LEGS || !address || !isLinked) return;
     const base = tryParseStake(stake);
     if (base === null) return;
 
@@ -112,7 +104,6 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
       taker: address,
       legs: legs.map((l) => ({ vault: l.vault, isYes: l.isYes })),
       stake: base.toString(),
-      inviteCode,
     });
     if (!response) return;
     const res = response.result;
@@ -120,7 +111,7 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
     setQuoteResult(res);
     // Keep the stale-mint note only when its replacement quote succeeds.
     setMintState((s) => (s === "requoted" && res.ok ? "requoted" : "idle"));
-  }, [display, legs, stake, address, inviteCode, chainId, session, revision, setQuoteResult]);
+  }, [display, legs, stake, address, isLinked, chainId, session, revision, setQuoteResult]);
 
   // Debounced (re)quote whenever the ticket's inputs change.
   useEffect(() => {
@@ -168,8 +159,8 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
 
   async function mintQuoted(q: WriterQuote, sig: `0x${string}`) {
     if (session.minting || session.revision !== revision || !publicClient || !usdcAddr || !address ||
-        !inviteCode || stakeBase === null || chainId !== hyperEvmTestnet.id) return;
-    const input = { taker: address, legs: legs.map(l => ({ vault: l.vault, isYes: l.isYes })), stake: stakeBase.toString(), inviteCode };
+        !isLinked || stakeBase === null || chainId !== hyperEvmTestnet.id) return;
+    const input = { taker: address, legs: legs.map(l => ({ vault: l.vault, isYes: l.isYes })), stake: stakeBase.toString() };
     if (!quoteMatches(q, input)) return;
     if (!session.beginMint()) return;
     setMintState("pending");
@@ -218,10 +209,10 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
   }
 
   function computeCta(): Cta {
-    if (!inviteCode) return { kind: "invite" };
     if (legs.length < MIN_LEGS) return { kind: "disabled", label: "Add 2 legs to price a ticket" };
     if (!walletReady) return { kind: "disabled", label: "Checking wallet…" };
     if (!isConnected) return { kind: "connect", label: "Connect wallet" };
+    if (!isLinked) return { kind: "connect", label: "Verify wallet" };
     if (chainId !== undefined && chainId !== hyperEvmTestnet.id)
       return { kind: "switch-chain", label: `Switch to ${hyperEvmTestnet.name}` };
     if (usdcBalance === 0n) return { kind: "external", label: "Get testnet USDC →", href: HL_DRIP, hint: DRIP_HINT };
@@ -254,6 +245,6 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
     void runQuote();
   }
   return { stake, setStake, quoteResult, ttlLeft, ttlSeconds, mintState, mintErrorMsg, mintErrorDetail,
-    setInviteCode, maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain };
+    maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain };
 
 }

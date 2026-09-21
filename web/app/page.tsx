@@ -103,7 +103,7 @@ export default async function Home() {
           <div>
             <h2 className="display max-w-[10ch] text-[clamp(2.5rem,5vw,4.6rem)]">Join the waitlist.</h2>
             <p className="mt-5 max-w-[40ch] leading-relaxed text-dim">
-              Hyperflip is opening testnet beta access in cohorts. Join the waitlist and we’ll email your invite code when you’re admitted. App access opens with your invitation.
+              Hyperflip is opening testnet beta access in cohorts. Join the waitlist and we’ll email you when you’re approved. Sign in with your approved email and connect your existing wallet.
             </p>
           </div>
           <InviteForm />

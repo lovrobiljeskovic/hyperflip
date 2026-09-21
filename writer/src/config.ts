@@ -50,7 +50,8 @@ export interface WriterConfig {
   deployBlock: bigint;
   markets: Map<string, MarketInfo>;
   registryJson: string;
-  inviteCodes: Set<string>;
+  privyAppId?: string;
+  privyAppSecret?: string;
   resendApiKey?: string;
   waitlistFile: string;
   waitlistAdminToken?: string;
@@ -79,10 +80,6 @@ function requireAddress(name: string): Address {
   const v = requireEnv(name);
   if (!isAddress(v)) throw new Error(`${name} is not a valid address`);
   return v;
-}
-
-export function parseInviteCodes(raw: string): Set<string> {
-  return new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
 }
 
 export const DEFAULT_CORS_ORIGINS =
@@ -159,7 +156,8 @@ export function loadConfig(): WriterConfig {
     livePriorSuspendMs: Number(process.env.LIVE_PRIOR_SUSPEND_MS ?? 30_000),
     ...(process.env.MAINNET_INFO_URL ? { mainnetInfoUrl: process.env.MAINNET_INFO_URL } : {}),
     pokerIntervalMs,
-    inviteCodes: parseInviteCodes(process.env.INVITE_CODES ?? ""),
+    privyAppId: process.env.PRIVY_APP_ID,
+    privyAppSecret: process.env.PRIVY_APP_SECRET,
     waitlistAdminToken: process.env.WAITLIST_ADMIN_TOKEN,
     googleSheets: googleSheetsConfig(process.env),
     resendApiKey: process.env.RESEND_API_KEY,

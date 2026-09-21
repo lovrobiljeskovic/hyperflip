@@ -8,6 +8,7 @@ import { BPS, clientIp, WAD } from "./pure.js";
 import { quoteDigest, type ParlayQuote, type QuoteLeg, type QuoteRecord } from "./quotes.js";
 import type { LegPriceObservation } from "./infoApi.js";
 import { isValidEmail, validCohort, type RateLimiter, type Waitlist } from "./waitlist.js";
+import type { AuthenticatedAccount } from "./auth.js";
 
 export interface Metrics {
   quoted: number;
@@ -38,7 +39,8 @@ export interface QuoteDeps {
   metrics: Metrics;
 
   waitlist?: Waitlist;
-  sendInvite?(email: string, code: string): Promise<void>;
+  sendInvite?(email: string): Promise<void>;
+  authenticate?(token: string): Promise<AuthenticatedAccount | null>;
   signupLimiter?: RateLimiter;
   syncWaitlist?(): Promise<void>;
 
@@ -57,7 +59,7 @@ export interface QuoteDeps {
 }
 
 type Validated =
-  | { ok: true; taker: Address; legs: QuoteLeg[]; stake: bigint; inviteCode: string }
+  | { ok: true; taker: Address; legs: QuoteLeg[]; stake: bigint }
   | { ok: false; status: number; reason: string };
 
 export function sameGameLeg(legs: QuoteLeg[], cfg: WriterConfig): Address | null {
@@ -79,17 +81,9 @@ export function validateQuoteRequest(
   body: unknown,
   cfg: WriterConfig,
   now: number,
-  waitlist?: { has(code: string): boolean },
 ): Validated {
-  const b = body as { taker?: unknown; legs?: unknown; stake?: unknown; inviteCode?: unknown };
-  if (
-    !b ||
-    typeof b.inviteCode !== "string" ||
-    !(cfg.inviteCodes.has(b.inviteCode) || waitlist?.has(b.inviteCode))
-  ) {
-    return { ok: false, status: 403, reason: "bad-invite" };
-  }
-  if (typeof b.taker !== "string" || !isAddress(b.taker)) {
+  const b = body as { taker?: unknown; legs?: unknown; stake?: unknown } | null;
+  if (typeof b?.taker !== "string" || !isAddress(b.taker)) {
     return { ok: false, status: 400, reason: "bad-taker" };
   }
   if (!Array.isArray(b.legs)) return { ok: false, status: 400, reason: "bad-legs" };
@@ -120,13 +114,14 @@ export function validateQuoteRequest(
   }
   if (stake <= 0n) return { ok: false, status: 400, reason: "bad-stake" };
   if (stake > cfg.maxStake) return { ok: false, status: 400, reason: "stake-too-big" };
-  return { ok: true, taker: b.taker as Address, legs, stake, inviteCode: b.inviteCode };
+  return { ok: true, taker: b.taker as Address, legs, stake };
 }
 
 export async function handleQuote(
   deps: QuoteDeps,
   body: unknown,
   ip = "unknown",
+  authorization?: string,
 ): Promise<{ status: number; json: unknown }> {
   const { cfg, exposure, metrics } = deps;
   if (deps.ready && !deps.ready()) {
@@ -137,14 +132,15 @@ export async function handleQuote(
     reject(metrics, "rate-limited");
     return { status: 429, json: { error: "rate-limited" } };
   }
-  const v = validateQuoteRequest(body, cfg, deps.now(), deps.waitlist);
+  const admission = await authenticateAdmission(deps, authorization, ip);
+  if ("status" in admission) return admission;
+  const v = validateQuoteRequest(body, cfg, deps.now());
   if (!v.ok) {
-    if (v.reason === "bad-invite" && deps.badInviteLimiter && !deps.badInviteLimiter.allow(ip)) {
-      reject(metrics, "rate-limited");
-      return { status: 429, json: { error: "rate-limited" } };
-    }
     reject(metrics, v.reason);
     return { status: v.status, json: { error: v.reason } };
+  }
+  if (!admission.account.wallets.includes(v.taker.toLowerCase())) {
+    return { status: 403, json: { error: "wallet-not-linked" } };
   }
   const vaults = [...new Set(v.legs.map((l) => l.vault.toLowerCase()))].map((addr) => addr as Address);
 
@@ -203,7 +199,7 @@ export async function handleQuote(
   // ponytail: one cap for the whole ticket; any in-play leg shrinks it to the in-play cap.
   const inPlay = v.legs.some((l) => { const s = cfg.markets.get(l.vault.toLowerCase())?.startMs; return s !== undefined && now >= s; });
   const marketCap = inPlay ? (cfg.perMarketCap * cfg.inPlayCapBps) / BPS : cfg.perMarketCap;
-  const check = exposure.check(risk, vaults, allowance, marketCap, now, cfg.perClusterCap, v.inviteCode, cfg.perCodeReservedCap);
+  const check = exposure.check(risk, vaults, allowance, marketCap, now, cfg.perClusterCap, admission.account.userId, cfg.perCodeReservedCap);
   if (!check.ok) {
     reject(metrics, check.reason);
     console.log(JSON.stringify({ at: new Date(now).toISOString(), event: "quote-rejected", reason: check.reason, risk: risk.toString() }));
@@ -211,7 +207,7 @@ export async function handleQuote(
     return { status: 409, json: { error: check.reason, maxStake: fitStake.toString() } };
   }
   const quoteId = deps.randomId();
-  exposure.reserve(quoteId, risk, vaults, now + cfg.quoteTtlMs, v.inviteCode);
+  exposure.reserve(quoteId, risk, vaults, now + cfg.quoteTtlMs, admission.account.userId);
 
   const quote: ParlayQuote = {
     taker: v.taker,
@@ -308,16 +304,27 @@ export async function handleWaitlist(
   return { status: 200, json: { ok: true } };
 }
 
-export function handleAccess(deps: QuoteDeps, body: unknown, ip: string) {
-  if (!deps.waitlist) return { status: 503, json: { error: "waitlist-unavailable" } };
-  const code = (body as { inviteCode?: unknown } | null)?.inviteCode;
-  // App access requires an admitted signup, not a standalone environment code.
-  if (typeof code !== "string" || !code || code.length > 256 || !deps.waitlist.has(code)) {
+async function authenticateAdmission(deps: QuoteDeps, authorization: string | undefined, ip: string): Promise<{ account: AuthenticatedAccount } | { status: number; json: { error: string } }> {
+  const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : "";
+  let account: AuthenticatedAccount | null = null;
+  if (!deps.authenticate || !deps.waitlist) return { status: 503, json: { error: "access-unavailable" } };
+  if (token && token.length <= 8192) {
+    try { account = await deps.authenticate(token); }
+    catch { return { status: 503, json: { error: "access-unavailable" } }; }
+  }
+  if (!account) {
     if (deps.badInviteLimiter && !deps.badInviteLimiter.allow(ip)) {
       return { status: 429, json: { error: "rate-limited" } };
     }
-    return { status: 403, json: { error: "not-admitted" } };
+    return { status: 401, json: { error: "unauthenticated" } };
   }
+  if (!deps.waitlist.claim(account.userId, account.emails)) return { status: 403, json: { error: "not-admitted" } };
+  return { account };
+}
+
+export async function handleAccess(deps: QuoteDeps, authorization: string | undefined, ip: string) {
+  const admission = await authenticateAdmission(deps, authorization, ip);
+  if ("status" in admission) return admission;
   return { status: 200, json: { ok: true } };
 }
 
@@ -344,7 +351,7 @@ export async function handleAdmission(deps: QuoteDeps, body: unknown) {
 
 const MAX_BODY = 64 * 1024;
 
-// CORS controls browser access; invite codes and exposure caps enforce access limits.
+// CORS controls browser access; authenticated admission and exposure caps enforce access limits.
 function corsAllowedOrigin(req: http.IncomingMessage, allowlist: string[]): string | undefined {
   const raw = req.headers.origin;
   const origin = Array.isArray(raw) ? raw[0] : raw;
@@ -405,7 +412,7 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
       res.writeHead(204, {
         ...cors,
         "Access-Control-Allow-Methods": "GET, POST",
-        "Access-Control-Allow-Headers": "content-type",
+        "Access-Control-Allow-Headers": "content-type, authorization",
         "Access-Control-Max-Age": "86400",
       });
       return res.end();
@@ -466,11 +473,11 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
         try {
           const ip = clientIp(req.headers["x-forwarded-for"], req.socket.remoteAddress);
           if (url === "/access") {
-            const r = handleAccess(deps, body, ip);
+            const r = await handleAccess(deps, req.headers.authorization, ip);
             return send(r.status, r.json);
           }
           if (url === "/quote") {
-            const r = await handleQuote(deps, body, ip);
+            const r = await handleQuote(deps, body, ip, req.headers.authorization);
             return send(r.status, r.json);
           }
           const r = url === "/integrations/google-sheets/admit" ? await handleAdmission(deps, body) : await handleWaitlist(deps, body, ip);
