@@ -5,7 +5,7 @@ import { erc20Abi } from "viem";
 import { useAccount, useBalance, usePublicClient, useReadContract, useSwitchChain, useWriteContract } from "wagmi";
 import { fetchLimits, type QuoteResult, type WriterLimits, type WriterQuote } from "@/lib/writer";
 import { formatUsdc, secondsLeft, shortError } from "@/lib/format";
-import { appChain, BRIDGED, HL_DRIP } from "@/lib/chain";
+import { appChain, BRIDGED, coreChain, HL_DRIP } from "@/lib/chain";
 import { PARLAY_VAULT } from "@/lib/contracts";
 import { useConnectAction, useUsdc, useWalletState } from "@/lib/wallet";
 import { tryParseStake, TicketSession, approveUsdc, mintTicket, quoteMatches, type BuilderLeg } from "@/lib/ticket";
@@ -216,13 +216,17 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
     if (!walletReady) return { kind: "disabled", label: "Checking wallet…" };
     if (!isConnected) return { kind: "connect", label: "Connect wallet" };
     if (!isLinked) return { kind: "connect", label: "Verify wallet" };
-    if (chainId !== undefined && chainId !== appChain.id)
+    // The bridge step moves the wallet to the core chain mid-flow; keep it mounted (and its
+    // "sent" status visible) instead of swapping in the switch-chain CTA until funds land.
+    const onCore = BRIDGED && chainId === coreChain.id;
+    if (chainId !== undefined && chainId !== appChain.id && !onCore)
       return { kind: "switch-chain", label: `Switch to ${appChain.name}` };
     if (BRIDGED) {
       const gasOut = gas !== undefined && gas.value === 0n;
       const short = stakeBase !== null && usdcBalance !== undefined ? stakeBase - usdcBalance : 0n;
       if (gasOut || usdcBalance === 0n || short > 0n) return { kind: "bridge", usdc: short > 0n ? short : 0n, gas: gasOut };
     }
+    if (onCore) return { kind: "switch-chain", label: `Switch to ${appChain.name}` };
     if (usdcBalance === 0n) return { kind: "external", label: "Get testnet USDC →", href: HL_DRIP, hint: DRIP_HINT };
     if (gas !== undefined && gas.value === 0n)
       return { kind: "external", label: "Get HYPE for gas →", href: HL_DRIP, hint: DRIP_HINT };
