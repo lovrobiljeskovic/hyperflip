@@ -23,7 +23,7 @@ try {
       assert.equal(Object.keys(abis).length, 2);
       for (const abi of Object.values(abis)) assert(Array.isArray(abi) && abi.length > 0);
       const { loadDeployment } = await import(${JSON.stringify(pathToFileURL(join(temporary, "registry/deployment.mts")).href)});
-      assert.equal(loadDeployment({}).chainId, 998);
+      assert([998, 99801].includes(loadDeployment({}).chainId));
       const files = await import(${JSON.stringify(pathToFileURL(join(temporary, "services/files.mts")).href)});
       assert.equal(typeof files.replaceFile, "function");
     `], { env: { ...process.env, PATH: dirname(process.execPath) }, stdio: "pipe" });

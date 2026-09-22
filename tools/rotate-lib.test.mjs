@@ -132,6 +132,11 @@ test("sportsRegistryEntry satisfies the writer's registry shape with the sports 
   });
   const standalone = sportsRegistryEntry(twins, "0xdef");
   assert.equal(standalone.question, undefined);
+  // Elysium pair: the leg is what the ParlayVault reads, the 998 vault is what settles.
+  const pair = sportsRegistryEntry(twins, "0xleg", "0xdef");
+  assert.equal(pair.vault, "0xleg");
+  assert.equal(pair.sourceVault, "0xdef");
+  assert.equal(Object.keys(pair)[1], "sourceVault");
   assert.equal(standalone.group, undefined);
   assert.equal(sportsMarketSymbol(twins), "S12289");
 });

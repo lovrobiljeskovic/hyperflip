@@ -3,7 +3,7 @@ import type { UseWriteContractReturnType } from "wagmi";
 import { requestQuote, type QuoteResult, type WriterQuote } from "./writer";
 import { PARLAY_VAULT, parlayVaultAbi, parlayMintedEvent } from "./contracts";
 import { rememberPosition, type PositionReceipt } from "./position-receipts";
-import { hyperEvmTestnet } from "./chain";
+import { appChain } from "./chain";
 import { secondsLeft, USDC_DECIMALS } from "./format";
 
 export interface BuilderLeg {
@@ -63,7 +63,7 @@ export async function approveUsdc({ client, write, usdc, taker, amount, current 
   amount: bigint;
   current: () => boolean;
 }): Promise<void> {
-  const hash = await write({ address: usdc, abi: erc20Abi, functionName: "approve", args: [PARLAY_VAULT, amount], account: taker, chainId: hyperEvmTestnet.id });
+  const hash = await write({ address: usdc, abi: erc20Abi, functionName: "approve", args: [PARLAY_VAULT, amount], account: taker, chainId: appChain.id });
   const receipt = await client.waitForTransactionReceipt({ hash });
   if (!current()) throw new Error("Ticket changed; review the current ticket before minting.");
   if (receipt.status !== "success") throw new Error("approve reverted");
@@ -108,7 +108,7 @@ export async function mintTicket({ client, write, usdc, quote, sig, input, curre
   const args = [{ taker: quote.taker, legs: quote.legs, premium, maxPayout: BigInt(quote.maxPayout), deadline: BigInt(quote.deadline), quoteId: quote.quoteId }, sig] as const;
   await client.simulateContract({ address: PARLAY_VAULT, abi: parlayVaultAbi, functionName: "mint", args, account: quote.taker });
   check();
-  const hash = await write({ address: PARLAY_VAULT, abi: parlayVaultAbi, functionName: "mint", args, account: quote.taker, chainId: hyperEvmTestnet.id });
+  const hash = await write({ address: PARLAY_VAULT, abi: parlayVaultAbi, functionName: "mint", args, account: quote.taker, chainId: appChain.id });
   const receipt = await client.waitForTransactionReceipt({ hash });
   if (receipt.status !== "success") throw new Error("QUOTE_EXPIRED (mint reverted on-chain)");
   const minted = parseEventLogs({ abi: [parlayMintedEvent], logs: receipt.logs.filter(l => l.address.toLowerCase() === PARLAY_VAULT.toLowerCase()) })

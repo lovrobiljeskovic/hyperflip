@@ -1,3 +1,4 @@
+import { appChain } from "./chain";
 import { beforeEach, expect, test, vi } from "vitest";
 import { mintTicket, TicketSession } from "./ticket";
 import { requestQuote, type QuoteResult } from "./writer";
@@ -56,7 +57,7 @@ test("mint preserves exact approval, fresh quote, simulation and receipt order",
   const { calls, args, write, fresh } = setup();
   expect(await mintTicket(args)).toMatchObject({ id: "1", block: "100", kind: "mint" });
   expect(calls).toEqual(["allowance", "balanceOf", "approve", "receipt", "requote", "simulate", "mint", "receipt"]);
-  expect(write.mock.calls[0][0]).toMatchObject({ functionName: "approve", args: [expect.any(String), 1000000n], account: taker, chainId: 998 });
+  expect(write.mock.calls[0][0]).toMatchObject({ functionName: "approve", args: [expect.any(String), 1000000n], account: taker, chainId: appChain.id });
   expect(write.mock.calls[1][0]).toMatchObject({ functionName: "mint", args: [expect.objectContaining({ premium: 1000000n, maxPayout: 2000000n, quoteId: fresh.quote.quoteId }), fresh.sig] });
 });
 

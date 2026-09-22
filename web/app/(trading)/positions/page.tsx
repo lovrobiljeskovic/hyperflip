@@ -9,7 +9,7 @@ import { PARLAY_VAULT, parlayVaultAbi } from "@/lib/contracts";
 import { formatUsdc, multiplier, pct1, shortError, USDC_DECIMALS } from "@/lib/format";
 import { CountUp, Kickoff } from "@/app/live";
 import { formatUnits } from "viem";
-import { hyperEvmTestnet, tradeUrl } from "@/lib/chain";
+import { appChain, explorerAddress, tradeUrl } from "@/lib/chain";
 import { fetchMarkets, type Market, marketMid, sideLabel, withMarketVolumes } from "@/lib/writer";
 import { fetchMarketVolumes } from "@/lib/info";
 import { useMids } from "@/lib/mids";
@@ -17,7 +17,6 @@ import { useConnectAction, useWalletState } from "@/lib/wallet";
 import { appHref } from "@/lib/site";
 import { rememberPosition } from "@/lib/position-receipts";
 
-const EXPLORER = hyperEvmTestnet.blockExplorers.default.url;
 
 const VERDICT_STYLE: Record<LegVerdict, { label: string; className: string }> = {
   pending: { label: "Pending", className: "text-dim" },
@@ -119,7 +118,7 @@ function LegTable({
             <a
               href={
                 coin === undefined
-                  ? `${EXPLORER}/address/${leg.vault}`
+                  ? explorerAddress(leg.vault) ?? undefined
                   : tradeUrl(coin)
               }
               target="_blank"
@@ -233,7 +232,7 @@ function PositionsContent() {
         functionName: kind === "claim" ? "claim" : "resolveParlay",
         args: [id],
         account: address,
-        chainId: hyperEvmTestnet.id,
+        chainId: appChain.id,
       });
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       if (receipt.status !== "success") throw new Error("Transaction reverted; retry after refreshing the position.");

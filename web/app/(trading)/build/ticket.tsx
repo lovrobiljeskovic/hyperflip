@@ -22,7 +22,8 @@ import {
   USDC_DECIMALS,
   type PriceBreakdown,
 } from "@/lib/format";
-import { hyperEvmTestnet, tradeUrl } from "@/lib/chain";
+import { appChain, tradeUrl } from "@/lib/chain";
+import { BridgeStep } from "./bridge-step";
 import { Overround } from "@/app/overround-motif";
 import { CountUp } from "@/app/live";
 
@@ -172,7 +173,7 @@ export function Ticket({
   const mids = useMids();
   const printing = usePrinting();
   const { stake, setStake, quoteResult, ttlLeft, ttlSeconds, mintState, mintErrorMsg, mintErrorDetail,
-    maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain } = useTicket(legs, display);
+    maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain, address } = useTicket(legs, display);
 
   // Quote-derived display values. premium/maxPayout are the signed truth;
   // `bd` re-derives the writer's pricing steps for the breakdown accordion.
@@ -443,12 +444,13 @@ export function Ticket({
           {cta.kind === "switch-chain" && (
             <button
               type="button"
-              onClick={() => switchChain({ chainId: hyperEvmTestnet.id })}
+              onClick={() => switchChain({ chainId: appChain.id })}
               className="mono mt-4 w-full rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90"
             >
               {cta.label}
             </button>
           )}
+          {cta.kind === "bridge" && address && <BridgeStep address={address} needUsdc={cta.usdc} needGas={cta.gas} />}
           {cta.kind === "done" && (
             <Link
               href={cta.href}

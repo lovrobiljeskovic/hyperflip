@@ -35,6 +35,10 @@ test("parseMarkets accepts sports metadata and rejects malformed active markets"
   for (const raw of [[MARKET], { markets: [MARKET] }]) {
     assert.deepEqual(parseMarkets(JSON.stringify(raw)).get(VAULT), MARKET);
   }
+  // Elysium rows: `vault` is the leg the ParlayVault reads, `sourceVault` the 998 vault behind it.
+  const sourceVault = "0x69288D331911984fAeC8Af82688B7f718e2bB541";
+  assert.equal(parseMarkets(JSON.stringify([{ ...MARKET, sourceVault }])).get(VAULT)?.sourceVault, sourceVault);
+  assert.throws(() => parseMarkets(JSON.stringify([{ ...MARKET, sourceVault: "0x12" }])), /invalid sourceVault/);
   for (const [change, reason] of [
     [{ vault: "invalid" }, /invalid market vault/],
     [{ coinYes: undefined }, /coinYes/],

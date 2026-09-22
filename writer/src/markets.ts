@@ -1,7 +1,10 @@
 import { isAddress, type Address } from "viem";
 
 export interface MarketInfo {
+  /** Address the ParlayVault reads: the OutcomeVault on HyperEVM, or the OutcomeLeg on Elysium. */
   vault: Address;
+  /** HyperEVM OutcomeVault an Elysium leg mirrors (the Core account); absent on HyperEVM rows. */
+  sourceVault?: Address;
   coinYes: string;
   coinNo: string;
   // Event identity used to refuse two legs from the same game.
@@ -47,6 +50,7 @@ export function parseMarkets(raw: string): Map<string, MarketInfo> {
   const map = new Map<string, MarketInfo>();
   for (const market of list) {
     if (!isAddress(market.vault)) throw new Error(`invalid market vault: ${market.vault}`);
+    if (market.sourceVault !== undefined && market.sourceVault !== null && !isAddress(market.sourceVault)) throw new Error(`market ${market.vault} invalid sourceVault`);
     if (typeof market.coinYes !== "string" || typeof market.coinNo !== "string") throw new Error(`market ${market.vault} missing coinYes/coinNo`);
     if (typeof market.underlying !== "string" || market.underlying === "" || typeof market.cluster !== "string" || market.cluster === "") throw new Error(`market ${market.vault} missing underlying/cluster`);
     if (typeof market.title !== "string" || market.title === "" || typeof market.category !== "string" || market.category === "") throw new Error(`market ${market.vault} missing title/category`);
@@ -55,6 +59,7 @@ export function parseMarkets(raw: string): Map<string, MarketInfo> {
     if (priorYes !== undefined && !(priorYes > 0 && priorYes < 1)) throw new Error(`market ${market.vault} priorYes must be in (0,1)`);
     map.set(market.vault.toLowerCase(), {
       vault: market.vault as Address,
+      ...(market.sourceVault ? { sourceVault: market.sourceVault as Address } : {}),
       coinYes: market.coinYes,
       coinNo: market.coinNo,
       underlying: market.underlying,

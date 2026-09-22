@@ -1,4 +1,4 @@
-import { loadDeployment } from "../../registry/deployment.mjs";
+import { loadDeployment, type Deployment } from "../../registry/deployment.mjs";
 import { config as loadDotenv } from "dotenv";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -14,10 +14,8 @@ loadDotenv({ path: path.resolve(here, "../../.env") });
 export { parseMarkets } from "./markets.js";
 export type { MarketInfo } from "./markets.js";
 
-export interface WriterConfig {
-  chainId: number;
+export interface WriterConfig extends Deployment {
   rpcUrl: string;
-  parlayVault: Address;
   writerAddress: Address;
   quoteSignerKey: `0x${string}`;
   pokerKey: `0x${string}`;

@@ -74,6 +74,58 @@ public identity, without making RPC requests. An alternate manifest must be
 available at build time; never put secrets in it. Rollback selects the previous
 manifest and matching environment settings without restoring runtime state.
 
+## Elysium (Season 1): ParlayVault on chain 99801, vaults on 998
+
+Elysium testnet is an Arbitrum Orbit rollup settling to HyperEVM testnet (chain ID 99801,
+RPC `https://testnet-rpc.elysium.kinetiq.xyz`, HYPE gas, no subgraph, no published explorer
+yet). The outcome layer never moves: every `OutcomeVault` stays on 998 as the Core account
+and the settlement source. On Elysium live one `ParlayVault` v2 (quote token = bridged USDC
+`0x7D29d8047B905000459c0E80c34a26CeedcB47b2`) and one `OutcomeLeg` per market; on 998 one
+`SettlementRelay` bound to the Orbit Inbox `0x11178Df40CBf87a4343f4B3F8B09B366ceFA8Ec0`.
+
+Registry rows on Elysium carry two addresses: `vault` is the leg the ParlayVault reads (what
+the writer quotes and the app mints against) and `sourceVault` is the 998 vault behind it
+(what the keeper settles and rotation checks). Writer and web read `vault` as before.
+
+Manifest: same `registry/deployment.testnet.json`, with `evmChainId: 99801`, `coreChainId: 998`,
+`settlementRelay` and `inbox`. `registry/deployment.hyperevm-testnet.json` keeps the 998
+identity (the subgraph generator reads that one; it is also the fallback if Elysium slips).
+
+Deploy order, all from the registrar key (`PRIVATE_KEY`), which needs HYPE on both chains
+(`cast send $INBOX "depositEth()" --value 0.05ether` on 998 lands on the same address on
+Elysium in about a minute; no faucet):
+
+```bash
+INBOX_ADDRESS=0x1117…8Ec0 forge script script/DeployRelay.s.sol --rpc-url hyperevm_testnet --private-key $PRIVATE_KEY --broadcast --legacy
+QUOTE_TOKEN_ADDRESS=0x7D29…47b2 WRITER_ADDRESS=… QUOTE_SIGNER_ADDRESS=… MIN_PREMIUM_BPS=500 \
+  LEG_REGISTRAR_ADDRESS=… OWNER_ADDRESS=… forge script script/DeployParlay.s.sol --rpc-url elysium_testnet --private-key $PRIVATE_KEY --broadcast --skip-simulation --gas-estimate-multiplier 150
+SOURCE_VAULT=<998 vault> RELAY_ADDRESS=… PARLAY_VAULT_ADDRESS=<Elysium vault> \
+  forge script script/DeployLeg.s.sol --rpc-url elysium_testnet --private-key $PRIVATE_KEY --broadcast --skip-simulation --gas-estimate-multiplier 150
+```
+
+Every Elysium broadcast needs `--skip-simulation --gas-estimate-multiplier 150`: Nitro counts L1 data posting as gas
+units that float with the parent basefee, so Forge's own limit fails with `intrinsic gas too low` or runs out of gas mid-creation (the first ParlayVault attempt died at exactly its 6.9M limit). Load
+`.env` into the shell first (`set -a; source .env; set +a`); Forge reads it for itself but
+does not export `$PRIVATE_KEY`.
+
+Only our own HIP-4 venue (`flip`) is listed on Elysium: `tools/mirror-legs.mjs` mirrors the live
+house rows and archives every other venue's rows, and `ROTATE_VENUES=flip` in `.env` keeps hourly
+rotation from adding foreign-venue markets (house games are wrapped by `house-markets.mjs sync`).
+
+Rotation does the third step itself for every new vault once `ELYSIUM_RPC`, `RELAY_ADDRESS`
+and `PARLAY_VAULT_ADDRESS` are in `.env` (`tools/rotate-lib.mjs` `deployPair`). The bank
+approves the Elysium vault from the cold key (ceremony) after bridging its float.
+
+Services: the writer points `WRITER_RPC` at Elysium (its ParlayVault, poker index and quote
+domain are all there; pricing is HTTP and unchanged); set `PARLAY_INDEX_FROM_BLOCK` to the
+Elysium deploy block and delete `writer/parlays.json` once. The keeper keeps `TESTNET_RPC`
+on 998 for `settle()` and adds `ELYSIUM_RPC`; after each settled vault it calls `relay()`
+once (retryable fees paid in HYPE on 998, doubled and refunded on Elysium) and stops when
+the leg reports settled. The web build reads the manifest as usual; set
+`NEXT_PUBLIC_POSITIONS_SOURCE=legacy` (no subgraph on Elysium) and `NEXT_PUBLIC_CORE_RPC_URL`
+for the bridge step, which moves the USDC shortfall and 0.01 HYPE of gas from 998 through
+the canonical bridge before the first mint.
+
 ## Persistent state
 
 Preserve these files across deployments, backups, and host replacement:

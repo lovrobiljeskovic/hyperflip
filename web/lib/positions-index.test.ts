@@ -1,3 +1,4 @@
+import { appChain } from "./chain";
 import { afterEach, expect, test, vi } from "vitest";
 import { createPositionsIndex, parsePositionQuery } from "./positions-index";
 import { DEPLOY_BLOCK, PARLAY_VAULT } from "./contracts";
@@ -5,7 +6,7 @@ import { DEPLOY_BLOCK, PARLAY_VAULT } from "./contracts";
 const wallet = `0x${"1".repeat(40)}`;
 const vault = `0x${"2".repeat(40)}`;
 const hash = `0x${"a".repeat(64)}`;
-const scope = `998:${PARLAY_VAULT.toLowerCase()}`;
+const scope = `${appChain.id}:${PARLAY_VAULT.toLowerCase()}`;
 const block = Number(DEPLOY_BLOCK) + 100;
 const query = (extra = "") => new URLSearchParams(`wallet=${wallet}${extra}`);
 afterEach(() => vi.useRealTimers());
@@ -18,13 +19,13 @@ function setup(count = 21) {
     premium: "1000000", maxPayout: "2000000", status: 0, burned: false, burnHolder: null,
     mintBlock: String(DEPLOY_BLOCK), mintHash: hash, mintTimestamp: String(now - 100),
   } }));
-  const page = { _meta: meta, deployment: { chainId: "998", vault: PARLAY_VAULT, startBlock: String(DEPLOY_BLOCK), schemaVersion: 1 }, walletTickets: tickets };
+  const page = { _meta: meta, deployment: { chainId: String(appChain.id), vault: PARLAY_VAULT, startBlock: String(DEPLOY_BLOCK), schemaVersion: 1 }, walletTickets: tickets };
   const fetcher = vi.fn(async (_url: unknown, init: RequestInit | undefined) => {
     const body = JSON.parse(String(init?.body));
     return Response.json({ data: body.variables ? { ...page, walletTickets: tickets.filter(t => BigInt(t.ticket.number) < BigInt(body.variables.before)).slice(0, body.variables.first) } : { _meta: meta } });
   });
   const client = {
-    getChainId: vi.fn(async () => 998),
+    getChainId: vi.fn(async () => appChain.id),
     getBlock: vi.fn(async () => ({ number: BigInt(block), hash, timestamp: BigInt(now) })),
     readContract: vi.fn(async ({ functionName }: { functionName: string }) => {
       if (functionName === "parlay") return { writer: wallet, premium: 1000000n, maxPayout: 2000000n, status: 0,

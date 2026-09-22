@@ -1,6 +1,6 @@
 import { isAddress, type Address, type PublicClient } from "viem";
 import { DEPLOY_BLOCK, PARLAY_VAULT, outcomeVaultAbi, parlayVaultAbi } from "./contracts";
-import { hyperEvmTestnet } from "./chain";
+import { appChain } from "./chain";
 import { legVerdict, type Leg, type ParlayData, type Row } from "./positions";
 import type { PositionPage, PositionSnapshot } from "./positions-api";
 import { pool } from "./pool";
@@ -9,7 +9,7 @@ const DECIMAL = /^(0|[1-9][0-9]{0,77})$/;
 const HASH = /^0x[0-9a-fA-F]{64}$/;
 const ZERO = /^0x0{40}$/;
 const MAX_ID = (1n << 256n) - 1n;
-const SCOPE = `${hyperEvmTestnet.id}:${PARLAY_VAULT.toLowerCase()}`;
+const SCOPE = `${appChain.id}:${PARLAY_VAULT.toLowerCase()}`;
 
 export class PositionsError extends Error {
   constructor(message: string, readonly status = 503) { super(message); }
@@ -106,7 +106,7 @@ export function createPositionsIndex(client: PublicClient, endpoint: string, tok
       return read();
     });
     await cached("chain", 60_000, async () => {
-      if (await readRpc(() => client.getChainId()) !== hyperEvmTestnet.id) throw new PositionsError("Positions RPC chain mismatch");
+      if (await readRpc(() => client.getChainId()) !== appChain.id) throw new PositionsError("Positions RPC chain mismatch");
     });
     const [meta, head] = await Promise.all([
       cached("meta", 10_000, () => graph<{ _meta: Meta }>(META_QUERY)),
@@ -134,7 +134,7 @@ export function createPositionsIndex(client: PublicClient, endpoint: string, tok
     if (metaSnapshot(page._meta).hash !== snapshot.hash) throw new PositionsError("Positions snapshot mismatch", 409);
     const deployment = page.deployment;
     // An empty, caught-up deployment has no event-created entity yet.
-    if (!deployment || deployment.chainId !== String(hyperEvmTestnet.id) || deployment.vault.toLowerCase() !== PARLAY_VAULT.toLowerCase() ||
+    if (!deployment || deployment.chainId !== String(appChain.id) || deployment.vault.toLowerCase() !== PARLAY_VAULT.toLowerCase() ||
         deployment.startBlock !== String(DEPLOY_BLOCK) || deployment.schemaVersion !== 1) throw new PositionsError("Positions deployment mismatch");
     if (!Array.isArray(page.walletTickets) || page.walletTickets.length > query.limit + 1) throw new PositionsError("Invalid positions response");
     let previous = BigInt(query.before ?? String(MAX_ID));

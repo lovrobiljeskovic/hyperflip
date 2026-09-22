@@ -16,6 +16,7 @@ export default defineConfig({
     env: {
       DEPLOYMENT_FILE: fileURLToPath(new URL("./deployment/deployment.testnet.json", import.meta.url)),
       NEXT_PUBLIC_CHAIN_ID: String(deployment.chainId),
+      NEXT_PUBLIC_CHAIN_NAME: deployment.chainName,
       NEXT_PUBLIC_PARLAY_VAULT: deployment.parlayVault,
       NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK: String(deployment.deployBlock),
     },

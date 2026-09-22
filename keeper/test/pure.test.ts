@@ -12,6 +12,10 @@ import {
   newestSampleBefore,
   opKey,
   parseRegistryMarkets,
+  relayFees,
+  RELAY_GAS_LIMIT,
+  RELAY_HOLD_MS,
+  shouldRelay,
   resolveBalanceCheck,
   WAD,
 } from "../src/pure.js";
@@ -161,6 +165,23 @@ test("parseRegistryMarkets CRITICAL: keeper watches exactly what the writer quot
   // A non-numeric expiry must not become a NaN deadline that alerts on every tick forever.
   const bogus = JSON.stringify({ markets: [{ vault: "0x69288D331911984fAeC8Af82688B7f718e2bB541", expiryMs: "soon" }] });
   assert.equal(parseRegistryMarkets(bogus)[0].expiryMs, undefined);
+});
+
+test("parseRegistryMarkets: an Elysium row settles its HyperEVM sourceVault and relays to the leg", () => {
+  const leg = "0xd6959Ac6a60b5af8edFf8165f642FBc7D02C1c0E";
+  const vault = "0x69288D331911984fAeC8Af82688B7f718e2bB541";
+  assert.deepEqual(parseRegistryMarkets(JSON.stringify({ markets: [{ vault: leg, sourceVault: vault, expiryMs: 5 }] })), [
+    { vault, leg, expiryMs: 5 },
+  ]);
+  assert.throws(() => parseRegistryMarkets(JSON.stringify({ markets: [{ vault: leg, sourceVault: "0x1234" }] })), /invalid sourceVault/);
+});
+
+test("relay pricing doubles both fee legs and shouldRelay honours the hold window", () => {
+  assert.deepEqual(relayFees(1_000n, 7n), { maxSubmissionCost: 2_000n, gasLimit: RELAY_GAS_LIMIT, maxFeePerGas: 14n, value: 2_000n + RELAY_GAS_LIMIT * 14n });
+  assert.equal(shouldRelay(true, undefined, 0), false);
+  assert.equal(shouldRelay(false, undefined, 0), true);
+  assert.equal(shouldRelay(false, 1_000, 1_000 + RELAY_HOLD_MS - 1), false);
+  assert.equal(shouldRelay(false, 1_000, 1_000 + RELAY_HOLD_MS), true);
 });
 
 test("parseRegistryMarkets: a malformed registry fails loudly rather than watching a short list", () => {

@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { bigBlocks, deploy, info, pickSports, ROOT, rotatedRegistry, settledVaults, sportsRegistryEntry } from "./rotate-lib.mjs";
+import { bigBlocks, deployPair, info, pickSports, ROOT, rotatedRegistry, settledVaults, sportsRegistryEntry } from "./rotate-lib.mjs";
 
 const REGISTRY = path.join(ROOT, "registry/markets.json");
 const ENV_FILE = path.join(ROOT, ".env");
@@ -22,13 +22,19 @@ const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));
 const [{ outcomes, questions }, mids, settled] = await Promise.all([
   info("outcomeMeta"),
   info("allMids"),
-  settledVaults(registry.markets.map((m) => m.vault)),
+  settledVaults(registry.markets.map((m) => m.sourceVault ?? m.vault)),
 ]);
 const nowMs = Date.now();
 const knownCoins = new Set(registry.markets.map((m) => m.coinYes));
+// ROTATE_VENUES=flip keeps the board to our own HIP-4 venue (Elysium legs are only deployed for
+// what we list, so foreign venues would otherwise get legs too). Unset = every venue, as before.
+const venues = process.env.ROTATE_VENUES?.split(",").map((v) => v.trim()).filter(Boolean);
+const outcomesInScope = venues?.length ? outcomes.filter((o) => venues.includes(o.venue)) : outcomes;
 
 // A settled vault is done regardless of its deadline: off the board, into archived.
-const retired = (m) => m.expiryMs <= nowMs || settled.has(m.vault.toLowerCase());
+// Settlement lives on the 998 vault; on Elysium rows that is sourceVault, not the leg in `vault`.
+const coreVault = (m) => (m.sourceVault ?? m.vault).toLowerCase();
+const retired = (m) => m.expiryMs <= nowMs || settled.has(coreVault(m));
 const expired = registry.markets.filter(retired);
 const venueOf = new Map(outcomes.map((o) => [`#${o.outcome * 10}`, o.venue]));
 let backfilled = 0;
@@ -40,14 +46,14 @@ const kept = registry.markets
     backfilled++;
     return { ...m, deployer };
   });
-const picks = pickSports({ outcomes, questions, mids, knownCoins, nowMs });
+const picks = pickSports({ outcomes: outcomesInScope, questions, mids, knownCoins, nowMs });
 
 // Retain metadata for settlement recovery of retired vaults.
 const archived = [...(registry.archived ?? []), ...expired];
 const writeRegistry = (markets) => writeFileSync(REGISTRY, JSON.stringify(rotatedRegistry(registry, markets, archived), null, 2) + "\n");
 
 console.log(`registry: ${kept.length} live, ${expired.length} expired (dropped)`);
-for (const m of expired) console.log(`  drop ${m.vault} — ${m.title}${settled.has(m.vault.toLowerCase()) ? " (settled)" : ""}`);
+for (const m of expired) console.log(`  drop ${m.vault} — ${m.title}${settled.has(coreVault(m)) ? " (settled)" : ""}`);
 if (picks.length === 0) {
   console.log("nothing to rotate — no fresh sports markets beyond what's wrapped");
   if ((expired.length || backfilled) && !dryRun) {
@@ -70,9 +76,9 @@ const deployed = [];
 bigBlocks("on");
 try {
   for (const pick of picks) {
-    const vault = await deploy(pick);
-    deployed.push(sportsRegistryEntry(pick, vault));
-    console.log(`deployed ${vault} for outcome ${pick.outcome}`);
+    const { vault, sourceVault } = await deployPair(pick);
+    deployed.push(sportsRegistryEntry(pick, vault, sourceVault));
+    console.log(`deployed ${sourceVault ?? vault}${sourceVault ? ` (leg ${vault})` : ""} for outcome ${pick.outcome}`);
   }
 } finally {
   // Record landed vaults even if resetting the block mode fails.

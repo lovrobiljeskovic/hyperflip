@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadDeployment, verifyDeploymentRpc } from "../../registry/deployment.mjs";
 
 test("deployment selection rejects conflicting settings and malformed alternate manifests", () => {
   const main = loadDeployment({});
-  assert.equal(main.chainId, 998);
-  assert.equal(main.deployBlock, 61906227n);
+  const file = JSON.parse(readFileSync(new URL("../../registry/deployment.testnet.json", import.meta.url), "utf8"));
+  assert.equal(main.chainId, file.evmChainId);
+  assert.equal(main.coreChainId, 998);
+  assert.equal(main.chainName, file.evmChainId === 998 ? "HyperEVM Testnet" : "Elysium Testnet");
+  assert.equal(main.deployBlock, BigInt(file.parlayDeployBlock));
   assert.equal(loadDeployment({ PARLAY_VAULT_ADDRESS: main.parlayVault.toUpperCase() }).parlayVault, main.parlayVault);
   for (const env of [
     { PARLAY_VAULT_ADDRESS: `0x${"1".repeat(40)}` }, { PARLAY_DEPLOY_BLOCK: "61907400" }, { EVM_CHAIN_ID: "999" },
@@ -29,6 +32,18 @@ test("deployment selection rejects conflicting settings and malformed alternate 
       writeFileSync(env.DEPLOYMENT_FILE, JSON.stringify({ ...alternate, ...change }));
       assert.throws(() => loadDeployment(env), /Deployment manifest/);
     }
+    const relay = `0x${"2".repeat(40)}`;
+    const inbox = `0x${"3".repeat(40)}`;
+    writeFileSync(env.DEPLOYMENT_FILE, JSON.stringify({ ...alternate, evmChainId: 99801, coreChainId: 998, settlementRelay: relay, inbox }));
+    assert.deepEqual(loadDeployment(env), { chainId: 99801, chainName: "Elysium Testnet", coreChainId: 998, parlayVault: alternate.parlayVault, deployBlock: 1n, settlementRelay: relay, inbox });
+    assert.equal(loadDeployment({ ...env, EVM_CHAIN_ID: "99801" }).chainId, 99801);
+    assert.throws(() => loadDeployment({ ...env, EVM_CHAIN_ID: "998" }), /disagrees/);
+    for (const change of [{ coreChainId: 99801 }, { settlementRelay: undefined }, { inbox: `0x${"0".repeat(40)}` }]) {
+      writeFileSync(env.DEPLOYMENT_FILE, JSON.stringify({ ...alternate, evmChainId: 99801, coreChainId: 998, settlementRelay: relay, inbox, ...change }));
+      assert.throws(() => loadDeployment(env), /Deployment manifest/);
+    }
+    writeFileSync(env.DEPLOYMENT_FILE, JSON.stringify({ ...alternate, coreChainId: 998 }));
+    assert.equal(loadDeployment(env).settlementRelay, undefined);
     writeFileSync(env.DEPLOYMENT_FILE, "{");
     assert.throws(() => loadDeployment(env), /Cannot read/);
   } finally { rmSync(directory, { recursive: true, force: true }); }
@@ -37,7 +52,7 @@ test("deployment selection rejects conflicting settings and malformed alternate 
 test("RPC verification rejects chain, address, block and unavailable history before startup", async () => {
   const deployment = loadDeployment({});
   const client = {
-    getChainId: async () => 998,
+    getChainId: async () => deployment.chainId,
     getCode: async ({ blockNumber }: { blockNumber?: bigint }): Promise<`0x${string}` | undefined> => blockNumber === deployment.deployBlock - 1n ? undefined : "0x1234",
   };
   await verifyDeploymentRpc(client, deployment);

@@ -1,7 +1,10 @@
 {
   "schemaVersion": 1,
   "network": "testnet",
-  "evmChainId": 998,
-  "parlayVault": "0x407cdc0b15e8d81f4d122481ecf92dbe07dc0169",
-  "parlayDeployBlock": "61906227"
+  "evmChainId": 99801,
+  "coreChainId": 998,
+  "parlayVault": "0xead53f4c662c69ed31ae2d9054d6b0a4ae1a00d6",
+  "parlayDeployBlock": "27935",
+  "settlementRelay": "0x7f495a95d34b14896820b178da269a1b1edc3612",
+  "inbox": "0x11178df40cbf87a4343f4b3f8b09b366cefa8ec0"
 }

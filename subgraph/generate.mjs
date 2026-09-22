@@ -9,7 +9,8 @@ const check = args.includes("--check");
 let network = args.includes("--local") ? "local" : args.find(arg => arg.startsWith("--network="))?.slice(10);
 if (check && !network) network = readFileSync(resolve(directory, "subgraph.yaml"), "utf8").match(/^    network: ([a-z0-9-]+)$/m)?.[1];
 if (!network || !/^[a-z][a-z0-9-]*$/.test(network)) throw new Error("Pass --local for local checks, or --network=<verified-provider-testnet-slug>; never guess a hosted network");
-const manifest = JSON.parse(readFileSync(resolve(root, "registry/deployment.testnet.json"), "utf8"));
+// The subgraph indexes the HyperEVM ParlayVault only; Elysium has no subgraph (positions use the legacy index there).
+const manifest = JSON.parse(readFileSync(resolve(root, "registry/deployment.hyperevm-testnet.json"), "utf8"));
 if (manifest.schemaVersion !== 1 || manifest.evmChainId !== 998 || manifest.network !== "testnet" ||
     !/^0x[0-9a-f]{40}$/.test(manifest.parlayVault) || !/^[1-9]\d*$/.test(manifest.parlayDeployBlock)) throw new Error("Invalid deployment manifest");
 const abi = JSON.parse(readFileSync(resolve(root, "writer/abi/ParlayVault.json"), "utf8"))

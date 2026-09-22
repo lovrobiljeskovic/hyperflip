@@ -5,6 +5,7 @@ import {
   defineChain,
   fallback,
   http,
+  parseAbi,
   zeroAddress,
   type Address,
 } from "viem";
@@ -20,7 +21,9 @@ import {
   fractionWadFromSettledValue,
   newestSampleBefore,
   opKey,
+  relayFees,
   resolveBalanceCheck,
+  shouldRelay,
   type BalanceSample,
   type OpType,
 } from "./pure.js";
@@ -48,6 +51,15 @@ const SETTLEMENT_STALE_AFTER_MS = 15 * 60_000;
  * a stalled sampler can't serve an arbitrarily old balance as a confident pre-op baseline; falls
  * through to the unconfident/fallback path instead. */
 const MAX_SAMPLE_AGE_MS = 60_000;
+/** The Elysium settlement path (src/SettlementRelay.sol, src/OutcomeLeg.sol): three calls, so the
+ * ABIs live here rather than in the generated set (see scripts/abis.mjs). */
+const settlementRelayAbi = parseAbi([
+  "function relay(address vault, address leg, uint256 maxSubmissionCost, uint256 gasLimit, uint256 maxFeePerGas) payable returns (uint256)",
+]);
+const inboxAbi = parseAbi(["function calculateRetryableSubmissionFee(uint256 dataLength, uint256 baseFee) view returns (uint256)"]);
+const outcomeLegAbi = parseAbi(["function settled() view returns (bool)"]);
+/** receiveSettlement(address,uint256): selector plus two words. */
+const RELAY_DATA_LENGTH = 68n;
 
 interface VaultInfo {
   outcome: number;
@@ -92,7 +104,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   // balance-verification path) — see keeper/rpc-check.mjs.
   const rpcUrls = config.rpcUrl.split(",").map((u) => u.trim()).filter(Boolean);
   const chain = defineChain({
-    id: config.chainId,
+    id: config.coreChainId,
     name: "HyperEVM Testnet",
     nativeCurrency: { name: "HYPE", symbol: "HYPE", decimals: 18 },
     rpcUrls: { default: { http: rpcUrls } },
@@ -102,7 +114,16 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   // dead config: a 429 on one URL falls through to the next, then the set is retried.
   const transport = fallback(rpcUrls.map((u) => http(u)));
   const publicClient = createPublicClient({ chain, transport });
-  await verifyDeploymentRpc(publicClient, config);
+  // With the ParlayVault on Elysium, the manifest is verified against the Elysium RPC and this
+  // client only has to be the Core chain; settle() never touches the ParlayVault.
+  const elysiumClient = config.elysiumRpcUrl
+    ? createPublicClient({ transport: fallback(config.elysiumRpcUrl.split(",").map((u) => u.trim()).filter(Boolean).map((u) => http(u))) })
+    : undefined;
+  if (config.chainId === config.coreChainId) await verifyDeploymentRpc(publicClient, config);
+  else {
+    if ((await publicClient.getChainId()) !== config.coreChainId) throw new Error("TESTNET_RPC chain disagrees with the manifest's coreChainId");
+    await verifyDeploymentRpc(elysiumClient!, config);
+  }
   const walletClient = createWalletClient({ account, chain, transport });
   // attest() (balanceLoop) and settle() (settlementLoop) both send from `account` with no
   // explicit nonce; serializing the send through this queue is what stops the two loops racing
@@ -409,6 +430,41 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     }
   }
 
+  // Elysium legs: once the 998 vault holds its fraction, anyone can pay the retryable that carries
+  // it up; this keeper is the one that does. relay() reads the fraction on-chain, so a wrong send
+  // costs fees only, and the leg rejects a second delivery — hence the hold window, not a lock.
+  const relaySentAt = new Map<Address, number>();
+  const relayedLegs = new Set<Address>();
+  async function relayIfNeeded(vault: Address): Promise<void> {
+    const leg = config.legs.get(vault.toLowerCase());
+    if (!leg || !elysiumClient || !config.settlementRelay || !config.inbox || relayedLegs.has(leg)) return;
+    const legSettled = await elysiumClient.readContract({ address: leg, abi: outcomeLegAbi, functionName: "settled" });
+    if (legSettled) {
+      relayedLegs.add(leg);
+      relaySentAt.delete(leg);
+      return;
+    }
+    if (!shouldRelay(legSettled, relaySentAt.get(leg), Date.now())) return;
+    const [submissionFee, l2GasPrice] = await Promise.all([
+      publicClient.readContract({ address: config.inbox, abi: inboxAbi, functionName: "calculateRetryableSubmissionFee", args: [RELAY_DATA_LENGTH, 0n] }),
+      elysiumClient.getGasPrice(),
+    ]);
+    const fees = relayFees(submissionFee, l2GasPrice);
+    relaySentAt.set(leg, Date.now());
+    const hash = await sendTx(() =>
+      walletClient.writeContract({
+        address: config.settlementRelay!,
+        abi: settlementRelayAbi,
+        functionName: "relay",
+        args: [vault, leg, fees.maxSubmissionCost, fees.gasLimit, fees.maxFeePerGas],
+        value: fees.value,
+        chain,
+        account,
+      }),
+    );
+    log("relay sent", vault, leg, fees.value.toString(), hash);
+  }
+
   // Settlement watcher: 0x814 status 2 (settled) is trustlessly relayable by anyone, and settle()
   // ignores our fractionWad there. Status 3 (pruned) is the keeper-relay path — Core prunes fast
   // (FINDINGS.md: 2->3 observed within ~10 minutes), so this crank must fire promptly on status 2,
@@ -421,6 +477,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
         if (settled) {
           settledVaults.add(vault);
           staleAlerted.delete(vault); // settled late (manual relay, or a race won elsewhere) — re-arm
+          await relayIfNeeded(vault);
           continue;
         }
         // Staleness tripwire. Fires regardless of WHY nothing settled — dead keeper, wrong vault

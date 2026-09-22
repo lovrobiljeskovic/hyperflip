@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { bigBlocks, deploy, info, ROOT, rotatedRegistry, sportsRegistryEntry } from "./rotate-lib.mjs";
+import { bigBlocks, deployPair, info, ROOT, rotatedRegistry, sportsRegistryEntry } from "./rotate-lib.mjs";
 import { fixtureFromEspn, LEAGUE, plan, registerAction, settleAction, withPriors } from "./house-lib.mjs";
 
 const REGISTRY = path.join(ROOT, "registry/markets.json");
@@ -112,9 +112,9 @@ if (p.toWrap.length) {
   bigBlocks("on");
   try {
     for (const pick of p.toWrap) {
-      const vault = await deploy(pick);
-      deployed.push({ ...sportsRegistryEntry(pick, vault), ...(pick.priorYes !== undefined ? { priorYes: pick.priorYes } : {}) });
-      console.log(`wrapped ${vault} for outcome ${pick.outcome}`);
+      const { vault, sourceVault } = await deployPair(pick);
+      deployed.push({ ...sportsRegistryEntry(pick, vault, sourceVault), ...(pick.priorYes !== undefined ? { priorYes: pick.priorYes } : {}) });
+      console.log(`wrapped ${sourceVault ?? vault}${sourceVault ? ` (leg ${vault})` : ""} for outcome ${pick.outcome}`);
     }
   } finally {
     // Record landed vaults even if resetting the block mode fails.

@@ -12,7 +12,12 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 loadDotenv({ path: path.resolve(here, "../../.env") });
 
 export interface KeeperConfig extends Deployment {
+  /** HyperEVM (coreChainId) RPC list: where OutcomeVaults settle. */
   rpcUrl: string;
+  /** Elysium RPC list, required when the ParlayVault lives there (chainId !== coreChainId). */
+  elysiumRpcUrl?: string;
+  /** Elysium OutcomeLeg per lowercased HyperEVM vault, for rows that carry a sourceVault. */
+  legs: Map<string, Address>;
   keeperPrivateKey: `0x${string}`;
   vaultAddresses: Address[];
   /** How often the balance loop and settlement loop each tick. */
@@ -71,9 +76,20 @@ export function loadConfig(): KeeperConfig {
       .map((m) => [m.vault.toLowerCase(), m.expiryMs!] as const),
   );
 
+  const deployment = loadDeployment();
+  const elysiumRpcUrl = process.env.ELYSIUM_RPC || undefined;
+  if (deployment.chainId !== deployment.coreChainId && !elysiumRpcUrl) {
+    throw new Error("ELYSIUM_RPC is required when the deployment manifest selects Elysium");
+  }
+  const legs = new Map(
+    (registryMarkets ?? []).filter((m) => m.leg !== undefined).map((m) => [m.vault.toLowerCase(), m.leg!] as const),
+  );
+
   return {
-    ...loadDeployment(),
+    ...deployment,
     rpcUrl,
+    elysiumRpcUrl,
+    legs,
     keeperPrivateKey: keeperPrivateKey as `0x${string}`,
     vaultAddresses,
     pollIntervalMs: Number(process.env.POLL_INTERVAL_MS ?? 5_000),

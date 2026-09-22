@@ -163,17 +163,43 @@ export function createSerializer(): <T>(fn: () => Promise<T>) => Promise<T> {
  * `expiryMs` is optional, matching the writer's own parseMarkets: a market without it simply
  * gets no staleness check. Everything else throws, because a keeper booted against a bad
  * registry must fail loudly rather than silently watch a shorter list than the writer quotes. */
-export function parseRegistryMarkets(json: string): { vault: Address; expiryMs?: number }[] {
-  const parsed = JSON.parse(json) as { markets?: { vault?: string; expiryMs?: unknown }[] };
+export function parseRegistryMarkets(json: string): { vault: Address; leg?: Address; expiryMs?: number }[] {
+  const parsed = JSON.parse(json) as { markets?: { vault?: string; sourceVault?: unknown; expiryMs?: unknown }[] };
   if (!Array.isArray(parsed.markets)) throw new Error("registry has no markets array");
   if (parsed.markets.length === 0) throw new Error("registry lists no markets");
   return parsed.markets.map((m) => {
     if (typeof m?.vault !== "string" || !isAddress(m.vault)) {
       throw new Error(`invalid vault in registry: ${String(m?.vault)}`);
     }
+    if (m.sourceVault !== undefined && (typeof m.sourceVault !== "string" || !isAddress(m.sourceVault))) {
+      throw new Error(`invalid sourceVault in registry: ${String(m.sourceVault)}`);
+    }
+    // On Elysium a row's `vault` is the OutcomeLeg the ParlayVault reads and `sourceVault` is
+    // the HyperEVM OutcomeVault it mirrors: the Core account, and the one this keeper settles.
     return {
-      vault: m.vault as Address,
+      vault: (m.sourceVault ?? m.vault) as Address,
+      ...(m.sourceVault ? { leg: m.vault as Address } : {}),
       expiryMs: typeof m.expiryMs === "number" ? m.expiryMs : undefined,
     };
   });
+}
+
+/** Gas limit for OutcomeLeg.receiveSettlement on Elysium (two SSTOREs and an event; ~50k used). */
+export const RELAY_GAS_LIMIT = 100_000n;
+/** After a relay() is sent, how long to wait for the retryable to land before paying for another. */
+export const RELAY_HOLD_MS = 3 * 60_000;
+
+/** Stock retryable pricing for one relay(): submission fee and Elysium gas both doubled so a basefee
+ * move between the quote and inclusion cannot strand the ticket. Excess refunds to the keeper on Elysium. */
+export function relayFees(submissionFee: bigint, l2GasPrice: bigint): {
+  maxSubmissionCost: bigint; gasLimit: bigint; maxFeePerGas: bigint; value: bigint;
+} {
+  const maxSubmissionCost = submissionFee * 2n;
+  const maxFeePerGas = l2GasPrice * 2n;
+  return { maxSubmissionCost, gasLimit: RELAY_GAS_LIMIT, maxFeePerGas, value: maxSubmissionCost + RELAY_GAS_LIMIT * maxFeePerGas };
+}
+
+/** Relay when the leg is still unsettled and no relay is inside its hold window. */
+export function shouldRelay(legSettled: boolean, sentAt: number | undefined, now: number): boolean {
+  return !legSettled && (sentAt === undefined || now - sentAt >= RELAY_HOLD_MS);
 }

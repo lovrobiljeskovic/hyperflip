@@ -5,7 +5,7 @@ import { erc20Abi } from "viem";
 import { useAccount, useBalance, usePublicClient, useReadContract, useSwitchChain, useWriteContract } from "wagmi";
 import { fetchLimits, type QuoteResult, type WriterLimits, type WriterQuote } from "@/lib/writer";
 import { formatUsdc, secondsLeft, shortError } from "@/lib/format";
-import { HL_DRIP, hyperEvmTestnet } from "@/lib/chain";
+import { appChain, BRIDGED, HL_DRIP } from "@/lib/chain";
 import { PARLAY_VAULT } from "@/lib/contracts";
 import { useConnectAction, useUsdc, useWalletState } from "@/lib/wallet";
 import { tryParseStake, TicketSession, approveUsdc, mintTicket, quoteMatches, type BuilderLeg } from "@/lib/ticket";
@@ -29,6 +29,8 @@ type Cta =
   | { kind: "external"; label: string; href: string; hint: string }
   | { kind: "done"; label: string; href: string }
   | { kind: "switch-chain"; label: string }
+  /** Funds live on HyperEVM; the bridge panel moves the USDC shortfall and gas across first. */
+  | { kind: "bridge"; usdc: bigint; gas: boolean }
   /** Past every gate: step one approves the stake, step two mints once the allowance covers it. */
   | { kind: "pay"; approve: { label: string; enabled: boolean; done: boolean }; mint: { label: string; enabled: boolean } };
 
@@ -94,7 +96,7 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
   const clockSkewRetried = useRef(false);
 
   const runQuote = useCallback(async () => {
-    if (display || session.minting || session.revision !== revision || chainId !== hyperEvmTestnet.id) return;
+    if (display || session.minting || session.revision !== revision || chainId !== appChain.id) return;
     if (legs.length < MIN_LEGS || !address || !isLinked) return;
     const base = tryParseStake(stake);
     if (base === null) return;
@@ -159,7 +161,7 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
 
   async function mintQuoted(q: WriterQuote, sig: `0x${string}`) {
     if (session.minting || session.revision !== revision || !publicClient || !usdcAddr || !address ||
-        !isLinked || stakeBase === null || chainId !== hyperEvmTestnet.id) return;
+        !isLinked || stakeBase === null || chainId !== appChain.id) return;
     const input = { taker: address, legs: legs.map(l => ({ vault: l.vault, isYes: l.isYes })), stake: stakeBase.toString() };
     if (!quoteMatches(q, input)) return;
     if (!session.beginMint()) return;
@@ -213,8 +215,13 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
     if (!walletReady) return { kind: "disabled", label: "Checking wallet…" };
     if (!isConnected) return { kind: "connect", label: "Connect wallet" };
     if (!isLinked) return { kind: "connect", label: "Verify wallet" };
-    if (chainId !== undefined && chainId !== hyperEvmTestnet.id)
-      return { kind: "switch-chain", label: `Switch to ${hyperEvmTestnet.name}` };
+    if (chainId !== undefined && chainId !== appChain.id)
+      return { kind: "switch-chain", label: `Switch to ${appChain.name}` };
+    if (BRIDGED) {
+      const gasOut = gas !== undefined && gas.value === 0n;
+      const short = stakeBase !== null && usdcBalance !== undefined ? stakeBase - usdcBalance : 0n;
+      if (gasOut || usdcBalance === 0n || short > 0n) return { kind: "bridge", usdc: short > 0n ? short : 0n, gas: gasOut };
+    }
     if (usdcBalance === 0n) return { kind: "external", label: "Get testnet USDC →", href: HL_DRIP, hint: DRIP_HINT };
     if (gas !== undefined && gas.value === 0n)
       return { kind: "external", label: "Get HYPE for gas →", href: HL_DRIP, hint: DRIP_HINT };
@@ -245,6 +252,6 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
     void runQuote();
   }
   return { stake, setStake, quoteResult, ttlLeft, ttlSeconds, mintState, mintErrorMsg, mintErrorDetail,
-    maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain };
+    maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain, address };
 
 }

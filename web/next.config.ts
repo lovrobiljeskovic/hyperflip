@@ -12,6 +12,7 @@ const nextConfig: NextConfig = {
   },
   env: {
     NEXT_PUBLIC_CHAIN_ID: String(deployment.chainId),
+    NEXT_PUBLIC_CHAIN_NAME: deployment.chainName,
     NEXT_PUBLIC_PARLAY_VAULT: deployment.parlayVault,
     NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK: String(deployment.deployBlock),
     NEXT_PUBLIC_APP_ORIGIN: process.env.VERCEL_ENV === "production" ? "https://app.hyperflip.xyz" : "",

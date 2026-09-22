@@ -6,3 +6,7 @@ libs = ["lib"]
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 
 [profile.ci]
+
+[rpc_endpoints]
+hyperevm_testnet = "https://rpc.hyperliquid-testnet.xyz/evm"
+elysium_testnet = "https://testnet-rpc.elysium.kinetiq.xyz"

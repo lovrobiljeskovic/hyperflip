@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const INFO_URL = "https://api.hyperliquid-testnet.xyz/info";
 const PUBLIC_DEPLOY_RPCS = ["https://rpc.hyperliquid-testnet.xyz/evm", "https://rpcs.chain.link/hyperevm/testnet", "https://hyperliquid-testnet.drpc.org"];
+export const ELYSIUM_CHAIN_ID = 99801;
 export const DEPLOY_ENV = {
   QUOTE_TOKEN_ADDRESS: "0x2B3370eE501B4a559b57D449569354196457D8Ab",
   CORE_SYSTEM_ADDRESS: "0x2000000000000000000000000000000000000000",
@@ -15,6 +16,8 @@ export const DEPLOY_ENV = {
 };
 // Read at call time so `.env` (loaded by the CLI after import) is honoured.
 const deployRpcs = () => [...new Set([...(process.env.DEPLOY_RPCS ?? "").split(",").map((u) => u.trim()).filter(Boolean), ...PUBLIC_DEPLOY_RPCS])];
+/** Elysium RPC list; empty when the deployment is HyperEVM-only (no legs are deployed then). */
+const elysiumRpcs = () => (process.env.ELYSIUM_RPC ?? "").split(",").map((u) => u.trim()).filter(Boolean);
 
 export async function info(type, extra = {}) {
   const res = await fetch(INFO_URL, {
@@ -60,15 +63,24 @@ export function bigBlocks(flag) {
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export async function landedVault(pick, polls = 6) {
+  return landedTx("Deploy.s.sol", 998, deployRpcs(), (t) => t.contractName === "OutcomeVault" && t.arguments?.[4] === String(pick.outcome), polls);
+}
+
+/** The OutcomeLeg for `vault` from the latest DeployLeg broadcast, if its tx landed. */
+export async function landedLeg(vault, polls = 6, delayMs = 3_000) {
+  const match = (t) => t.contractName === "OutcomeLeg" && String(t.arguments?.[0]).toLowerCase() === vault.toLowerCase();
+  return landedTx("DeployLeg.s.sol", ELYSIUM_CHAIN_ID, elysiumRpcs(), match, polls, delayMs);
+}
+
+async function landedTx(script, chainId, rpcs, match, polls, delayMs = 20_000) {
   let tx;
   try {
-    const broadcast = JSON.parse(readFileSync(path.join(ROOT, "broadcast/Deploy.s.sol/998/run-latest.json"), "utf8"));
-    tx = broadcast.transactions.find((t) => t.contractName === "OutcomeVault" && t.arguments?.[4] === String(pick.outcome));
+    const broadcast = JSON.parse(readFileSync(path.join(ROOT, `broadcast/${script}/${chainId}/run-latest.json`), "utf8"));
+    tx = broadcast.transactions.find(match);
   } catch {
     return null;
   }
   if (!tx) return null;
-  const rpcs = deployRpcs();
   for (let i = 0; i < polls; i++) {
     for (const rpc of rpcs) {
       try {
@@ -82,9 +94,47 @@ export async function landedVault(pick, polls = 6) {
         if (receipt) return null; // landed but reverted
       } catch {} // RPC flake — try the other / next poll
     }
-    await sleep(20_000); // big blocks tick ~60s; give a pending tx time
+    await sleep(delayMs); // big blocks tick ~60s; give a pending tx time
   }
   return null;
+}
+
+/** Deploys the Elysium OutcomeLeg mirroring `vault` and lists it on the ParlayVault (registrar key). */
+export async function deployLeg(vault, attempts = 4) {
+  for (const key of ["RELAY_ADDRESS", "PARLAY_VAULT_ADDRESS"]) {
+    if (!process.env[key]) throw new Error(`${key} must be set in .env to deploy Elysium legs`);
+  }
+  const prior = await landedLeg(vault, 1);
+  if (prior) {
+    console.log(`reusing already-landed leg ${prior} for vault ${vault}`);
+    return prior;
+  }
+  const rpcs = elysiumRpcs();
+  for (let i = 0; i < attempts; i++) {
+    try {
+      execFileSync(
+        "forge",
+        // --skip-simulation: Nitro charges L1 data posting as gas units, so a locally simulated
+        // gas limit is "intrinsic gas too low" on Elysium; let the RPC estimate instead.
+        ["script", "script/DeployLeg.s.sol", "--rpc-url", rpcs[i % rpcs.length], "--broadcast", "--skip-simulation", "--gas-estimate-multiplier", "150", "--sig", "run()", "--retries", "12", "--delay", "2"],
+        { cwd: ROOT, stdio: "inherit", env: { ...process.env, SOURCE_VAULT: vault } },
+      );
+    } catch (err) {
+      console.log(`forge exited non-zero for leg of ${vault} (attempt ${i + 1}) — checking chain for a landed tx...`);
+    }
+    const leg = await landedLeg(vault);
+    if (leg) return leg;
+    if (i + 1 < attempts) await sleep(5_000);
+  }
+  throw new Error(`leg deploy failed for vault ${vault} after ${attempts} attempts`);
+}
+
+/** One market: the 998 OutcomeVault, plus its Elysium leg when ELYSIUM_RPC is set. Returns the
+ * registry pair: `vault` is what the ParlayVault reads, `sourceVault` the Core account behind it. */
+export async function deployPair(pick) {
+  const vault = await deploy(pick);
+  if (elysiumRpcs().length === 0) return { vault };
+  return { vault: await deployLeg(vault), sourceVault: vault };
 }
 
 export async function deploy(pick, attempts = 4) {
@@ -99,7 +149,9 @@ export async function deploy(pick, attempts = 4) {
       execFileSync(
         "forge",
         // Pass the signing key through the environment, never command arguments.
-        ["script", "script/Deploy.s.sol", "--rpc-url", rpcs[i % rpcs.length], "--broadcast", "--legacy", "--sig", "run()", "--retries", "12", "--delay", "10"],
+        // --disable-block-gas-limit: forge >= 1.8 caps the simulation at the forked block's gas
+        // limit, and a small 998 block (3M) cannot hold the vault (~8M); it lands in a big block.
+        ["script", "script/Deploy.s.sol", "--rpc-url", rpcs[i % rpcs.length], "--broadcast", "--legacy", "--disable-block-gas-limit", "--sig", "run()", "--retries", "12", "--delay", "10"],
         {
           cwd: ROOT,
           stdio: "inherit",
@@ -290,9 +342,10 @@ export function pickSports({
   return picked;
 }
 
-export function sportsRegistryEntry(pick, vault) {
+export function sportsRegistryEntry(pick, vault, sourceVault) {
   const entry = {
     vault,
+    ...(sourceVault ? { sourceVault } : {}),
     title: pick.title,
     category: "sports",
     cluster: pick.cluster,

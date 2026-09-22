@@ -1,6 +1,6 @@
 import { parseAbi, parseEventLogs, TransactionReceiptNotFoundError, type Address, type PublicClient, type TransactionReceipt } from "viem";
 import { PARLAY_VAULT, parlayMintedEvent } from "./contracts";
-import { hyperEvmTestnet } from "./chain";
+import { appChain } from "./chain";
 import { loadRow, type Row } from "./positions";
 import type { PositionSnapshot } from "./positions-api";
 import { pool } from "./pool";
@@ -9,7 +9,7 @@ const events = [...parseAbi(["event ParlayResolved(uint256 indexed id, uint8 sta
 export type PositionReceipt = { hash: `0x${string}`; block: string; blockHash: `0x${string}`; mintBlock: string; id: string | null; kind: "mint" | "claim" | "resolve" };
 const memory = new Map<string, PositionReceipt[]>();
 const storageUnavailable = new Set<string>();
-const key = (wallet: string) => `positions:${hyperEvmTestnet.id}:${PARLAY_VAULT.toLowerCase()}:${wallet.toLowerCase()}`;
+const key = (wallet: string) => `positions:${appChain.id}:${PARLAY_VAULT.toLowerCase()}:${wallet.toLowerCase()}`;
 
 export function savedPositions(wallet: string): PositionReceipt[] {
   try {

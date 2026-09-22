@@ -3,12 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { formatUnits } from "viem";
 import { useAccount, useBalance, useSwitchChain } from "wagmi";
-import { hyperEvmTestnet } from "@/lib/chain";
+import { appChain, explorerAddress } from "@/lib/chain";
 import { formatUsdc, shortAddress } from "@/lib/format";
 import { useConnectAction, useDisconnectAction, useUsdc, useWalletState } from "@/lib/wallet";
 import { HyperflipLogo } from "./brand";
 
-const EXPLORER = hyperEvmTestnet.blockExplorers.default.url;
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -58,7 +57,8 @@ export function WalletButton() {
     );
   }
 
-  const wrongChain = chainId !== undefined && chainId !== hyperEvmTestnet.id;
+  const wrongChain = chainId !== undefined && chainId !== appChain.id;
+  const explorer = address ? explorerAddress(address) : null;
 
   async function copy() {
     if (!address) return;
@@ -116,14 +116,16 @@ export function WalletButton() {
               >
                 {copied ? "Copied" : "Copy address"}
               </button>
-              <a
-                href={`${EXPLORER}/address/${address}`}
-                target="_blank"
-                rel="noreferrer"
-                className="flex-1 rounded-[4px] border border-line px-2 py-1 text-center mono text-[11px] text-dim transition-colors hover:text-fg"
-              >
-                Explorer ↗
-              </a>
+              {explorer && (
+                <a
+                  href={explorer}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex-1 rounded-[4px] border border-line px-2 py-1 text-center mono text-[11px] text-dim transition-colors hover:text-fg"
+                >
+                  Explorer ↗
+                </a>
+              )}
             </div>
 
             <div className="mt-4 flex flex-col gap-2 border-t border-line pt-3">
@@ -133,7 +135,7 @@ export function WalletButton() {
               </Row>
               <Row label="Network">
                 <span className={wrongChain ? "text-no" : "text-dim"}>
-                  {wrongChain ? `chain ${chainId}` : hyperEvmTestnet.name}
+                  {wrongChain ? `chain ${chainId}` : appChain.name}
                 </span>
               </Row>
             </div>
@@ -141,10 +143,10 @@ export function WalletButton() {
             {wrongChain && (
               <button
                 type="button"
-                onClick={() => switchChain({ chainId: hyperEvmTestnet.id })}
+                onClick={() => switchChain({ chainId: appChain.id })}
                 className="mt-3 w-full rounded-[4px] bg-accent py-1.5 text-center font-medium text-on-accent transition-opacity hover:opacity-90"
               >
-                Switch to {hyperEvmTestnet.name}
+                Switch to {appChain.name}
               </button>
             )}
 

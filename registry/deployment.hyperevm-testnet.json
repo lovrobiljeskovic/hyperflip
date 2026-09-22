@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "network": "testnet",
+  "evmChainId": 998,
+  "parlayVault": "0x407cdc0b15e8d81f4d122481ecf92dbe07dc0169",
+  "parlayDeployBlock": "61906227"
+}
