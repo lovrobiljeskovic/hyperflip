@@ -81,6 +81,11 @@ export function BridgeStep({ address, needUsdc, needGas }: { address: `0x${strin
       >
         {state === "pending" ? "Confirm in wallet…" : state === "sent" ? "Sent - arriving on " + appChain.name + "…" : tooMuch ? "Not enough USDC on " + coreChain.name : "Bridge to " + appChain.name}
       </button>
+      {state === "sent" && (
+        <p role="status" className="text-[12px] text-yes">
+          Bridge confirmed on {coreChain.name}. Funds take a few minutes to land on {appChain.name}; this panel updates by itself, no reload needed.
+        </p>
+      )}
       {state === "error" && <p className="text-[12px] text-no">{error}</p>}
     </div>
   );
