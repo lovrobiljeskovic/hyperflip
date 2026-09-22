@@ -14,12 +14,14 @@ export function usePositions(client: PublicClient | undefined, address: `0x${str
   const [cursor, setCursor] = useState<{ before: string; snapshot: PositionSnapshot } | null>(null);
   const sequence = useRef(0);
   const loadingRef = useRef(false);
-  const load = useCallback(async (more?: { before: string; snapshot: PositionSnapshot }) => {
+  // quiet: a background reconciliation retry. Failures stay silent (the previous state stands);
+  // only the initial load and a manual Refresh report problems. Success always clears them.
+  const load = useCallback(async (more?: { before: string; snapshot: PositionSnapshot }, quiet = false) => {
     if (!address || !client || loadingRef.current) return;
     loadingRef.current = true;
     const request = ++sequence.current;
     setLoading(true);
-    setError(false);
+    if (!quiet) setError(false);
     // Show confirmed receipts while the index request is still in flight.
     const preview = receiptPositions(client, address).then(overlay => {
       if (request === sequence.current && overlay.rows.length) setRows(previous => mergePositionRows(previous ?? [], overlay.rows));
@@ -34,8 +36,8 @@ export function usePositions(client: PublicClient | undefined, address: `0x${str
         if (result.rows.length && !result.failed) forgetPositions(address, result.rows.reduce((max, row) => row.block > max ? row.block : max, 0n));
         const rows = mergePositionRows(result.rows, overlay.rows);
         setRows(previous => result.failed && !rows.length ? previous : rows);
-        setError(result.failed > 0);
-        setNotice(overlay.rows.some(row => !indexed.has(String(row.id))) ? "Your transaction is confirmed. Updating the ticket history…" : "");
+        if (!quiet || !result.failed) setError(result.failed > 0);
+        if (!quiet || !result.failed) setNotice(overlay.rows.some(row => !indexed.has(String(row.id))) ? "Your transaction is confirmed. Updating the ticket history…" : "");
         return;
       }
       const page = await fetchPositionPage(address, more?.before, more?.snapshot);
@@ -50,10 +52,12 @@ export function usePositions(client: PublicClient | undefined, address: `0x${str
         return overlay.failed ? mergePositionRows(base, (previous ?? []).filter(row => pendingIds.has(String(row.id)))) : base;
       });
       setCursor(page.next ? { before: page.next, snapshot: page.snapshot } : null);
-      setError(page.failed > 0 || overlay.failed || (page.stale && !nextRows.length));
+      const trouble = page.failed > 0 || overlay.failed || (page.stale && !nextRows.length);
+      if (quiet && trouble) return;
+      setError(trouble);
       setNotice(overlay.pending ? "Your transaction is confirmed. Updating the ticket history…" : page.stale ? "Ticket history is catching up. Refresh for the latest positions." : "");
     } catch {
-      if (request !== sequence.current) return;
+      if (request !== sequence.current || quiet) return;
       setError(true);
       setNotice("Positions could not be updated. Refresh to try again.");
       if (preview) {
@@ -73,7 +77,7 @@ export function usePositions(client: PublicClient | undefined, address: `0x${str
     void load();
     // Bounded reconciliation: manual refresh remains available after these attempts.
     const timers = address && savedPositions(address).length
-      ? [3000, 8000, 15_000, 30_000].map(ms => setTimeout(() => void load(), ms)) : [];
+      ? [3000, 8000, 15_000, 30_000].map(ms => setTimeout(() => void load(undefined, true), ms)) : [];
     return () => { sequence.current++; timers.forEach(clearTimeout); };
   }, [load, address]);
 
