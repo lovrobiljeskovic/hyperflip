@@ -4,7 +4,6 @@ import { fetchMids } from "@/lib/info";
 import { fetchMarketBoard, onlySports } from "@/lib/writer";
 import { LandingHeader } from "./landing-header";
 import { appHref } from "@/lib/site";
-import { InviteForm } from "./invite-form";
 import { HeroSlip, LiveMarketBoard, LiveMarketRail, type BoardSnapshot } from "./live-markets";
 import { PurrCoinToss } from "./purr-coin-toss";
 import { ScrollLink } from "./scroll-link";
@@ -76,10 +75,10 @@ export default async function Home() {
                 Launch app
               </Link>
               <ScrollLink
-                to="counter"
+                to="board"
                 className="rounded-[8px] border border-line px-6 py-3.5 font-medium text-fg transition-colors hover:border-dim"
               >
-                Join the waitlist
+                See the markets
               </ScrollLink>
             </div>
           </div>
@@ -97,16 +96,6 @@ export default async function Home() {
             A preview of markets available to trade. Open the app to see all markets, pick your legs and get a signed quote.
           </p>
           <LiveMarketBoard board={board} />
-        </section>
-
-        <section id="counter" className="section-reveal mx-auto grid w-full max-w-[1280px] scroll-mt-20 gap-10 px-4 py-20 sm:px-6 lg:grid-cols-[.85fr_1.15fr] lg:py-28">
-          <div>
-            <h2 className="display max-w-[10ch] text-[clamp(2.5rem,5vw,4.6rem)]">Join the waitlist.</h2>
-            <p className="mt-5 max-w-[40ch] leading-relaxed text-dim">
-              Hyperflip is opening testnet beta access in cohorts. Join the waitlist and we’ll email you when you’re approved. Sign in with your approved email and connect your existing wallet.
-            </p>
-          </div>
-          <InviteForm />
         </section>
 
         <section id="writing" className="section-reveal border-y border-line bg-panel/55 scroll-mt-20">

@@ -46,7 +46,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <PrivyProvider
       appId={privyAppId}
       config={{
-        loginMethods: ["email", "wallet"],
+        loginMethods: ["wallet"],
         embeddedWallets: { ethereum: { createOnLogin: "off" }, solana: { createOnLogin: "off" } },
         defaultChain: appChain,
         supportedChains: [...chains],

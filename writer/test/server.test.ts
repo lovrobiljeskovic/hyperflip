@@ -5,7 +5,7 @@ import { join } from "node:path";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import type { Address, Hex } from "viem";
-import { handleQuote as authenticatedQuote, marketsJson, sameGameLeg, validateQuoteRequest, newMetrics, startServer, type QuoteDeps } from "../src/server.js";
+import { handleAccess, handleQuote as authenticatedQuote, marketsJson, sameGameLeg, validateQuoteRequest, newMetrics, startServer, type QuoteDeps } from "../src/server.js";
 import { ExposureBook } from "../src/exposure.js";
 import { RateLimiter, Waitlist } from "../src/waitlist.js";
 import { WAD } from "../src/pure.js";
@@ -24,6 +24,7 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     infoApiUrl: "", quoteJournalFile: "/dev/null", port: 0, edgeBps: 0n, minPremiumBps: 100n, minLegs: 2,
     maxStake: 10_000_000n, perMarketCap: 1_000_000_000n, perClusterCap: 1_000_000_000n,
     perCodeReservedCap: 1_000_000_000n,
+    openAccess: false,
     legEdgeBps: 0n, quoteTtlMs: 30_000,
     spotPxStaleMs: 60_000,
     minBookDepthWad: 0n,
@@ -110,6 +111,15 @@ test("direct quotes reject missing auth, forged identity and shared legacy codes
     assert.equal(r.status, 401);
   }
   assert.equal(d.exposure.reservedGlobal(d.now()), 0n);
+});
+
+test("OPEN_ACCESS admits any authenticated account without a waitlist entry", async () => {
+  const stranger = async (token: string) => token === "new-token" ? { userId: "did:privy:new", emails: [], wallets: [TAKER.toLowerCase()] } : null;
+  assert.equal((await handleAccess(deps({ authenticate: stranger }), "Bearer new-token", "ip")).status, 403);
+  const open = deps({ cfg: cfg({ openAccess: true }), authenticate: stranger });
+  assert.equal((await handleAccess(open, "Bearer new-token", "ip")).status, 200);
+  assert.equal((await handleAccess(open, undefined, "ip")).status, 401);
+  assert.equal((await handleQuote(open, goodBody, "ip", "Bearer new-token")).status, 200);
 });
 
 test("invalid tokens are rate limited; authenticated requests do not consume a slot", async () => {

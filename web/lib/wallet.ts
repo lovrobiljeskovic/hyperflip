@@ -78,7 +78,7 @@ export function useConnectAction(): () => void {
   const { authenticated, login, connectWallet, linkWallet, user } = usePrivy();
   const { address, isConnected } = useAccount();
   const linked = user?.linkedAccounts.some(a => a.type === "wallet" && a.address.toLowerCase() === address?.toLowerCase());
-  return () => !authenticated ? login({ loginMethods: ["email"] }) : isConnected && !linked ? linkWallet() : connectWallet();
+  return () => !authenticated ? login({ loginMethods: ["wallet"] }) : isConnected && !linked ? linkWallet() : connectWallet();
 }
 
 /** Click handler for "Disconnect". Privy owns the session, so logout() is the

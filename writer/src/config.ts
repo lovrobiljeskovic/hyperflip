@@ -53,6 +53,8 @@ export interface WriterConfig extends Deployment {
   resendApiKey?: string;
   waitlistFile: string;
   waitlistAdminToken?: string;
+  /** Admit every authenticated account; the waitlist stays intact for a later gated season. */
+  openAccess: boolean;
   googleSheets?: GoogleSheetsConfig;
   parlayIndexFile?: string;
   parlayIndexFromBlock?: bigint;
@@ -157,6 +159,7 @@ export function loadConfig(): WriterConfig {
     privyAppId: process.env.PRIVY_APP_ID,
     privyAppSecret: process.env.PRIVY_APP_SECRET,
     waitlistAdminToken: process.env.WAITLIST_ADMIN_TOKEN,
+    openAccess: process.env.OPEN_ACCESS === "1",
     googleSheets: googleSheetsConfig(process.env),
     resendApiKey: process.env.RESEND_API_KEY,
     waitlistFile: path.resolve(here, "../..", process.env.WAITLIST_FILE ?? "writer/waitlist.json"),

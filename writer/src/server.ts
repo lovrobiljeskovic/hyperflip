@@ -318,7 +318,7 @@ async function authenticateAdmission(deps: QuoteDeps, authorization: string | un
     }
     return { status: 401, json: { error: "unauthenticated" } };
   }
-  if (!deps.waitlist.claim(account.userId, account.emails)) return { status: 403, json: { error: "not-admitted" } };
+  if (!deps.cfg?.openAccess && !deps.waitlist.claim(account.userId, account.emails)) return { status: 403, json: { error: "not-admitted" } };
   return { account };
 }
 
