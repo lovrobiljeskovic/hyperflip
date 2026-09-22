@@ -74,6 +74,12 @@ export async function receiptPositions(client: PublicClient, wallet: Address, in
   return { rows: rows.filter((row): row is NonNullable<typeof row> => row !== null), pending, failed };
 }
 
+/** Drop receipts the index has caught up with (legacy writer index: contiguous scan, so any
+ * receipt at or below the newest indexed block is covered). */
+export function forgetPositions(wallet: string, indexedTo: bigint): void {
+  save(wallet, savedPositions(wallet).filter(p => BigInt(p.block) > indexedTo));
+}
+
 export function mergePositionRows(rows: Row[], updates: Row[]): Row[] {
   const merged = new Map(rows.map(row => [String(row.id), row]));
   for (const row of updates) {

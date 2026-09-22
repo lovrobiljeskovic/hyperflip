@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PublicClient, TransactionReceipt } from "viem";
 import { INDEXED_POSITIONS, loadPositions, loadRow, type Row } from "@/lib/positions";
 import { fetchPositionPage, type PositionSnapshot } from "@/lib/positions-api";
-import { confirmedPositionRow, mergePositionRows, receiptPositions, savedPositions } from "@/lib/position-receipts";
+import { confirmedPositionRow, forgetPositions, mergePositionRows, receiptPositions, savedPositions } from "@/lib/position-receipts";
 
 export function usePositions(client: PublicClient | undefined, address: `0x${string}` | undefined) {
   const [rows, setRows] = useState<Row[] | null>(null);
@@ -31,6 +31,7 @@ export function usePositions(client: PublicClient | undefined, address: `0x${str
         const [result, overlay] = await Promise.all([loadPositions(client, address), preview]);
         if (request !== sequence.current) return;
         const indexed = new Set(result.rows.map(row => String(row.id)));
+        if (result.rows.length && !result.failed) forgetPositions(address, result.rows.reduce((max, row) => row.block > max ? row.block : max, 0n));
         const rows = mergePositionRows(result.rows, overlay.rows);
         setRows(previous => result.failed && !rows.length ? previous : rows);
         setError(result.failed > 0);

@@ -9,7 +9,9 @@ import { appChain, BRIDGED, coreChain } from "@/lib/chain";
 
 // The bridge step signs on HyperEVM, so the wallet needs both chains when the vault is on Elysium.
 const chains = BRIDGED ? ([appChain, coreChain] as const) : ([appChain] as const);
-const transports = { [appChain.id]: http(undefined, { retryCount: 6, retryDelay: 2_000 }), [coreChain.id]: http(undefined, { retryCount: 6, retryDelay: 2_000 }) };
+// batch: Elysium has no Multicall3 but its RPC accepts JSON-RPC batches; one request per tick
+// instead of a burst of ~6 per position row, which stalled the public endpoint.
+const transports = { [appChain.id]: http(undefined, { batch: true, retryCount: 6, retryDelay: 2_000 }), [coreChain.id]: http(undefined, { batch: true, retryCount: 6, retryDelay: 2_000 }) };
 
 const wagmiConfig = createConfig({
   chains,
