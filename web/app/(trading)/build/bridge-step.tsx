@@ -55,7 +55,7 @@ export function BridgeStep({ address, needUsdc, needGas }: { address: `0x${strin
       <p className="mono text-[11px] uppercase tracking-[0.1em] text-dim">Bridge from {coreChain.name}</p>
       <p className="text-[12px] text-dim">
         Tickets mint on {appChain.name}. Your {coreChain.name} wallet holds {coreUsdc === undefined ? "…" : formatUsdc(coreUsdc)} USDC
-        {coreGas ? ` and ${Number(formatUnits(coreGas.value, coreGas.decimals)).toFixed(4)} HYPE` : ""}. Bridging takes about a minute.
+        {coreGas ? ` and ${Number(formatUnits(coreGas.value, coreGas.decimals)).toFixed(4)} HYPE` : ""}. Bridging takes a few minutes; the balance updates here on its own.
       </p>
       {(noCoreUsdc || noCoreGas) && (
         <a href={HL_DRIP} target="_blank" rel="noreferrer" className="text-[12px] underline decoration-line underline-offset-4">

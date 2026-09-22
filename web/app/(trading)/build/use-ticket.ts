@@ -63,7 +63,8 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
   // Check gas before opening the wallet.
   const { data: gas } = useBalance({
     address,
-    query: { enabled: !display && !!address },
+    chainId: appChain.id,
+    query: { enabled: !display && !!address, refetchInterval: 15_000 },
   });
   // Gates the mint button; refetched after approve confirms. mint re-reads it too.
   const { data: allowance, refetch: refetchAllowance } = useReadContract({

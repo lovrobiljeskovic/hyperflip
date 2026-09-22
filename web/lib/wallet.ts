@@ -4,6 +4,7 @@ import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { useEffect, useState } from "react";
 import { erc20Abi } from "viem";
 import { useAccount, useDisconnect, useReadContract } from "wagmi";
+import { appChain } from "./chain";
 import { PARLAY_VAULT, parlayVaultAbi } from "./contracts";
 
 // @privy-io/wagmi's WagmiProvider only mounts when NEXT_PUBLIC_PRIVY_APP_ID is
@@ -104,8 +105,10 @@ export function useUsdc(): { address?: `0x${string}`; balance?: bigint } {
     address: PARLAY_VAULT,
     abi: parlayVaultAbi,
     functionName: "usdc",
+    chainId: appChain.id,
   });
   const { data: balance } = useReadContract({
+    chainId: appChain.id,
     address: token,
     abi: erc20Abi,
     functionName: "balanceOf",

@@ -21,16 +21,20 @@ export function usePositions(client: PublicClient | undefined, address: `0x${str
     setLoading(true);
     setError(false);
     // Show confirmed receipts while the index request is still in flight.
-    const preview = INDEXED_POSITIONS ? receiptPositions(client, address).then(overlay => {
+    const preview = receiptPositions(client, address).then(overlay => {
       if (request === sequence.current && overlay.rows.length) setRows(previous => mergePositionRows(previous ?? [], overlay.rows));
       return overlay;
-    }) : null;
+    });
     try {
       if (!INDEXED_POSITIONS) {
-        const result = await loadPositions(client, address);
+        // Writer index lags a poll tick behind the chain; a fresh mint's receipt fills the gap.
+        const [result, overlay] = await Promise.all([loadPositions(client, address), preview]);
         if (request !== sequence.current) return;
-        setRows(previous => result.failed && !result.rows.length ? previous : result.rows);
+        const indexed = new Set(result.rows.map(row => String(row.id)));
+        const rows = mergePositionRows(result.rows, overlay.rows);
+        setRows(previous => result.failed && !rows.length ? previous : rows);
         setError(result.failed > 0);
+        setNotice(overlay.rows.some(row => !indexed.has(String(row.id))) ? "Your transaction is confirmed. Updating the ticket history…" : "");
         return;
       }
       const page = await fetchPositionPage(address, more?.before, more?.snapshot);
@@ -67,7 +71,7 @@ export function usePositions(client: PublicClient | undefined, address: `0x${str
     loadingRef.current = false;
     void load();
     // Bounded reconciliation: manual refresh remains available after these attempts.
-    const timers = INDEXED_POSITIONS && address && savedPositions(address).length
+    const timers = address && savedPositions(address).length
       ? [3000, 8000, 15_000, 30_000].map(ms => setTimeout(() => void load(), ms)) : [];
     return () => { sequence.current++; timers.forEach(clearTimeout); };
   }, [load, address]);
