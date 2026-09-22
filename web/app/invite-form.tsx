@@ -49,7 +49,7 @@ export function InviteForm({ showAppLink = true }: { showAppLink?: boolean }) {
               className="mono flex-1 rounded-[8px] border border-line bg-raised px-3 py-2.5 text-[15px] text-fg placeholder:text-dim focus:border-accent"
               placeholder="you@example.com"
             />
-            <button type="submit" disabled={state === "sending"} className="mono rounded-[8px] bg-accent px-6 py-3 text-[12px] uppercase tracking-wide text-on-accent disabled:cursor-not-allowed disabled:opacity-60">
+            <button type="submit" disabled={state === "sending"} className="mono whitespace-nowrap rounded-[8px] bg-accent px-6 py-3 text-[12px] uppercase tracking-wide text-on-accent disabled:cursor-not-allowed disabled:opacity-60">
               {state === "sending" ? "Joining…" : "Join the waitlist"}
             </button>
           </div>

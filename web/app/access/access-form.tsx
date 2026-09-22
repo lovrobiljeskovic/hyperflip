@@ -4,12 +4,29 @@ import Link from "next/link";
 import { useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { siteHref } from "@/lib/site";
+import { HyperflipBrand } from "../brand";
 import { InviteForm } from "../invite-form";
 import { Providers } from "../providers";
 
 export function AccessForm(props: { nextPath: string; unavailable: boolean }) {
-  if (!process.env.NEXT_PUBLIC_PRIVY_APP_ID) return <main className="mx-auto max-w-lg px-4 py-12"><p className="mb-6">Sign-in is temporarily unavailable. You can still join the waitlist.</p><InviteForm showAppLink={false} /></main>;
+  if (!process.env.NEXT_PUBLIC_PRIVY_APP_ID) return <AccessShell><p className="mb-6">Sign-in is temporarily unavailable. You can still join the waitlist.</p><InviteForm showAppLink={false} /></AccessShell>;
   return <Providers><AccountAccess {...props} /></Providers>;
+}
+
+function AccessShell({ children }: { children: React.ReactNode }) {
+  const home = siteHref("/");
+  return <main className="relative isolate mx-auto w-full max-w-xl px-4 py-8 sm:py-14">
+    <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden" aria-hidden="true">
+      <img src="/brand/purr-lines.png" alt="" width="600" height="600" className="absolute bottom-[-6%] right-[-12%] w-[min(85vw,640px)] opacity-[.12] sm:right-[-4%] lg:right-[6%]" />
+    </div>
+    <div className="flex items-center gap-3">
+      <Link href={home} prefetch={false} aria-label="Back to Hyperflip" className="flex h-9 w-9 items-center justify-center rounded-card border border-line text-dim transition-colors hover:text-fg">
+        <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden><path d="M10 3L5 8l5 5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </Link>
+      <HyperflipBrand href={home} />
+    </div>
+    <div className="mt-10">{children}</div>
+  </main>;
 }
 
 function AccountAccess({ nextPath, unavailable }: { nextPath: string; unavailable: boolean }) {
@@ -37,9 +54,8 @@ function AccountAccess({ nextPath, unavailable }: { nextPath: string; unavailabl
     finally { setBusy(false); }
   }
 
-  return <main className="mx-auto w-full max-w-lg px-4 py-12 sm:py-20">
-    <Link href={siteHref("/")} className="text-sm text-dim underline underline-offset-4">Hyperflip</Link>
-    <h1 className="display mt-8 text-5xl">Your access starts here.</h1>
+  return <AccessShell>
+    <h1 className="display text-5xl">Your access starts here.</h1>
     <p className="mt-5 leading-relaxed text-dim">Sign in with the email you used for the waitlist. Once approved, connect and verify your existing wallet in the app.</p>
     <div className="my-8 space-y-3">
       {authenticated && user?.email && <p className="text-sm text-dim">Signed in as {user.email.address}</p>}
@@ -52,5 +68,5 @@ function AccountAccess({ nextPath, unavailable }: { nextPath: string; unavailabl
     </div>
     <p className="mb-4 text-sm text-dim">Waiting for approval? Join the waitlist. We’ll email you when your cohort is admitted.</p>
     <InviteForm showAppLink={false} />
-  </main>;
+  </AccessShell>;
 }
