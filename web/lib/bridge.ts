@@ -42,7 +42,10 @@ export function outboundData(maxSubmissionCost: bigint): `0x${string}` {
 }
 
 export async function quoteBridgeFees(core: PublicClient, l2GasPrice: bigint) {
-  const fee = await core.readContract({ address: BRIDGE.inbox, abi: inboxAbi, functionName: "calculateRetryableSubmissionFee", args: [BRIDGE_DATA_LENGTH, 0n] });
+  // Quote at the live 998 basefee: this Inbox returns 0 for baseFee 0 instead of substituting
+  // block.basefee, and a 0 maxSubmissionCost makes the ticket revert on chain.
+  const { baseFeePerGas } = await core.getBlock();
+  const fee = await core.readContract({ address: BRIDGE.inbox, abi: inboxAbi, functionName: "calculateRetryableSubmissionFee", args: [BRIDGE_DATA_LENGTH, baseFeePerGas ?? 1_000_000_000n] });
   return bridgeFees(fee, l2GasPrice);
 }
 
