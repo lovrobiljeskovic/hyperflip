@@ -40,12 +40,15 @@ echo "== .env"
 setkey() { # setkey FILE KEY VALUE — replace or append, keep the file's mode
   if grep -q "^$2=" "$1"; then sed -i "s|^$2=.*|$2=$3|" "$1"; else printf '%s=%s\n' "$2" "$3" >> "$1"; fi
 }
+# defkey: append only when missing. The box carries a keyed Conduit URL in *_RPC that the
+# public URL must never overwrite (public endpoint rate-limits boot, writer crash-loops).
+defkey() { grep -q "^$2=" "$1" || printf '%s=%s\n' "$2" "$3" >> "$1"; }
 for f in /opt/hype/.env $( [ -f /opt/hype/repo/.env ] && [ ! -L /opt/hype/repo/.env ] && echo /opt/hype/repo/.env ); do
   setkey $f PARLAY_VAULT_ADDRESS 0xEAD53F4C662C69Ed31AE2d9054d6B0a4aE1A00D6
   setkey $f PARLAY_DEPLOY_BLOCK 27935
-  setkey $f WRITER_RPC https://testnet-rpc.elysium.kinetiq.xyz
+  defkey $f WRITER_RPC https://testnet-rpc.elysium.kinetiq.xyz
   setkey $f PARLAY_INDEX_FROM_BLOCK 27935
-  setkey $f ELYSIUM_RPC https://testnet-rpc.elysium.kinetiq.xyz
+  defkey $f ELYSIUM_RPC https://testnet-rpc.elysium.kinetiq.xyz
   setkey $f RELAY_ADDRESS 0x7F495A95D34b14896820B178Da269a1B1EdC3612
   setkey $f INBOX_ADDRESS 0x11178Df40CBf87a4343f4B3F8B09B366ceFA8Ec0
   setkey $f ROTATE_VENUES flip,flp
