@@ -1,7 +1,7 @@
 import { formatUsdc, multiplier } from "./format";
 import type { BuilderLeg } from "./ticket";
 
-export type SlipImageInput = { legs: Pick<BuilderLeg, "isYes" | "title" | "label" | "group">[]; premium: bigint; maxPayout: bigint; id: string | null };
+export type SlipImageInput = { legs: Pick<BuilderLeg, "isYes" | "title" | "label" | "group">[]; premium: bigint; maxPayout: bigint };
 
 const W = 1080;
 const PAD = 72;
@@ -70,11 +70,11 @@ export async function renderSlipPng(slip: SlipImageInput): Promise<Blob> {
   y += 130;
   ctx.font = `700 76px ${f.display}`;
   ctx.textBaseline = "alphabetic";
-  ctx.fillText(slip.id === null ? "Slip" : `Slip #${slip.id}`, PAD - 2, y);
+  ctx.fillText(`${slip.legs.length} leg combo`, PAD - 2, y);
   y += 44;
   ctx.font = `400 28px ${f.sans}`;
   ctx.fillStyle = C.dim;
-  ctx.fillText(`${slip.legs.length} legs, all must hit.`, PAD, y);
+  ctx.fillText("All legs must hit.", PAD, y);
 
   // Stamp, rotated, top right.
   ctx.save();

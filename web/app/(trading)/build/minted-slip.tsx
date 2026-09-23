@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { HyperflipLogo } from "@/app/brand";
-import { explorerTx } from "@/lib/chain";
 import { formatUsdc, multiplier } from "@/lib/format";
 import { slipShareText, xIntentUrl } from "@/lib/share";
 import { renderSlipPng } from "@/lib/slip-image";
@@ -27,8 +26,8 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
   const [imageError, setImageError] = useState(false);
 
   if (!slip) return null;
-  const { legs, premium, maxPayout, hash, id } = slip;
-  const png = () => renderSlipPng({ legs, premium, maxPayout, id });
+  const { legs, premium, maxPayout } = slip;
+  const png = () => renderSlipPng({ legs, premium, maxPayout });
   async function copyImage() {
     try {
       // Promise form: Safari needs the write to start inside the click.
@@ -37,19 +36,9 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
       setTimeout(() => setCopied(false), 2500);
     } catch { setImageError(true); }
   }
-  async function download() {
-    try {
-      const url = URL.createObjectURL(await png());
-      const a = Object.assign(document.createElement("a"), { href: url, download: `hyperflip-slip${id === null ? "" : `-${id}`}.png` });
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch { setImageError(true); }
-  }
-  const tx = explorerTx(hash);
   // The intent cannot attach an image: the post carries the text and the site
-  // link; the card goes in by hand via copy or download, sportsbook style.
+  // link; the card goes in by hand via copy image, sportsbook style.
   const share = xIntentUrl(slipShareText(legs, premium, maxPayout), SITE);
-  const stamped = new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 
   return (
     <dialog
@@ -68,7 +57,7 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
           <h2 id="minted-title" className="display mt-6 text-[34px] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
             Slip minted
           </h2>
-          <p className="mt-1 text-dim">{legs.length} legs, all must hit.</p>
+          <p className="mt-1 text-dim">{legs.length} leg combo. All legs must hit.</p>
           <span aria-hidden className="minted-stamp mono">Minted</span>
         </div>
 
@@ -94,16 +83,6 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
           </div>
         </div>
 
-        <p className="mono mt-5 flex justify-between px-6 text-[10px] text-dim">
-          <span>{id === null ? "Position pending" : `Position #${id}`} · {stamped}</span>
-          {tx ? (
-            <a href={tx} target="_blank" rel="noreferrer" className="underline decoration-line underline-offset-4 hover:decoration-dim">
-              tx {hash.slice(0, 6)}…{hash.slice(-4)}
-            </a>
-          ) : (
-            <span>tx {hash.slice(0, 6)}…{hash.slice(-4)}</span>
-          )}
-        </p>
 
         <div className="minted-tear" />
         <div className="px-6 pb-6">
@@ -124,14 +103,13 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
               View positions
             </Link>
           </div>
-          <div className="mono mt-3 flex items-center justify-center gap-5 text-[11px] text-dim">
-            <button type="button" onClick={() => void copyImage()} className="transition-colors hover:text-fg">
-              {copied ? "Copied" : "Copy image"}
-            </button>
-            <button type="button" onClick={() => void download()} className="transition-colors hover:text-fg">
-              Download image
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => void copyImage()}
+            className="mono mt-2 w-full rounded-[8px] border border-line py-[13px] text-[12px] uppercase tracking-[0.1em] text-fg transition-colors hover:border-dim"
+          >
+            {copied ? "Copied" : "Copy image"}
+          </button>
           {imageError && <p className="mono mt-2 text-center text-[11px] text-no">Could not render the image in this browser.</p>}
           <button type="button" onClick={onClose} className="mono mt-2 w-full py-1 text-[11px] text-dim transition-colors hover:text-fg">
             Back to the board
