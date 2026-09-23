@@ -109,7 +109,9 @@ function BoardRow({
           <p className="truncate text-[13px]">
             <MarketLink coin={market.coinYes}>{market.title}</MarketLink>
           </p>
-          <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">{categoryLine(market)}</p>
+          {market.cluster && (
+            <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">{market.cluster}</p>
+          )}
         </div>
         <span className="ml-auto shrink-0 sm:hidden">
           <Kickoff market={market} />
@@ -140,11 +142,6 @@ function BoardRow({
       </span>
     </div>
   );
-}
-
-function categoryLine(market: Market): string {
-  const by = market.deployer ? `by ${market.deployer}` : undefined;
-  return [market.sport ?? market.category, market.cluster, by].filter(Boolean).join(" · ");
 }
 
 /** Title as a deep link to the leg's live Core book, new tab. */
@@ -197,9 +194,7 @@ function GroupRow({
               <MarketLink coin={head.coinYes}>{title}</MarketLink>
             </p>
             <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">
-              {categoryLine(head)}
-              {" · "}
-              {members.length} outcomes
+              {[head.cluster, `${members.length} outcomes`].filter(Boolean).join(" · ")}
             </p>
           </div>
         </div>
