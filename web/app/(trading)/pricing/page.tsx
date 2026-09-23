@@ -23,9 +23,11 @@ export default async function PricingPage() {
           <>
             <dl className="mt-5 space-y-4">
               <div className="flex items-baseline justify-between gap-4"><dt>Base margin</dt><dd className="mono text-xl text-accent">{pricing.base}%</dd></div>
-              <div className="flex items-baseline justify-between gap-4"><dt>Each leg after the first</dt><dd className="mono text-xl text-accent">+{pricing.perLeg}%</dd></div>
+              {pricing.perLeg !== "0.00" && (
+                <div className="flex items-baseline justify-between gap-4"><dt>Each leg after the first</dt><dd className="mono text-xl text-accent">+{pricing.perLeg}%</dd></div>
+              )}
             </dl>
-            <p className="mt-5 text-sm leading-relaxed text-dim">The base and additional-leg margins are added together and applied to the combined probability to calculate quoted odds. This reduces the payout relative to fair odds; it is not a separate charge on top of your stake.</p>
+            <p className="mt-5 text-sm leading-relaxed text-dim">The margin is applied to the combined probability to calculate quoted odds. This reduces the payout relative to fair odds; it is not a separate charge on top of your stake.</p>
           </>
         ) : (
           <p role="status" className="mt-4 text-dim">Current pricing is temporarily unavailable. Please reload to try again. No estimated fee is shown; inspect a fresh quote in the builder before you mint.</p>

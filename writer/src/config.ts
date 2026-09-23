@@ -143,7 +143,7 @@ export function loadConfig(): WriterConfig {
     perCodeReservedCap: process.env.PER_CODE_RESERVED_CAP
       ? BigInt(process.env.PER_CODE_RESERVED_CAP)
       : defaultPerCodeReservedCap(maxStake, minPremiumBps),
-    legEdgeBps: BigInt(process.env.LEG_EDGE_BPS ?? 300),
+    legEdgeBps: BigInt(process.env.LEG_EDGE_BPS ?? 0),
     quoteTtlMs: Number(process.env.QUOTE_TTL_MS ?? 10_000),
     spotPxStaleMs,
     // ponytail: testnet depth floor; measure liquidity before a real-money launch.
