@@ -52,7 +52,7 @@ function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: BuilderLeg
   if (res.error === "rpc-down") return "Chain RPC is rate-limiting the writer - retry in a moment.";
   if (res.status === 0 || res.status === 503) return "Writer unreachable - retrying.";
   if (res.status === 429) return "Too many quotes too fast - pausing a moment.";
-  if (res.status === 401 || res.status === 403) return "Verify your approved account and link this wallet to continue.";
+  if (res.status === 401 || res.status === 403) return "Sign in with this wallet again to continue.";
   if (res.status === 409) {
     if (res.error === "leg-settled") return "A leg just settled - remove it and requote.";
     if (res.error === "quota-cap")
@@ -408,7 +408,6 @@ export function Ticket({
                   Use {formatUsdc(BigInt(quoteResult.maxStake))} USDC
                 </button>
               )}
-              {quoteResult.status === 403 && <Link href="/access" prefetch={false} className="text-accent underline">Verify your account</Link>}
             </div>
           )}
         </>

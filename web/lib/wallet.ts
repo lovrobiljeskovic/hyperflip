@@ -83,9 +83,7 @@ export function useConnectAction(): () => void {
 
 /** Click handler for "Disconnect". Privy owns the session, so logout() is the
  * one that actually clears it — wagmi's disconnect alone leaves the user
- * authenticated and silently reconnected on the next render. The admission
- * cookie is gone after DELETE, but proxy.ts only runs on navigation, so send
- * the user to the access page instead of leaving a gated page open. */
+ * authenticated and silently reconnected on the next render. */
 export function useDisconnectAction(): () => void {
   const { disconnect } = useDisconnect();
   if (!PRIVY_ENABLED) return () => disconnect();
@@ -93,7 +91,7 @@ export function useDisconnectAction(): () => void {
   const { logout } = usePrivy();
   return () => {
     disconnect();
-    void fetch("/api/access", { method: "DELETE" }).catch(() => {}).then(() => logout()).catch(() => {}).then(() => window.location.assign("/access"));
+    void logout().catch(() => {});
   };
 }
 

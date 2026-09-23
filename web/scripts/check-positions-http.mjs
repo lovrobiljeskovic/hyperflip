@@ -18,11 +18,6 @@ const tickets = Array.from({length: 21}, (_, i) => ({ ticket: { id: `998:${deplo
 const fixture = createServer(async (req, res) => {
   let raw = ''; for await (const chunk of req) raw += chunk;
   res.setHeader('content-type', 'application/json');
-  if (req.url === '/access') {
-    const allowed = req.headers.authorization === 'Bearer http-fixture-admitted';
-    res.statusCode = allowed ? 200 : 403;
-    return res.end(JSON.stringify({ ok: allowed }));
-  }
   if (req.url === '/graphql') {
     const input = JSON.parse(raw);
     if (fail) return res.end(JSON.stringify({ errors: [{ message: 'fixture provider unavailable' }] }));
@@ -46,8 +41,7 @@ const app = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start',
 try {
   const url = `http://127.0.0.1:${port}`;
   for (let attempt = 0; ; attempt++) { try { await fetch(`${url}/api/positions?wallet=bad`); break; } catch { if (attempt > 100) throw new Error('Local app did not start'); await new Promise(resolve => setTimeout(resolve, 100)); } }
-  assert.equal((await fetch(`${url}/api/positions?wallet=bad`)).status, 403);
-  const admitted = target => fetch(target, { headers: { cookie: 'hyperflip-session=http-fixture-admitted' } });
+  const admitted = fetch;
   assert.equal((await admitted(`${url}/api/positions?wallet=bad`)).status, 400);
   const response = await admitted(`${url}/api/positions?wallet=${wallet}`);
   assert.equal(response.status, 200, await response.clone().text());
@@ -60,5 +54,5 @@ try {
   assert.equal((await admitted(`${url}/api/positions?wallet=${leg}`)).status, 503);
   assert.equal((await fetch(`${url}/position-markets.json`)).status, 200);
   const html = await (await admitted(`${url}/positions`)).text(); assert.match(html, /Your slips/);
-  console.log('PASS: production HTTP route: 403 admission gate, 400 validation, 20+1 paginated tickets, deduped outcomes (22 eth_call), provider failure 503, static labels, positions HTML');
+  console.log('PASS: production HTTP route: 400 validation, 20+1 paginated tickets, deduped outcomes (22 eth_call), provider failure 503, static labels, positions HTML');
 } finally { app.kill('SIGTERM'); await once(app, 'exit'); await new Promise(resolve => fixture.close(resolve)); }
