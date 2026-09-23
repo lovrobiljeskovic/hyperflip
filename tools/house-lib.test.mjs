@@ -24,7 +24,7 @@ const car = espnEvent("2", "CAR", "Carolina Panthers", "ATL", "Atlanta Falcons",
 const nyg = espnEvent("3", "NYG", "New York Giants", "LAR", "Los Angeles Rams", T0 + 4.5 * D);
 
 function outcomeFor(fx, id, venue = "flip") {
-  const kv = registerAction(fx, 2).operation.registerStandaloneOutcomeFromTemplate.keywordToValue;
+  const kv = registerAction(fx, 2, "flip").operation.registerStandaloneOutcomeFromTemplate.keywordToValue;
   return {
     outcome: id, venue, name: "template:sportsContestWinner7", quoteToken: "USDC",
     description: kv.map(([k, v]) => `${k}:${v}`).join("|"),
@@ -40,8 +40,10 @@ test("devig removes the vig and returns P(away)", () => {
 
 test("registerAction fills sportsContestWinner7 with sorted keywords and refuses oversized names", () => {
   const fx = fixtureFromEspn(det, { away: 180, home: -218 });
-  const action = registerAction(fx, 2);
+  const action = registerAction(fx, 2, "flip");
   assert.equal(action.venue, "flip");
+  assert.equal(registerAction({ ...fx, venue: "flp" }, 2).venue, "flp");
+  assert.throws(() => registerAction(fx, 2, "zzz"), /unknown venue/);
   const inst = action.operation.registerStandaloneOutcomeFromTemplate;
   assert.equal(inst.id, "sportsContestWinner7");
   assert.equal(inst.deployerFeeScale, "1");
@@ -53,13 +55,15 @@ test("registerAction fills sportsContestWinner7 with sorted keywords and refuses
     sport: "American football", stage: "Week 2",
   });
   const long = { ...fx, away: { abbr: "AAA", name: "A".repeat(40) }, home: { abbr: "BBB", name: "B".repeat(40) } };
-  assert.throws(() => registerAction(long, 2), /name > 70/);
-  assert.throws(() => registerAction({ ...fx, away: { abbr: "A|B", name: "x" } }, 2), /invalid/);
+  assert.throws(() => registerAction(long, 2, "flip"), /name > 70/);
+  assert.throws(() => registerAction({ ...fx, away: { abbr: "A|B", name: "x" } }, 2, "flip"), /invalid/);
 });
 
 test("settleAction echoes the on-chain outcome verbatim", () => {
   const o = outcomeFor(fixtureFromEspn(det), 7);
   const action = settleAction(o, "0.5");
+  assert.equal(action.venue, "flip");
+  assert.equal(settleAction(outcomeFor(fixtureFromEspn(det), 8, "flp"), "1").venue, "flp");
   assert.deepEqual(action.operation.settleOutcome, {
     outcome: 7, settleFraction: "0.5", details: "", nameAndDescription: [o.name, o.description], sideNames: ["template:{shortNameA}", "template:{shortNameB}"],
   });
@@ -81,7 +85,7 @@ test("plan: settles finals and stale deadlines, registers by kickoff within the 
   // 3 mine, 2 settling -> 1 active -> room for 2; NYG is beyond the 4d horizon, CAR already registered.
   assert.deepEqual(p.toRegister.map((fx) => fx.id), []);
   const p2 = plan({ outcomes: [oDet, oOld, oCar, other], fixtures, registry, nowMs: T0, horizonMs: 5 * D, maxActive: 3 });
-  assert.deepEqual(p2.toRegister.map((fx) => fx.id), ["3"]);
+  assert.deepEqual(p2.toRegister.map((fx) => [fx.id, fx.venue]), [["3", "flip"]]);
   assert.deepEqual(p.toWrap.map((w) => [w.outcome, w.coinYes, w.underlying, w.priorYes, w.deployer]), [[3, "#30", "carolina-panthers-atlanta-falcons-20260920", 0.438, "flip"]]);
   assert.deepEqual([...p.priors], []); // DET kicked off: frozen
   const live = { markets: [{ coinYes: "#30", deployer: "flip", startMs: T0 + 3 * D, priorYes: 0.5 }] };
@@ -97,8 +101,24 @@ test("plan: contested slots go to balanced games with a real pre-kickoff window"
   assert.deepEqual(p.toRegister.map((fx) => fx.id), ["2", "3"]);
   const p2 = plan({ outcomes: [], fixtures, registry: { markets: [] }, nowMs: T0, maxActive: 3, minWindowMs: 2 * H });
   assert.deepEqual(p2.toRegister.map((fx) => fx.id), ["2", "3", "1"]);
+  // maxActive is per venue: one slot on flip, one on flp; DET (lopsided) is left out.
   const p3 = plan({ outcomes: [], fixtures, registry: { markets: [] }, nowMs: T0, maxActive: 1, minWindowMs: 2 * H });
-  assert.deepEqual(p3.toRegister.map((fx) => fx.id), ["2"]);
+  assert.deepEqual(p3.toRegister.map((fx) => [fx.id, fx.venue]), [["2", "flip"], ["3", "flp"]]);
+});
+
+test("plan: flip fills first, flp takes only the overflow; both venues settle and wrap", () => {
+  const games = ["A", "B", "C", "D", "E"].map((x, i) => espnEvent(x, x, `${x} Away`, `${x}H`, `${x} Home`, T0 + (2 + i) * D));
+  const fixtures = games.map((g) => fixtureFromEspn(g));
+  // flip holds 2 of 2 (one already final), flp holds 1 of 2.
+  const flipFinal = espnEvent("Z", "Z", "Z Away", "ZH", "Z Home", T0 - D, { final: true, awayWins: true });
+  const outcomes = [outcomeFor(fixtureFromEspn(flipFinal), 1), outcomeFor(fixtures[0], 2), outcomeFor(fixtures[1], 3, "flp")];
+  const p = plan({ outcomes, fixtures: [fixtureFromEspn(flipFinal), ...fixtures], registry: { markets: [] }, nowMs: T0, maxActive: 2 });
+  assert.deepEqual(p.toSettle.map((s) => [s.o.outcome, s.fraction]), [[1, "1"]]);
+  // settling frees a flip slot -> C on flip; flp has one slot -> D; E has no room.
+  assert.deepEqual(p.toRegister.map((fx) => [fx.id, fx.venue]), [["C", "flip"], ["D", "flp"]]);
+  assert.deepEqual(p.toWrap.map((w) => [w.outcome, w.deployer]), [[2, "flip"], [3, "flp"]]);
+  const p2 = plan({ outcomes: [], fixtures, registry: { markets: [] }, nowMs: T0, maxActive: 2 });
+  assert.deepEqual(p2.toRegister.map((fx) => fx.venue), ["flip", "flip", "flp", "flp"]);
 });
 
 test("withPriors returns the same reference when nothing changes", () => {

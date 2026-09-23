@@ -1,8 +1,10 @@
-// Pure planning for house-deployed HIP-4 markets (venue `flip`). State lives on Core
-// (outcomeMeta) and at ESPN; nothing is persisted here. CLI: tools/house-markets.mjs.
+// Pure planning for house-deployed HIP-4 markets. State lives on Core (outcomeMeta) and at
+// ESPN; nothing is persisted here. CLI: tools/house-markets.mjs.
 import { eventKey, parseSportsEvent } from "./rotate-lib.mjs";
 
-export const VENUE = "flip";
+// Testnet caps each venue owner at 10 active outcomes, so we own two venues. Fill order matters:
+// `flip` first, `flp` only takes the overflow. Sub-deployer (box EOA) is the same on both.
+export const VENUES = ["flip", "flp"];
 export const TEMPLATE = "sportsContestWinner7";
 // ponytail: one league constant; a second league is a second constant + env switch.
 export const LEAGUE = { path: "football/nfl", competition: "NFL", sport: "American football", officialSource: "NFL", season: "2026", seasontype: 2 };
@@ -47,7 +49,8 @@ const checkValue = (k, v) => {
   return v;
 };
 
-export function registerAction(fx, week) {
+export function registerAction(fx, week, venue = fx.venue) {
+  if (!VENUES.includes(venue)) throw new Error(`unknown venue: ${venue}`);
   const stage = `Week ${week}`;
   const kv = {
     competition: LEAGUE.competition, contestType: "game", officialSource: LEAGUE.officialSource,
@@ -60,7 +63,7 @@ export function registerAction(fx, week) {
   const name = `${kv.competition} ${stage}: ${kv.participantA} v ${kv.participantB}`;
   if (name.length > 70) throw new Error(`name > 70 chars: ${name}`);
   const keywordToValue = Object.entries(kv).sort(([a], [b]) => (a < b ? -1 : 1));
-  return { type: "outcomeDeploy", venue: VENUE, operation: { registerStandaloneOutcomeFromTemplate: { id: TEMPLATE, keywordToValue, deployerFeeScale: "1" } } };
+  return { type: "outcomeDeploy", venue, operation: { registerStandaloneOutcomeFromTemplate: { id: TEMPLATE, keywordToValue, deployerFeeScale: "1" } } };
 }
 
 export const fixtureKey = (fx) => `${fx.away.name}|${fx.home.name}|${fx.kickoffMs}`;
@@ -72,7 +75,7 @@ export const outcomeKey = (o) => {
 /** Settlement copies name/description/sideSpecs from outcomeMeta verbatim: Core rejects any drift. */
 export function settleAction(o, fraction) {
   return {
-    type: "outcomeDeploy", venue: VENUE,
+    type: "outcomeDeploy", venue: o.venue,
     operation: { settleOutcome: { outcome: o.outcome, settleFraction: fraction, details: "", nameAndDescription: [o.name, o.description], sideNames: o.sideSpecs.map((s) => s.name) } },
   };
 }
@@ -85,12 +88,12 @@ export function housePick(o, ev, priorYes) {
   return {
     outcome: o.outcome, coinYes: `#${o.outcome * 10}`, coinNo: `#${o.outcome * 10 + 1}`, question: null, group: null,
     title, groupTitle: title, sideYes: ev.shortNameA, sideNo: ev.shortNameB, underlying: eventKey(ev), cluster: ev.competition,
-    sport: ev.sport, startMs: ev.startMs, expiryMs: ev.expiryMs, deployer: VENUE, ...(priorYes !== undefined ? { priorYes } : {}),
+    sport: ev.sport, startMs: ev.startMs, expiryMs: ev.expiryMs, deployer: o.venue, ...(priorYes !== undefined ? { priorYes } : {}),
   };
 }
 
 export function plan({ outcomes, fixtures, registry, nowMs, horizonMs = 7 * 86400_000, maxActive = 10, minWindowMs = 18 * 3600_000 }) {
-  const mine = outcomes.filter((o) => o.venue === VENUE && o.name === `template:${TEMPLATE}`);
+  const mine = outcomes.filter((o) => VENUES.includes(o.venue) && o.name === `template:${TEMPLATE}`);
   const byKey = new Map(fixtures.map((fx) => [fixtureKey(fx), fx]));
   const knownCoins = new Set(registry.markets.map((m) => m.coinYes));
 
@@ -108,11 +111,17 @@ export function plan({ outcomes, fixtures, registry, nowMs, horizonMs = 7 * 8640
   // trading to be worth a slot, and balanced games (prior nearest 0.5) win contested slots.
   const lopsided = (fx) => Math.abs((priorOf(fx) ?? 0.5) - 0.5);
   const registered = new Set(mine.map(outcomeKey));
-  const room = Math.max(0, maxActive - (mine.length - toSettle.length));
+  // maxActive is per venue owner; fill venues in VENUES order so `flip` stays as it is and
+  // `flp` only gets what `flip` cannot hold.
+  const slots = VENUES.flatMap((venue) => {
+    const active = mine.filter((o) => o.venue === venue && !settling.has(o.outcome)).length;
+    return Array(Math.max(0, maxActive - active)).fill(venue);
+  });
   const toRegister = fixtures
     .filter((fx) => !registered.has(fixtureKey(fx)) && fx.kickoffMs - nowMs >= minWindowMs && fx.kickoffMs - nowMs <= horizonMs)
     .sort((a, b) => lopsided(a) - lopsided(b) || a.kickoffMs - b.kickoffMs)
-    .slice(0, room);
+    .slice(0, slots.length)
+    .map((fx, i) => ({ ...fx, venue: slots[i] }));
 
   const toWrap = [];
   for (const o of mine) {
@@ -126,7 +135,7 @@ export function plan({ outcomes, fixtures, registry, nowMs, horizonMs = 7 * 8640
   const priors = new Map();
   const fxByCoin = new Map(mine.map((o) => [`#${o.outcome * 10}`, byKey.get(outcomeKey(o))]));
   for (const m of registry.markets) {
-    if (m.deployer !== VENUE || !(m.startMs > nowMs)) continue;
+    if (!VENUES.includes(m.deployer) || !(m.startMs > nowMs)) continue;
     const p = priorOf(fxByCoin.get(m.coinYes));
     if (p !== undefined) priors.set(m.coinYes, p);
   }

@@ -108,8 +108,8 @@ units that float with the parent basefee, so Forge's own limit fails with `intri
 `.env` into the shell first (`set -a; source .env; set +a`); Forge reads it for itself but
 does not export `$PRIVATE_KEY`.
 
-Only our own HIP-4 venue (`flip`) is listed on Elysium: `tools/mirror-legs.mjs` mirrors the live
-house rows and archives every other venue's rows, and `ROTATE_VENUES=flip` in `.env` keeps hourly
+Only our own HIP-4 venues (`flip`, `flp`) are listed on Elysium: `tools/mirror-legs.mjs` mirrors the live
+house rows and archives every other venue's rows, and `ROTATE_VENUES=flip,flp` in `.env` keeps hourly
 rotation from adding foreign-venue markets (house games are wrapped by `house-markets.mjs sync`).
 
 Rotation does the third step itself for every new vault once `ELYSIUM_RPC`, `RELAY_ADDRESS`
@@ -336,12 +336,13 @@ and existing writer/keeper units. Adapt those paths before installation. It
 restarts the services after registry changes. Private deploy RPCs can be supplied
 through `DEPLOY_RPCS` to avoid sharing public endpoint quotas with running services.
 
-## House HIP-4 markets (venue `flip`)
+## House HIP-4 markets (venues `flip` and `flp`)
 
 `tools/house-markets.mjs sync` runs first in `rotate.service`, hourly. Each run settles our
 finished games from ESPN finals, registers upcoming fixtures from the
-`sportsContestWinner7` template (testnet caps a deployer at 10 active outcomes and 50
-deployments per day, so games roll through in kickoff order), wraps new outcomes in
+`sportsContestWinner7` template (testnet caps a venue owner at 10 active outcomes and 50
+deployments per day, so we own two venues: `flip` is filled first and `flp` takes only the
+overflow, giving 20 slots for a 16-game NFL week), wraps new outcomes in
 OutcomeVaults through the rotation deploy path, and refreshes `priorYes` on our registry
 entries from the DraftKings moneyline ESPN publishes. The writer prices a leg from
 `priorYes` whenever the Core book is empty, until kickoff. A game takes a slot only if it
@@ -355,8 +356,9 @@ the hourly cadence keeps writer restarts (registry rewrites on moneyline drift) 
 node tools/house-markets.mjs sync --dry-run
 ```
 
-One-off setup from the staked wallet (100 testnet HYPE, Standard account abstraction;
-activation and the venue name are permanent), then grant the box deployer key:
+One-off setup per venue from its staked owner wallet (100 testnet HYPE, Standard account
+abstraction, `userAbstraction` must read `disabled`, not `default`; activation and the venue name
+are permanent), then grant the box deployer key. Done for `flip` (2026-09-15) and `flp` (2026-09-23):
 
 ```bash
 PRIVATE_KEY=<master> uv run tools/hip4.py '{"type":"activateOutcomeDeployer","activate":{"venueName":"flip"}}'

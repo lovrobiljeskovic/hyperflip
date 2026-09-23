@@ -8,7 +8,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { VENUE } from "./house-lib.mjs";
+import { VENUES } from "./house-lib.mjs";
 import { ELYSIUM_CHAIN_ID, ROOT, rotatedRegistry } from "./rotate-lib.mjs";
 
 const REGISTRY = path.join(ROOT, "registry/markets.json");
@@ -21,7 +21,7 @@ for (const key of ["PRIVATE_KEY", "ELYSIUM_RPC", "RELAY_ADDRESS", "PARLAY_VAULT_
 
 const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));
 const nowMs = Date.now();
-const house = (m) => m.deployer === VENUE;
+const house = (m) => VENUES.includes(m.deployer);
 const todo = registry.markets.filter((m) => house(m) && m.expiryMs > nowMs && !m.sourceVault);
 // Everything that gets no leg leaves the board: foreign venues and already-expired house rows.
 const foreign = registry.markets.filter((m) => !m.sourceVault && !todo.includes(m));

@@ -48,7 +48,7 @@ for f in /opt/hype/.env $( [ -f /opt/hype/repo/.env ] && [ ! -L /opt/hype/repo/.
   setkey $f ELYSIUM_RPC https://testnet-rpc.elysium.kinetiq.xyz
   setkey $f RELAY_ADDRESS 0x7F495A95D34b14896820B178Da269a1B1EdC3612
   setkey $f INBOX_ADDRESS 0x11178Df40CBf87a4343f4B3F8B09B366ceFA8Ec0
-  setkey $f ROTATE_VENUES flip
+  setkey $f ROTATE_VENUES flip,flp
   grep -q "^EVM_CHAIN_ID=" $f && setkey $f EVM_CHAIN_ID 99801
   echo "$f: $(grep -cE '^(PARLAY_VAULT_ADDRESS|PARLAY_DEPLOY_BLOCK|WRITER_RPC|PARLAY_INDEX_FROM_BLOCK|ELYSIUM_RPC|RELAY_ADDRESS|INBOX_ADDRESS|ROTATE_VENUES)=' $f)/8 keys set"
 done

@@ -1,5 +1,5 @@
-// House HIP-4 deployer sync: settle finished games, register upcoming ones (10-slot testnet
-// cap), wrap our outcomes in OutcomeVaults, refresh registry priors from ESPN moneylines.
+// House HIP-4 deployer sync: settle finished games, register upcoming ones (10 slots per venue on testnet,
+// `flip` filled before `flp`), wrap our outcomes in OutcomeVaults, refresh registry priors from ESPN moneylines.
 //   node tools/house-markets.mjs sync [--dry-run]
 // Runs hourly from rotate.service ahead of rotate-markets.mjs; registry mtime triggers
 // the writer/keeper restart there.
@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { bigBlocks, deployPair, info, ROOT, rotatedRegistry, sportsRegistryEntry } from "./rotate-lib.mjs";
-import { fixtureFromEspn, LEAGUE, plan, registerAction, settleAction, withPriors } from "./house-lib.mjs";
+import { fixtureFromEspn, LEAGUE, plan, registerAction, settleAction, VENUES, withPriors } from "./house-lib.mjs";
 
 const REGISTRY = path.join(ROOT, "registry/markets.json");
 const dryRun = process.argv.includes("--dry-run");
@@ -68,9 +68,9 @@ const { weekNo, fixtures } = await espnFixtures();
 let outcomes = await myOutcomes();
 let p = plan({ outcomes, fixtures, registry, nowMs, horizonMs, maxActive, minWindowMs });
 
-console.log(`house: week ${weekNo}, ${fixtures.length} fixtures, ${outcomes.filter((o) => o.venue === "flip").length} active outcomes`);
+console.log(`house: week ${weekNo}, ${fixtures.length} fixtures, active ${VENUES.map((v) => `${v}=${outcomes.filter((o) => o.venue === v).length}`).join(" ")}`);
 for (const s of p.toSettle) console.log(`settle: outcome ${s.o.outcome} -> ${s.fraction} (${s.o.description})`);
-for (const fx of p.toRegister) console.log(`register: ${fx.away.name} @ ${fx.home.name} ${new Date(fx.kickoffMs).toISOString()}${fx.moneyline ? ` ml ${fx.moneyline.away}/${fx.moneyline.home}` : ""}`);
+for (const fx of p.toRegister) console.log(`register on ${fx.venue}: ${fx.away.name} @ ${fx.home.name} ${new Date(fx.kickoffMs).toISOString()}${fx.moneyline ? ` ml ${fx.moneyline.away}/${fx.moneyline.home}` : ""}`);
 for (const w of p.toWrap) console.log(`wrap: outcome ${w.outcome} ${w.title} prior ${w.priorYes ?? "-"}`);
 for (const [coin, prior] of p.priors) console.log(`prior: ${coin} ${prior}`);
 if (dryRun) {
@@ -88,13 +88,15 @@ for (const s of p.toSettle) {
   }
 }
 let registered = 0;
+const failedVenues = new Set();
 for (const fx of p.toRegister) {
+  if (failedVenues.has(fx.venue)) continue; // cap or rejection: later fixtures on that venue will not fare better this hour
   try {
     hip4(registerAction(fx, fx.week ?? weekNo));
     registered++;
   } catch (err) {
-    console.log(`register failed for ${fx.away.name} @ ${fx.home.name}: ${err.message} — retry next run`);
-    break; // cap or rejection: later fixtures will not fare better this hour
+    console.log(`register failed on ${fx.venue} for ${fx.away.name} @ ${fx.home.name}: ${err.message} — retry next run`);
+    failedVenues.add(fx.venue);
   }
 }
 if (settled || registered) {

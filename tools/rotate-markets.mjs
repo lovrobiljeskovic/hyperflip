@@ -26,7 +26,7 @@ const [{ outcomes, questions }, mids, settled] = await Promise.all([
 ]);
 const nowMs = Date.now();
 const knownCoins = new Set(registry.markets.map((m) => m.coinYes));
-// ROTATE_VENUES=flip keeps the board to our own HIP-4 venue (Elysium legs are only deployed for
+// ROTATE_VENUES=flip,flp keeps the board to our own HIP-4 venues (Elysium legs are only deployed for
 // what we list, so foreign venues would otherwise get legs too). Unset = every venue, as before.
 const venues = process.env.ROTATE_VENUES?.split(",").map((v) => v.trim()).filter(Boolean);
 const outcomesInScope = venues?.length ? outcomes.filter((o) => venues.includes(o.venue)) : outcomes;
