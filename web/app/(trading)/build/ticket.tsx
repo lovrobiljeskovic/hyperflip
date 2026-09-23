@@ -24,6 +24,7 @@ import {
 } from "@/lib/format";
 import { appChain, tradeUrl } from "@/lib/chain";
 import { BridgeStep } from "./bridge-step";
+import { MintedSlipDialog } from "./minted-slip";
 import { Overround } from "@/app/overround-motif";
 import { CountUp } from "@/app/live";
 
@@ -173,7 +174,7 @@ export function Ticket({
   const mids = useMids();
   const printing = usePrinting();
   const { stake, setStake, quoteResult, ttlLeft, ttlSeconds, mintState, mintErrorMsg, mintErrorDetail,
-    maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain, address } = useTicket(legs, display);
+    maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain, address, minted, dismissMinted } = useTicket(legs, display);
 
   // Quote-derived display values. premium/maxPayout are the signed truth;
   // `bd` re-derives the writer's pricing steps for the breakdown accordion.
@@ -516,6 +517,7 @@ export function Ticket({
           )}
         </>
       ) : null}
+      {!display && <MintedSlipDialog slip={minted} onClose={dismissMinted} />}
     </div>
   );
 }

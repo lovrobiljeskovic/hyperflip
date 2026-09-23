@@ -10,6 +10,10 @@ import { PARLAY_VAULT } from "@/lib/contracts";
 import { useConnectAction, useUsdc, useWalletState } from "@/lib/wallet";
 import { tryParseStake, TicketSession, approveUsdc, mintTicket, quoteMatches, type BuilderLeg } from "@/lib/ticket";
 
+/** What the confirmed mint put on-chain, frozen for the slip overlay: the
+ * ticket's legs and signed terms at the moment of the receipt. */
+export type MintedSlip = { legs: BuilderLeg[]; premium: bigint; maxPayout: bigint; hash: `0x${string}`; id: string | null };
+
 const MIN_LEGS = 2;
 const QUOTE_DEBOUNCE_MS = 400;
 const TTL_SECONDS = 30;
@@ -46,6 +50,7 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
   const [mintErrorMsg, setMintErrorMsg] = useState("");
   const [mintErrorDetail, setMintErrorDetail] = useState("");
   const [approving, setApproving] = useState(false);
+  const [minted, setMinted] = useState<MintedSlip | null>(null);
 
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
@@ -170,10 +175,14 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
     setMintErrorMsg("");
     setMintErrorDetail("");
     let retryQuote = false;
+    // mintTicket may swap in a refreshed quote before sending; the slip shows the terms that landed.
+    let signed = q;
     try {
       const done = await mintTicket({ client: publicClient, write: writeContractAsync, usdc: usdcAddr,
-        quote: q, sig, input, current: () => session.revision === revision, onQuote: setQuoteResult });
+        quote: q, sig, input, current: () => session.revision === revision,
+        onQuote: (r) => { if (r.ok) signed = r.quote; setQuoteResult(r); } });
       if (session.revision === revision) setMintState(done ? "done" : "idle");
+      if (done) setMinted({ legs, premium: BigInt(signed.premium), maxPayout: BigInt(signed.maxPayout), hash: done.hash, id: done.id });
     } catch (err) {
       if (session.revision !== revision) return;
       const msg = String((err as Error)?.message ?? err);
@@ -256,7 +265,8 @@ export function useTicket(legs: BuilderLeg[], display: boolean) {
     clockSkewRetried.current = false;
     void runQuote();
   }
+  const dismissMinted = useCallback(() => setMinted(null), []);
   return { stake, setStake, quoteResult, ttlLeft, ttlSeconds, mintState, mintErrorMsg, mintErrorDetail,
-    maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain, address };
+    maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain, address, minted, dismissMinted };
 
 }
