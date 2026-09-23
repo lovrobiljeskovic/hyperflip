@@ -68,14 +68,14 @@ function PriceCell({
   );
 }
 
-/** American football: a generic ball, drawn inline. No league or team marks -
- * those are licensed. Other sports keep the two-letter badge. */
+/** American football: Tabler's `ball-american-football` (MIT), inlined - the
+ * installed lucide set has no football. No league or team marks - those are
+ * licensed. Other sports keep the two-letter badge. */
 function SportBadge({ market }: { market: Pick<Market, "sport" | "category"> }) {
   if (sportLabel(market) === "Football") {
     return (
-      <svg aria-hidden="true" viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.3" className="text-dim">
-        <ellipse cx="10" cy="10" rx="8.5" ry="5.2" transform="rotate(-45 10 10)" />
-        <path d="M7 13l6-6M7.6 10.5l1.4 1.4M9.3 8.8l1.4 1.4M11 7.1l1.4 1.4" strokeLinecap="round" />
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="text-dim">
+        <path d="M15 9l-6 6M10 12l2 2M12 10l2 2M8 21a5 5 0 0 0-5-5M16 3c-7.18 0-13 5.82-13 13a5 5 0 0 0 5 5c7.18 0 13-5.82 13-13a5 5 0 0 0-5-5M16 3a5 5 0 0 0 5 5" />
       </svg>
     );
   }
