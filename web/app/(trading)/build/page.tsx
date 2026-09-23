@@ -68,10 +68,20 @@ function PriceCell({
   );
 }
 
-function SportBadge({ sport }: { sport?: string }) {
+/** American football: a generic ball, drawn inline. No league or team marks -
+ * those are licensed. Other sports keep the two-letter badge. */
+function SportBadge({ market }: { market: Pick<Market, "sport" | "category"> }) {
+  if (sportLabel(market) === "Football") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.3" className="text-dim">
+        <ellipse cx="10" cy="10" rx="8.5" ry="5.2" transform="rotate(-45 10 10)" />
+        <path d="M7 13l6-6M7.6 10.5l1.4 1.4M9.3 8.8l1.4 1.4M11 7.1l1.4 1.4" strokeLinecap="round" />
+      </svg>
+    );
+  }
   return (
     <span aria-hidden="true" className="mono flex h-5 w-5 items-center justify-center rounded-full border border-line text-[8px] uppercase text-dim">
-      {(sport ?? "?").slice(0, 2)}
+      {(market.sport ?? "?").slice(0, 2)}
     </span>
   );
 }
@@ -124,7 +134,7 @@ function BoardRow({
         {/* Kickoff on its own line: beside the title it ate half the card. */}
         <div className="flex min-w-0 items-center gap-2.5">
           <span className="shrink-0">
-            <SportBadge sport={market.sport} />
+            <SportBadge market={market} />
           </span>
           <p className="min-w-0 truncate text-[13px]">
             <MarketLink coin={market.coinYes}>{market.title}</MarketLink>
@@ -146,7 +156,7 @@ function BoardRow({
     >
       <div className="flex min-w-0 items-center gap-2.5">
         <span className="shrink-0">
-          <SportBadge sport={market.sport} />
+          <SportBadge market={market} />
         </span>
         <div className="min-w-0">
           <p className="truncate text-[13px]">
@@ -222,7 +232,7 @@ function GroupRow({
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
           <span className="shrink-0">
-            <SportBadge sport={head.sport} />
+            <SportBadge market={head} />
           </span>
           <div className="min-w-0">
             <p className="truncate text-[13px]">
