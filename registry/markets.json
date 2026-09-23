@@ -17,7 +17,7 @@
       "groupTitle": "Houston Texans vs Indianapolis Colts",
       "sport": "American football",
       "deployer": "flip",
-      "priorYes": 0.5635
+      "priorYes": 0.5721
     },
     {
       "vault": "0x69288d331911984faec8af82688b7f718e2bb541",
@@ -35,7 +35,7 @@
       "groupTitle": "Los Angeles Rams vs Denver Broncos",
       "sport": "American football",
       "deployer": "flip",
-      "priorYes": 0.5514
+      "priorYes": 0.5635
     },
     {
       "vault": "0x5f7661c2656caf075898f74d5f337b95e709dbdc",
@@ -71,7 +71,7 @@
       "groupTitle": "New England Patriots vs Jacksonville Jaguars",
       "sport": "American football",
       "deployer": "flip",
-      "priorYes": 0.4004
+      "priorYes": 0.417
     },
     {
       "vault": "0x7f03b94023a9a727b68d55d6d4caf634142ddb92",
@@ -89,7 +89,7 @@
       "groupTitle": "Baltimore Ravens vs Dallas Cowboys",
       "sport": "American football",
       "deployer": "flip",
-      "priorYes": 0.583
+      "priorYes": 0.6164
     },
     {
       "vault": "0x3ab318c3fcd1f2bd6de18dafdaa535aeba0e974e",
@@ -143,7 +143,7 @@
       "groupTitle": "Cincinnati Bengals vs Pittsburgh Steelers",
       "sport": "American football",
       "deployer": "flip",
-      "priorYes": 0.6225
+      "priorYes": 0.6309
     },
     {
       "vault": "0x8535c01d2b53f81d2e6aeee52a7b556b59db2c0d",
@@ -161,7 +161,7 @@
       "groupTitle": "Tennessee Titans vs New York Giants",
       "sport": "American football",
       "deployer": "flip",
-      "priorYes": 0.4004
+      "priorYes": 0.4486
     },
     {
       "vault": "0xdbcb0cebcd6f00e0c6de53ef915b69de32df48f0",
@@ -179,7 +179,115 @@
       "groupTitle": "Philadelphia Eagles vs Chicago Bears",
       "sport": "American football",
       "deployer": "flip",
-      "priorYes": 0.6092
+      "priorYes": 0.6636
+    },
+    {
+      "vault": "0x79675d9b977b15cb3e77322010a0fcceb6b6ee70",
+      "sourceVault": "0xf1dc07dcdbbfd1c9b143467069597d82afe8c1b6",
+      "title": "Atlanta Falcons vs Green Bay Packers",
+      "category": "sports",
+      "cluster": "NFL",
+      "coinYes": "#208830",
+      "coinNo": "#208831",
+      "underlying": "atlanta-falcons-green-bay-packers-20260925",
+      "startMs": 1790295300000,
+      "expiryMs": 1790554500000,
+      "sideYes": "ATL",
+      "sideNo": "GB",
+      "groupTitle": "Atlanta Falcons vs Green Bay Packers",
+      "sport": "American football",
+      "deployer": "flp",
+      "priorYes": 0.3042
+    },
+    {
+      "vault": "0x97ea3d688fbd7ea4188149c87923d7cec826e99e",
+      "sourceVault": "0xa356b1f5c22cfe568b46a0b72d00117e630ced74",
+      "title": "Seattle Seahawks vs Washington Commanders",
+      "category": "sports",
+      "cluster": "NFL",
+      "coinYes": "#208840",
+      "coinNo": "#208841",
+      "underlying": "seattle-seahawks-washington-commanders-20260927",
+      "startMs": 1790528400000,
+      "expiryMs": 1790787600000,
+      "sideYes": "SEA",
+      "sideNo": "WSH",
+      "groupTitle": "Seattle Seahawks vs Washington Commanders",
+      "sport": "American football",
+      "deployer": "flp",
+      "priorYes": 0.718
+    },
+    {
+      "vault": "0x91a572427334c35bbe64d0f0354bcdc161769a57",
+      "sourceVault": "0x765fb2c349334cd5488dcfd0f75c7103c5e0a624",
+      "title": "New York Jets vs Detroit Lions",
+      "category": "sports",
+      "cluster": "NFL",
+      "coinYes": "#208850",
+      "coinNo": "#208851",
+      "underlying": "new-york-jets-detroit-lions-20260927",
+      "startMs": 1790528400000,
+      "expiryMs": 1790787600000,
+      "sideYes": "NYJ",
+      "sideNo": "DET",
+      "groupTitle": "New York Jets vs Detroit Lions",
+      "sport": "American football",
+      "deployer": "flp",
+      "priorYes": 0.2779
+    },
+    {
+      "vault": "0x4fc0ef1f475c6a5796f2a6b419edd1bf7889280e",
+      "sourceVault": "0xcd6553f5929e94e9b15d9b2eac134d3fe96b2b34",
+      "title": "Los Angeles Chargers vs Buffalo Bills",
+      "category": "sports",
+      "cluster": "NFL",
+      "coinYes": "#208860",
+      "coinNo": "#208861",
+      "underlying": "los-angeles-chargers-buffalo-bills-20260927",
+      "startMs": 1790528400000,
+      "expiryMs": 1790787600000,
+      "sideYes": "LAC",
+      "sideNo": "BUF",
+      "groupTitle": "Los Angeles Chargers vs Buffalo Bills",
+      "sport": "American football",
+      "deployer": "flp",
+      "priorYes": 0.2559
+    },
+    {
+      "vault": "0x91d97b356cf0cb6de30c7d0abfa60cbf7517a4c8",
+      "sourceVault": "0x33287de08b1d1786d637f0151d37512dc9abd19b",
+      "title": "Arizona Cardinals vs San Francisco 49ers",
+      "category": "sports",
+      "cluster": "NFL",
+      "coinYes": "#208870",
+      "coinNo": "#208871",
+      "underlying": "arizona-cardinals-san-francisco-49ers-20260927",
+      "startMs": 1790539500000,
+      "expiryMs": 1790798700000,
+      "sideYes": "ARI",
+      "sideNo": "SF",
+      "groupTitle": "Arizona Cardinals vs San Francisco 49ers",
+      "sport": "American football",
+      "deployer": "flp",
+      "priorYes": 0.2042
+    },
+    {
+      "vault": "0xe074e70cb3313ede1417b2c858b5dc3aa66b10b7",
+      "sourceVault": "0x9dc9c533bf88c7abe9b636606cba783aab2a70cc",
+      "title": "Kansas City Chiefs vs Miami Dolphins",
+      "category": "sports",
+      "cluster": "NFL",
+      "coinYes": "#208880",
+      "coinNo": "#208881",
+      "underlying": "kansas-city-chiefs-miami-dolphins-20260927",
+      "startMs": 1790528400000,
+      "expiryMs": 1790787600000,
+      "sideYes": "KC",
+      "sideNo": "MIA",
+      "groupTitle": "Kansas City Chiefs vs Miami Dolphins",
+      "sport": "American football",
+      "deployer": "flp",
+      "priorYes": 0.863
     }
   ],
   "archived": [
