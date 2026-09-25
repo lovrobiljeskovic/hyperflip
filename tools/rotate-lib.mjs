@@ -17,7 +17,7 @@ export const DEPLOY_ENV = {
 // Read at call time so `.env` (loaded by the CLI after import) is honoured.
 const deployRpcs = () => [...new Set([...(process.env.DEPLOY_RPCS ?? "").split(",").map((u) => u.trim()).filter(Boolean), ...PUBLIC_DEPLOY_RPCS])];
 /** Elysium RPC list; empty when the deployment is HyperEVM-only (no legs are deployed then). */
-const elysiumRpcs = () => (process.env.ELYSIUM_RPC ?? "").split(",").map((u) => u.trim()).filter(Boolean);
+export const elysiumRpcs = () => (process.env.ELYSIUM_RPC ?? "").split(",").map((u) => u.trim()).filter(Boolean);
 
 export async function info(type, extra = {}) {
   const res = await fetch(INFO_URL, {
@@ -29,11 +29,11 @@ export async function info(type, extra = {}) {
   return res.json();
 }
 
-/** Vaults whose `settled()` is true, lowercase. Registry `expiryMs` is the vault deadline
- * (kickoff + days), so without this a settled game stays listed until the deadline. An RPC
- * failure counts as not settled: the vault just waits for the next hourly run. */
-export async function settledVaults(vaults) {
-  const rpcs = deployRpcs();
+/** Vaults (or Elysium legs, given `rpcs`) whose `settled()` is true, lowercase. Registry
+ * `expiryMs` is the vault deadline (kickoff + days), so without this a settled game stays listed
+ * until the deadline. An RPC failure counts as not settled: the vault just waits for the next
+ * hourly run. */
+export async function settledVaults(vaults, rpcs = deployRpcs()) {
   const out = new Set();
   const call = async (vault) => {
     for (const rpc of rpcs) {

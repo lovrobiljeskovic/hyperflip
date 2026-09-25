@@ -189,12 +189,19 @@ export const RELAY_GAS_LIMIT = 100_000n;
 /** After a relay() is sent, how long to wait for the retryable to land before paying for another. */
 export const RELAY_HOLD_MS = 3 * 60_000;
 
-/** Stock retryable pricing for one relay(): submission fee and Elysium gas both doubled so a basefee
- * move between the quote and inclusion cannot strand the ticket. Excess refunds to the keeper on Elysium. */
-export function relayFees(submissionFee: bigint, l2GasPrice: bigint): {
+/** abi.encodeCall(OutcomeLeg.receiveSettlement, (vault, fractionWad)): selector + two words. */
+const RELAY_DATA_LENGTH = 68n;
+
+/** Stock retryable pricing for one relay(), quoted from the live 998 basefee: Nitro charges
+ * (1400 + 6 * dataLength) * baseFee for submission, so a quote at basefee 0 is 0 and the Inbox
+ * reverts InsufficientSubmissionCost at inclusion (2026-09-25, see Gotchas). Submission fee and
+ * Elysium gas are both doubled so a basefee move between the quote and inclusion cannot strand
+ * the ticket. Excess refunds to the keeper on Elysium. */
+export function relayFees(baseFeePerGas: bigint, l2GasPrice: bigint): {
   maxSubmissionCost: bigint; gasLimit: bigint; maxFeePerGas: bigint; value: bigint;
 } {
-  const maxSubmissionCost = submissionFee * 2n;
+  if (baseFeePerGas <= 0n) throw new Error("relayFees: 998 basefee unavailable, refusing a zero submission quote");
+  const maxSubmissionCost = (1400n + 6n * RELAY_DATA_LENGTH) * baseFeePerGas * 2n;
   const maxFeePerGas = l2GasPrice * 2n;
   return { maxSubmissionCost, gasLimit: RELAY_GAS_LIMIT, maxFeePerGas, value: maxSubmissionCost + RELAY_GAS_LIMIT * maxFeePerGas };
 }

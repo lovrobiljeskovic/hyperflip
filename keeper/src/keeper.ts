@@ -56,10 +56,7 @@ const MAX_SAMPLE_AGE_MS = 60_000;
 const settlementRelayAbi = parseAbi([
   "function relay(address vault, address leg, uint256 maxSubmissionCost, uint256 gasLimit, uint256 maxFeePerGas) payable returns (uint256)",
 ]);
-const inboxAbi = parseAbi(["function calculateRetryableSubmissionFee(uint256 dataLength, uint256 baseFee) view returns (uint256)"]);
 const outcomeLegAbi = parseAbi(["function settled() view returns (bool)"]);
-/** receiveSettlement(address,uint256): selector plus two words. */
-const RELAY_DATA_LENGTH = 68n;
 
 interface VaultInfo {
   outcome: number;
@@ -437,7 +434,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   const relayedLegs = new Set<Address>();
   async function relayIfNeeded(vault: Address): Promise<void> {
     const leg = config.legs.get(vault.toLowerCase());
-    if (!leg || !elysiumClient || !config.settlementRelay || !config.inbox || relayedLegs.has(leg)) return;
+    if (!leg || !elysiumClient || !config.settlementRelay || relayedLegs.has(leg)) return;
     const legSettled = await elysiumClient.readContract({ address: leg, abi: outcomeLegAbi, functionName: "settled" });
     if (legSettled) {
       relayedLegs.add(leg);
@@ -445,11 +442,11 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
       return;
     }
     if (!shouldRelay(legSettled, relaySentAt.get(leg), Date.now())) return;
-    const [submissionFee, l2GasPrice] = await Promise.all([
-      publicClient.readContract({ address: config.inbox, abi: inboxAbi, functionName: "calculateRetryableSubmissionFee", args: [RELAY_DATA_LENGTH, 0n] }),
-      elysiumClient.getGasPrice(),
-    ]);
-    const fees = relayFees(submissionFee, l2GasPrice);
+    // 998 gas price is basefee plus a tip, so it is at or above the basefee the Inbox will
+    // charge against; quoting the Inbox view with basefee 0 returned 0 and reverted every relay
+    // (2026-09-25, Gotchas).
+    const [l1GasPrice, l2GasPrice] = await Promise.all([publicClient.getGasPrice(), elysiumClient.getGasPrice()]);
+    const fees = relayFees(l1GasPrice, l2GasPrice);
     relaySentAt.set(leg, Date.now());
     const hash = await sendTx(() =>
       walletClient.writeContract({
@@ -463,6 +460,12 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
       }),
     );
     log("relay sent", vault, leg, fees.value.toString(), hash);
+    const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
+    if (receipt.status !== "success") {
+      alert("relay tx reverted", vault, leg, hash);
+      return;
+    }
+    log("relay confirmed", vault, leg, hash);
   }
 
   // Settlement watcher: 0x814 status 2 (settled) is trustlessly relayable by anyone, and settle()

@@ -177,11 +177,25 @@ test("parseRegistryMarkets: an Elysium row settles its HyperEVM sourceVault and 
 });
 
 test("relay pricing doubles both fee legs and shouldRelay honours the hold window", () => {
-  assert.deepEqual(relayFees(1_000n, 7n), { maxSubmissionCost: 2_000n, gasLimit: RELAY_GAS_LIMIT, maxFeePerGas: 14n, value: 2_000n + RELAY_GAS_LIMIT * 14n });
+  assert.deepEqual(relayFees(1_000n, 7n), { maxSubmissionCost: 3_616_000n, gasLimit: RELAY_GAS_LIMIT, maxFeePerGas: 14n, value: 3_616_000n + RELAY_GAS_LIMIT * 14n });
   assert.equal(shouldRelay(true, undefined, 0), false);
   assert.equal(shouldRelay(false, undefined, 0), true);
   assert.equal(shouldRelay(false, 1_000, 1_000 + RELAY_HOLD_MS - 1), false);
   assert.equal(shouldRelay(false, 1_000, 1_000 + RELAY_HOLD_MS), true);
+});
+
+test("relayFees quotes the retryable submission cost from the live 998 basefee, never from a zero quote", () => {
+  // 2026-09-25: the keeper asked the Inbox for the fee at basefee 0, got 0, and every relay()
+  // reverted InsufficientSubmissionCost(180_800_000_000, 0) at basefee 0.1 gwei. Nitro's fee is
+  // (1400 + 6 * dataLength) * baseFee; relay() data is 68 bytes; both legs stay doubled.
+  const fees = relayFees(100_000_000n, 10_000_000n);
+  assert.deepEqual(fees, {
+    maxSubmissionCost: 361_600_000_000n,
+    gasLimit: RELAY_GAS_LIMIT,
+    maxFeePerGas: 20_000_000n,
+    value: 361_600_000_000n + RELAY_GAS_LIMIT * 20_000_000n,
+  });
+  assert.throws(() => relayFees(0n, 10_000_000n), /basefee/);
 });
 
 test("parseRegistryMarkets: a malformed registry fails loudly rather than watching a short list", () => {

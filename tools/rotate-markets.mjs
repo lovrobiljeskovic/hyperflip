@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { bigBlocks, deployPair, info, pickSports, ROOT, rotatedRegistry, settledVaults, sportsRegistryEntry } from "./rotate-lib.mjs";
+import { bigBlocks, deployPair, elysiumRpcs, info, pickSports, ROOT, rotatedRegistry, settledVaults, sportsRegistryEntry } from "./rotate-lib.mjs";
 
 const REGISTRY = path.join(ROOT, "registry/markets.json");
 const ENV_FILE = path.join(ROOT, ".env");
@@ -19,11 +19,17 @@ for (const key of ["PRIVATE_KEY", "TESTNET_RPC", "KEEPER_ADDRESS"]) {
 console.log(`keeper: ${process.env.KEEPER_ADDRESS} (must be KEEPER_PRIVATE_KEY's address)`);
 
 const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));
-const [{ outcomes, questions }, mids, settled] = await Promise.all([
+// A row is done when the address the ParlayVault reads is settled: the 998 vault on HyperEVM
+// rows, the Elysium leg on Elysium rows. Retiring on the 998 sourceVault instead dropped the row
+// from the keeper's watch before the relay landed and stranded every ticket on it (2026-09-25).
+const legRows = registry.markets.filter((m) => m.sourceVault);
+const [{ outcomes, questions }, mids, settledCore, settledLegs] = await Promise.all([
   info("outcomeMeta"),
   info("allMids"),
-  settledVaults(registry.markets.map((m) => m.sourceVault ?? m.vault)),
+  settledVaults(registry.markets.filter((m) => !m.sourceVault).map((m) => m.vault)),
+  settledVaults(legRows.map((m) => m.vault), elysiumRpcs()),
 ]);
+const settled = new Set([...settledCore, ...settledLegs]);
 const nowMs = Date.now();
 const knownCoins = new Set(registry.markets.map((m) => m.coinYes));
 // ROTATE_VENUES=flip,flp keeps the board to our own HIP-4 venues (Elysium legs are only deployed for
@@ -31,10 +37,8 @@ const knownCoins = new Set(registry.markets.map((m) => m.coinYes));
 const venues = process.env.ROTATE_VENUES?.split(",").map((v) => v.trim()).filter(Boolean);
 const outcomesInScope = venues?.length ? outcomes.filter((o) => venues.includes(o.venue)) : outcomes;
 
-// A settled vault is done regardless of its deadline: off the board, into archived.
-// Settlement lives on the 998 vault; on Elysium rows that is sourceVault, not the leg in `vault`.
-const coreVault = (m) => (m.sourceVault ?? m.vault).toLowerCase();
-const retired = (m) => m.expiryMs <= nowMs || settled.has(coreVault(m));
+// A settled row is done regardless of its deadline: off the board, into archived.
+const retired = (m) => m.expiryMs <= nowMs || settled.has(m.vault.toLowerCase());
 const expired = registry.markets.filter(retired);
 const venueOf = new Map(outcomes.map((o) => [`#${o.outcome * 10}`, o.venue]));
 let backfilled = 0;
@@ -53,7 +57,7 @@ const archived = [...(registry.archived ?? []), ...expired];
 const writeRegistry = (markets) => writeFileSync(REGISTRY, JSON.stringify(rotatedRegistry(registry, markets, archived), null, 2) + "\n");
 
 console.log(`registry: ${kept.length} live, ${expired.length} expired (dropped)`);
-for (const m of expired) console.log(`  drop ${m.vault} — ${m.title}${settled.has(coreVault(m)) ? " (settled)" : ""}`);
+for (const m of expired) console.log(`  drop ${m.vault} — ${m.title}${settled.has(m.vault.toLowerCase()) ? " (settled)" : ""}`);
 if (picks.length === 0) {
   console.log("nothing to rotate — no fresh sports markets beyond what's wrapped");
   if ((expired.length || backfilled) && !dryRun) {
