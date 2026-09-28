@@ -147,6 +147,45 @@ export function settleAction(o, fraction) {
   };
 }
 
+/** fixtureFromEspn winner ("A" = away, "B" = home, "tie") -> question side. */
+export const winnerSide = (fx) => (fx.winner === "B" ? "home" : fx.winner === "A" ? "away" : fx.winner === "tie" ? "draw" : null);
+
+/** Which side each named outcome of a 3-way soccer question stands for, in namedOutcomes order.
+ * null when the question is not ours to settle: a member is missing from outcomeMeta, or a
+ * participant matches neither side of the question's own description. */
+export function questionSides(q, byId) {
+  const ev = parseSportsEvent(q.description);
+  if (!ev) return null;
+  const sides = [];
+  for (const id of q.namedOutcomes ?? []) {
+    const o = byId.get(id);
+    if (!o) return null;
+    const side = o.name === "template:sportsContestDraw5" ? "draw"
+      : o.description === `participant:${ev.participantA}` ? "home"
+      : o.description === `participant:${ev.participantB}` ? "away" : null;
+    if (!side) return null;
+    sides.push({ o, side });
+  }
+  return sides.length === 3 && new Set(sides.map((s) => s.side)).size === 3 ? sides : null;
+}
+
+/** settleQuestion2 must cover exactly the remaining named outcomes, one of them at "1", and echo
+ * names/descriptions/side names verbatim. The fallback settles to 0 on its own. */
+export function settleQuestionAction(q, sides, winner) {
+  const settled = new Set(q.settledNamedOutcomes ?? []);
+  return {
+    type: "outcomeDeploy", venue: sides[0].o.venue,
+    operation: { settleQuestion2: {
+      question: q.question,
+      outcomeSettlements: sides.filter(({ o }) => !settled.has(o.outcome)).map(({ o, side }) => ({
+        outcome: o.outcome, settleFraction: side === winner ? "1" : "0", details: "",
+        nameAndDescription: [o.name, o.description], sideNames: o.sideSpecs.map((s) => s.name),
+      })),
+      nameAndDescription: [q.name, q.description],
+    } },
+  };
+}
+
 const fractionFor = (winner) => (winner === "A" ? "1" : winner === "B" ? "0" : "0.5");
 
 /** Pick shape consumed by rotate-lib deploy() + sportsRegistryEntry(). */

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { devig, devig3, fixtureFromEspn, housePick, LEAGUES, matchdayOf, outcomeKey, plan, questionFixtureKey, registerAction, registerQuestionAction, settleAction, stamp, withPriors } from "./house-lib.mjs";
+import { devig, devig3, fixtureFromEspn, housePick, LEAGUES, matchdayOf, outcomeKey, plan, questionFixtureKey, questionSides, registerAction, registerQuestionAction, settleAction, settleQuestionAction, stamp, winnerSide, withPriors } from "./house-lib.mjs";
 
 const T0 = Date.UTC(2026, 8, 17, 12); // Thu 2026-09-17 12:00Z
 const H = 3600_000;
@@ -198,4 +198,45 @@ test("registerQuestionAction reproduces the hand-built Liverpool v Manchester Ci
   assert.throws(() => registerQuestionAction({ ...livMci(), away: { abbr: "X", name: "Bad|Name" } }, PL(), "flip"), /invalid/);
   assert.equal(LEAGUES.find((l) => l.key === "nfl").kind, "standalone");
   assert.equal(LEAGUES.find((l) => l.key === "esp.1").competition, "La Liga");
+});
+
+function questionFor(fx, qid, venue = "flip") {
+  // Payload always built for "flip" (registerQuestionAction rejects unknown venues); `venue` only
+  // stamps the outcome rows, so a foreign venue like "zzz" can be faked.
+  const inst = registerQuestionAction(fx, PL(), "flip").operation.registerQuestionFromTemplate.questionTemplateInstance;
+  const description = inst.keywordToValue.map(([k, v]) => `${k}:${v}`).join("|");
+  const base = qid * 10;
+  const yesNo = [{ name: "Yes" }, { name: "No" }];
+  const question = { question: qid, name: "template:sportsContestResult5", description, fallbackOutcome: base, namedOutcomes: [base + 1, base + 2, base + 3], settledNamedOutcomes: [] };
+  const outcomes = [
+    { outcome: base, venue, name: "template fallback", description: "other", quoteToken: "USDC", sideSpecs: yesNo },
+    { outcome: base + 1, venue, name: "template:sportsContestParticipant5", description: `participant:${fx.home.name}`, quoteToken: "USDC", sideSpecs: yesNo },
+    { outcome: base + 2, venue, name: "template:sportsContestDraw5", description: "", quoteToken: "USDC", sideSpecs: yesNo },
+    { outcome: base + 3, venue, name: "template:sportsContestParticipant5", description: `participant:${fx.away.name}`, quoteToken: "USDC", sideSpecs: yesNo },
+  ];
+  return { question, outcomes };
+}
+
+test("settleQuestionAction settles exactly one side to 1 and echoes every named outcome verbatim", () => {
+  const { question, outcomes } = questionFor(livMci(), 1392, "flp");
+  const byId = new Map(outcomes.map((o) => [o.outcome, o]));
+  const sides = questionSides(question, byId);
+  assert.deepEqual(sides.map((s) => [s.o.outcome, s.side]), [[13921, "home"], [13922, "draw"], [13923, "away"]]);
+  const action = settleQuestionAction(question, sides, "draw");
+  assert.equal(action.venue, "flp");
+  const s = action.operation.settleQuestion2;
+  assert.equal(s.question, 1392);
+  assert.deepEqual(s.nameAndDescription, [question.name, question.description]);
+  assert.deepEqual(s.outcomeSettlements.map((x) => [x.outcome, x.settleFraction, x.details]), [[13921, "0", ""], [13922, "1", ""], [13923, "0", ""]]);
+  assert.deepEqual(s.outcomeSettlements[0], { outcome: 13921, settleFraction: "0", details: "", nameAndDescription: ["template:sportsContestParticipant5", "participant:Liverpool"], sideNames: ["Yes", "No"] });
+  assert.deepEqual(settleQuestionAction(question, sides, "home").operation.settleQuestion2.outcomeSettlements.map((x) => x.settleFraction), ["1", "0", "0"]);
+  assert.deepEqual(settleQuestionAction(question, sides, "away").operation.settleQuestion2.outcomeSettlements.map((x) => x.settleFraction), ["0", "0", "1"]);
+  // An already-settled member is left out of outcomeSettlements.
+  const partial = { ...question, settledNamedOutcomes: [13921] };
+  assert.deepEqual(settleQuestionAction(partial, questionSides(partial, byId), "away").operation.settleQuestion2.outcomeSettlements.map((x) => x.outcome), [13922, 13923]);
+  // Malformed questions are rejected: a member missing, or a participant that matches neither side.
+  assert.equal(questionSides(question, new Map([...byId].filter(([id]) => id !== 13922))), null);
+  const stranger = new Map(byId); stranger.set(13923, { ...byId.get(13923), description: "participant:Everton" });
+  assert.equal(questionSides(question, stranger), null);
+  assert.deepEqual([winnerSide({ winner: "B" }), winnerSide({ winner: "A" }), winnerSide({ winner: "tie" }), winnerSide({ winner: null })], ["home", "away", "draw", null]);
 });
