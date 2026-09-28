@@ -149,11 +149,13 @@ test("devig3 normalises a 3-way line; matchdayOf clusters the season by gaps of 
   assert.deepEqual(devig3(-140, 300, 320), { home: 0.5444, draw: 0.2333, away: 0.2222 });
   assert.deepEqual(devig3(100, 100, 100), { home: 0.3333, draw: 0.3333, away: 0.3333 });
   const day = (m, d) => Date.UTC(2026, m - 1, d, 15);
-  const season = [day(8, 21), day(8, 22), day(8, 23), day(8, 28), day(8, 29), day(9, 4), day(9, 5), day(10, 10), day(10, 11)];
-  assert.equal(matchdayOf(day(8, 22), season), 1);
-  assert.equal(matchdayOf(day(9, 5), season), 3);
-  assert.equal(matchdayOf(day(10, 11), season), 4);
-  assert.throws(() => matchdayOf(day(12, 25), season), /not in season/);
+  // One team's league fixtures, Fri-Mon rounds plus a midweek round: the matchday is how many
+  // of its fixtures fall on or before the kickoff, whatever the gaps.
+  const team = [day(8, 19), day(8, 24), day(8, 30), day(9, 6), day(9, 13), day(9, 17), day(9, 20), day(10, 9)];
+  assert.equal(matchdayOf(day(8, 19), team), 1);
+  assert.equal(matchdayOf(day(9, 17), team), 6);
+  assert.equal(matchdayOf(day(10, 9), team), 8);
+  assert.throws(() => matchdayOf(day(12, 25), team), /not in season/);
 });
 
 test("fixtureFromEspn treats a soccer full-time result as final; no winner flag is a draw", () => {
@@ -278,6 +280,18 @@ test("plan adopts house questions: settles finals and deadlines, wraps members w
   const homeWin = { ...finished, ...fixtureFromEspn(soccerEvent("f1", "ARS", "Arsenal", "LEE", "Leeds United", nowMs - 20 * H, { fullTime: true, homeWins: true })) };
   const p5 = plan({ outcomes: oFin, questions: [qFin], fixtures: [], soccerFixtures: [homeWin], registry: { markets: [] }, nowMs, maxActive: 20 });
   assert.deepEqual(p5.toSettleQuestions.map((s) => s.winner), ["home"]);
+  // Kickoff moved by a day on ESPN after registration: still the same question (no Draw, no duplicate).
+  const moved = { ...upcoming, ...fixtureFromEspn(soccerEvent("401879264", "LIV", "Liverpool", "MNC", "Manchester City", KO + D)) };
+  const p7 = plan({ outcomes: oUp, questions: [qUp], fixtures: [], soccerFixtures: [moved], registry: { markets: [] }, nowMs, maxActive: 20, nflMaxActive: 0 });
+  assert.deepEqual([p7.toSettleQuestions, p7.toRegisterQuestions, p7.toWrap.map((w) => w.priorYes)], [[], [], [0.4649, 0.2695, 0.2656]]);
+  // Past the deadline with no ESPN fixture at all: wait and report, never guess Draw.
+  const p8 = plan({ outcomes: oStale, questions: [qStale], fixtures: [], soccerFixtures: [], registry: { markets: [] }, nowMs, maxActive: 20 });
+  assert.deepEqual([p8.toSettleQuestions, p8.unmatched.map((u) => u.q.question)], [[], [1401]]);
+  // Past the deadline with the fixture known and still not final (postponed): Draw.
+  assert.deepEqual(plan({ outcomes: oStale, questions: [qStale], fixtures: [], soccerFixtures: [stale], registry: { markets: [] }, nowMs, maxActive: 20 }).toSettleQuestions.map((s) => s.winner), ["draw"]);
+  // A league that is not enabled this run is not touched: no settle, no wrap, no priors.
+  const p9 = plan({ outcomes: [...oUp, ...oStale], questions: [qUp, qStale], fixtures: [], soccerFixtures: [upcoming, stale], registry: { markets: rows }, nowMs, maxActive: 20, questionLeagues: [] });
+  assert.deepEqual([p9.toSettleQuestions, p9.toWrap, [...p9.priors], p9.unmatched], [[], [], [], []]);
   // A fixture with no odds wraps without a prior.
   const noOdds = { ...upcoming }; delete noOdds.odds;
   const p6 = plan({ outcomes: oUp, questions: [qUp], fixtures: [], soccerFixtures: [noOdds], registry: { markets: [] }, nowMs, maxActive: 20 });
@@ -301,22 +315,27 @@ test("plan: NFL keeps a 16-slot budget, soccer takes the rest in whole chunks of
   assert.deepEqual(p.toRegister.map((fx) => [fx.id, fx.venue]), [["A", "flip"], ["B", "flip"]]);
   assert.deepEqual(p.toRegisterQuestions.map((fx) => [fx.id, fx.venue]), [["s1", "flip"], ["s3", "flip"], ["s2", "flip"]]);
 
-  // 8 per venue, 3 NFL already active on flip: flip has 5 left -> 1 chunk; flp has 8 -> 2 chunks.
+  // 20 per venue, 3 NFL active on flip and 13 NFL slots still reserved (flip first): flip has
+  // 17 free - 13 reserved = 4 -> 1 chunk; flp has 20 -> 5 chunks.
   const active = nfl.map((fx, i) => outcomeFor(fx, i + 1));
-  const p2 = plan({ outcomes: active, questions: [], fixtures: nfl, soccerFixtures: [even, mild, lopsided], registry: { markets: [] }, nowMs, maxActive: 8, nflMaxActive: 16 });
+  const p2 = plan({ outcomes: active, questions: [], fixtures: nfl, soccerFixtures: [even, mild, lopsided], registry: { markets: [] }, nowMs, maxActive: 20, nflMaxActive: 16 });
   assert.deepEqual(p2.toRegister, []);
   assert.deepEqual(p2.toRegisterQuestions.map((fx) => [fx.id, fx.venue]), [["s1", "flip"], ["s3", "flp"], ["s2", "flp"]]);
 
   // A registered question and its fallback count as 4 active; a settling one frees its 4.
   const { question, outcomes } = questionFor(even, 1392);
-  const p3 = plan({ outcomes, questions: [question], fixtures: [], soccerFixtures: [even, mild], registry: { markets: [] }, nowMs, maxActive: 4 });
+  const p3 = plan({ outcomes, questions: [question], fixtures: [], soccerFixtures: [even, mild], registry: { markets: [] }, nowMs, maxActive: 4, nflMaxActive: 0 });
+  // The NFL reservation holds even with no NFL fixture in sight: 40 free, 16 reserved, 6 matches fit.
+  const six = ["a", "b", "c", "d", "e", "f", "g"].map((x) => soccer(x, `${x} Home`, `${x} Away`, { home: 100, draw: 245, away: 250 }));
+  const pr = plan({ outcomes: [], questions: [], fixtures: [], soccerFixtures: six, registry: { markets: [] }, nowMs, maxActive: 20, nflMaxActive: 16 });
+  assert.deepEqual(pr.toRegisterQuestions.map((fx) => fx.venue), ["flip", "flp", "flp", "flp", "flp", "flp"]);
   assert.deepEqual(p3.toRegisterQuestions.map((fx) => [fx.id, fx.venue]), [["s3", "flp"]]);
   // Two hours after kickoff the match is full time (same kickoff, so the question key still matches):
   // its 4 slots free up this run and the next fixture takes them on flip.
   const later = KO + 2 * H;
   const done = { ...even, ...fixtureFromEspn(soccerEvent("s1", "LIV", "Liverpool", "MNC", "Manchester City", KO, { fullTime: true, awayWins: true })) };
   const next = { ...mild, ...fixtureFromEspn(soccerEvent("s3", "CHE", "Chelsea", "BOU", "AFC Bournemouth", later + 5 * D)) };
-  const p4 = plan({ outcomes, questions: [question], fixtures: [], soccerFixtures: [done, next], registry: { markets: [] }, nowMs: later, maxActive: 4 });
+  const p4 = plan({ outcomes, questions: [question], fixtures: [], soccerFixtures: [done, next], registry: { markets: [] }, nowMs: later, maxActive: 4, nflMaxActive: 0 });
   assert.deepEqual(p4.toSettleQuestions.map((s) => s.winner), ["away"]);
   assert.deepEqual(p4.toRegisterQuestions.map((fx) => [fx.id, fx.venue]), [["s3", "flip"]]);
 });

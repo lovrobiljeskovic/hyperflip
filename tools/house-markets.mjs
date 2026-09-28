@@ -68,8 +68,9 @@ async function espnFixtures() {
 
 /** ESPN soccer: the scoreboard only answers month queries (`dates=YYYYMM`); a single day returns
  * nothing and the bare call is stuck on a stale day. Fetch every month from the season start so
- * the matchday can be derived by clustering, keep fixtures from 3 days back (settle window) to the
- * soccer horizon, and price upcoming ones from the DraftKings 3-way line. */
+ * each team's matchday can be counted, keep fixtures from 7 days back (settle window, wider than the
+ * 3-day deadline so a late settle still sees the result) to the soccer horizon, and price upcoming
+ * ones from the DraftKings 3-way line. */
 async function espnSoccerFixtures(league, nowMs) {
   const base = `https://site.api.espn.com/apis/site/v2/sports/${league.path}/scoreboard`;
   const months = [];
@@ -80,11 +81,14 @@ async function espnSoccerFixtures(league, nowMs) {
   const seen = new Map();
   for (const m of months) for (const e of (await getJson(`${base}?dates=${m}&limit=300`)).events ?? []) seen.set(e.id, e);
   const events = [...seen.values()];
-  const kickoffs = events.map((e) => Date.parse(e.date));
+  const teamKickoffs = new Map(); // team displayName -> its kickoffs this season
+  for (const e of events) {
+    for (const t of e.competitions[0].competitors) teamKickoffs.set(t.team.displayName, [...(teamKickoffs.get(t.team.displayName) ?? []), Date.parse(e.date)]);
+  }
   const fixtures = [];
   for (const event of events) {
     const kickoffMs = Date.parse(event.date);
-    if (kickoffMs < nowMs - 3 * 86400_000 || kickoffMs > nowMs + soccerHorizonMs) continue;
+    if (kickoffMs < nowMs - 7 * 86400_000 || kickoffMs > nowMs + soccerHorizonMs) continue;
     let odds;
     if (kickoffMs > nowMs) {
       try {
@@ -96,7 +100,8 @@ async function espnSoccerFixtures(league, nowMs) {
         console.log(`odds unavailable for ${event.name}: ${err.message}`);
       }
     }
-    fixtures.push({ ...fixtureFromEspn(event), ...(odds ? { odds } : {}), league: league.key, matchday: matchdayOf(kickoffMs, kickoffs) });
+    const fx = fixtureFromEspn(event);
+    fixtures.push({ ...fx, ...(odds ? { odds } : {}), league: league.key, matchday: matchdayOf(kickoffMs, teamKickoffs.get(fx.home.name)) });
   }
   return fixtures;
 }
@@ -111,15 +116,27 @@ const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));
 const nowMs = Date.now();
 const nfl = leagues.find((l) => l.kind === "standalone");
 const { weekNo, fixtures } = nfl ? await espnFixtures() : { weekNo: undefined, fixtures: [] };
-const soccerFixtures = (await Promise.all(leagues.filter((l) => l.kind === "question").map((l) => espnSoccerFixtures(l, nowMs)))).flat();
+// A league whose ESPN fetch fails this hour is dropped from the run entirely (no settle, no
+// register, no priors) so one feed outage neither blocks NFL nor settles anything blind.
+const questionLeagues = [];
+const soccerFixtures = [];
+for (const league of leagues.filter((l) => l.kind === "question")) {
+  try {
+    soccerFixtures.push(...(await espnSoccerFixtures(league, nowMs)));
+    questionLeagues.push(league);
+  } catch (err) {
+    console.log(`ESPN ${league.key} unavailable, league skipped this run: ${err.message}`);
+  }
+}
 let { outcomes, questions } = await meta();
-const planArgs = () => ({ outcomes, questions, fixtures, soccerFixtures, registry, nowMs, horizonMs, soccerHorizonMs, maxActive, nflMaxActive, minWindowMs });
+const planArgs = () => ({ outcomes, questions, fixtures, soccerFixtures, registry, nowMs, horizonMs, soccerHorizonMs, maxActive, nflMaxActive, minWindowMs, questionLeagues });
 let p = plan(planArgs());
 
 const activeLine = () => VENUES.map((v) => `${v}=${outcomes.filter((o) => o.venue === v).length}`).join(" ");
 console.log(`house: week ${weekNo ?? "-"}, ${fixtures.length} NFL fixtures, ${soccerFixtures.length} soccer fixtures, active ${activeLine()}`);
 for (const s of p.toSettle) console.log(`settle: outcome ${s.o.outcome} -> ${s.fraction} (${s.o.description})`);
 for (const s of p.toSettleQuestions) console.log(`settle question ${s.q.question} -> ${s.winner} (${s.q.description})`);
+for (const u of p.unmatched) console.log(`WARN question ${u.q.question} ${u.reason}, left unsettled (${u.q.description})`);
 for (const fx of p.toRegister) console.log(`register on ${fx.venue}: ${fx.away.name} @ ${fx.home.name} ${new Date(fx.kickoffMs).toISOString()}${fx.moneyline ? ` ml ${fx.moneyline.away}/${fx.moneyline.home}` : ""}`);
 for (const fx of p.toRegisterQuestions) console.log(`register question on ${fx.venue}: ${fx.home.name} v ${fx.away.name} ${new Date(fx.kickoffMs).toISOString()} ${fx.league} md${fx.matchday} ml ${fx.odds.home}/${fx.odds.draw}/${fx.odds.away}`);
 for (const w of p.toWrap) console.log(`wrap: outcome ${w.outcome} ${w.groupTitle && w.groupTitle !== w.title ? `${w.groupTitle} / ` : ""}${w.title} prior ${w.priorYes ?? "-"}`);

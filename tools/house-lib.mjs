@@ -15,7 +15,7 @@ export const LEAGUES = [
   { key: "esp.1", kind: "question", path: "soccer/esp.1", competition: "La Liga", officialSource: "La Liga", sport: "Soccer", season: "2026/27", contestType: "Match", seasonStartMs: Date.UTC(2026, 7, 1) },
 ];
 export const QUESTION_TEMPLATE = "sportsContestResult5";
-const DEADLINE_MS = 3 * 86400_000; // resolutionDeadline = kickoff + 3d (postponements void to 0.5)
+const DEADLINE_MS = 3 * 86400_000; // resolutionDeadline = kickoff + 3d (NFL: postponement voids to 0.5; soccer: Draw)
 
 /** Implied P(away) from two American moneylines, vig removed by normalisation. */
 export function devig(awayMl, homeMl) {
@@ -36,21 +36,12 @@ export function devig3(homeMl, drawMl, awayMl) {
   return { home: r(h), draw: r(d), away: r(a) };
 }
 
-/** 1-based round of `kickoffMs` within a league season: ESPN publishes no round number, so a gap
- * of more than 3 days between consecutive fixture days starts a new matchday.
- * ponytail: a midweek round played Tue/Wed right after a Sat/Sun round merges into it; the
- * stage text is display only (settlement echoes what Core stored), so a wrong number is cosmetic. */
-export function matchdayOf(kickoffMs, seasonKickoffs) {
-  const toDay = (ms) => Math.floor(ms / 86400_000);
-  const days = [...new Set(seasonKickoffs.map(toDay))].sort((a, b) => a - b);
-  let round = 0;
-  let prev = -Infinity;
-  for (const day of days) {
-    if (day - prev > 3) round++;
-    prev = day;
-    if (day === toDay(kickoffMs)) return round;
-  }
-  throw new Error(`kickoff ${new Date(kickoffMs).toISOString()} not in season kickoffs`);
+/** 1-based matchday of `kickoffMs` for one team: how many of that team's league fixtures fall on
+ * or before the kickoff. ESPN publishes no round number; counting a team's own games survives
+ * midweek rounds and Fri-Mon spreads, where clustering by date gaps does not. */
+export function matchdayOf(kickoffMs, teamKickoffs) {
+  if (!teamKickoffs.includes(kickoffMs)) throw new Error(`kickoff ${new Date(kickoffMs).toISOString()} not in season kickoffs`);
+  return teamKickoffs.filter((ms) => ms <= kickoffMs).length;
 }
 
 /** Inverse of rotate-lib parseStamp: ms -> YYYYMMDD-HHMM UTC. */
@@ -215,7 +206,7 @@ export function questionPick(q, o, ev, side, priorYes) {
 
 const prior3 = (fx) => (fx?.odds ? devig3(fx.odds.home, fx.odds.draw, fx.odds.away) : undefined);
 
-export function plan({ outcomes, questions = [], fixtures, soccerFixtures = [], registry, nowMs, horizonMs = 7 * 86400_000, soccerHorizonMs = 14 * 86400_000, maxActive = 10, nflMaxActive = 16, minWindowMs = 18 * 3600_000 }) {
+export function plan({ outcomes, questions = [], fixtures, soccerFixtures = [], registry, nowMs, horizonMs = 7 * 86400_000, soccerHorizonMs = 14 * 86400_000, maxActive = 10, nflMaxActive = 16, minWindowMs = 18 * 3600_000, questionLeagues = LEAGUES.filter((l) => l.kind === "question") }) {
   const mine = outcomes.filter((o) => VENUES.includes(o.venue) && o.name === `template:${TEMPLATE}`);
   const byKey = new Map(fixtures.map((fx) => [fixtureKey(fx), fx]));
   const knownCoins = new Set(registry.markets.map((m) => m.coinYes));
@@ -229,21 +220,41 @@ export function plan({ outcomes, questions = [], fixtures, soccerFixtures = [], 
   }
   const settling = new Set(toSettle.map((s) => s.o.outcome));
 
-  // Our 3-way soccer questions: every member must be present and match the question's own sides.
+  // Our 3-way soccer questions: every member must be present and match the question's own sides,
+  // and the competition must be enabled this run. A league whose ESPN feed is off or disabled is
+  // left alone entirely: settling it blind would pay the Draw side on no evidence.
   const byId = new Map(outcomes.map((o) => [o.outcome, o]));
+  const enabled = new Set(questionLeagues.map((l) => l.competition));
   const mineQ = [];
   for (const q of questions) {
     if (q.name !== `template:${QUESTION_TEMPLATE}`) continue;
     const sides = questionSides(q, byId);
     if (!sides || !VENUES.includes(sides[0].o.venue)) continue;
-    mineQ.push({ q, sides, venue: sides[0].o.venue, ev: parseSportsEvent(q.description) });
+    const ev = parseSportsEvent(q.description);
+    if (!enabled.has(ev.competition)) continue;
+    mineQ.push({ q, sides, venue: sides[0].o.venue, ev });
   }
-  const soccerByKey = new Map(soccerFixtures.map((fx) => [questionFixtureKey(fx), fx]));
+  // A question and a fixture are the same match when the pairing matches and the kickoff is within
+  // the deadline window: ESPN moves kickoffs after we register (TV picks), and a pairing does not
+  // recur that close in league play.
+  const pairKey = (a, b) => `${a}|${b}`;
+  const fixturesByPair = new Map();
+  for (const fx of soccerFixtures) {
+    const k = pairKey(fx.home.name, fx.away.name);
+    fixturesByPair.set(k, [...(fixturesByPair.get(k) ?? []), fx]);
+  }
+  const fixtureOf = (m) => (fixturesByPair.get(pairKey(m.ev.participantA, m.ev.participantB)) ?? [])
+    .filter((fx) => Math.abs(fx.kickoffMs - m.ev.startMs) <= DEADLINE_MS)
+    .sort((a, b) => Math.abs(a.kickoffMs - m.ev.startMs) - Math.abs(b.kickoffMs - m.ev.startMs))[0];
   const toSettleQuestions = [];
+  const unmatched = [];
   for (const m of mineQ) {
-    const fx = soccerByKey.get(outcomeKey(m.q));
+    const fx = fixtureOf(m);
     if (fx?.final) toSettleQuestions.push({ ...m, fx, winner: winnerSide(fx) });
-    else if (m.ev.expiryMs <= nowMs) toSettleQuestions.push({ ...m, fx: fx ?? null, winner: "draw" }); // deadline rule: Draw
+    else if (m.ev.expiryMs <= nowMs) {
+      if (fx) toSettleQuestions.push({ ...m, fx, winner: "draw" }); // known match, no result by the deadline: Draw
+      else unmatched.push({ q: m.q, reason: "past deadline, no ESPN fixture" }); // wait, never guess
+    }
   }
   const settlingQ = new Set(toSettleQuestions.map((s) => s.q.question));
 
@@ -267,13 +278,20 @@ export function plan({ outcomes, questions = [], fixtures, soccerFixtures = [], 
     .slice(0, slots.length)
     .map((fx, i) => ({ ...fx, venue: slots[i] }));
 
-  // Soccer takes what NFL left, four outcomes per match, most balanced match first.
+  // Soccer takes what NFL left, four outcomes per match, most balanced match first. NFL's unused
+  // budget stays reserved (flip first) so a bye week or an empty horizon never hands its slots away.
   const nflAssigned = (venue) => toRegister.filter((fx) => fx.venue === venue).length;
-  const registeredQ = new Set(mineQ.map((m) => outcomeKey(m.q)));
+  let reserve = nflRoom - toRegister.length;
+  const qSlots = VENUES.flatMap((venue) => {
+    const free = Math.max(0, maxActive - activeOn(venue) - nflAssigned(venue));
+    const held = Math.min(reserve, free);
+    reserve -= held;
+    return Array(Math.floor((free - held) / 4)).fill(venue);
+  });
+  const isRegistered = (fx) => mineQ.some((m) => fixtureOf(m) === fx);
   const balance3 = (fx) => Math.max(...Object.values(prior3(fx)));
-  const qSlots = VENUES.flatMap((venue) => Array(Math.max(0, Math.floor((maxActive - activeOn(venue) - nflAssigned(venue)) / 4))).fill(venue));
   const toRegisterQuestions = soccerFixtures
-    .filter((fx) => fx.odds && !registeredQ.has(questionFixtureKey(fx)) && fx.kickoffMs - nowMs >= minWindowMs && fx.kickoffMs - nowMs <= soccerHorizonMs)
+    .filter((fx) => fx.odds && !isRegistered(fx) && fx.kickoffMs - nowMs >= minWindowMs && fx.kickoffMs - nowMs <= soccerHorizonMs)
     .sort((a, b) => balance3(a) - balance3(b) || a.kickoffMs - b.kickoffMs)
     .slice(0, qSlots.length)
     .map((fx, i) => ({ ...fx, venue: qSlots[i] }));
@@ -288,7 +306,7 @@ export function plan({ outcomes, questions = [], fixtures, soccerFixtures = [], 
 
   for (const m of mineQ) {
     if (settlingQ.has(m.q.question) || m.ev.startMs <= nowMs) continue;
-    const p = prior3(soccerByKey.get(outcomeKey(m.q)));
+    const p = prior3(fixtureOf(m));
     for (const { o, side } of m.sides) {
       if (knownCoins.has(`#${o.outcome * 10}`)) continue;
       toWrap.push(questionPick(m.q, o, m.ev, side, p?.[side]));
@@ -300,7 +318,7 @@ export function plan({ outcomes, questions = [], fixtures, soccerFixtures = [], 
   const fxByCoin = new Map(mine.map((o) => [`#${o.outcome * 10}`, byKey.get(outcomeKey(o))]));
   const qByCoin = new Map();
   for (const m of mineQ) {
-    const fx = soccerByKey.get(outcomeKey(m.q));
+    const fx = fixtureOf(m);
     for (const { o, side } of m.sides) qByCoin.set(`#${o.outcome * 10}`, { fx, side });
   }
   for (const m of registry.markets) {
@@ -309,7 +327,7 @@ export function plan({ outcomes, questions = [], fixtures, soccerFixtures = [], 
     const p = hit ? prior3(hit.fx)?.[hit.side] : priorOf(fxByCoin.get(m.coinYes));
     if (p !== undefined) priors.set(m.coinYes, p);
   }
-  return { toSettle, toSettleQuestions, toRegister, toRegisterQuestions, toWrap, priors };
+  return { toSettle, toSettleQuestions, unmatched, toRegister, toRegisterQuestions, toWrap, priors };
 }
 
 /** Same array reference back when no prior changed, so callers can skip the write. */
