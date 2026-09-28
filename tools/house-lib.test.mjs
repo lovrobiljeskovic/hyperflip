@@ -284,3 +284,39 @@ test("plan adopts house questions: settles finals and deadlines, wraps members w
   assert.deepEqual(p6.toWrap.map((w) => w.priorYes), [undefined, undefined, undefined]);
   assert.equal(questionPick(qUp, oUp[1], { participantA: "A", participantB: "B", competition: "PL", sport: "Soccer", startMs: 1, expiryMs: 2 }, "home", undefined).priorYes, undefined);
 });
+
+test("plan: NFL keeps a 16-slot budget, soccer takes the rest in whole chunks of 4, flip first, most balanced first, no odds means no listing", () => {
+  const nowMs = KO - 10 * D;
+  const soccer = (id, home, away, odds, daysOut = 10) => ({ ...fixtureFromEspn(soccerEvent(id, home.slice(0, 3).toUpperCase(), home, away.slice(0, 3).toUpperCase(), away, nowMs + daysOut * D)), ...(odds ? { odds } : {}), league: "eng.1", matchday: 6 });
+  const even = soccer("s1", "Liverpool", "Manchester City", { home: 100, draw: 245, away: 250 });
+  const lopsided = soccer("s2", "Barcelona", "Getafe", { home: -1200, draw: 900, away: 2000 });
+  const mild = soccer("s3", "Chelsea", "AFC Bournemouth", { home: -140, draw: 300, away: 320 });
+  const unpriced = soccer("s4", "Everton", "Hull City", undefined);
+  const far = soccer("s5", "Leeds United", "Arsenal", { home: 100, draw: 245, away: 250 }, 20);
+  const soon = soccer("s6", "Fulham", "Ipswich Town", { home: 100, draw: 245, away: 250 }, 0.5);
+  const nfl = ["A", "B", "C"].map((x, i) => fixtureFromEspn(espnEvent(x, x, `${x} Away`, `${x}H`, `${x} Home`, nowMs + (2 + i) * D), { away: -110, home: -110 }));
+
+  // 20 per venue, NFL budget 2: NFL takes 2 on flip, soccer gets floor(18/4)=4 chunks on flip + 5 on flp = 9 chunks, 3 eligible.
+  const p = plan({ outcomes: [], questions: [], fixtures: nfl, soccerFixtures: [lopsided, unpriced, far, soon, mild, even], registry: { markets: [] }, nowMs, maxActive: 20, nflMaxActive: 2 });
+  assert.deepEqual(p.toRegister.map((fx) => [fx.id, fx.venue]), [["A", "flip"], ["B", "flip"]]);
+  assert.deepEqual(p.toRegisterQuestions.map((fx) => [fx.id, fx.venue]), [["s1", "flip"], ["s3", "flip"], ["s2", "flip"]]);
+
+  // 8 per venue, 3 NFL already active on flip: flip has 5 left -> 1 chunk; flp has 8 -> 2 chunks.
+  const active = nfl.map((fx, i) => outcomeFor(fx, i + 1));
+  const p2 = plan({ outcomes: active, questions: [], fixtures: nfl, soccerFixtures: [even, mild, lopsided], registry: { markets: [] }, nowMs, maxActive: 8, nflMaxActive: 16 });
+  assert.deepEqual(p2.toRegister, []);
+  assert.deepEqual(p2.toRegisterQuestions.map((fx) => [fx.id, fx.venue]), [["s1", "flip"], ["s3", "flp"], ["s2", "flp"]]);
+
+  // A registered question and its fallback count as 4 active; a settling one frees its 4.
+  const { question, outcomes } = questionFor(even, 1392);
+  const p3 = plan({ outcomes, questions: [question], fixtures: [], soccerFixtures: [even, mild], registry: { markets: [] }, nowMs, maxActive: 4 });
+  assert.deepEqual(p3.toRegisterQuestions.map((fx) => [fx.id, fx.venue]), [["s3", "flp"]]);
+  // Two hours after kickoff the match is full time (same kickoff, so the question key still matches):
+  // its 4 slots free up this run and the next fixture takes them on flip.
+  const later = KO + 2 * H;
+  const done = { ...even, ...fixtureFromEspn(soccerEvent("s1", "LIV", "Liverpool", "MNC", "Manchester City", KO, { fullTime: true, awayWins: true })) };
+  const next = { ...mild, ...fixtureFromEspn(soccerEvent("s3", "CHE", "Chelsea", "BOU", "AFC Bournemouth", later + 5 * D)) };
+  const p4 = plan({ outcomes, questions: [question], fixtures: [], soccerFixtures: [done, next], registry: { markets: [] }, nowMs: later, maxActive: 4 });
+  assert.deepEqual(p4.toSettleQuestions.map((s) => s.winner), ["away"]);
+  assert.deepEqual(p4.toRegisterQuestions.map((fx) => [fx.id, fx.venue]), [["s3", "flip"]]);
+});

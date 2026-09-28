@@ -246,24 +246,37 @@ export function plan({ outcomes, questions = [], fixtures, soccerFixtures = [], 
     else if (m.ev.expiryMs <= nowMs) toSettleQuestions.push({ ...m, fx: fx ?? null, winner: "draw" }); // deadline rule: Draw
   }
   const settlingQ = new Set(toSettleQuestions.map((s) => s.q.question));
-  const toRegisterQuestions = [];
 
   const priorOf = (fx) => (fx?.moneyline ? devig(fx.moneyline.away, fx.moneyline.home) : undefined);
-  // Slots are scarce (10 on testnet): a game must keep at least minWindowMs of pre-kickoff
+  // Slots are scarce (20 per venue on testnet): a game must keep at least minWindowMs of pre-kickoff
   // trading to be worth a slot, and balanced games (prior nearest 0.5) win contested slots.
   const lopsided = (fx) => Math.abs((priorOf(fx) ?? 0.5) - 0.5);
   const registered = new Set(mine.map(outcomeKey));
-  // maxActive is per venue owner; fill venues in VENUES order so `flip` stays as it is and
-  // `flp` only gets what `flip` cannot hold.
-  const slots = VENUES.flatMap((venue) => {
-    const active = mine.filter((o) => o.venue === venue && !settling.has(o.outcome)).length;
-    return Array(Math.max(0, maxActive - active)).fill(venue);
-  });
+  // Every outcome on a venue counts against its cap: standalone games, question members and
+  // fallbacks. Outcomes settling this run are freed up front.
+  const activeOn = (venue) =>
+    outcomes.filter((o) => o.venue === venue && !settling.has(o.outcome)).length -
+    4 * toSettleQuestions.filter((s) => s.venue === venue).length;
+  // NFL keeps a fixed budget across both venues (one week of games); fill `flip` first so it
+  // stays as it is and `flp` only gets what `flip` cannot hold.
+  const nflRoom = Math.max(0, nflMaxActive - mine.filter((o) => !settling.has(o.outcome)).length);
+  const slots = VENUES.flatMap((venue) => Array(Math.max(0, maxActive - activeOn(venue))).fill(venue)).slice(0, nflRoom);
   const toRegister = fixtures
     .filter((fx) => !registered.has(fixtureKey(fx)) && fx.kickoffMs - nowMs >= minWindowMs && fx.kickoffMs - nowMs <= horizonMs)
     .sort((a, b) => lopsided(a) - lopsided(b) || a.kickoffMs - b.kickoffMs)
     .slice(0, slots.length)
     .map((fx, i) => ({ ...fx, venue: slots[i] }));
+
+  // Soccer takes what NFL left, four outcomes per match, most balanced match first.
+  const nflAssigned = (venue) => toRegister.filter((fx) => fx.venue === venue).length;
+  const registeredQ = new Set(mineQ.map((m) => outcomeKey(m.q)));
+  const balance3 = (fx) => Math.max(...Object.values(prior3(fx)));
+  const qSlots = VENUES.flatMap((venue) => Array(Math.max(0, Math.floor((maxActive - activeOn(venue) - nflAssigned(venue)) / 4))).fill(venue));
+  const toRegisterQuestions = soccerFixtures
+    .filter((fx) => fx.odds && !registeredQ.has(questionFixtureKey(fx)) && fx.kickoffMs - nowMs >= minWindowMs && fx.kickoffMs - nowMs <= soccerHorizonMs)
+    .sort((a, b) => balance3(a) - balance3(b) || a.kickoffMs - b.kickoffMs)
+    .slice(0, qSlots.length)
+    .map((fx, i) => ({ ...fx, venue: qSlots[i] }));
 
   const toWrap = [];
   for (const o of mine) {
