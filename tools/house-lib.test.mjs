@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { devig, devig3, fixtureFromEspn, housePick, LEAGUES, matchdayOf, outcomeKey, plan, questionFixtureKey, questionSides, registerAction, registerQuestionAction, settleAction, settleQuestionAction, stamp, winnerSide, withPriors } from "./house-lib.mjs";
+import { devig, devig3, fixtureFromEspn, housePick, LEAGUES, matchdayOf, outcomeKey, plan, questionFixtureKey, questionPick, questionSides, registerAction, registerQuestionAction, settleAction, settleQuestionAction, stamp, winnerSide, withPriors } from "./house-lib.mjs";
 
 const T0 = Date.UTC(2026, 8, 17, 12); // Thu 2026-09-17 12:00Z
 const H = 3600_000;
@@ -239,4 +239,48 @@ test("settleQuestionAction settles exactly one side to 1 and echoes every named 
   const stranger = new Map(byId); stranger.set(13923, { ...byId.get(13923), description: "participant:Everton" });
   assert.equal(questionSides(question, stranger), null);
   assert.deepEqual([winnerSide({ winner: "B" }), winnerSide({ winner: "A" }), winnerSide({ winner: "tie" }), winnerSide({ winner: null })], ["home", "away", "draw", null]);
+});
+
+test("plan adopts house questions: settles finals and deadlines, wraps members with 3-way priors, refreshes priors pre-kickoff only", () => {
+  const upcoming = livMci(); // kicks off KO, 13 days after nowMs
+  const nowMs = KO - 13 * D;
+  const { question: qUp, outcomes: oUp } = questionFor(upcoming, 1392);
+  const finished = { ...fixtureFromEspn(soccerEvent("f1", "ARS", "Arsenal", "LEE", "Leeds United", nowMs - 20 * H, { fullTime: true })), league: "eng.1", matchday: 5 };
+  const { question: qFin, outcomes: oFin } = questionFor(finished, 1400, "flp");
+  const stale = { ...fixtureFromEspn(soccerEvent("f2", "CHE", "Chelsea", "BOU", "AFC Bournemouth", nowMs - 5 * D)), league: "eng.1", matchday: 4 }; // never final; deadline passed
+  const { question: qStale, outcomes: oStale } = questionFor(stale, 1401);
+  const foreign = questionFor({ ...upcoming, home: { abbr: "X", name: "Foreign" } }, 1500, "zzz");
+  const outcomes = [...oUp, ...oFin, ...oStale, ...foreign.outcomes];
+  const questions = [qUp, qFin, qStale, foreign.question];
+  const p = plan({ outcomes, questions, fixtures: [], soccerFixtures: [upcoming, finished, stale], registry: { markets: [] }, nowMs, maxActive: 20 });
+
+  assert.deepEqual(p.toSettleQuestions.map((s) => [s.q.question, s.venue, s.winner]), [[1400, "flp", "draw"], [1401, "flip", "draw"]]);
+  assert.deepEqual(p.toRegisterQuestions, []);
+  assert.deepEqual(p.toWrap.map((w) => [w.outcome, w.coinYes, w.title, w.sideNo, w.group, w.groupTitle, w.priorYes, w.deployer, w.question]), [
+    [13921, "#139210", "Liverpool", "Not Liverpool", "q1392", "Liverpool vs Manchester City", 0.4649, "flip", 1392],
+    [13922, "#139220", "Draw", "Not Draw", "q1392", "Liverpool vs Manchester City", 0.2695, "flip", 1392],
+    [13923, "#139230", "Manchester City", "Not Manchester City", "q1392", "Liverpool vs Manchester City", 0.2656, "flip", 1392],
+  ]);
+  assert.deepEqual([...p.priors], []);
+
+  // rotate-markets already wrapped all three members (question 1392 today): no re-wrap, priors attach by coinYes.
+  const rows = [13921, 13922, 13923].map((id) => ({ coinYes: `#${id * 10}`, deployer: "flip", question: 1392, startMs: KO }));
+  const p2 = plan({ outcomes: oUp, questions: [qUp], fixtures: [], soccerFixtures: [upcoming], registry: { markets: rows }, nowMs, maxActive: 20 });
+  assert.equal(p2.toWrap.length, 0);
+  assert.deepEqual([...p2.priors], [["#139210", 0.4649], ["#139220", 0.2695], ["#139230", 0.2656]]);
+  // Only the home member wrapped so far: wrap the other two.
+  const p3 = plan({ outcomes: oUp, questions: [qUp], fixtures: [], soccerFixtures: [upcoming], registry: { markets: rows.slice(0, 1) }, nowMs, maxActive: 20 });
+  assert.deepEqual(p3.toWrap.map((w) => w.outcome), [13922, 13923]);
+  // After kickoff nothing is wrapped and priors freeze.
+  const p4 = plan({ outcomes: oUp, questions: [qUp], fixtures: [], soccerFixtures: [upcoming], registry: { markets: rows }, nowMs: KO + H, maxActive: 20 });
+  assert.deepEqual([p4.toWrap, [...p4.priors]], [[], []]);
+  // A finished match with a home winner settles home.
+  const homeWin = { ...finished, ...fixtureFromEspn(soccerEvent("f1", "ARS", "Arsenal", "LEE", "Leeds United", nowMs - 20 * H, { fullTime: true, homeWins: true })) };
+  const p5 = plan({ outcomes: oFin, questions: [qFin], fixtures: [], soccerFixtures: [homeWin], registry: { markets: [] }, nowMs, maxActive: 20 });
+  assert.deepEqual(p5.toSettleQuestions.map((s) => s.winner), ["home"]);
+  // A fixture with no odds wraps without a prior.
+  const noOdds = { ...upcoming }; delete noOdds.odds;
+  const p6 = plan({ outcomes: oUp, questions: [qUp], fixtures: [], soccerFixtures: [noOdds], registry: { markets: [] }, nowMs, maxActive: 20 });
+  assert.deepEqual(p6.toWrap.map((w) => w.priorYes), [undefined, undefined, undefined]);
+  assert.equal(questionPick(qUp, oUp[1], { participantA: "A", participantB: "B", competition: "PL", sport: "Soccer", startMs: 1, expiryMs: 2 }, "home", undefined).priorYes, undefined);
 });

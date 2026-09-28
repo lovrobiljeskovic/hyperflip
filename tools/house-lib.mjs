@@ -198,7 +198,24 @@ export function housePick(o, ev, priorYes) {
   };
 }
 
-export function plan({ outcomes, fixtures, registry, nowMs, horizonMs = 7 * 86400_000, maxActive = 10, minWindowMs = 18 * 3600_000 }) {
+const sideLabel = (ev, side) => (side === "draw" ? "Draw" : side === "home" ? ev.participantA : ev.participantB);
+
+/** Same leg shape rotate-lib pickSports builds for third-party questions, plus the house prior,
+ * so rotate-markets sees the coin as known and the writer/app treat it like any question leg. */
+export function questionPick(q, o, ev, side, priorYes) {
+  const label = sideLabel(ev, side);
+  const underlying = `q${q.question}`;
+  return {
+    outcome: o.outcome, coinYes: `#${o.outcome * 10}`, coinNo: `#${o.outcome * 10 + 1}`, question: q.question, group: underlying,
+    groupTitle: `${ev.participantA} vs ${ev.participantB}`, title: label, sideYes: label, sideNo: `Not ${label}`, underlying,
+    cluster: ev.competition, sport: ev.sport, startMs: ev.startMs, expiryMs: ev.expiryMs, deployer: o.venue,
+    ...(priorYes !== undefined ? { priorYes } : {}),
+  };
+}
+
+const prior3 = (fx) => (fx?.odds ? devig3(fx.odds.home, fx.odds.draw, fx.odds.away) : undefined);
+
+export function plan({ outcomes, questions = [], fixtures, soccerFixtures = [], registry, nowMs, horizonMs = 7 * 86400_000, soccerHorizonMs = 14 * 86400_000, maxActive = 10, nflMaxActive = 16, minWindowMs = 18 * 3600_000 }) {
   const mine = outcomes.filter((o) => VENUES.includes(o.venue) && o.name === `template:${TEMPLATE}`);
   const byKey = new Map(fixtures.map((fx) => [fixtureKey(fx), fx]));
   const knownCoins = new Set(registry.markets.map((m) => m.coinYes));
@@ -211,6 +228,25 @@ export function plan({ outcomes, fixtures, registry, nowMs, horizonMs = 7 * 8640
     else if (ev && ev.expiryMs <= nowMs) toSettle.push({ o, fx: fx ?? null, fraction: "0.5" }); // no result by deadline
   }
   const settling = new Set(toSettle.map((s) => s.o.outcome));
+
+  // Our 3-way soccer questions: every member must be present and match the question's own sides.
+  const byId = new Map(outcomes.map((o) => [o.outcome, o]));
+  const mineQ = [];
+  for (const q of questions) {
+    if (q.name !== `template:${QUESTION_TEMPLATE}`) continue;
+    const sides = questionSides(q, byId);
+    if (!sides || !VENUES.includes(sides[0].o.venue)) continue;
+    mineQ.push({ q, sides, venue: sides[0].o.venue, ev: parseSportsEvent(q.description) });
+  }
+  const soccerByKey = new Map(soccerFixtures.map((fx) => [questionFixtureKey(fx), fx]));
+  const toSettleQuestions = [];
+  for (const m of mineQ) {
+    const fx = soccerByKey.get(outcomeKey(m.q));
+    if (fx?.final) toSettleQuestions.push({ ...m, fx, winner: winnerSide(fx) });
+    else if (m.ev.expiryMs <= nowMs) toSettleQuestions.push({ ...m, fx: fx ?? null, winner: "draw" }); // deadline rule: Draw
+  }
+  const settlingQ = new Set(toSettleQuestions.map((s) => s.q.question));
+  const toRegisterQuestions = [];
 
   const priorOf = (fx) => (fx?.moneyline ? devig(fx.moneyline.away, fx.moneyline.home) : undefined);
   // Slots are scarce (10 on testnet): a game must keep at least minWindowMs of pre-kickoff
@@ -237,15 +273,30 @@ export function plan({ outcomes, fixtures, registry, nowMs, horizonMs = 7 * 8640
     toWrap.push(housePick(o, ev, priorOf(byKey.get(outcomeKey(o)))));
   }
 
+  for (const m of mineQ) {
+    if (settlingQ.has(m.q.question) || m.ev.startMs <= nowMs) continue;
+    const p = prior3(soccerByKey.get(outcomeKey(m.q)));
+    for (const { o, side } of m.sides) {
+      if (knownCoins.has(`#${o.outcome * 10}`)) continue;
+      toWrap.push(questionPick(m.q, o, m.ev, side, p?.[side]));
+    }
+  }
+
   // Priors refresh pre-kickoff only; after kickoff the last pre-game number is frozen.
   const priors = new Map();
   const fxByCoin = new Map(mine.map((o) => [`#${o.outcome * 10}`, byKey.get(outcomeKey(o))]));
+  const qByCoin = new Map();
+  for (const m of mineQ) {
+    const fx = soccerByKey.get(outcomeKey(m.q));
+    for (const { o, side } of m.sides) qByCoin.set(`#${o.outcome * 10}`, { fx, side });
+  }
   for (const m of registry.markets) {
     if (!VENUES.includes(m.deployer) || !(m.startMs > nowMs)) continue;
-    const p = priorOf(fxByCoin.get(m.coinYes));
+    const hit = qByCoin.get(m.coinYes);
+    const p = hit ? prior3(hit.fx)?.[hit.side] : priorOf(fxByCoin.get(m.coinYes));
     if (p !== undefined) priors.set(m.coinYes, p);
   }
-  return { toSettle, toRegister, toWrap, priors };
+  return { toSettle, toSettleQuestions, toRegister, toRegisterQuestions, toWrap, priors };
 }
 
 /** Same array reference back when no prior changed, so callers can skip the write. */
