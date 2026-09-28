@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { devig, devig3, fixtureFromEspn, housePick, matchdayOf, outcomeKey, plan, registerAction, settleAction, stamp, withPriors } from "./house-lib.mjs";
+import { devig, devig3, fixtureFromEspn, housePick, LEAGUES, matchdayOf, outcomeKey, plan, questionFixtureKey, registerAction, registerQuestionAction, settleAction, stamp, withPriors } from "./house-lib.mjs";
 
 const T0 = Date.UTC(2026, 8, 17, 12); // Thu 2026-09-17 12:00Z
 const H = 3600_000;
@@ -163,4 +163,39 @@ test("fixtureFromEspn treats a soccer full-time result as final; no winner flag 
   assert.deepEqual([draw.final, draw.winner], [true, "tie"]);
   const live = fixtureFromEspn(soccerEvent("s3", "LIV", "Liverpool", "MNC", "Manchester City", T0));
   assert.deepEqual([live.final, live.winner], [false, null]);
+});
+
+const PL = () => LEAGUES.find((l) => l.key === "eng.1");
+const KO = Date.UTC(2026, 9, 11, 15, 30); // Sun 2026-10-11 15:30Z
+const livMci = () => ({ ...fixtureFromEspn(soccerEvent("401879264", "LIV", "Liverpool", "MNC", "Manchester City", KO)), odds: { home: 100, draw: 245, away: 250 }, league: "eng.1", matchday: 6 });
+
+test("registerQuestionAction reproduces the hand-built Liverpool v Manchester City payload", () => {
+  const action = registerQuestionAction(livMci(), PL(), "flip");
+  assert.deepEqual(action, {
+    type: "outcomeDeploy", venue: "flip",
+    operation: { registerQuestionFromTemplate: {
+      questionTemplateInstance: {
+        id: "sportsContestResult5",
+        keywordToValue: [
+          ["competition", "Premier League"], ["contestType", "Match"], ["officialSource", "Premier League"],
+          ["participantA", "Liverpool"], ["participantB", "Manchester City"], ["resolutionDeadline", "20261014-1530"],
+          ["scheduledStart", "20261011-1530"], ["season", "2026/27"], ["sport", "Soccer"], ["stage", "Matchday 6"],
+        ],
+        deployerFeeScale: "1",
+      },
+      namedOutcomeTemplateInstances: [
+        { id: "sportsContestParticipant5", keywordToValue: [["participant", "Liverpool"]] },
+        { id: "sportsContestDraw5", keywordToValue: [] },
+        { id: "sportsContestParticipant5", keywordToValue: [["participant", "Manchester City"]] },
+      ],
+    } },
+  });
+  assert.equal(registerQuestionAction({ ...livMci(), venue: "flp" }, PL()).venue, "flp");
+  assert.equal(questionFixtureKey(livMci()), `Liverpool|Manchester City|${KO}`);
+  assert.throws(() => registerQuestionAction(livMci(), PL(), "zzz"), /unknown venue/);
+  assert.throws(() => registerQuestionAction({ ...livMci(), matchday: undefined }, PL(), "flip"), /matchday/);
+  assert.throws(() => registerQuestionAction({ ...livMci(), home: { abbr: "X", name: "A".repeat(26) } }, PL(), "flip"), /participant > 25/);
+  assert.throws(() => registerQuestionAction({ ...livMci(), away: { abbr: "X", name: "Bad|Name" } }, PL(), "flip"), /invalid/);
+  assert.equal(LEAGUES.find((l) => l.key === "nfl").kind, "standalone");
+  assert.equal(LEAGUES.find((l) => l.key === "esp.1").competition, "La Liga");
 });

@@ -6,8 +6,15 @@ import { eventKey, parseSportsEvent } from "./rotate-lib.mjs";
 // `flip` first, `flp` only takes the overflow. Sub-deployer (box EOA) is the same on both.
 export const VENUES = ["flip", "flp"];
 export const TEMPLATE = "sportsContestWinner7";
-// ponytail: one league constant; a second league is a second constant + env switch.
-export const LEAGUE = { path: "football/nfl", competition: "NFL", sport: "American football", officialSource: "NFL", season: "2026", seasontype: 2 };
+// One entry per league we deploy. `standalone` leagues use sportsContestWinner7 (one Yes/No outcome
+// per game); `question` leagues use sportsContestResult5 (Home / Draw / Away + fallback, 4 slots).
+export const LEAGUE = { key: "nfl", kind: "standalone", path: "football/nfl", competition: "NFL", sport: "American football", officialSource: "NFL", season: "2026", seasontype: 2 };
+export const LEAGUES = [
+  LEAGUE,
+  { key: "eng.1", kind: "question", path: "soccer/eng.1", competition: "Premier League", officialSource: "Premier League", sport: "Soccer", season: "2026/27", contestType: "Match", seasonStartMs: Date.UTC(2026, 7, 1) },
+  { key: "esp.1", kind: "question", path: "soccer/esp.1", competition: "La Liga", officialSource: "La Liga", sport: "Soccer", season: "2026/27", contestType: "Match", seasonStartMs: Date.UTC(2026, 7, 1) },
+];
+export const QUESTION_TEMPLATE = "sportsContestResult5";
 const DEADLINE_MS = 3 * 86400_000; // resolutionDeadline = kickoff + 3d (postponements void to 0.5)
 
 /** Implied P(away) from two American moneylines, vig removed by normalisation. */
@@ -94,6 +101,36 @@ export function registerAction(fx, week, venue = fx.venue) {
   if (name.length > 70) throw new Error(`name > 70 chars: ${name}`);
   const keywordToValue = Object.entries(kv).sort(([a], [b]) => (a < b ? -1 : 1));
   return { type: "outcomeDeploy", venue, operation: { registerStandaloneOutcomeFromTemplate: { id: TEMPLATE, keywordToValue, deployerFeeScale: "1" } } };
+}
+
+export const questionFixtureKey = (fx) => `${fx.home.name}|${fx.away.name}|${fx.kickoffMs}`;
+
+/** Soccer questions list the home side as participantA (question 1392 set the precedent). */
+export function registerQuestionAction(fx, league, venue = fx.venue) {
+  if (!VENUES.includes(venue)) throw new Error(`unknown venue: ${venue}`);
+  if (!(fx.matchday >= 1)) throw new Error(`fixture ${fx.id} has no matchday`);
+  const kv = {
+    competition: league.competition, contestType: league.contestType, officialSource: league.officialSource,
+    participantA: fx.home.name, participantB: fx.away.name,
+    resolutionDeadline: stamp(fx.kickoffMs + DEADLINE_MS), scheduledStart: stamp(fx.kickoffMs),
+    season: league.season, sport: league.sport, stage: `Matchday ${fx.matchday}`,
+  };
+  for (const [k, v] of Object.entries(kv)) checkValue(k, v);
+  for (const p of [kv.participantA, kv.participantB]) if (p.length > 25) throw new Error(`participant > 25 chars: ${p}`);
+  const name = `${kv.competition} ${kv.stage}: ${kv.participantA} v ${kv.participantB}`;
+  if (name.length > 70) throw new Error(`name > 70 chars: ${name}`);
+  const keywordToValue = Object.entries(kv).sort(([a], [b]) => (a < b ? -1 : 1));
+  return {
+    type: "outcomeDeploy", venue,
+    operation: { registerQuestionFromTemplate: {
+      questionTemplateInstance: { id: QUESTION_TEMPLATE, keywordToValue, deployerFeeScale: "1" },
+      namedOutcomeTemplateInstances: [
+        { id: "sportsContestParticipant5", keywordToValue: [["participant", kv.participantA]] },
+        { id: "sportsContestDraw5", keywordToValue: [] },
+        { id: "sportsContestParticipant5", keywordToValue: [["participant", kv.participantB]] },
+      ],
+    } },
+  };
 }
 
 export const fixtureKey = (fx) => `${fx.away.name}|${fx.home.name}|${fx.kickoffMs}`;
