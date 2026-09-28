@@ -112,7 +112,7 @@ const fold = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCas
 /** Yes CLOB token of the Polymarket moneyline market for one soccer question member (Home / Draw /
  * Away). Candidates from `public-search`: slug ends with the UTC kickoff date and carries three
  * open moneyline markets. The market is matched by question text; market order (home, draw, away)
- * is only a tiebreak when the text match fails and the draw sits at index 1. */
+ * is the tiebreak when the text match is not unique and the draw sits at index 1. */
 export function pmQuestionToken(events: PmSearchEvent[], m: Pick<MarketInfo, "title" | "groupTitle" | "startMs">): { token: string; slug: string; question: string } | null {
   const [home, away] = (m.groupTitle ?? "").split(" vs ").map((t) => t.trim());
   if (!home || !away || m.startMs === undefined) return null;
@@ -127,7 +127,9 @@ export function pmQuestionToken(events: PmSearchEvent[], m: Pick<MarketInfo, "ti
     if (m.title === "Draw") pick = ml.find(isDraw);
     else {
       const label = fold(m.title);
-      pick = ml.find((x) => !isDraw(x) && fold(q(x)).includes(label));
+      // A unique text hit only: "Barcelona" sits inside "RCD Espanyol de Barcelona" too.
+      const hits = ml.filter((x) => !isDraw(x) && fold(q(x)).includes(label));
+      pick = hits.length === 1 ? hits[0] : undefined;
       if (!pick && isDraw(ml[1])) pick = ml[m.title === home ? 0 : m.title === away ? 2 : -1];
     }
     if (!pick) continue;

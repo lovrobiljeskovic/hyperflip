@@ -329,3 +329,11 @@ test("NFL rows are unaffected by the soccer admit; a non-soccer question member 
   assert.equal(h.live.status()["#194630"].source, "mainnet");
   assert.ok(!Object.keys(h.live.status()).includes("#88880"));
 });
+
+test("pmQuestionToken: a label inside the opponent's Polymarket name is ambiguous, so order breaks the tie (Espanyol v Barcelona)", () => {
+  const DERBY = "lal-esp-bar-2026-11-01";
+  const ev = pmEvent(DERBY, "RCD Espanyol de Barcelona", "FC Barcelona");
+  const row = { groupTitle: "Espanyol vs Barcelona", startMs: Date.UTC(2026, 10, 1, 20, 0) };
+  assert.equal(pmQuestionToken([ev], { ...row, title: "Barcelona" })?.token, `${DERBY}-away`);
+  assert.equal(pmQuestionToken([ev], { ...row, title: "Espanyol" })?.token, `${DERBY}-home`);
+});
