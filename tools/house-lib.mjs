@@ -18,6 +18,34 @@ export function devig(awayMl, homeMl) {
   return Math.round((a / (a + h)) * 1e4) / 1e4;
 }
 
+/** Implied Home/Draw/Away from three American moneylines, vig removed by normalisation. */
+export function devig3(homeMl, drawMl, awayMl) {
+  const dec = (ml) => (ml > 0 ? 1 + ml / 100 : 1 + 100 / -ml);
+  const h = 1 / dec(homeMl);
+  const d = 1 / dec(drawMl);
+  const a = 1 / dec(awayMl);
+  const s = h + d + a;
+  const r = (x) => Math.round((x / s) * 1e4) / 1e4;
+  return { home: r(h), draw: r(d), away: r(a) };
+}
+
+/** 1-based round of `kickoffMs` within a league season: ESPN publishes no round number, so a gap
+ * of more than 3 days between consecutive fixture days starts a new matchday.
+ * ponytail: a midweek round played Tue/Wed right after a Sat/Sun round merges into it; the
+ * stage text is display only (settlement echoes what Core stored), so a wrong number is cosmetic. */
+export function matchdayOf(kickoffMs, seasonKickoffs) {
+  const toDay = (ms) => Math.floor(ms / 86400_000);
+  const days = [...new Set(seasonKickoffs.map(toDay))].sort((a, b) => a - b);
+  let round = 0;
+  let prev = -Infinity;
+  for (const day of days) {
+    if (day - prev > 3) round++;
+    prev = day;
+    if (day === toDay(kickoffMs)) return round;
+  }
+  throw new Error(`kickoff ${new Date(kickoffMs).toISOString()} not in season kickoffs`);
+}
+
 /** Inverse of rotate-lib parseStamp: ms -> YYYYMMDD-HHMM UTC. */
 export function stamp(ms) {
   const d = new Date(ms);
@@ -25,13 +53,15 @@ export function stamp(ms) {
   return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}-${p(d.getUTCHours())}${p(d.getUTCMinutes())}`;
 }
 
+const FINAL_STATUS = new Set(["STATUS_FINAL", "STATUS_FULL_TIME"]); // NFL / soccer
+
 /** ESPN scoreboard event -> fixture. `winner` is "A" (away) / "B" (home) / "tie" / null. */
 export function fixtureFromEspn(event, moneyline) {
   const c = event.competitions[0];
   const side = (ha) => c.competitors.find((t) => t.homeAway === ha);
   const away = side("away");
   const home = side("home");
-  const final = c.status?.type?.name === "STATUS_FINAL" && c.status?.type?.completed === true;
+  const final = FINAL_STATUS.has(c.status?.type?.name) && c.status?.type?.completed === true;
   const winner = !final ? null : away.winner ? "A" : home.winner ? "B" : "tie";
   return {
     id: event.id,

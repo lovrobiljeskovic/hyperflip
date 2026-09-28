@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { devig, fixtureFromEspn, housePick, outcomeKey, plan, registerAction, settleAction, stamp, withPriors } from "./house-lib.mjs";
+import { devig, devig3, fixtureFromEspn, housePick, matchdayOf, outcomeKey, plan, registerAction, settleAction, stamp, withPriors } from "./house-lib.mjs";
 
 const T0 = Date.UTC(2026, 8, 17, 12); // Thu 2026-09-17 12:00Z
 const H = 3600_000;
@@ -15,6 +15,21 @@ function espnEvent(id, awayAbbr, awayName, homeAbbr, homeName, kickoffMs, { fina
         { homeAway: "home", team: { abbreviation: homeAbbr, displayName: homeName }, winner: homeWins },
       ],
       status: { type: { name: final ? "STATUS_FINAL" : "STATUS_SCHEDULED", completed: final } },
+    }],
+  };
+}
+
+
+/** ESPN soccer scoreboard event. Home is listed first; a draw has no winner flag on either side. */
+function soccerEvent(id, homeAbbr, homeName, awayAbbr, awayName, kickoffMs, { fullTime = false, homeWins = false, awayWins = false } = {}) {
+  return {
+    id, date: new Date(kickoffMs).toISOString(),
+    competitions: [{
+      competitors: [
+        { homeAway: "home", team: { abbreviation: homeAbbr, displayName: homeName }, winner: homeWins },
+        { homeAway: "away", team: { abbreviation: awayAbbr, displayName: awayName }, winner: awayWins },
+      ],
+      status: { type: { name: fullTime ? "STATUS_FULL_TIME" : "STATUS_SCHEDULED", completed: fullTime } },
     }],
   };
 }
@@ -128,4 +143,24 @@ test("withPriors returns the same reference when nothing changes", () => {
   assert.notEqual(next, markets);
   assert.deepEqual(next[1], { coinYes: "#20", priorYes: 0.7 });
   assert.equal(housePick({ outcome: 5 }, { participantA: "A", participantB: "B", shortNameA: "A", shortNameB: "B", competition: "NFL", sport: "x", startMs: 1, expiryMs: 2 }, undefined).priorYes, undefined);
+});
+
+test("devig3 normalises a 3-way line; matchdayOf clusters the season by gaps of more than 3 days", () => {
+  assert.deepEqual(devig3(-140, 300, 320), { home: 0.5444, draw: 0.2333, away: 0.2222 });
+  assert.deepEqual(devig3(100, 100, 100), { home: 0.3333, draw: 0.3333, away: 0.3333 });
+  const day = (m, d) => Date.UTC(2026, m - 1, d, 15);
+  const season = [day(8, 21), day(8, 22), day(8, 23), day(8, 28), day(8, 29), day(9, 4), day(9, 5), day(10, 10), day(10, 11)];
+  assert.equal(matchdayOf(day(8, 22), season), 1);
+  assert.equal(matchdayOf(day(9, 5), season), 3);
+  assert.equal(matchdayOf(day(10, 11), season), 4);
+  assert.throws(() => matchdayOf(day(12, 25), season), /not in season/);
+});
+
+test("fixtureFromEspn treats a soccer full-time result as final; no winner flag is a draw", () => {
+  const home = fixtureFromEspn(soccerEvent("s1", "LIV", "Liverpool", "MNC", "Manchester City", T0, { fullTime: true, homeWins: true }));
+  assert.deepEqual([home.final, home.winner, home.home.name, home.away.name], [true, "B", "Liverpool", "Manchester City"]);
+  const draw = fixtureFromEspn(soccerEvent("s2", "LIV", "Liverpool", "MNC", "Manchester City", T0, { fullTime: true }));
+  assert.deepEqual([draw.final, draw.winner], [true, "tie"]);
+  const live = fixtureFromEspn(soccerEvent("s3", "LIV", "Liverpool", "MNC", "Manchester City", T0));
+  assert.deepEqual([live.final, live.winner], [false, null]);
 });
