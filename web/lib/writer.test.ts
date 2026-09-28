@@ -1,6 +1,6 @@
 vi.mock("@privy-io/react-auth", () => ({ getAccessToken: vi.fn().mockResolvedValue("verified-token") }));
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { compareKickoff, kickoffKey, currentPricing, fetchLimits, fetchMarkets, groupMarkets, isPriced, marketMid, sportLabel, requestQuote, sideLabel, withMarketVolumes, type Market } from "./writer";
+import { compareKickoff, kickoffKey, isMatchQuestion, currentPricing, fetchLimits, fetchMarkets, groupMarkets, isPriced, marketMid, sportLabel, requestQuote, sideLabel, withMarketVolumes, type Market } from "./writer";
 
 test("public pricing follows writer configuration and never invents missing fees", async () => {
   const limits = { maxStake: "1000000", edgeBps: "725", legEdgeBps: "150", quoteTtlMs: 30000 };
@@ -96,11 +96,18 @@ test("withMarketVolumes uses Hyperliquid's side-0 market volume", () => {
 });
 
 test("compareKickoff sorts soonest first, falls back to expiry, sinks markets with neither", () => {
+  const D = 86_400_000;
   const m = (startMs?: number, expiryMs?: number, group?: string) => ({ startMs, expiryMs, group }) as Market;
-  // The grouped season started at 1 but settles at 40: it ranks on 40.
-  const markets = [m(30), m(undefined, 20), m(), m(10), m(1, 40, "q1")];
-  expect([...markets].sort((a, b) => compareKickoff(a, b)).map(kickoffKey)).toEqual([10, 20, 30, 40, undefined]);
-  expect([...markets].sort((a, b) => compareKickoff(a, b, false)).map(kickoffKey)).toEqual([40, 30, 20, 10, undefined]);
+  // The grouped season started at 1 but settles at 40 days: it ranks on settlement. A grouped
+  // match (3-way soccer question, deadline 3 days after kickoff) ranks on its kickoff like any game.
+  const season = m(1, 40 * D, "q1");
+  const match = m(25 * D, 28 * D, "q2");
+  const markets = [m(30 * D), m(undefined, 20 * D), m(), m(10 * D), season, match];
+  expect(isMatchQuestion(season)).toBe(false);
+  expect(isMatchQuestion(match)).toBe(true);
+  expect(isMatchQuestion(m(10 * D))).toBe(false);
+  expect([...markets].sort((a, b) => compareKickoff(a, b)).map(kickoffKey)).toEqual([10 * D, 20 * D, 25 * D, 30 * D, 40 * D, undefined]);
+  expect([...markets].sort((a, b) => compareKickoff(a, b, false)).map(kickoffKey)).toEqual([40 * D, 30 * D, 25 * D, 20 * D, 10 * D, undefined]);
 });
 
 test("sideLabel uses registry side names and falls back to YES/NO", () => {

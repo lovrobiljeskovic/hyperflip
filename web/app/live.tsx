@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { until, whenLabel } from "@/lib/format";
-import { kickoffKey } from "@/lib/writer";
+import { isMatchQuestion, kickoffKey } from "@/lib/writer";
 
 /** A clock that re-renders on a fixed beat. Countdowns tick, "live" flips on
  * its own, and nothing waits for the next data fetch to change. */
@@ -60,9 +60,10 @@ export function CountUp({
  * text that the client immediately replaces, hence suppressHydrationWarning. */
 export function Kickoff({ market, align = "right" }: { market: { startMs?: number; expiryMs?: number; group?: string }; align?: "left" | "right" }) {
   const now = useNow();
-  // A grouped question is a season or tournament: its start is long gone and
-  // "live" for months says nothing, so it counts down to settlement instead.
-  const futures = market.group !== undefined;
+  // A grouped season or tournament: its start is long gone and "live" for months
+  // says nothing, so it counts down to settlement instead. A grouped match
+  // (3-way soccer) is a game: kickoff, then live.
+  const futures = market.group !== undefined && !isMatchQuestion(market);
   const at = kickoffKey(market);
   if (!at) return <span className="text-dim">-</span>;
   const live = !futures && market.startMs !== undefined && now >= market.startMs;

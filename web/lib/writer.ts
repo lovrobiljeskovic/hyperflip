@@ -138,12 +138,18 @@ export async function fetchMarketBoard(): Promise<Market[]> {
   return withMarketVolumes(markets, volumes);
 }
 
+/** A grouped question that is one game (3-way soccer: Home / Draw / Away, deadline a few
+ * days after kickoff), as opposed to a season-long tournament winner. */
+export function isMatchQuestion(m: Pick<Market, "startMs" | "expiryMs" | "group">): boolean {
+  return m.group !== undefined && m.startMs !== undefined && m.expiryMs !== undefined && m.expiryMs - m.startMs <= 7 * 86_400_000;
+}
+
 /** Soonest kickoff first; markets with neither start nor deadline sink to the
- * bottom. A grouped question is a season, so it ranks on its settlement
- * deadline rather than a start months ago. The board's only sort now that
- * volume is hidden. */
+ * bottom. A grouped season ranks on its settlement deadline rather than a
+ * start months ago; a grouped match ranks on its kickoff like any game. The
+ * board's only sort now that volume is hidden. */
 export function kickoffKey(m: Pick<Market, "startMs" | "expiryMs" | "group">): number | undefined {
-  return (m.group === undefined ? m.startMs : undefined) ?? m.expiryMs;
+  return (m.group === undefined || isMatchQuestion(m) ? m.startMs : undefined) ?? m.expiryMs;
 }
 export function compareKickoff(left: Market, right: Market, soonestFirst = true): number {
   const ka = kickoffKey(left);
