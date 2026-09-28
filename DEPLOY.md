@@ -339,17 +339,21 @@ through `DEPLOY_RPCS` to avoid sharing public endpoint quotas with running servi
 ## House HIP-4 markets (venues `flip` and `flp`)
 
 `tools/house-markets.mjs sync` runs first in `rotate.service`, hourly. Each run settles our
-finished games from ESPN finals, registers upcoming fixtures from the
-`sportsContestWinner7` template (testnet caps a venue owner at 10 active outcomes and 50
-deployments per day, so we own two venues: `flip` is filled first and `flp` takes only the
-overflow, giving 20 slots for a 16-game NFL week), wraps new outcomes in
-OutcomeVaults through the rotation deploy path, and refreshes `priorYes` on our registry
-entries from the DraftKings moneyline ESPN publishes. The writer prices a leg from
-`priorYes` whenever the Core book is empty, until kickoff. A game takes a slot only if it
-still has `HOUSE_MIN_WINDOW_HOURS` (18) of pre-kickoff trading, and balanced games (moneyline
-nearest even) win contested slots, so lopsided fixtures are dropped rather than listed for
-minutes. Env knobs: `HOUSE_WEEK` (default: ESPN current week), `HOUSE_HORIZON_DAYS` (7),
-`HOUSE_MAX_ACTIVE` (10), `HOUSE_MIN_WINDOW_HOURS` (18). Register and settle cost no gas;
+finished games from ESPN finals, registers upcoming fixtures, wraps new outcomes in OutcomeVaults
+through the rotation deploy path, and refreshes `priorYes` on our registry entries from the
+DraftKings lines ESPN publishes. Testnet caps a venue owner at 20 active outcomes (the doc still
+says 10) and 50 deployments per day; we own two venues, `flip` filled first, `flp` takes the
+overflow. NFL games use the `sportsContestWinner7` template (1 slot each, budget
+`HOUSE_NFL_MAX_ACTIVE` = 16, horizon `HOUSE_HORIZON_DAYS` = 7, ESPN current week plus next).
+Soccer matches (`HOUSE_LEAGUES=nfl,eng.1,esp.1`) use the 3-way `sportsContestResult5` question
+(Home / Draw / Away + fallback = 4 slots), take whatever the NFL budget leaves, horizon
+`HOUSE_SOCCER_HORIZON_DAYS` = 14, and settle with `settleQuestion2` (Draw on a postponement past the
+deadline). 2-side templates settle draws to 0.5, which `ParlayVault` treats as a void, so soccer is
+never listed 2-side. A fixture takes a slot only if it still has `HOUSE_MIN_WINDOW_HOURS` (18) of
+pre-kickoff trading and, when slots are contested, the most balanced fixture wins (NFL: moneyline
+nearest even; soccer: smallest max of the devigged H/D/A). A soccer fixture without ESPN odds is
+not listed. Other knobs: `HOUSE_WEEK` (default: ESPN current week), `HOUSE_MAX_ACTIVE` (10 until the
+soccer deploy, then 20). Register and settle cost no gas;
 the hourly cadence keeps writer restarts (registry rewrites on moneyline drift) to at most one per hour.
 
 ```bash
