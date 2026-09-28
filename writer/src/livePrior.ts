@@ -101,6 +101,40 @@ export function yesOutcomeIndex(outcomes: string[], title: string): number {
   return outcomes.findIndex((o) => away.endsWith(o.trim().toLowerCase()));
 }
 
+export interface PmSearchEvent { slug?: string; markets?: Record<string, unknown>[] }
+
+const fold = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+
+/** Yes CLOB token of the Polymarket moneyline market for one soccer question member (Home / Draw /
+ * Away). Candidates from `public-search`: slug ends with the UTC kickoff date and carries three
+ * open moneyline markets. The market is matched by question text; market order (home, draw, away)
+ * is only a tiebreak when the text match fails and the draw sits at index 1. */
+export function pmQuestionToken(events: PmSearchEvent[], m: Pick<MarketInfo, "title" | "groupTitle" | "startMs">): { token: string; slug: string; question: string } | null {
+  const [home, away] = (m.groupTitle ?? "").split(" vs ").map((t) => t.trim());
+  if (!home || !away || m.startMs === undefined) return null;
+  const date = new Date(m.startMs).toISOString().slice(0, 10);
+  for (const ev of events) {
+    if (!ev.slug?.endsWith(date)) continue;
+    const ml = (ev.markets ?? []).filter((x) => x.sportsMarketType === "moneyline" && x.closed !== true && x.acceptingOrders !== false);
+    if (ml.length !== 3) continue;
+    const q = (x: Record<string, unknown>) => (typeof x.question === "string" ? x.question : "");
+    const isDraw = (x: Record<string, unknown>) => /end in a draw/i.test(q(x));
+    let pick: Record<string, unknown> | undefined;
+    if (m.title === "Draw") pick = ml.find(isDraw);
+    else {
+      const label = fold(m.title);
+      pick = ml.find((x) => !isDraw(x) && fold(q(x)).includes(label));
+      if (!pick && isDraw(ml[1])) pick = ml[m.title === home ? 0 : m.title === away ? 2 : -1];
+    }
+    if (!pick) continue;
+    const outcomes = typeof pick.outcomes === "string" ? (JSON.parse(pick.outcomes) as string[]) : [];
+    const tokens = typeof pick.clobTokenIds === "string" ? (JSON.parse(pick.clobTokenIds) as string[]) : [];
+    const token = tokens[outcomes.indexOf("Yes")];
+    return token ? { token, slug: ev.slug, question: q(pick) } : null;
+  }
+  return null;
+}
+
 export function defaultFetchJson(url: string, body?: unknown): Promise<unknown> {
   // ponytail: Node's default UA passes both CDNs; ESPN's Akamai 403s some custom strings.
   const init: RequestInit = { signal: AbortSignal.timeout(8_000) };

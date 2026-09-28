@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Address } from "viem";
-import { espnDate, LivePrior, mainnetYesCoin, pmSlug, toWad, yesOutcomeIndex } from "../src/livePrior.js";
+import { espnDate, LivePrior, mainnetYesCoin, pmQuestionToken, pmSlug, toWad, yesOutcomeIndex } from "../src/livePrior.js";
 import type { MarketInfo } from "../src/markets.js";
 import { WAD } from "../src/pure.js";
 
@@ -201,4 +201,54 @@ test("a pruned mainnet coin (l2Book error) drops the coin and re-resolves after 
   await h.live.tick();
   assert.equal(h.calls.filter((u) => u.endsWith("#outcomeMeta")).length, 2);
   assert.equal(h.calls.filter((u) => u.endsWith("#l2Book")).length, 3);
+});
+
+// ---- Soccer 3-way question members (Polymarket public-search) ----
+
+const SOCCER_KICKOFF = Date.UTC(2026, 9, 11, 15, 30);
+const pmMarket = (question: string, yes: string, extra: Record<string, unknown> = {}) => ({
+  question, sportsMarketType: "moneyline", outcomes: JSON.stringify(["Yes", "No"]), clobTokenIds: JSON.stringify([yes, `${yes}-no`]), ...extra,
+});
+const pmEvent = (slug: string, home: string, away: string, extra: Record<string, unknown> = {}) => ({
+  slug,
+  markets: [
+    { sportsMarketType: "spread", question: "spread" },
+    pmMarket(`Will ${home} win on 2026-10-11?`, `${slug}-home`, extra),
+    pmMarket(`Will ${home} vs. ${away} end in a draw?`, `${slug}-draw`, extra),
+    pmMarket(`Will ${away} win on 2026-10-11?`, `${slug}-away`, extra),
+  ],
+});
+const LIV = "epl-liv-mac-2026-10-11";
+const soccerRow = (title: string, groupTitle = "Liverpool vs Manchester City") =>
+  ({ title, groupTitle, startMs: SOCCER_KICKOFF }) as Pick<MarketInfo, "title" | "groupTitle" | "startMs">;
+
+test("pmQuestionToken: home, away and Draw pick the right Yes token; wrong date and closed events are ignored", () => {
+  const events = [
+    pmEvent("epl-liv-mac-2026-10-04", "Liverpool FC", "Manchester City FC"), // last week, same clubs
+    pmEvent(LIV, "Liverpool FC", "Manchester City FC"),
+  ];
+  assert.deepEqual(pmQuestionToken(events, soccerRow("Liverpool")), { token: `${LIV}-home`, slug: LIV, question: "Will Liverpool FC win on 2026-10-11?" });
+  assert.equal(pmQuestionToken(events, soccerRow("Manchester City"))?.token, `${LIV}-away`);
+  assert.equal(pmQuestionToken(events, soccerRow("Draw"))?.token, `${LIV}-draw`);
+  assert.equal(pmQuestionToken([pmEvent(LIV, "Liverpool FC", "Manchester City FC", { closed: true })], soccerRow("Draw")), null);
+  assert.equal(pmQuestionToken([], soccerRow("Draw")), null);
+  assert.equal(pmQuestionToken(events, soccerRow("Liverpool", "Liverpool")), null, "no ' vs ' in groupTitle");
+});
+
+test("pmQuestionToken: accent-insensitive match, first candidate wins, index fallback only around a draw at index 1", () => {
+  const MAL = "lal-mala-esp-2026-10-09";
+  const malaga = pmEvent(MAL, "Málaga CF", "RCD Espanyol de Barcelona");
+  const row = { title: "Malaga", groupTitle: "Malaga vs Espanyol", startMs: Date.UTC(2026, 9, 9, 19, 0) };
+  assert.equal(pmQuestionToken([malaga], row)?.token, `${MAL}-home`);
+  assert.equal(pmQuestionToken([malaga], { ...row, title: "Espanyol" })?.token, `${MAL}-away`);
+  // Two candidates on the date: the first is used.
+  assert.equal(pmQuestionToken([malaga, pmEvent(`${MAL}-replay-2026-10-09`, "Málaga CF", "RCD Espanyol de Barcelona")], row)?.slug, MAL);
+  // Polymarket spells the club differently: fall back to market order (home 0, draw 1, away 2).
+  const odd = pmEvent(MAL, "Malaga Club", "Espanyol Club");
+  assert.equal(pmQuestionToken([odd], { ...row, groupTitle: "Málaga CF vs RCD Espanyol", title: "Málaga CF" })?.token, `${MAL}-home`);
+  assert.equal(pmQuestionToken([odd], { ...row, groupTitle: "Málaga CF vs RCD Espanyol", title: "RCD Espanyol" })?.token, `${MAL}-away`);
+  // No draw at index 1: no fallback.
+  const noDraw = { slug: MAL, markets: [pmMarket("Will Malaga Club win on 2026-10-09?", "h"), pmMarket("Will Espanyol Club win on 2026-10-09?", "a"), pmMarket("Will Malaga Club vs. Espanyol Club end in a draw?", "d")] };
+  assert.equal(pmQuestionToken([noDraw], { ...row, groupTitle: "Málaga CF vs RCD Espanyol", title: "Málaga CF" }), null);
+  assert.equal(pmQuestionToken([noDraw], { ...row, title: "Draw" })?.token, "d");
 });
