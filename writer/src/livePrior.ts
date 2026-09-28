@@ -14,6 +14,10 @@ import { WAD } from "./pure.js";
  *   2. Polymarket moneyline midpoint (real-money book, ticks in play; Gamma slug is
  *      `nfl-<away>-<home>-<UTC date>`, the YES token is the away team = `sideYes`).
  *   3. ESPN scoreboard `situation.lastPlay.probability` (model win probability, in play only).
+ * Soccer 3-way question members (Home / Draw / Away, `question` set) use source 2 only: the
+ * event is found by Gamma `public-search` on both club names and the UTC kickoff date, the
+ * market by question text. Full time closes the market (midpoint 404) so the leg goes
+ * unpriced, as NFL after final.
  * None needs a key. Pregame, when no live sample is fresh, the caller falls back to
  * the registry `priorYes`; in play a missing sample leaves the leg `unpriced-leg`.
  *
@@ -135,6 +139,9 @@ export function pmQuestionToken(events: PmSearchEvent[], m: Pick<MarketInfo, "ti
   return null;
 }
 
+/** Soccer 3-way question member (Home / Draw / Away): Polymarket-only, matched by public-search. */
+const isSoccerQuestion = (m: MarketInfo) => m.question !== undefined && m.sport?.toLowerCase() === "soccer" && !!m.groupTitle && m.startMs !== undefined;
+
 export function defaultFetchJson(url: string, body?: unknown): Promise<unknown> {
   // ponytail: Node's default UA passes both CDNs; ESPN's Akamai 403s some custom strings.
   const init: RequestInit = { signal: AbortSignal.timeout(8_000) };
@@ -158,9 +165,10 @@ export class LivePrior {
     this.clob = opts.clobUrl ?? "https://clob.polymarket.com";
     this.espn = opts.espnUrl ?? "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard";
     for (const m of opts.markets) {
-      // ponytail: NFL game winners only — both feeds are NFL-shaped; a second league is a second
-      // slug prefix + ESPN path. Question members (tournament winners) are not games.
-      if (m.startMs === undefined || !m.sideYes || !m.sideNo || m.question !== undefined || m.sport?.toLowerCase() !== "american football") continue;
+      // ponytail: NFL game winners (all three feeds) and soccer 3-way question members
+      // (Polymarket only). Other question members (tournament winners) are not games.
+      const nfl = m.question === undefined && !!m.sideYes && !!m.sideNo && m.sport?.toLowerCase() === "american football";
+      if (m.startMs === undefined || !(nfl || isSoccerQuestion(m))) continue;
       this.markets.push(m);
       const key = m.vault.toLowerCase();
       this.states.set(key, { espnDate: espnDate(m.startMs), suspendedUntil: 0, final: false });
@@ -217,7 +225,9 @@ export class LivePrior {
         const s = this.states.get(m.vault.toLowerCase())!;
         if (s.final || (m.expiryMs !== undefined && now >= m.expiryMs)) return;
         try {
-          const sample = (await this.mainnet(m, s, mainnetMeta)) ?? (await this.polymarket(m, s)) ?? (await this.espnSample(m, s, board));
+          const sample = isSoccerQuestion(m)
+            ? await this.polymarket(m, s)
+            : (await this.mainnet(m, s, mainnetMeta)) ?? (await this.polymarket(m, s)) ?? (await this.espnSample(m, s, board));
           if (sample) this.record(m, s, sample);
         } catch (err) {
           this.opts.log?.({ event: "live-prior-failed", vault: m.vault, error: (err as Error).message.slice(0, 200) });
@@ -241,19 +251,31 @@ export class LivePrior {
   private async polymarket(m: MarketInfo, s: State): Promise<LiveSample | null> {
     if (s.pmToken === null && s.pmRetryAt !== undefined && this.opts.now() >= s.pmRetryAt) s.pmToken = undefined;
     if (s.pmToken === undefined) {
-      const slug = pmSlug(m);
-      if (!slug) {
-        s.pmToken = null;
-        return null;
+      if (isSoccerQuestion(m)) {
+        const [home, away] = m.groupTitle!.split(" vs ").map((t) => t.trim());
+        let hit: ReturnType<typeof pmQuestionToken> = null;
+        if (home && away) {
+          const res = (await this.opts.fetchJson(`${this.gamma}/public-search?q=${encodeURIComponent(`${home} ${away}`)}&limit_per_type=6`)) as { events?: PmSearchEvent[] };
+          hit = pmQuestionToken(res?.events ?? [], m);
+        }
+        s.pmToken = hit?.token ?? null;
+        s.pmRetryAt = this.opts.now() + PM_RETRY_MS;
+        this.opts.log?.({ event: "live-prior-resolved", vault: m.vault, slug: hit?.slug ?? null, question: hit?.question ?? null, polymarket: s.pmToken !== null });
+      } else {
+        const slug = pmSlug(m);
+        if (!slug) {
+          s.pmToken = null;
+          return null;
+        }
+        const events = (await this.opts.fetchJson(`${this.gamma}/events?slug=${slug}`)) as { markets?: Record<string, unknown>[] }[];
+        const ml = events?.[0]?.markets?.find((x) => x.sportsMarketType === "moneyline" && x.closed !== true && x.acceptingOrders !== false);
+        const outcomes = typeof ml?.outcomes === "string" ? (JSON.parse(ml.outcomes) as string[]) : null;
+        const tokens = typeof ml?.clobTokenIds === "string" ? (JSON.parse(ml.clobTokenIds) as string[]) : null;
+        const idx = outcomes ? yesOutcomeIndex(outcomes, m.title) : -1;
+        s.pmToken = idx >= 0 && tokens?.[idx] ? tokens[idx] : null;
+        s.pmRetryAt = this.opts.now() + PM_RETRY_MS;
+        this.opts.log?.({ event: "live-prior-resolved", vault: m.vault, slug, polymarket: s.pmToken !== null });
       }
-      const events = (await this.opts.fetchJson(`${this.gamma}/events?slug=${slug}`)) as { markets?: Record<string, unknown>[] }[];
-      const ml = events?.[0]?.markets?.find((x) => x.sportsMarketType === "moneyline" && x.closed !== true && x.acceptingOrders !== false);
-      const outcomes = typeof ml?.outcomes === "string" ? (JSON.parse(ml.outcomes) as string[]) : null;
-      const tokens = typeof ml?.clobTokenIds === "string" ? (JSON.parse(ml.clobTokenIds) as string[]) : null;
-      const idx = outcomes ? yesOutcomeIndex(outcomes, m.title) : -1;
-      s.pmToken = idx >= 0 && tokens?.[idx] ? tokens[idx] : null;
-      s.pmRetryAt = this.opts.now() + PM_RETRY_MS;
-      this.opts.log?.({ event: "live-prior-resolved", vault: m.vault, slug, polymarket: s.pmToken !== null });
     }
     if (s.pmToken === null) return null;
     let mid: string | undefined;

@@ -252,3 +252,80 @@ test("pmQuestionToken: accent-insensitive match, first candidate wins, index fal
   assert.equal(pmQuestionToken([noDraw], { ...row, groupTitle: "Málaga CF vs RCD Espanyol", title: "Málaga CF" }), null);
   assert.equal(pmQuestionToken([noDraw], { ...row, title: "Draw" })?.token, "d");
 });
+
+const SOCCER: MarketInfo[] = (["Liverpool", "Draw", "Manchester City"] as const).map((title, i) => ({
+  vault: `0x${String(i + 2).repeat(40)}` as Address, coinYes: `#${13920 + i * 10}`, coinNo: `#${13921 + i * 10}`, underlying: "q1392", cluster: "Premier League",
+  title, groupTitle: "Liverpool vs Manchester City", question: 1392, group: "q1392", sideYes: title, sideNo: `Not ${title}`, category: "sports", sport: "Soccer",
+  startMs: SOCCER_KICKOFF, expiryMs: SOCCER_KICKOFF + 3 * 86400_000, priorYes: 0.4,
+}));
+
+function soccerHarness(routes: Record<string, (url: string, body?: unknown) => unknown>, extra: MarketInfo[] = []) {
+  let now = SOCCER_KICKOFF + 60_000;
+  const calls: string[] = [];
+  const log: Record<string, unknown>[] = [];
+  const live = new LivePrior({
+    markets: [...SOCCER, ...extra],
+    fetchJson: async (url, body) => {
+      const type = (body as { type?: string } | undefined)?.type;
+      calls.push(type ? `${url}#${type}` : url);
+      const key = Object.keys(routes).find((k) => (type ?? url).includes(k));
+      if (!key) throw new Error(`no route for ${url}`);
+      return routes[key](url, body);
+    },
+    mainnetInfoUrl: MAINNET,
+    now: () => now,
+    staleMs: 60_000,
+    jumpWad: WAD / 10n,
+    suspendMs: 30_000,
+    log: (m) => log.push(m),
+  });
+  return { live, calls, log, advance: (ms: number) => { now += ms; } };
+}
+
+test("soccer question members: each resolves via public-search to its own token, prices both coins, never asks ESPN or mainnet", async () => {
+  const search = [pmEvent(LIV, "Liverpool FC", "Manchester City FC")];
+  const mids: Record<string, string> = { [`${LIV}-home`]: "0.45", [`${LIV}-draw`]: "0.25", [`${LIV}-away`]: "0.30" };
+  const h = soccerHarness({
+    "public-search": () => ({ events: search }),
+    "midpoint": (url) => ({ mid: mids[/token_id=(.*)$/.exec(url)![1]] }),
+    "espn": () => { throw new Error("espn must not be called"); },
+    "outcomeMeta": () => { throw new Error("mainnet must not be called"); },
+  });
+  await h.live.tick();
+  assert.equal(h.live.prior("#13920"), toWad(0.45));
+  assert.equal(h.live.prior("#13921"), WAD - toWad(0.45));
+  assert.equal(h.live.prior("#13930"), toWad(0.25));
+  assert.equal(h.live.prior("#13940"), toWad(0.30));
+  assert.equal(h.live.priorYes(SOCCER[2].vault), 0.3);
+  const searches = h.calls.filter((u) => u.includes("public-search"));
+  assert.equal(searches.length, 3);
+  assert.ok(searches[0].includes(encodeURIComponent("Liverpool Manchester City")));
+  assert.ok(!h.calls.some((u) => u.includes("espn") || u.startsWith(MAINNET)));
+  assert.equal(h.live.status()["#13930"].source, "polymarket");
+  assert.ok(h.log.some((m) => m.event === "live-prior-resolved" && m.slug === LIV && m.question === "Will Liverpool FC vs. Manchester City FC end in a draw?"));
+});
+
+test("soccer member with no Polymarket event is null, retried after ten minutes; a malformed row does not break the tick", async () => {
+  let listed = false;
+  const bad: MarketInfo = { ...SOCCER[0], vault: `0x${"9".repeat(40)}` as Address, coinYes: "#99990", coinNo: "#99991", groupTitle: "Liverpool" };
+  const h = soccerHarness({ "public-search": () => ({ events: listed ? [pmEvent(LIV, "Liverpool FC", "Manchester City FC")] : [] }), "midpoint": () => ({ mid: "0.5" }) }, [bad]);
+  await h.live.tick();
+  await h.live.tick();
+  assert.equal(h.calls.filter((u) => u.includes("public-search")).length, 3, "three searchable members, one search each, none repeated");
+  assert.equal(h.live.prior("#13920"), undefined);
+  assert.equal(h.live.prior("#99990"), undefined);
+  assert.equal(h.log.filter((m) => m.event === "live-prior-failed").length, 0);
+  listed = true;
+  h.advance(10 * 60_000);
+  await h.live.tick();
+  assert.equal(h.live.prior("#13920"), toWad(0.5));
+});
+
+test("NFL rows are unaffected by the soccer admit; a non-soccer question member is still skipped", async () => {
+  const tournament: MarketInfo = { ...MARKET, expiryMs: SOCCER_KICKOFF + 86400_000, vault: `0x${"8".repeat(40)}` as Address, coinYes: "#88880", coinNo: "#88881", question: 7, groupTitle: "Super Bowl LXI winner", title: "Chiefs" };
+  const h = soccerHarness({ "events?slug": () => gamma, "public-search": () => ({ events: [] }), "midpoint": () => ({ mid: "0.5" }), "outcomeMeta": () => mnMeta, "l2Book": () => mnBook("0.42", "0.43") }, [{ ...MARKET, expiryMs: SOCCER_KICKOFF + 86400_000 }, tournament]);
+  await h.live.tick();
+  assert.ok(Object.keys(h.live.status()).includes("#194630"));
+  assert.equal(h.live.status()["#194630"].source, "mainnet");
+  assert.ok(!Object.keys(h.live.status()).includes("#88880"));
+});
