@@ -16,8 +16,9 @@ import { WAD } from "./pure.js";
  *   3. ESPN scoreboard `situation.lastPlay.probability` (model win probability, in play only).
  * Soccer 3-way question members (Home / Draw / Away, `question` set) use source 2 only: the
  * event is found by Gamma `public-search` on both club names and the UTC kickoff date, the
- * market by question text. Full time closes the market (midpoint 404) so the leg goes
- * unpriced, as NFL after final.
+ * market by question text. When all three members price in one tick their mids are scaled to
+ * sum to 1 (vig removed by normalisation, as `devig3`). Full time closes the market (midpoint
+ * 404) so the leg goes unpriced, as NFL after final.
  * None needs a key. Pregame, when no live sample is fresh, the caller falls back to
  * the registry `priorYes`; in play a missing sample leaves the leg `unpriced-leg`.
  *
@@ -59,6 +60,8 @@ export interface LivePriorOpts {
 
 // Polymarket spells a few teams differently from ESPN.
 const PM_RETRY_MS = 10 * 60_000;
+// A listing / search / outcomeMeta fetch that throws is retried this soon, not every tick.
+const FAIL_RETRY_MS = 60_000;
 // A mid across a wider book than this is nobody's price (D41 sample: NFL spreads 0.00001–0.024).
 const MAINNET_MAX_SPREAD = 0.03;
 const PM_ALIAS: Record<string, string> = { wsh: "was", lar: "la" };
@@ -154,6 +157,8 @@ export function defaultFetchJson(url: string, body?: unknown): Promise<unknown> 
   });
 }
 
+type Get = (url: string, body?: unknown) => Promise<unknown>;
+
 export class LivePrior {
   private states = new Map<string, State>(); // by lowercase vault
   private byCoin = new Map<string, { vault: string; isYes: boolean }>();
@@ -211,31 +216,38 @@ export class LivePrior {
 
   async tick(): Promise<void> {
     const now = this.opts.now();
-    let meta: Promise<unknown> | undefined; // one mainnet outcomeMeta per tick, only while something is unresolved
-    const mainnetMeta = () => (meta ??= this.opts.fetchJson(this.opts.mainnetInfoUrl!, { type: "outcomeMeta" }));
-    const boards = new Map<string, Promise<unknown>>();
-    const board = (date: string) => {
-      let p = boards.get(date);
-      if (!p) {
-        p = this.opts.fetchJson(`${this.espn}?dates=${date}`);
-        boards.set(date, p);
-      }
+    // One fetch per URL per tick: outcomeMeta, an ESPN board day, a soccer question's search.
+    const memo = new Map<string, Promise<unknown>>();
+    const get: Get = (url, body) => {
+      const key = body === undefined ? url : `${url} ${JSON.stringify(body)}`;
+      let p = memo.get(key);
+      if (!p) memo.set(key, (p = this.opts.fetchJson(url, body)));
       return p;
     };
+    const raw = new Map<number, { m: MarketInfo; s: State; sample: LiveSample }[]>(); // soccer, by question
     await Promise.all(
       this.markets.map(async (m) => {
         const s = this.states.get(m.vault.toLowerCase())!;
         if (s.final || (m.expiryMs !== undefined && now >= m.expiryMs)) return;
         try {
-          const sample = isSoccerQuestion(m)
-            ? await this.polymarket(m, s)
-            : (await this.mainnet(m, s, mainnetMeta)) ?? (await this.polymarket(m, s)) ?? (await this.espnSample(m, s, board));
+          if (isSoccerQuestion(m)) {
+            const sample = await this.polymarket(m, s, get);
+            if (sample) raw.set(m.question!, [...(raw.get(m.question!) ?? []), { m, s, sample }]);
+            return;
+          }
+          const sample = (await this.mainnet(m, s, get)) ?? (await this.polymarket(m, s, get)) ?? (await this.espnSample(m, s, get));
           if (sample) this.record(m, s, sample);
         } catch (err) {
           this.opts.log?.({ event: "live-prior-failed", vault: m.vault, error: (err as Error).message.slice(0, 200) });
         }
       }),
     );
+    for (const [question, members] of raw) {
+      const sum = members.reduce((t, x) => t + x.sample.yesWad, 0n);
+      // A partial question (one member unpriced) keeps its raw mids: nothing to scale against.
+      const whole = members.length === this.markets.filter((x) => x.question === question).length;
+      for (const { m, s, sample } of members) this.record(m, s, whole ? { ...sample, yesWad: (sample.yesWad * WAD) / sum } : sample);
+    }
   }
 
   private record(m: MarketInfo, s: State, sample: LiveSample): void {
@@ -250,14 +262,17 @@ export class LivePrior {
     s.sample = sample;
   }
 
-  private async polymarket(m: MarketInfo, s: State): Promise<LiveSample | null> {
+  private async polymarket(m: MarketInfo, s: State, get: Get): Promise<LiveSample | null> {
     if (s.pmToken === null && s.pmRetryAt !== undefined && this.opts.now() >= s.pmRetryAt) s.pmToken = undefined;
     if (s.pmToken === undefined) {
+      // Held until the lookup lands, so a throwing fetch waits FAIL_RETRY_MS instead of every tick.
+      s.pmToken = null;
+      s.pmRetryAt = this.opts.now() + FAIL_RETRY_MS;
       if (isSoccerQuestion(m)) {
         const [home, away] = m.groupTitle!.split(" vs ").map((t) => t.trim());
         let hit: ReturnType<typeof pmQuestionToken> = null;
         if (home && away) {
-          const res = (await this.opts.fetchJson(`${this.gamma}/public-search?q=${encodeURIComponent(`${home} ${away}`)}&limit_per_type=6`)) as { events?: PmSearchEvent[] };
+          const res = (await get(`${this.gamma}/public-search?q=${encodeURIComponent(`${home} ${away}`)}&limit_per_type=6`)) as { events?: PmSearchEvent[] };
           hit = pmQuestionToken(res?.events ?? [], m);
         }
         s.pmToken = hit?.token ?? null;
@@ -265,11 +280,8 @@ export class LivePrior {
         this.opts.log?.({ event: "live-prior-resolved", vault: m.vault, slug: hit?.slug ?? null, question: hit?.question ?? null, polymarket: s.pmToken !== null });
       } else {
         const slug = pmSlug(m);
-        if (!slug) {
-          s.pmToken = null;
-          return null;
-        }
-        const events = (await this.opts.fetchJson(`${this.gamma}/events?slug=${slug}`)) as { markets?: Record<string, unknown>[] }[];
+        if (!slug) return null;
+        const events = (await get(`${this.gamma}/events?slug=${slug}`)) as { markets?: Record<string, unknown>[] }[];
         const ml = events?.[0]?.markets?.find((x) => x.sportsMarketType === "moneyline" && x.closed !== true && x.acceptingOrders !== false);
         const outcomes = typeof ml?.outcomes === "string" ? (JSON.parse(ml.outcomes) as string[]) : null;
         const tokens = typeof ml?.clobTokenIds === "string" ? (JSON.parse(ml.clobTokenIds) as string[]) : null;
@@ -295,12 +307,14 @@ export class LivePrior {
     return { yesWad: toWad(p), atMs: this.opts.now(), source: "polymarket" };
   }
 
-  private async mainnet(m: MarketInfo, s: State, meta: () => Promise<unknown>): Promise<LiveSample | null> {
+  private async mainnet(m: MarketInfo, s: State, get: Get): Promise<LiveSample | null> {
     if (!this.opts.mainnetInfoUrl) return null;
     const now = this.opts.now();
     if (s.mnCoin === null && s.mnRetryAt !== undefined && now >= s.mnRetryAt) s.mnCoin = undefined;
     if (s.mnCoin === undefined) {
-      const { outcomes } = (await meta()) as { outcomes?: { outcome: number; name?: string; description?: string }[] };
+      s.mnCoin = null;
+      s.mnRetryAt = now + FAIL_RETRY_MS;
+      const { outcomes } = (await get(this.opts.mainnetInfoUrl, { type: "outcomeMeta" })) as { outcomes?: { outcome: number; name?: string; description?: string }[] };
       s.mnCoin = mainnetYesCoin(outcomes ?? [], m);
       s.mnRetryAt = now + PM_RETRY_MS;
       this.opts.log?.({ event: "live-prior-resolved", vault: m.vault, mainnet: s.mnCoin });
@@ -321,8 +335,8 @@ export class LivePrior {
     return { yesWad: toWad((bid + ask) / 2), atMs: now, source: "mainnet" };
   }
 
-  private async espnSample(m: MarketInfo, s: State, board: (date: string) => Promise<unknown>): Promise<LiveSample | null> {
-    const data = (await board(s.espnDate)) as { events?: EspnEvent[] };
+  private async espnSample(m: MarketInfo, s: State, get: Get): Promise<LiveSample | null> {
+    const data = (await get(`${this.espn}?dates=${s.espnDate}`)) as { events?: EspnEvent[] };
     const ev = data.events?.find((e) => {
       const teams = e.competitions?.[0]?.competitors ?? [];
       const abbr = (ha: string) => teams.find((t) => t.homeAway === ha)?.team?.abbreviation?.toUpperCase();

@@ -298,7 +298,7 @@ test("soccer question members: each resolves via public-search to its own token,
   assert.equal(h.live.prior("#13940"), toWad(0.30));
   assert.equal(h.live.priorYes(SOCCER[2].vault), 0.3);
   const searches = h.calls.filter((u) => u.includes("public-search"));
-  assert.equal(searches.length, 3);
+  assert.equal(searches.length, 1, "members of one question share the search");
   assert.ok(searches[0].includes(encodeURIComponent("Liverpool Manchester City")));
   assert.ok(!h.calls.some((u) => u.includes("espn") || u.startsWith(MAINNET)));
   assert.equal(h.live.status()["#13930"].source, "polymarket");
@@ -311,7 +311,7 @@ test("soccer member with no Polymarket event is null, retried after ten minutes;
   const h = soccerHarness({ "public-search": () => ({ events: listed ? [pmEvent(LIV, "Liverpool FC", "Manchester City FC")] : [] }), "midpoint": () => ({ mid: "0.5" }) }, [bad]);
   await h.live.tick();
   await h.live.tick();
-  assert.equal(h.calls.filter((u) => u.includes("public-search")).length, 3, "three searchable members, one search each, none repeated");
+  assert.equal(h.calls.filter((u) => u.includes("public-search")).length, 1, "one shared search, not repeated");
   assert.equal(h.live.prior("#13920"), undefined);
   assert.equal(h.live.prior("#99990"), undefined);
   assert.equal(h.log.filter((m) => m.event === "live-prior-failed").length, 0);
@@ -319,6 +319,43 @@ test("soccer member with no Polymarket event is null, retried after ten minutes;
   h.advance(10 * 60_000);
   await h.live.tick();
   assert.equal(h.live.prior("#13920"), toWad(0.5));
+});
+
+test("soccer mids are normalised to sum to 1 when all three members price; a partial question stays raw", async () => {
+  const search = [pmEvent(LIV, "Liverpool FC", "Manchester City FC")];
+  const mids: Record<string, string> = { [`${LIV}-home`]: "0.5", [`${LIV}-draw`]: "0.3", [`${LIV}-away`]: "0.45" }; // sum 1.25
+  const h = soccerHarness({ "public-search": () => ({ events: search }), "midpoint": (url) => ({ mid: mids[/token_id=(.*)$/.exec(url)![1]] }) });
+  await h.live.tick();
+  assert.equal(h.live.prior("#13920"), toWad(0.4));
+  assert.equal(h.live.prior("#13930"), toWad(0.24));
+  assert.equal(h.live.prior("#13940"), toWad(0.36));
+  assert.equal(h.live.priorYes(SOCCER[0].vault), 0.4, "/markets overlay shows the de-vigged line");
+  mids[`${LIV}-draw`] = "nope";
+  h.advance(3_000);
+  await h.live.tick();
+  assert.equal(h.live.prior("#13920"), toWad(0.5));
+});
+
+test("a failed listing or search backs off a minute instead of retrying every tick", async () => {
+  let up = false;
+  const h = harness({ "gamma": () => { if (!up) throw new Error("HTTP 503"); return gamma; }, "midpoint": () => ({ mid: "0.4" }), "espn": () => espnBoard("pre") });
+  await h.live.tick();
+  await h.live.tick();
+  assert.equal(h.calls.filter((u) => u.includes("gamma")).length, 1);
+  up = true;
+  h.advance(60_000);
+  await h.live.tick();
+  assert.equal(h.live.prior("#194630"), toWad(0.4));
+
+  let sUp = false;
+  const s = soccerHarness({ "public-search": () => { if (!sUp) throw new Error("HTTP 503"); return { events: [pmEvent(LIV, "Liverpool FC", "Manchester City FC")] }; }, "midpoint": () => ({ mid: "0.5" }) });
+  await s.live.tick();
+  await s.live.tick();
+  assert.equal(s.calls.filter((u) => u.includes("public-search")).length, 1);
+  sUp = true;
+  s.advance(60_000);
+  await s.live.tick();
+  assert.equal(s.live.prior("#13920"), WAD / 3n, "three even mids normalise to a third each");
 });
 
 test("NFL rows are unaffected by the soccer admit; a non-soccer question member is still skipped", async () => {
