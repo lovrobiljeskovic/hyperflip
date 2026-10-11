@@ -46,10 +46,12 @@ function optionalString(market: Record<string, unknown>, key: string): string | 
 /**
  * Registry rows are written Elysium-first: `vault` is the OutcomeLeg the Elysium ParlayVault reads,
  * `sourceVault` the 998 OutcomeVault behind it. A writer on the Core chain reads the 998 vault instead,
- * so both lanes share one registry file.
+ * so both lanes share one registry file. A row without `sourceVault` is a 998-only address (pre-cutover
+ * or foreign venue); the bridged lane drops it, because the same deployer nonce on both chains makes
+ * such an address collide with a live leg and the app labels legs by address.
  */
 export function laneRows<T extends { vault: string; sourceVault?: string | null }>(rows: T[], chainId: number, coreChainId: number): T[] {
-  if (chainId !== coreChainId) return rows;
+  if (chainId !== coreChainId) return rows.filter((row) => row.sourceVault);
   return rows.map(({ sourceVault, ...row }) => (sourceVault ? { ...row, vault: sourceVault } : row) as T);
 }
 

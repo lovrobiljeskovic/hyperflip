@@ -200,11 +200,14 @@ function PositionsContent() {
   const [markets, setMarkets] = useState<Market[]>([]);
   const mids = useMids();
 
-  // Registry metadata supplies sports labels; addresses remain the fallback.
+  // Registry metadata supplies sports labels; addresses remain the fallback. The lane's writer serves
+  // the authoritative (box-rotated) registry resolved for this chain; the static snapshot is built from
+  // the repo registry, which lags behind, so it only backs the indexed path when the writer is down.
   useEffect(() => {
     // Volumes too, so a book trading at exactly 0.5 prices the same as on /build.
+    const staticLabels = () => fetch("/position-markets.json").then(r => { if (!r.ok) throw new Error("Market labels unavailable"); return r.json() as Promise<Market[]>; });
     Promise.all([
-      INDEXED_POSITIONS ? fetch("/position-markets.json").then(r => { if (!r.ok) throw new Error("Market labels unavailable"); return r.json() as Promise<Market[]>; }) : fetchMarkets(true),
+      INDEXED_POSITIONS ? fetchMarkets(true).catch(staticLabels) : fetchMarkets(true),
       fetchMarketVolumes(),
     ])
       .then(([ms, volumes]) => setMarkets(withMarketVolumes(ms, volumes)))

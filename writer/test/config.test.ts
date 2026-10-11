@@ -59,8 +59,10 @@ test("parseMarkets accepts sports metadata and rejects malformed active markets"
 test("laneRows: a writer on the Core chain reads the 998 vault behind an Elysium row", () => {
   const leg = "0x7d3f116e525ceaf7bfae310c091b8fcf82ac1612";
   const rows = [{ ...MARKET, vault: leg, sourceVault: VAULT }, MARKET];
-  // Elysium writer: rows as written (vault = leg).
-  assert.deepEqual(laneRows(rows, 99801, 998), rows);
+  // Elysium writer: rows as written (vault = leg); a row without sourceVault is a 998-only address
+  // (pre-cutover or foreign venue) and can collide with a live leg (same deployer nonce on both
+  // chains), so it is dropped from this lane.
+  assert.deepEqual(laneRows(rows, 99801, 998), [rows[0]]);
   // 998 writer: vault = sourceVault, no sourceVault left; rows without one pass through.
   assert.deepEqual(laneRows(rows, 998, 998), [MARKET, MARKET]);
 });
