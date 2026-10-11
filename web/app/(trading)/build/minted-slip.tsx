@@ -1,28 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { HyperflipLogo } from "@/app/brand";
 import { formatUsdc, multiplier } from "@/lib/format";
 import { slipShareText, xIntentUrl } from "@/lib/share";
 import { renderSlipPng } from "@/lib/slip-image";
 import type { MintedSlip } from "./use-ticket";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 
 const SITE = "https://hyperflip.xyz";
-const shareClass = "mono flex items-center justify-center gap-2 rounded-[8px] bg-accent py-[13px] text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform active:scale-[0.98] hover:opacity-90 motion-reduce:transition-none";
+const shareClass = "mono flex h-11 items-center justify-center gap-2 rounded-[8px] border border-line text-[12px] uppercase tracking-[0.1em] text-fg transition-colors hover:border-dim";
 const xIcon = "M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z";
 
 /** The confirmed slip, printed once the mint lands. A native dialog: focus
  * trap, Escape and backdrop come free, so the only state is open or not. */
 export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; onClose: () => void }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    if (slip && !el.open) el.showModal();
-    if (!slip && el.open) el.close();
-  }, [slip]);
-
   const [copied, setCopied] = useState(false);
   const [imageError, setImageError] = useState(false);
   // Decided after mount so the server render has no share sheet to ask. Touch
@@ -59,23 +53,21 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
   }
 
   return (
-    <dialog
-      ref={ref}
-      onClose={onClose}
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-      aria-labelledby="minted-title"
-      className="minted-dialog mx-auto mt-auto mb-0 pb-[env(safe-area-inset-bottom)] w-[min(100%,420px)] sm:m-auto sm:w-[min(100%-2rem,400px)] bg-transparent p-0 text-fg backdrop:bg-ink/85 backdrop:backdrop-blur-sm"
-    >
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent
+        showCloseButton={false}
+        className="top-auto bottom-0 w-[min(100%,420px)] max-w-none translate-y-0 rounded-none border-0 bg-transparent p-0 pb-[env(safe-area-inset-bottom)] text-fg shadow-none ring-0 sm:top-1/2 sm:bottom-auto sm:w-[min(100%-2rem,400px)] sm:-translate-y-1/2"
+      >
       <div className="minted-slip text-[13px]">
         <div className="relative px-6 pt-6">
           <div className="flex items-center gap-2">
             <HyperflipLogo className="size-6" />
             <span className="display text-[16px] tracking-[-0.045em]">hyperflip</span>
           </div>
-          <h2 id="minted-title" className="display mt-6 text-[34px] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
+          <DialogTitle className="display mt-6 text-[34px] font-normal leading-none [font-variation-settings:'wght'_700] tracking-[-0.03em]">
             {legs.length} leg combo
-          </h2>
-          <p className="mono mt-2 text-[11px] text-dim">{slip.id ? `Ticket #${slip.id} · ` : ""}settles after the last leg · payout escrowed on-chain</p>
+          </DialogTitle>
+          <DialogDescription className="mono mt-2 text-[11px] text-dim">{slip.id ? `Ticket #${slip.id} · ` : ""}settles after the last leg · payout escrowed on-chain</DialogDescription>
           <span aria-hidden className="minted-stamp mono">Minted</span>
         </div>
 
@@ -116,26 +108,16 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
                 Share on X
               </a>
             )}
-            <Link
-              href="/positions"
-              className="mono flex items-center justify-center rounded-[8px] border border-line py-[13px] text-[12px] uppercase tracking-[0.1em] text-fg transition-colors hover:border-dim"
-            >
-              View positions
-            </Link>
+            <Button asChild className="mono h-11 text-[12px] uppercase tracking-[0.1em]"><Link href="/positions">View positions</Link></Button>
           </div>
-          <button
-            type="button"
-            onClick={() => void copyImage()}
-            className="mono mt-2 w-full rounded-[8px] border border-line py-[13px] text-[12px] uppercase tracking-[0.1em] text-fg transition-colors hover:border-dim"
-          >
+          <Button variant="outline" onClick={() => void copyImage()} className="mono mt-2 h-11 w-full text-[12px] uppercase tracking-[0.1em]">
             {copied ? "Copied" : "Copy image"}
-          </button>
+          </Button>
           {imageError && <p className="mono mt-2 text-center text-[11px] text-no">Could not render the image in this browser.</p>}
-          <button type="button" onClick={onClose} className="mono mt-2 w-full py-1 text-[11px] text-dim transition-colors hover:text-fg">
-            Done
-          </button>
+          <Button variant="ghost" size="sm" onClick={onClose} className="mono mt-2 w-full text-[11px] text-dim">Done</Button>
         </div>
       </div>
-    </dialog>
+      </DialogContent>
+    </Dialog>
   );
 }

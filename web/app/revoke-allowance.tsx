@@ -6,6 +6,7 @@ import { usePublicClient, useWriteContract } from "wagmi";
 import { shortError } from "@/lib/format";
 import { revokeUsdc } from "@/lib/ticket";
 import { useUsdc, useWalletState } from "@/lib/wallet";
+import { Button } from "@/components/ui/button";
 
 const row = "flex w-full items-center justify-between gap-4 py-2 text-left text-[12px] normal-case tracking-normal";
 
@@ -31,10 +32,10 @@ export function RevokeAllowance({ className = row }: { className?: string }) {
 
   return (
     <>
-      <button type="button" disabled={revoking === "pending"} onClick={() => void revoke()} className={`${className} text-dim hover:text-fg`}>
+      <Button variant="ghost" disabled={revoking === "pending"} onClick={() => void revoke()} className={`${className} h-auto px-0 font-normal text-dim hover:bg-transparent hover:text-fg`}>
         <span>Revoke USDC allowance</span>
         <span aria-live="polite" className="mono text-[11px]">{revoking === "pending" ? "Confirm in wallet…" : revoking === "done" ? "Revoked" : ""}</span>
-      </button>
+      </Button>
       {revoking === "error" && <p className="mono text-[11px] text-no">{error}</p>}
     </>
   );

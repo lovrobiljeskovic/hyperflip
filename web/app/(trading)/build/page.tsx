@@ -6,6 +6,8 @@ import { tradeUrl } from "@/lib/chain";
 import { useMids } from "@/lib/mids";
 import { formatOdds, useOddsFormat } from "@/lib/odds-format";
 import { OddsFormatToggle } from "@/app/odds-format-toggle";
+import { Button } from "@/components/ui/button";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useIsDesktop } from "@/lib/media";
 import { loadSlip, restorableBoard, restoreLegs, saveSlip } from "@/lib/slip-storage";
 import { Kickoff } from "@/app/live";
@@ -286,27 +288,19 @@ export default function BuildPage() {
         <section className="lg:border-r lg:border-line lg:pr-8">
           <div className="flex items-baseline justify-between gap-4">
             <h1 className="display text-[32px] [font-variation-settings:'wght'_700] tracking-[-0.03em]">Build a slip</h1>
-            <button type="button" onClick={() => setSoonestFirst((v) => !v)} aria-label={`Sort by kickoff, ${soonestFirst ? "soonest" : "latest"} first`}
-              className="mono text-[10px] uppercase tracking-[0.16em] text-dim transition-colors hover:text-fg">Kickoff {soonestFirst ? "↑" : "↓"}</button>
+            <Button variant="ghost" size="sm" onClick={() => setSoonestFirst((v) => !v)} aria-label={`Sort by kickoff, ${soonestFirst ? "soonest" : "latest"} first`}
+              className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Kickoff {soonestFirst ? "↑" : "↓"}</Button>
           </div>
           <div className="mt-6 flex flex-wrap items-center justify-between gap-2">
-            <div className="mono flex flex-wrap gap-1 text-[10px] uppercase tracking-[0.16em]">
-              {tabs.length > 2 && tabs.map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  aria-pressed={tab === t}
-                  onClick={() => setTab(t)}
-                  className={`rounded-[4px] border px-3 py-1.5 transition-colors ${
-                    tab === t
-                      ? "border-accent bg-accent/10 text-fg"
-                      : "border-line text-dim hover:border-dim hover:text-fg"
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
+            {tabs.length > 2 ? (
+              <ToggleGroup type="single" size="sm" variant="outline" value={tab} onValueChange={(v) => { if (v) setTab(v); }} aria-label="Sport" className="flex-wrap">
+                {tabs.map((t) => (
+                  <ToggleGroupItem key={t} value={t} className="mono h-7 border-line px-3 text-[10px] uppercase tracking-[0.16em] text-dim data-[state=on]:border-accent data-[state=on]:bg-accent/10 data-[state=on]:text-fg">
+                    {t}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+            ) : <span />}
             <OddsFormatToggle className="hidden lg:inline-flex" />
           </div>
 
@@ -314,13 +308,7 @@ export default function BuildPage() {
             {error ? (
               <div className="flex flex-col items-start gap-3 rounded-card border border-line bg-panel p-6">
                 <p className="text-no">Writer unreachable.</p>
-                <button
-                  type="button"
-                  onClick={() => void load()}
-                  className="rounded-card border border-line px-4 py-2 text-sm text-fg transition-colors hover:border-dim"
-                >
-                  Retry
-                </button>
+                <Button variant="outline" onClick={() => void load()} className="border-line">Retry</Button>
               </div>
             ) : markets === null ? (
               <LoadingSkeleton />

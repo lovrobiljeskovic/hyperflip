@@ -27,6 +27,9 @@ import { STAKE_CHIPS, chipState } from "@/lib/slip-summary";
 import { formatOdds, useOddsFormat } from "@/lib/odds-format";
 import { Overround } from "@/app/overround-motif";
 import { CountUp } from "@/app/live";
+import { XIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 export type { BuilderLeg } from "@/lib/ticket";
 const legLabel = (leg: BuilderLeg): string => leg.label ?? (leg.isYes ? "YES" : "NO");
@@ -146,13 +149,6 @@ function HouseLimits({ limits, maxStake }: { limits: WriterLimits | null; maxSta
   );
 }
 
-/** The single pay button: live accent, else muted. */
-function payButtonClass(enabled: boolean, done: boolean): string {
-  const base = "mono rounded-card py-[14px] text-center text-[14px] font-semibold normal-case tracking-normal transition-transform motion-reduce:transition-none";
-  if (enabled) return `${base} bg-accent text-on-accent active:scale-[0.98] hover:opacity-90`;
-  if (done) return `${base} bg-yes/20 text-yes cursor-default`;
-  return `${base} bg-raised text-dim cursor-not-allowed`;
-}
 
 export function Ticket({
   legs,
@@ -166,6 +162,7 @@ export function Ticket({
   compact?: boolean;
 }) {
   const mids = useMids();
+  const ctaClass = "mono mt-4 h-12 w-full text-[14px] font-semibold";
   const printing = usePrinting();
   const format = useOddsFormat();
   const { stake, setStake, quoteResult, ttlLeft, ttlSeconds, mintState, mintErrorMsg, mintErrorDetail,
@@ -237,14 +234,7 @@ export function Ticket({
                 {leg.title}
               </a>
               <span className="mono text-dim">{formatOdds(marketMid(mids, {}, leg.coin), format)}</span>
-              <button
-                type="button"
-                onClick={() => onRemove(leg.vault)}
-                aria-label={`Remove ${leg.title}`}
-                className="grid h-7 w-7 shrink-0 place-items-center rounded-[6px] text-[16px] leading-none text-dim transition-colors hover:bg-raised hover:text-no"
-              >
-                ×
-              </button>
+              <Button variant="ghost" size="icon-sm" onClick={() => onRemove(leg.vault)} aria-label={`Remove ${leg.title}`} className="shrink-0 text-dim hover:text-no"><XIcon /></Button>
             </li>
           ))}
         </ul>
@@ -269,19 +259,20 @@ export function Ticket({
               </div>
             </div>
             <div className="mt-2 flex gap-1.5">
-              {STAKE_CHIPS.map((v) => {
-                const s = chipState(v, maxStake, usdcBalance);
-                return (
-                  <button key={v} type="button" disabled={!s.enabled} title={s.title} aria-pressed={stake === String(v)} onClick={() => setStake(String(v))}
-                    className="mono flex-1 rounded-[6px] border border-line py-2 text-[11px] text-dim transition-colors hover:border-dim hover:text-fg aria-pressed:border-accent aria-pressed:text-accent disabled:cursor-not-allowed disabled:opacity-40">
-                    ${v}
-                  </button>
-                );
-              })}
-              <button type="button" disabled={maxAllowed === null || maxAllowed === 0n} onClick={() => maxAllowed !== null && setStake(formatUnits(maxAllowed, USDC_DECIMALS))}
-                className="mono flex-1 rounded-[6px] border border-line py-2 text-[11px] text-dim transition-colors hover:border-dim hover:text-fg disabled:cursor-not-allowed disabled:opacity-40">
+              <ToggleGroup type="single" size="sm" variant="outline" value={STAKE_CHIPS.some((v) => String(v) === stake) ? stake : ""} onValueChange={(v) => { if (v) setStake(v); }} aria-label="Stake presets" className="flex-1 gap-1.5 [&>*]:flex-1">
+                {STAKE_CHIPS.map((v) => {
+                  const c = chipState(v, maxStake, usdcBalance);
+                  return (
+                    <ToggleGroupItem key={v} value={String(v)} disabled={!c.enabled} title={c.title} className="mono h-8 border-line px-0 text-[11px] text-dim data-[state=on]:border-accent data-[state=on]:bg-transparent data-[state=on]:text-accent">
+                      ${v}
+                    </ToggleGroupItem>
+                  );
+                })}
+              </ToggleGroup>
+              <Button variant="outline" size="sm" disabled={maxAllowed === null || maxAllowed === 0n} title={maxAllowed === null ? "House limit unknown" : maxAllowed === 0n ? "No USDC in this wallet" : undefined}
+                onClick={() => maxAllowed !== null && setStake(formatUnits(maxAllowed, USDC_DECIMALS))} className="mono h-8 flex-1 border-line text-[11px] text-dim">
                 Max
-              </button>
+              </Button>
             </div>
             <div className="mono mt-2 flex items-center justify-between text-[11px] text-dim">
               <span>{quoteResult?.ok ? `Ticket ${mult(multiplierNum(premium, maxPayout))} · ${legs.length} legs` : `Balance $${usdcBalance === undefined ? "–" : formatUsdc(usdcBalance)}`}</span>
@@ -333,22 +324,12 @@ export function Ticket({
                 <p className="mt-1 mono text-[11px] text-no/70">{quoteResult.error}</p>
               )}
               {(quoteResult.status === 0 || quoteResult.status === 503 || quoteResult.status === 429) && (
-                <button
-                  type="button"
-                  onClick={retry}
-                  className="mt-2 rounded-[4px] border border-line px-2 py-1 mono text-[11px] text-dim transition-colors hover:text-fg"
-                >
-                  Retry
-                </button>
+                <Button variant="outline" size="xs" onClick={retry} className="mono mt-2 border-line text-[11px] text-dim">Retry</Button>
               )}
               {quoteResult.maxStake !== undefined && BigInt(quoteResult.maxStake) > 0n && (
-                <button
-                  type="button"
-                  onClick={() => setStake(formatUnits(BigInt(quoteResult.maxStake!), USDC_DECIMALS))}
-                  className="mt-2 rounded-[4px] border border-line px-2 py-1 mono text-[11px] text-dim transition-colors hover:text-fg"
-                >
+                <Button variant="outline" size="xs" onClick={() => setStake(formatUnits(BigInt(quoteResult.maxStake!), USDC_DECIMALS))} className="mono mt-2 ml-2 border-line text-[11px] text-dim">
                   Use {formatUsdc(BigInt(quoteResult.maxStake))} USDC
-                </button>
+                </Button>
               )}
             </div>
           )}
@@ -356,43 +337,13 @@ export function Ticket({
 
       {cta ? (
         <>
-          {cta.kind === "connect" && (
-            <button
-              type="button"
-              onClick={() => connect()}
-              className="mono mt-4 w-full rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90"
-            >
-              {cta.label}
-            </button>
-          )}
-          {cta.kind === "switch-chain" && (
-            <button
-              type="button"
-              onClick={() => switchChain({ chainId: appChain.id })}
-              className="mono mt-4 w-full rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90"
-            >
-              {cta.label}
-            </button>
-          )}
+          {cta.kind === "connect" && <Button size="lg" onClick={() => connect()} className={ctaClass}>{cta.label}</Button>}
+          {cta.kind === "switch-chain" && <Button size="lg" onClick={() => switchChain({ chainId: appChain.id })} className={ctaClass}>{cta.label}</Button>}
           {cta.kind === "bridge" && address && <BridgeStep address={address} needUsdc={cta.usdc} needGas={cta.gas} />}
-          {cta.kind === "done" && (
-            <Link
-              href={cta.href}
-              className="mono mt-4 block w-full rounded-card bg-yes py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90"
-            >
-              {cta.label}
-            </Link>
-          )}
+          {cta.kind === "done" && <Button size="lg" asChild className={`${ctaClass} bg-yes hover:bg-yes/80`}><Link href={cta.href}>{cta.label}</Link></Button>}
           {cta.kind === "external" && (
             <>
-              <a
-                href={cta.href}
-                target="_blank"
-                rel="noreferrer"
-                className="mono mt-4 block w-full rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90"
-              >
-                {cta.label}
-              </a>
+              <Button size="lg" asChild className={ctaClass}><a href={cta.href} target="_blank" rel="noreferrer">{cta.label}</a></Button>
               <p className="mt-2 text-center mono text-[11px] text-dim">{cta.hint}</p>
             </>
           )}
@@ -403,17 +354,15 @@ export function Ticket({
                   Approve USDC once so later tickets are a single wallet prompt.
                 </p>
               )}
-              <button type="button" disabled={!cta.enabled}
+              <Button size="lg" disabled={!cta.enabled}
                 onClick={() => cta.step === "approve" ? void approve() : quoteResult?.ok && mintQuoted(quoteResult.quote, quoteResult.sig)}
-                className={payButtonClass(cta.enabled, false)}>
+                className={`${ctaClass} mt-0`}>
                 {cta.label}
-              </button>
+              </Button>
             </div>
           )}
           {cta.kind === "disabled" && (
-            <div className="mono mt-4 w-full cursor-not-allowed rounded-card bg-raised py-[14px] text-center text-[13px] font-medium text-dim">
-              {cta.label}
-            </div>
+            <Button size="lg" variant="secondary" disabled className={`${ctaClass} text-dim disabled:opacity-100`}>{cta.label}</Button>
           )}
           {mintState === "requoted" && (
             <p className="mt-3 text-center mono text-[11px] text-accent">Quote refreshed - mint again</p>

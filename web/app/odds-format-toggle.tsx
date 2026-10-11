@@ -1,23 +1,27 @@
 "use client";
 
-import { ODDS_FORMAT_LABEL, ODDS_FORMATS, setOddsFormat, useOddsFormat } from "@/lib/odds-format";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { ODDS_FORMAT_LABEL, ODDS_FORMATS, setOddsFormat, useOddsFormat, type OddsFormat } from "@/lib/odds-format";
 
 /** Segmented control. Lives in the hamburger on the phone and at the right of the market filters on desktop. */
-export function OddsFormatToggle({ className = "inline-flex" }: { className?: string }) {
+export function OddsFormatToggle({ className = "" }: { className?: string }) {
   const format = useOddsFormat();
   return (
-    <div role="group" aria-label="Odds format" className={`mono overflow-hidden rounded-[6px] border border-line text-[11px] ${className}`}>
+    <ToggleGroup
+      type="single"
+      size="sm"
+      variant="outline"
+      spacing={0}
+      value={format}
+      onValueChange={(v) => { if (v) setOddsFormat(v as OddsFormat); }}
+      aria-label="Odds format"
+      className={className}
+    >
       {ODDS_FORMATS.map((f) => (
-        <button
-          key={f}
-          type="button"
-          aria-pressed={format === f}
-          onClick={() => setOddsFormat(f)}
-          className={`px-2.5 py-1 transition-colors ${format === f ? "bg-raised text-fg" : "text-dim hover:text-fg"}`}
-        >
+        <ToggleGroupItem key={f} value={f} className="mono h-7 px-2.5 text-[11px] text-dim data-[state=on]:bg-raised data-[state=on]:text-fg">
           {ODDS_FORMAT_LABEL[f]}
-        </button>
+        </ToggleGroupItem>
       ))}
-    </div>
+    </ToggleGroup>
   );
 }

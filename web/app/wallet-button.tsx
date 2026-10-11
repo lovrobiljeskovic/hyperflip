@@ -7,6 +7,8 @@ import { appChain, explorerAddress } from "@/lib/chain";
 import { formatUsdc, shortAddress } from "@/lib/format";
 import { useConnectAction, useDisconnectAction, useUsdc, useWalletState } from "@/lib/wallet";
 import { HyperflipLogo } from "./brand";
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { RevokeAllowance } from "./revoke-allowance";
 
 
@@ -48,13 +50,7 @@ export function WalletButton() {
 
   if (!isConnected || !address) {
     return (
-      <button
-        type="button"
-        onClick={() => connect()}
-        className="rounded-card bg-accent px-4 py-1.5 text-sm font-medium text-on-accent transition-transform motion-reduce:transition-none active:scale-[0.98] hover:opacity-90"
-      >
-        Connect wallet
-      </button>
+      <Button onClick={() => connect()} className="h-[34px] px-4 text-sm">Connect wallet</Button>
     );
   }
 
@@ -74,35 +70,14 @@ export function WalletButton() {
   }
 
   return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        className="flex items-center gap-2 rounded-card border border-line bg-panel py-2 px-3.5 mono text-xs text-fg transition-colors hover:border-dim"
-      >
-        <span
-          className={`inline-block size-1.5 rounded-full ${wrongChain ? "bg-no" : "bg-yes"}`}
-          aria-hidden
-        />
-        {wrongChain ? "Wrong network" : shortAddress(address)}
-      </button>
-
-      {open && (
-        <>
-          {/* click-outside catcher - cheaper than a document listener */}
-          <button
-            type="button"
-            aria-label="Close wallet menu"
-            onClick={() => setOpen(false)}
-            className="fixed inset-0 z-20 cursor-default"
-          />
-          <div
-            role="dialog"
-            aria-label="Wallet"
-            className="absolute right-0 z-30 mt-2 w-72 rounded-card border border-line bg-panel p-4 text-xs shadow-[0_24px_60px_rgba(4,10,12,0.6)]"
-          >
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" className="mono h-[34px] gap-2 border-line bg-panel px-3.5 text-xs text-fg">
+          <span className={`inline-block size-1.5 rounded-full ${wrongChain ? "bg-no" : "bg-yes"}`} aria-hidden />
+          {wrongChain ? "Wrong network" : shortAddress(address)}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" aria-label="Wallet" className="w-72 border border-line bg-panel p-4 font-sans text-xs text-fg shadow-[0_24px_60px_rgba(4,10,12,0.6)] ring-0">
             <div className="mb-3 flex items-center gap-2 border-b border-line pb-3">
               <HyperflipLogo className="size-5" />
               <span className="display text-sm">hyperflip wallet</span>
@@ -110,22 +85,9 @@ export function WalletButton() {
             <p className="break-all mono text-[11px] leading-relaxed text-fg">{address}</p>
 
             <div className="mt-3 flex gap-2">
-              <button
-                type="button"
-                onClick={() => void copy()}
-                className="flex-1 rounded-[4px] border border-line px-2 py-1 mono text-[11px] text-dim transition-colors hover:text-fg"
-              >
-                {copied ? "Copied" : "Copy address"}
-              </button>
+              <Button variant="outline" size="sm" onClick={() => void copy()} className="mono flex-1 border-line text-[11px] text-dim">{copied ? "Copied" : "Copy address"}</Button>
               {explorer && (
-                <a
-                  href={explorer}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex-1 rounded-[4px] border border-line px-2 py-1 text-center mono text-[11px] text-dim transition-colors hover:text-fg"
-                >
-                  Explorer ↗
-                </a>
+                <Button variant="outline" size="sm" asChild className="mono flex-1 border-line text-[11px] text-dim"><a href={explorer} target="_blank" rel="noreferrer">Explorer ↗</a></Button>
               )}
             </div>
 
@@ -142,30 +104,13 @@ export function WalletButton() {
             </div>
 
             {wrongChain && (
-              <button
-                type="button"
-                onClick={() => switchChain({ chainId: appChain.id })}
-                className="mt-3 w-full rounded-[4px] bg-accent py-1.5 text-center font-medium text-on-accent transition-opacity hover:opacity-90"
-              >
-                Switch to {appChain.name}
-              </button>
+              <Button size="sm" onClick={() => switchChain({ chainId: appChain.id })} className="mt-3 w-full">Switch to {appChain.name}</Button>
             )}
 
             <RevokeAllowance className="mt-3 flex w-full items-center justify-between gap-4 text-left" />
 
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                disconnect();
-              }}
-              className="mt-3 w-full rounded-[4px] border border-no/40 py-1.5 text-center mono text-[11px] text-no transition-colors hover:bg-no/10"
-            >
-              Disconnect
-            </button>
-          </div>
-        </>
-      )}
-    </div>
+            <Button variant="destructive" size="sm" onClick={() => { setOpen(false); disconnect(); }} className="mono mt-3 w-full text-[11px]">Disconnect</Button>
+      </PopoverContent>
+    </Popover>
   );
 }

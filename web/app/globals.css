@@ -1,4 +1,8 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
 
 @theme {
   --color-ink: #0d0f0c;
@@ -151,7 +155,7 @@ details[open] > summary::after { content: "-"; }
 @media (min-width: 640px) { @keyframes slip-print { from { opacity: 0; transform: translateY(-40px) scale(.97); clip-path: inset(0 0 100% 0); } to { opacity: 1; transform: none; clip-path: inset(0); } } }
 @keyframes stamp-land { from { opacity: 0; transform: rotate(-9deg) scale(1.7); } 65% { opacity: .95; transform: rotate(-9deg) scale(.94); } to { opacity: .95; transform: rotate(-9deg) scale(1); } }
 @keyframes backdrop-in { from { opacity: 0; } to { opacity: 1; } }
-.minted-dialog[open]::backdrop { animation: backdrop-in .3s ease-out both; }
+
 .minted-slip {
   overflow: hidden;
   border: 1px solid var(--color-line);
@@ -177,6 +181,62 @@ details[open] > summary::after { content: "-"; }
   animation: stamp-land .4s .5s cubic-bezier(.2,.8,.2,1) both;
 }
 @media (prefers-reduced-motion: reduce) {
-  .minted-slip, .minted-stamp, .minted-dialog[open]::backdrop { animation: none; }
+  .minted-slip, .minted-stamp { animation: none; }
   .minted-stamp { opacity: .95; }
+}
+
+@theme inline {
+  /* shadcn semantic tokens, mapped onto the Hyperflip palette above. `accent` stays ours (lime):
+     it is not redefined here, so shadcn components get `primary` for lime and `muted` for hover. */
+  --font-heading: var(--font-display);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* Dark only: one value set, no `.dark` switch. */
+:root {
+  --background: #0d0f0c;
+  --foreground: #f1f4eb;
+  --card: #151912;
+  --card-foreground: #f1f4eb;
+  --popover: #1d2219;
+  --popover-foreground: #f1f4eb;
+  --primary: #c8f36a;
+  --primary-foreground: #172006;
+  --secondary: #1d2219;
+  --secondary-foreground: #f1f4eb;
+  --muted: #1d2219;
+  --muted-foreground: #9ca592;
+  --destructive: #ff5d6c;
+  --border: #30362b;
+  --input: #30362b;
+  --ring: #c8f36a;
+  --radius: 0.75rem;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
 }

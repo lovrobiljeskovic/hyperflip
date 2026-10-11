@@ -7,8 +7,11 @@ import { appChain, coreChain, HL_DRIP } from "@/lib/chain";
 import { BRIDGE, bridgeGas, bridgeUsdc, GAS_TOPUP, quoteBridgeFees } from "@/lib/bridge";
 import { formatUsdc, shortError, USDC_DECIMALS } from "@/lib/format";
 import { tryParseStake } from "@/lib/ticket";
+import { Button } from "@/components/ui/button";
 
 const DEFAULT_USDC = "5";
+type BridgeState = "idle" | "pending" | "sent" | "error";
+const bridgeMemory = new Map<string, { amount: string; state: BridgeState }>();
 
 /** Moves USDC and gas from HyperEVM to the app chain through the canonical bridge: approve the
  * gateway, `outboundTransfer` on the router, `depositEth` on the Inbox, then switch the wallet
@@ -22,8 +25,13 @@ export function BridgeStep({ address, needUsdc, needGas }: { address: `0x${strin
   const { data: coreUsdc } = useReadContract({ chainId: coreChain.id, address: BRIDGE.usdc, abi: erc20Abi, functionName: "balanceOf",
     args: [address], query: { refetchInterval: 15_000 } });
   const { data: coreGas } = useBalance({ chainId: coreChain.id, address, query: { refetchInterval: 15_000 } });
-  const [amount, setAmount] = useState(needUsdc > 0n ? formatUnits(needUsdc, USDC_DECIMALS) : DEFAULT_USDC);
-  const [state, setState] = useState<"idle" | "pending" | "sent" | "error">("idle");
+  // ponytail: module-level memory so a sent/pending bridge survives the phone drawer unmounting;
+  // lift into useTicket if a second consumer ever needs it.
+  const remembered = bridgeMemory.get(address);
+  const [amount, setAmountState] = useState(remembered?.amount ?? (needUsdc > 0n ? formatUnits(needUsdc, USDC_DECIMALS) : DEFAULT_USDC));
+  const [state, setStateState] = useState<BridgeState>(remembered?.state ?? "idle");
+  const setAmount = (v: string) => { setAmountState(v); bridgeMemory.set(address, { amount: v, state }); };
+  const setState = (v: BridgeState) => { setStateState(v); bridgeMemory.set(address, { amount, state: v }); };
   const [error, setError] = useState("");
 
   const usdc = tryParseStake(amount);
@@ -73,14 +81,9 @@ export function BridgeStep({ address, needUsdc, needGas }: { address: `0x${strin
         />
         {needGas && <span className="text-dim">+ {formatUnits(GAS_TOPUP, 18)} HYPE for gas</span>}
       </label>
-      <button
-        type="button"
-        disabled={!ready}
-        onClick={() => void run()}
-        className="mono w-full rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent transition-transform disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none active:scale-[0.98] hover:opacity-90"
-      >
+      <Button size="lg" disabled={!ready} onClick={() => void run()} className="h-12 w-full text-[14px] font-semibold">
         {state === "pending" ? "Confirm in wallet…" : state === "sent" ? "Sent - arriving on " + appChain.name + "…" : tooMuch ? "Not enough USDC on " + coreChain.name : "Bridge to " + appChain.name}
-      </button>
+      </Button>
       {state === "sent" && (
         <p role="status" className="text-[12px] text-yes">
           Bridge confirmed on {coreChain.name}. Funds take a few minutes to land on {appChain.name}; this panel updates by itself, no reload needed.

@@ -5,6 +5,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { HyperflipBrand } from "./brand";
 import { ScrollLink } from "./scroll-link";
+import { MenuIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
 export function SiteHeader({ links, action, mobileAction, menu, home = "/" }: {
   links: { href: string; label: string; activePaths?: string[]; scrollTo?: string; icon?: string }[];
@@ -41,45 +44,39 @@ export function SiteHeader({ links, action, mobileAction, menu, home = "/" }: {
         </nav>
         <div className="ml-auto flex items-center gap-3 lg:hidden">
           {mobileAction ?? action}
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            aria-expanded={open}
-            aria-label={open ? "Close menu" : "Open menu"}
-            className="flex h-9 w-9 items-center justify-center rounded-card border border-line text-fg"
-          >
-            <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden>
-              {open ? (
-                <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              ) : (
-                <path d="M2 4.5h12M2 8h12M2 11.5h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              )}
-            </svg>
-          </button>
+          <Sheet open={open} onOpenChange={setOpen}>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="icon-lg" aria-label="Open menu" className="border-line bg-transparent text-fg"><MenuIcon /></Button>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-[min(100%,340px)] border-line bg-ink text-fg sm:max-w-[340px]">
+              <SheetHeader className="pb-0">
+                <SheetTitle className="display text-[18px] font-normal">Menu</SheetTitle>
+                <SheetDescription className="sr-only">Site navigation and wallet settings.</SheetDescription>
+              </SheetHeader>
+              <nav aria-label="Mobile navigation" className="mono flex flex-col gap-1 px-4 text-[11px] uppercase tracking-[0.1em]">
+                {links.map((l) => {
+                  const active = l.activePaths?.includes(pathname) ?? false;
+                  if (l.scrollTo) return <ScrollLink key={l.label} to={l.scrollTo} onClick={() => setOpen(false)} className="py-2 text-dim">{l.label}</ScrollLink>;
+                  return (
+                    <Link
+                      key={l.label}
+                      href={l.href}
+                      prefetch={false}
+                      aria-current={active ? "page" : undefined}
+                      onClick={() => setOpen(false)}
+                      className={`inline-flex items-center gap-1.5 py-2 ${active ? "text-fg" : "text-dim"}`}
+                    >
+                      {l.icon && <img src={l.icon} alt="" className="size-4" />}
+                      {l.label}
+                    </Link>
+                  );
+                })}
+                {menu}
+              </nav>
+            </SheetContent>
+          </Sheet>
         </div>
       </div>
-      {open && (
-        <nav aria-label="Mobile navigation" className="mono flex flex-col gap-1 border-t border-line bg-ink px-4 pb-4 pt-2 text-[11px] uppercase tracking-[0.1em] lg:hidden">
-          {links.map((l) => {
-            const active = l.activePaths?.includes(pathname) ?? false;
-            if (l.scrollTo) return <ScrollLink key={l.label} to={l.scrollTo} onClick={() => setOpen(false)} className="py-2 text-dim">{l.label}</ScrollLink>;
-            return (
-              <Link
-                key={l.label}
-                href={l.href}
-                prefetch={false}
-                aria-current={active ? "page" : undefined}
-                onClick={() => setOpen(false)}
-                className={`inline-flex items-center gap-1.5 py-2 ${active ? "text-fg" : "text-dim"}`}
-              >
-                {l.icon && <img src={l.icon} alt="" className="size-4" />}
-                {l.label}
-              </Link>
-            );
-          })}
-          {menu}
-        </nav>
-      )}
     </header>
   );
 }

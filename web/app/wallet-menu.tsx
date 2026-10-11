@@ -6,6 +6,7 @@ import { shortAddress } from "@/lib/format";
 import { useDisconnectAction, useWalletState } from "@/lib/wallet";
 import { RevokeAllowance } from "./revoke-allowance";
 import { OddsFormatToggle } from "./odds-format-toggle";
+import { Button } from "@/components/ui/button";
 
 const row = "flex w-full items-center justify-between gap-4 py-2 text-left text-[12px] normal-case tracking-normal";
 
@@ -27,9 +28,9 @@ export function WalletMenu() {
             {explorer ? <a href={explorer} target="_blank" rel="noreferrer" className="mono text-fg">{shortAddress(address)} ↗</a> : <span className="mono">{shortAddress(address)}</span>}
           </div>
           <div className={row}><span className="text-dim">Network</span><span className={`mono ${wrongChain ? "text-no" : ""}`}>{wrongChain ? `chain ${chainId}` : appChain.name}</span></div>
-          {wrongChain && <button type="button" onClick={() => switchChain({ chainId: appChain.id })} className={`${row} text-accent`}>Switch to {appChain.name}</button>}
+          {wrongChain && <Button variant="ghost" onClick={() => switchChain({ chainId: appChain.id })} className={`${row} h-auto justify-start px-0 text-accent`}>Switch to {appChain.name}</Button>}
           <RevokeAllowance />
-          <button type="button" onClick={() => disconnect()} className={`${row} text-no`}>Disconnect</button>
+          <Button variant="ghost" onClick={() => disconnect()} className={`${row} h-auto justify-start px-0 text-no hover:text-no`}>Disconnect</Button>
         </>
       )}
     </div>
