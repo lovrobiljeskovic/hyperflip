@@ -23,7 +23,6 @@ import {
 } from "@/lib/format";
 import { appChain, tradeUrl } from "@/lib/chain";
 import { BridgeStep } from "./bridge-step";
-import { MintedSlipDialog } from "./minted-slip";
 import { STAKE_CHIPS, chipState } from "@/lib/slip-summary";
 import { formatOdds, useOddsFormat } from "@/lib/odds-format";
 import { Overround } from "@/app/overround-motif";
@@ -168,7 +167,7 @@ export function Ticket({
   const printing = usePrinting();
   const format = useOddsFormat();
   const { stake, setStake, quoteResult, ttlLeft, ttlSeconds, mintState, mintErrorMsg, mintErrorDetail,
-    maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain, address, minted, dismissMinted, stakeBase, toWin } = ticket;
+    maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain, address, stakeBase, toWin } = ticket;
   // Keep the last to-win dimmed while a requote is in flight, so it does not jump to a dash.
   const lastWin = useRef<bigint | null>(null);
   if (toWin !== null) lastWin.current = toWin;
@@ -429,7 +428,6 @@ export function Ticket({
           )}
         </>
       ) : null}
-      <MintedSlipDialog slip={minted} onClose={dismissMinted} />
     </div>
   );
 }
