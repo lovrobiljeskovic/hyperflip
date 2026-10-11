@@ -1,0 +1,289 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1900" height="1440" viewBox="0 0 1900 1440" font-family="'Architects Daughter','Comic Sans MS','Segoe Print',cursive">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#111"/></marker>
+    <marker id="ahb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f5fc4"/></marker>
+    <marker id="ahg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a8f3a"/></marker>
+    <marker id="ahp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8e44ad"/></marker>
+    <marker id="ahk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#888"/></marker>
+    <marker id="aho" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d2691e"/></marker>
+  </defs>
+  <rect width="1900" height="1440" fill="#fff"/>
+  <rect x="20" y="20" width="1860" height="1400" rx="14" fill="none" stroke="#111" stroke-width="2"/>
+  <text x="40" y="58" font-size="26" fill="#111">Hyperflip v2 on Elysium: multi-maker RFQ with cross-margin, everything Kinetiq promised assumed live (2026-09-28)</text>
+  <text x="40" y="84" font-size="15" fill="#555">Assumed: phase-two read precompile (status, settledValue, positions, book depth, history), ElysiumCoreWriter write lane, settled outcomes retained past Core's prune window, subgraph. Money path on Elysium, custody on 998.</text>
+
+  <!-- bands -->
+  <g stroke-width="1.5" stroke-dasharray="6 6">
+    <rect x="40" y="100" width="1820" height="140" rx="10" fill="#fff7e6" stroke="#d9a441"/>
+    <rect x="40" y="330" width="640" height="560" rx="10" fill="#f3f3f3" stroke="#999"/>
+    <rect x="710" y="330" width="1150" height="560" rx="10" fill="#eef4ff" stroke="#6b8dd6"/>
+    <rect x="40" y="940" width="1820" height="230" rx="10" fill="#f3fbf1" stroke="#7fb37a"/>
+  </g>
+  <text x="56" y="126" font-size="20" fill="#111">HyperCore</text>
+  <text x="56" y="356" font-size="20" fill="#111">HyperEVM (998): custody only, 1 s blocks</text>
+  <text x="726" y="356" font-size="20" fill="#111">Elysium (Kinetiq L2): the money path, 100-200 ms blocks, HYPE gas, bridged USDC</text>
+  <text x="56" y="966" font-size="20" fill="#111">Off-chain</text>
+
+  <!-- HyperCore boxes -->
+  <g fill="#fff" stroke="#111" stroke-width="2">
+    <rect x="60" y="140" width="440" height="85" rx="6"/>
+    <rect x="520" y="140" width="520" height="85" rx="6"/>
+    <rect x="1060" y="140" width="780" height="85" rx="6"/>
+  </g>
+  <g font-size="14" fill="#111">
+    <text x="72" y="162" font-size="16">HIP-4 outcome books (singles)</text>
+    <text x="72" y="184">resting orders, fills, fees; makers hedge here</text>
+    <text x="72" y="204">agent orders land in about one Core block</text>
+    <text x="532" y="162" font-size="16">Settlement</text>
+    <text x="532" y="184">outcomeStatus 2 + settledValue, then pruned (2 to 3)</text>
+    <text x="532" y="204">deployer settles (venues flip / flp), or deadline = 0.5</text>
+    <text x="1072" y="162" font-size="16">Core-side balances of 998 contracts (same address on both layers)</text>
+    <text x="1072" y="184">OutcomeVault #n's account: the oYES / oNO backing for one outcome</text>
+    <text x="1072" y="204">MarginTwin #m's account: hedges + hedge cash; trade-only agent approved for Elysium</text>
+  </g>
+
+  <!-- 998 boxes -->
+  <g fill="#fff" stroke="#111" stroke-width="2">
+    <rect x="60" y="380" width="290" height="170" rx="6"/>
+    <rect x="370" y="380" width="290" height="190" rx="6"/>
+    <rect x="60" y="620" width="290" height="90" rx="6"/>
+  </g>
+  <g font-size="13" fill="#111">
+    <text x="72" y="404" font-size="16">OutcomeVault (per outcome)</text>
+    <text x="72" y="428">is a Core account; split / merge</text>
+    <text x="72" y="448">settle() at status 2, in prune window</text>
+    <text x="72" y="468">stores settleFractionWad forever</text>
+    <text x="72" y="488">unchanged; the composability layer</text>
+    <text x="72" y="508">(oYES / oNO ERC-20s) stays here</text>
+
+    <text x="382" y="404" font-size="16">MarginTwin (per maker)</text>
+    <text x="382" y="428">owns the Core account that holds hedges</text>
+    <text x="382" y="448">no withdrawal function at all</text>
+    <text x="382" y="468">approves + renews the Elysium agent</text>
+    <text x="382" y="488">  (CoreWriter action 9, before expiry)</text>
+    <text x="382" y="508">sweep(): free Core USDC to 998, then</text>
+    <text x="382" y="528">  bridge to the Elysium MarginVault</text>
+    <text x="382" y="548">maker sets a sweep floor (hedge cash)</text>
+
+    <text x="72" y="644" font-size="16">KeeperVerifier</text>
+    <text x="72" y="668">split / merge execution attestation</text>
+    <text x="72" y="688">swappable for a 0x801-backed verifier</text>
+  </g>
+  <g font-size="12" fill="#666">
+    <text x="60" y="760">What is not here any more: SettlementRelay (phase-two reads replace it),</text>
+    <text x="60" y="778">ParlayVault on 998, MarginVault collateral on 998. Only Core-account owners remain.</text>
+  </g>
+
+  <!-- Elysium boxes -->
+  <g fill="#fff" stroke="#111" stroke-width="2">
+    <rect x="730" y="380" width="250" height="170" rx="6"/>
+    <rect x="1010" y="380" width="360" height="190" rx="6"/>
+    <rect x="1410" y="380" width="430" height="190" rx="6"/>
+    <rect x="730" y="620" width="250" height="110" rx="6" stroke-dasharray="8 6"/>
+    <rect x="1000" y="620" width="200" height="110" rx="6" stroke-dasharray="8 6"/>
+    <rect x="1290" y="620" width="290" height="110" rx="6"/>
+    <rect x="1620" y="620" width="220" height="110" rx="6" stroke-dasharray="8 6"/>
+    <rect x="730" y="760" width="250" height="90" rx="6"/>
+    <rect x="1000" y="760" width="260" height="90" rx="6" stroke="#8e44ad"/>
+      </g>
+  <g font-size="13" fill="#111">
+    <text x="742" y="404" font-size="16">OutcomeLeg (per outcome)</text>
+    <text x="742" y="428">no Core balance, no escrow</text>
+    <text x="742" y="448">views: settled(), fraction</text>
+    <text x="742" y="468">settle(): reads status + value</text>
+    <text x="742" y="488">  from the precompile, any time</text>
+    <text x="742" y="508">question id from precompile too</text>
+    <text x="742" y="528">(partition bound anchored)</text>
+
+    <text x="1022" y="404" font-size="16">MarginVault (per maker)</text>
+    <text x="1022" y="428">cash_evm: bridged USDC; liabilities</text>
+    <text x="1022" y="448">hedge(): emits an order intent</text>
+    <text x="1022" y="468">confirmHedge(): reads the twin's</text>
+    <text x="1022" y="488">  positions via precompile, records</text>
+    <text x="1022" y="508">requirement = worst case per question</text>
+    <text x="1022" y="528">  minus confirmed hedges, relief capped</text>
+    <text x="1022" y="548">Core cash never counts; withdraw the rest</text>
+
+    <text x="1422" y="404" font-size="16">ParlayVault v2 (multi-maker)</text>
+    <text x="1422" y="428">ERC-721 ticket; Quote carries the maker; signerOf registry</text>
+    <text x="1422" y="448">replay key (maker, quoteId); firm until deadline</text>
+    <text x="1422" y="468">escrow: approved maker => MarginVault.lock(id, amt)</text>
+    <text x="1422" y="488">  else safeTransferFrom(maker allowance)</text>
+    <text x="1422" y="508">taker pays premium; premium stays in the pot</text>
+    <text x="1422" y="528">resolveParlay: Dead / Void / Won off OutcomeLeg views</text>
+    <text x="1422" y="548">protocol fee on premium (Stage 5)</text>
+
+    <text x="742" y="644" font-size="16">Read precompile</text>
+    <text x="742" y="668">status, settledValue, positions,</text>
+    <text x="742" y="688">book depth, history (TWAP for free)</text>
+    <text x="742" y="708">height-stamped; sequencer-attested</text>
+    <text x="742" y="724">read by settle() and confirmHedge()</text>
+
+    <text x="1012" y="644" font-size="16">RelationAttestor</text>
+    <text x="1012" y="668">Stage 4, curated cross-</text>
+    <text x="1012" y="688">question relations; may</text>
+    <text x="1012" y="708">only lower a requirement,</text>
+    <text x="1012" y="724">within an owner cap</text>
+
+    <text x="1302" y="644" font-size="16">Adjustments vs the 998 spec</text>
+    <text x="1302" y="668">Core cash never counts as collateral</text>
+    <text x="1302" y="688">relief from sequencer reads is capped</text>
+    <text x="1302" y="708">twin cannot withdraw; maker sweep floor</text>
+    <text x="1302" y="724">question id anchored via precompile</text>
+    <text x="1632" y="644" font-size="16">Subgraph (assumed)</text>
+    <text x="1632" y="668">positions index off events</text>
+    <text x="1632" y="688">replaces the legacy index</text>
+    <text x="1632" y="708">and the getLogs fallback</text>
+
+    <text x="742" y="784" font-size="16">Escrow whitelist</text>
+    <text x="742" y="808">setMaker(maker, signer), owner-only</text>
+    <text x="742" y="828">approvedEscrow[maker] gates lock()</text>
+
+    <text x="1012" y="784" font-size="16" fill="#8e44ad">ElysiumCoreWriter (predeploy)</text>
+    <text x="1012" y="808">binds the twin's Core account</text>
+    <text x="1012" y="828">intents out; Kinetiq keeper signs</text>
+
+  </g>
+
+  <!-- Off-chain boxes -->
+  <g fill="#fff" stroke="#111" stroke-width="2">
+    <rect x="60" y="985" width="170" height="100" rx="6"/>
+    <rect x="250" y="985" width="180" height="100" rx="6"/>
+    <rect x="450" y="985" width="230" height="100" rx="6"/>
+    <rect x="708" y="993" width="280" height="120" rx="6" stroke="#999"/>
+    <rect x="700" y="985" width="280" height="120" rx="6"/>
+    <rect x="1000" y="985" width="300" height="120" rx="6" stroke="#8e44ad"/>
+    <rect x="1330" y="985" width="300" height="160" rx="6"/>
+  </g>
+  <g font-size="13" fill="#111">
+    <text x="72" y="1009" font-size="16">Registry</text>
+    <text x="72" y="1033">markets.json</text>
+    <text x="72" y="1053">house deployer</text>
+    <text x="72" y="1073">external priors</text>
+
+    <text x="262" y="1009" font-size="16">Web</text>
+    <text x="262" y="1033">build slip, send intent</text>
+    <text x="262" y="1053">show best of N</text>
+    <text x="262" y="1073">approve + mint</text>
+
+    <text x="462" y="1009" font-size="16">RFQ relay (neutral)</text>
+    <text x="462" y="1033">fan out, 1.5 s window</text>
+    <text x="462" y="1053">best maxPayout wins</text>
+    <text x="462" y="1073">journal incl. losers</text>
+
+    <text x="712" y="1009" font-size="16">Maker clients, N (house is one)</text>
+    <text x="712" y="1033">own pricing: external odds + book</text>
+    <text x="712" y="1053">firm EIP-712 quote, no last look</text>
+    <text x="712" y="1073">hedge policy: legs, timing, size</text>
+    <text x="712" y="1093">no API key to hold: hedges are on-chain</text>
+
+    <text x="1012" y="1009" font-size="16" fill="#8e44ad">Kinetiq's keeper (their party)</text>
+    <text x="1012" y="1033">holds each MarginVault's agent key</text>
+    <text x="1012" y="1053">signs intents, submits to Core</text>
+    <text x="1012" y="1073">trade-only by Core enforcement</text>
+    <text x="1012" y="1093">can still sell hedges at a bad price</text>
+
+    <text x="1342" y="1009" font-size="16">Our keeper (cranks)</text>
+    <text x="1342" y="1033">OutcomeVault.settle() on 998</text>
+    <text x="1342" y="1053">OutcomeLeg.settle() on Elysium</text>
+    <text x="1342" y="1073">MarginVault.confirmHedge()</text>
+    <text x="1342" y="1093">MarginTwin.sweep() + bridge redeem</text>
+    <text x="1342" y="1113">agent renewal on the twin</text>
+    <text x="1342" y="1133">resolveParlay() Dead / Void</text>
+  </g>
+
+  <!-- HyperCore edges -->
+  <g stroke="#111" stroke-width="2" fill="none" stroke-dasharray="3 5" marker-end="url(#ah)">
+    <line x1="100" y1="380" x2="100" y2="244"/>
+    <line x1="420" y1="380" x2="420" y2="244"/>
+  </g>
+  <g stroke="#2f5fc4" stroke-width="2" fill="none" stroke-dasharray="7 5" marker-end="url(#ahb)">
+    <line x1="116" y1="380" x2="116" y2="244"/>
+  </g>
+  <g stroke="#3a8f3a" stroke-width="2" fill="none" stroke-dasharray="7 5" marker-end="url(#ahg)">
+    <line x1="720" y1="620" x2="720" y2="244"/>
+  </g>
+  <g stroke="#8e44ad" stroke-width="2" fill="none" stroke-dasharray="7 5" marker-end="url(#ahp)">
+    <path d="M1260,842 V858 H1850 V244"/>
+  </g>
+  <g font-size="12">
+    <text x="126" y="264" fill="#111">CoreWriter: split / merge, spotSend (async)</text>
+    <text x="126" y="300" fill="#2f5fc4">0x814 status, 0x801 balances (consensus)</text>
+    <text x="430" y="264" fill="#111">CoreWriter (async): USDC into own Core account,</text>
+    <text x="430" y="282" fill="#111">sweeps out, action 9 approve / renew agent</text>
+    <text x="730" y="300" fill="#3a8f3a">read lane: Kinetiq's node serves Core state, height-stamped, attested by the sequencer</text>
+    <text x="730" y="318" fill="#3a8f3a">retention assumed: settled outcomes served past Core's prune window</text>
+    <text x="1290" y="264" fill="#8e44ad">write lane: intents signed by Kinetiq's keeper as the twin's trade-only agent, ~1 Core block</text>
+  </g>
+
+  <!-- same-chain (black) -->
+  <g stroke="#111" stroke-width="2" fill="none" marker-end="url(#ah)">
+    <line x1="1410" y1="470" x2="1372" y2="470"/>
+    <path d="M1500,572 V600 H900 V552"/>
+    <line x1="1100" y1="620" x2="1100" y2="572"/>
+  </g>
+  <g font-size="12" fill="#111">
+    <text x="1390" y="458" text-anchor="middle">lock()</text>
+    <text x="1300" y="612">ParlayVault reads leg settled(), fraction</text>
+    <text x="1108" y="612">capped relief</text>
+  </g>
+
+  <!-- Elysium write lane (purple) -->
+  <g stroke="#8e44ad" stroke-width="2" fill="none" marker-end="url(#ahp)">
+    <line x1="1225" y1="572" x2="1225" y2="758"/>
+    <line x1="1140" y1="985" x2="1140" y2="852"/>
+  </g>
+  <g font-size="12" fill="#8e44ad">
+    <text x="1090" y="748">hedge(): order intent</text>
+    <text x="1150" y="905">signs each intent as the agent</text>
+  </g>
+
+  <!-- bridge (grey) -->
+  <g stroke="#888" stroke-width="2.2" fill="none" stroke-dasharray="10 6" marker-end="url(#ahk)">
+    <line x1="682" y1="500" x2="708" y2="500"/>
+    <path d="M640,570 V875 H1270 V572"/>
+  </g>
+  <g font-size="12" fill="#666">
+    <text x="372" y="592">users + makers bridge USDC in, ~1 min</text>
+    <text x="560" y="866">hedge proceeds: twin sweeps free Core USDC (spotSend), then bridge 998 to Elysium, about 1 min; both fast directions</text>
+    <text x="560" y="884">the reverse direction (Elysium to 998) waits the challenge period and is only used when a maker or user exits</text>
+  </g>
+
+  <!-- off-chain (orange) -->
+  <g stroke="#d2691e" stroke-width="2" fill="none">
+    <line x1="230" y1="1035" x2="242" y2="1035" marker-end="url(#aho)"/>
+    <line x1="430" y1="1035" x2="442" y2="1035" marker-end="url(#aho)" marker-start="url(#aho)"/>
+    <line x1="680" y1="1035" x2="692" y2="1035" marker-end="url(#aho)" marker-start="url(#aho)"/>
+    <path d="M340,985 V920 H1600 V572" marker-end="url(#aho)"/>
+  </g>
+  <g font-size="12" fill="#d2691e">
+    <text x="350" y="912">taker: approve + mint(quote, sig) against the winning maker's quote</text>
+    <text x="250" y="1105">intent out, best quote back</text>
+    <text x="450" y="1105">POST /rfq, quotes back inside the window</text>
+  </g>
+
+  <!-- notes -->
+  <g fill="#fff" stroke="#111" stroke-width="1.5" stroke-dasharray="10 8">
+    <rect x="40" y="1200" width="700" height="200" rx="6"/>
+    <rect x="760" y="1200" width="1100" height="200" rx="6"/>
+  </g>
+  <g font-size="13" fill="#111">
+    <text x="56" y="1224" font-size="15">Legend, by what you trust</text>
+    <line x1="56" y1="1244" x2="110" y2="1244" stroke="#111" stroke-width="2"/><text x="120" y="1248">same-chain call, atomic (Elysium or 998)</text>
+    <line x1="56" y1="1266" x2="110" y2="1266" stroke="#111" stroke-width="2" stroke-dasharray="3 5"/><text x="120" y="1270">CoreWriter action on 998: async, fails silently; custody moves only</text>
+    <line x1="56" y1="1288" x2="110" y2="1288" stroke="#2f5fc4" stroke-width="2" stroke-dasharray="7 5"/><text x="120" y="1292">998 precompile read: Core state as of the block, consensus-backed</text>
+    <line x1="56" y1="1310" x2="110" y2="1310" stroke="#3a8f3a" stroke-width="2" stroke-dasharray="7 5"/><text x="120" y="1314">Elysium precompile read: sequencer-attested, auditable afterwards</text>
+    <line x1="56" y1="1332" x2="110" y2="1332" stroke="#8e44ad" stroke-width="2"/><text x="120" y="1336">Elysium write lane: contract intent, signed by Kinetiq's keeper as agent</text>
+    <line x1="56" y1="1354" x2="110" y2="1354" stroke="#888" stroke-width="2" stroke-dasharray="10 6"/><text x="120" y="1358">bridge: non-atomic, about 1 min up, challenge period down</text>
+    <line x1="56" y1="1376" x2="110" y2="1376" stroke="#d2691e" stroke-width="2"/><text x="120" y="1380">off-chain HTTP and EIP-712 quotes</text>
+
+    <text x="776" y="1224" font-size="15">What this buys over the 998-only shape</text>
+    <text x="776" y="1248">Tickets mint and resolve in 100-200 ms. Settlement is keeper-free and never races the prune window.</text>
+    <text x="776" y="1268">Every hedge intent is on-chain, so relay neutrality and maker hedging are auditable. Makers hold no API key.</text>
+    <text x="776" y="1288">Book depth and history in-tx: a verifiable premium floor and a free TWAP. Subgraph for positions.</text>
+    <text x="776" y="1318" font-size="15">What you newly trust</text>
+    <text x="776" y="1342">The sequencer's reads: relief is capped, so a wrong read costs at most the cap, never the vault.</text>
+    <text x="776" y="1362">Kinetiq's keeper holding agent keys: can trade the twin's account at any price; proceeds stay; twin can revoke.</text>
+    <text x="776" y="1382">Agent expiry and bridge liveness: renewals and sweeps are keeper jobs; a missed renewal stalls hedging, not funds.</text>
+  </g>
+</svg>

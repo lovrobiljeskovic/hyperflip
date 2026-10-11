@@ -1,0 +1,240 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1860" height="1360" viewBox="0 0 1860 1360" font-family="'Architects Daughter','Comic Sans MS','Segoe Print',cursive">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#111"/></marker>
+    <marker id="ahb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f5fc4"/></marker>
+    <marker id="ahg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a8f3a"/></marker>
+    <marker id="ahk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#888"/></marker>
+    <marker id="aho" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d2691e"/></marker>
+  </defs>
+  <rect width="1860" height="1360" fill="#fff"/>
+  <rect x="20" y="20" width="1820" height="1320" rx="14" fill="none" stroke="#111" stroke-width="2"/>
+  <text x="40" y="58" font-size="26" fill="#111">Hyperflip, Stage 3 with Elysium in the picture (proposed 2026-09-28)</text>
+  <text x="40" y="84" font-size="15" fill="#555">Rule: anything that holds a Core balance, or needs an atomic view of one, lives on HyperEVM. Anything that only reads Core or mints tickets may live on Elysium. Nothing on Elysium writes to Core.</text>
+
+  <!-- bands -->
+  <g stroke-width="1.5" stroke-dasharray="6 6">
+    <rect x="40" y="100" width="1780" height="140" rx="10" fill="#fff7e6" stroke="#d9a441"/>
+    <rect x="40" y="330" width="960" height="510" rx="10" fill="#f3f3f3" stroke="#999"/>
+    <rect x="1030" y="330" width="730" height="510" rx="10" fill="#eef4ff" stroke="#6b8dd6"/>
+    <rect x="40" y="890" width="1780" height="240" rx="10" fill="#f3fbf1" stroke="#7fb37a"/>
+  </g>
+  <text x="56" y="126" font-size="20" fill="#111">HyperCore</text>
+  <text x="56" y="356" font-size="20" fill="#111">HyperEVM (998): custody and settlement source, 1 s blocks</text>
+  <text x="1046" y="356" font-size="20" fill="#111">Elysium (Kinetiq L2): trading lane, 100-200 ms blocks</text>
+  <text x="56" y="916" font-size="20" fill="#111">Off-chain (the box)</text>
+
+  <!-- HyperCore boxes -->
+  <g fill="#fff" stroke="#111" stroke-width="2">
+    <rect x="60" y="140" width="440" height="85" rx="6"/>
+    <rect x="520" y="140" width="560" height="85" rx="6"/>
+    <rect x="1100" y="140" width="700" height="85" rx="6"/>
+  </g>
+  <g font-size="14" fill="#111">
+    <text x="72" y="162" font-size="16">HIP-4 outcome books (singles)</text>
+    <text x="72" y="184">resting orders, fills, fees</text>
+    <text x="72" y="204">orders sent via CoreWriter are delayed a few seconds</text>
+    <text x="532" y="162" font-size="16">Settlement</text>
+    <text x="532" y="184">outcomeStatus 2 + settledValue, then pruned (2 to 3)</text>
+    <text x="532" y="204">deployer settles (venues flip / flp), or deadline = 0.5</text>
+    <text x="1112" y="162" font-size="16">Core accounts, each owned by a HyperEVM contract</text>
+    <text x="1112" y="184">OutcomeVault #n: oYES / oNO backing for one outcome</text>
+    <text x="1112" y="204">MarginVault #m: hedges + hedge cash, API wallet approved</text>
+  </g>
+
+  <!-- HyperEVM boxes -->
+  <g fill="#fff" stroke="#111" stroke-width="2">
+    <rect x="60" y="380" width="290" height="170" rx="6"/>
+    <rect x="360" y="380" width="300" height="170" rx="6"/>
+    <rect x="700" y="380" width="280" height="170" rx="6"/>
+    <rect x="60" y="650" width="290" height="100" rx="6"/>
+    <rect x="370" y="650" width="300" height="100" rx="6"/>
+  </g>
+  <g font-size="13" fill="#111">
+    <text x="72" y="404" font-size="16">OutcomeVault (per outcome)</text>
+    <text x="72" y="428">is a Core account; split / merge</text>
+    <text x="72" y="448">settle() at status 2, in prune window</text>
+    <text x="72" y="468">stores settleFractionWad forever</text>
+    <text x="72" y="488">views: settled(), settleFractionWad()</text>
+    <text x="72" y="508">unchanged from today</text>
+
+    <text x="372" y="404" font-size="16">MarginVault (per maker)</text>
+    <text x="372" y="428">own Core account + cash_evm (USDC)</text>
+    <text x="372" y="448">hedge(): order via API wallet</text>
+    <text x="372" y="468">confirmHedge(): reads 0x801, records</text>
+    <text x="372" y="488">requirement = worst case per question</text>
+    <text x="372" y="508">  minus confirmed hedge payoff</text>
+    <text x="372" y="528">withdraw only cash_evm - requirement</text>
+
+    <text x="712" y="404" font-size="16">ParlayVault (998)</text>
+    <text x="712" y="428">tickets of cross-margined makers</text>
+    <text x="712" y="448">escrow via IEscrowSource seam:</text>
+    <text x="712" y="468">  MarginVault.lock(id, amount)</text>
+    <text x="712" y="488">whitelisted sources only</text>
+    <text x="712" y="508">legs = OutcomeVault views</text>
+
+    <text x="72" y="674" font-size="16">SettlementRelay</text>
+    <text x="72" y="698">reads a settled OutcomeVault</text>
+    <text x="72" y="718">sends its fraction up as a retryable</text>
+
+    <text x="382" y="674" font-size="16">KeeperVerifier</text>
+    <text x="382" y="698">split / merge execution attestation</text>
+    <text x="382" y="718">swappable for a 0x801-backed verifier</text>
+  </g>
+
+  <!-- Elysium boxes -->
+  <g fill="#fff" stroke="#111" stroke-width="2">
+    <rect x="1070" y="380" width="270" height="170" rx="6"/>
+    <rect x="1420" y="380" width="320" height="170" rx="6"/>
+    <rect x="1070" y="650" width="460" height="100" rx="6" stroke-dasharray="8 6"/>
+  </g>
+  <g font-size="13" fill="#111">
+    <text x="1082" y="404" font-size="16">OutcomeLeg (per outcome)</text>
+    <text x="1082" y="428">no Core balance, no escrow</text>
+    <text x="1082" y="448">views: settled(), fraction</text>
+    <text x="1082" y="468">settle(): precompile (phase 2)</text>
+    <text x="1082" y="488">fallback: fraction via relay</text>
+    <text x="1082" y="508">question id copied from 998</text>
+
+    <text x="1432" y="404" font-size="16">ParlayVault v2 (Season 1, Stage 1)</text>
+    <text x="1432" y="428">ERC-721 tickets, bridged USDC</text>
+    <text x="1432" y="448">full escrow: maxPayout - premium</text>
+    <text x="1432" y="468">multi-maker RFQ, best quote wins</text>
+    <text x="1432" y="488">no cross-margin here: 998 collateral</text>
+    <text x="1432" y="508">cannot be locked in an Elysium tx</text>
+
+    <text x="1082" y="674" font-size="16">HyperCore read precompile (phase 2, not on testnet yet)</text>
+    <text x="1082" y="698">status, settledValue, balances, positions, full book depth</text>
+    <text x="1082" y="718">height-stamped, 150-350 ms fresh, sequencer-attested</text>
+    <text x="1082" y="738">retention past Core's prune window is negotiable</text>
+  </g>
+
+  <!-- Off-chain boxes -->
+  <g fill="#fff" stroke="#111" stroke-width="2">
+    <rect x="60" y="930" width="230" height="90" rx="6"/>
+    <rect x="320" y="930" width="250" height="90" rx="6"/>
+    <rect x="600" y="930" width="330" height="110" rx="6"/>
+    <rect x="960" y="930" width="330" height="110" rx="6"/>
+    <rect x="1320" y="930" width="480" height="150" rx="6"/>
+  </g>
+  <g font-size="13" fill="#111">
+    <text x="72" y="954" font-size="16">Web (Next.js)</text>
+    <text x="72" y="978">build slip, request quote</text>
+    <text x="72" y="998">approve + mint on either vault</text>
+
+    <text x="332" y="954" font-size="16">RFQ relay</text>
+    <text x="332" y="978">fan out intent, 1.5 s window</text>
+    <text x="332" y="998">best of N, journal incl. losers</text>
+
+    <text x="612" y="954" font-size="16">Maker client (house first)</text>
+    <text x="612" y="978">prices off external odds + Core book</text>
+    <text x="612" y="998">signs EIP-712 quote, firm until deadline</text>
+    <text x="612" y="1018">hedge policy: which legs, when, size</text>
+
+    <text x="972" y="954" font-size="16">API wallet (agent key)</text>
+    <text x="972" y="978">approved by MarginVault (action 9)</text>
+    <text x="972" y="998">trade-only, cannot withdraw</text>
+    <text x="972" y="1018">exchange API, no CoreWriter delay</text>
+
+    <text x="1332" y="954" font-size="16">Keeper: permissionless cranks on both chains</text>
+    <text x="1332" y="978">OutcomeVault.settle() inside the prune window</text>
+    <text x="1332" y="998">MarginVault.confirmHedge(), Core to EVM sweeps</text>
+    <text x="1332" y="1018">SettlementRelay.relay() per settled vault</text>
+    <text x="1332" y="1038">resolveParlay() for Dead and Void tickets</text>
+    <text x="1332" y="1058">API wallet renewal before expiry (up to 180 d)</text>
+  </g>
+
+  <!-- HyperCore edges from HyperEVM: CoreWriter (black dotted) and precompile reads (blue dashed) -->
+  <g stroke="#111" stroke-width="2" fill="none" stroke-dasharray="3 5" marker-end="url(#ah)">
+    <line x1="100" y1="380" x2="100" y2="244"/>
+  </g>
+  <g stroke="#2f5fc4" stroke-width="2" fill="none" stroke-dasharray="7 5" marker-end="url(#ahb)">
+    <line x1="116" y1="380" x2="116" y2="244"/>
+    <line x1="440" y1="380" x2="440" y2="244"/>
+  </g>
+  <g font-size="12">
+    <text x="126" y="264" fill="#111">CoreWriter: split / merge, spotSend (async)</text>
+    <text x="126" y="300" fill="#2f5fc4">0x814 status, 0x801 balances</text>
+    <text x="450" y="282" fill="#2f5fc4">0x801 hedge positions</text>
+    <text x="450" y="300" fill="#2f5fc4">(confirmHedge, atomic)</text>
+  </g>
+
+  <!-- Elysium precompile edge to HyperCore (green dashed) -->
+  <g stroke="#3a8f3a" stroke-width="2" fill="none" stroke-dasharray="7 5" marker-end="url(#ahg)">
+    <line x1="1050" y1="650" x2="1050" y2="244"/>
+    <line x1="1200" y1="552" x2="1200" y2="648"/>
+  </g>
+  <g font-size="12" fill="#3a8f3a">
+    <text x="1062" y="264">phase 2: Kinetiq's co-located node serves Core state</text>
+    <text x="1062" y="300">height-stamped, sequencer-attested, not proven by Core</text>
+    <text x="1210" y="600">settle(): status +</text>
+    <text x="1210" y="616">settledValue</text>
+  </g>
+
+  <!-- same-chain calls (black solid) -->
+  <g stroke="#111" stroke-width="2" fill="none" marker-end="url(#ah)">
+    <line x1="700" y1="470" x2="662" y2="470"/>
+    <path d="M780,552 V600 H205 V554"/>
+    <line x1="120" y1="650" x2="120" y2="554"/>
+    <line x1="1420" y1="470" x2="1342" y2="470"/>
+  </g>
+  <g font-size="12" fill="#111">
+    <text x="681" y="458" text-anchor="middle">lock()</text>
+    <text x="430" y="622">ParlayVault (998) reads each leg's settled(), settleFractionWad()</text>
+    <text x="128" y="590">relay reads</text>
+    <text x="128" y="606">settled vault</text>
+    <text x="1381" y="458" text-anchor="middle">settled(),</text>
+    <text x="1381" y="500" text-anchor="middle">fraction</text>
+  </g>
+
+  <!-- bridge messages (grey dashed) -->
+  <g stroke="#888" stroke-width="2.2" fill="none" stroke-dasharray="10 6" marker-end="url(#ahk)">
+    <path d="M200,750 V800 H1015 V470 H1068"/>
+    <line x1="985" y1="690" x2="1028" y2="690"/>
+  </g>
+  <g font-size="12" fill="#666">
+    <text x="380" y="772">retryable 998 to Elysium, about 1 min, bridge trust only; becomes the fallback once phase 2 serves settlement</text>
+    <text x="380" y="788">the reverse direction waits the challenge period and is never on the money path</text>
+    <text x="700" y="676">users bridge USDC in</text>
+    <text x="700" y="692">before their first mint,</text>
+    <text x="700" y="708">about 1 min, one way</text>
+  </g>
+
+  <!-- off-chain flows (orange) -->
+  <g stroke="#d2691e" stroke-width="2" fill="none" marker-end="url(#aho)">
+    <line x1="290" y1="975" x2="312" y2="975"/>
+    <line x1="570" y1="975" x2="592" y2="975"/>
+    <line x1="930" y1="985" x2="952" y2="985"/>
+    <path d="M170,930 V860 H900 V554"/>
+    <path d="M170,860 H1600 V554"/>
+    <path d="M1100,930 V870 H1785 V244"/>
+  </g>
+  <g font-size="12" fill="#d2691e">
+    <text x="180" y="852">taker: approve + mint(quote, sig)</text>
+    <text x="700" y="852">to the 998 vault when the maker is cross-margined</text>
+    <text x="1380" y="852">to the Elysium vault for Season 1 tickets</text>
+    <text x="1800" y="820" transform="rotate(-90 1800 820)">API wallet: place / cancel orders on the MarginVault's Core account, about one Core block</text>
+  </g>
+
+  <!-- legend + why -->
+  <g fill="#fff" stroke="#111" stroke-width="1.5" stroke-dasharray="10 8">
+    <rect x="40" y="1160" width="900" height="172" rx="6"/>
+    <rect x="960" y="1160" width="860" height="172" rx="6"/>
+  </g>
+  <g font-size="13" fill="#111">
+    <text x="56" y="1184" font-size="15">Legend, by what you trust</text>
+    <line x1="56" y1="1204" x2="110" y2="1204" stroke="#111" stroke-width="2"/><text x="120" y="1208">same-chain call, atomic</text>
+    <line x1="56" y1="1226" x2="110" y2="1226" stroke="#111" stroke-width="2" stroke-dasharray="3 5"/><text x="120" y="1230">CoreWriter action: async, no return value, fails silently</text>
+    <line x1="56" y1="1248" x2="110" y2="1248" stroke="#2f5fc4" stroke-width="2" stroke-dasharray="7 5"/><text x="120" y="1252">HyperEVM precompile read: Core state as of block construction, backed by Core consensus</text>
+    <line x1="56" y1="1270" x2="110" y2="1270" stroke="#3a8f3a" stroke-width="2" stroke-dasharray="7 5"/><text x="120" y="1274">Elysium precompile read: attested by the sequencer, auditable afterwards; cap any margin relief it grants</text>
+    <line x1="56" y1="1292" x2="110" y2="1292" stroke="#888" stroke-width="2" stroke-dasharray="10 6"/><text x="120" y="1296">bridge message: non-atomic, about 1 min one way, challenge period the other way</text>
+    <line x1="56" y1="1314" x2="110" y2="1314" stroke="#d2691e" stroke-width="2"/><text x="120" y="1318">off-chain: HTTP, EIP-712 quotes, exchange API</text>
+
+    <text x="976" y="1184" font-size="15">Why this split</text>
+    <text x="976" y="1208">Cross-margin needs one transaction that sees collateral, confirmed hedges and liabilities together.</text>
+    <text x="976" y="1230">Only HyperEVM offers that, so the MarginVault and its ParlayVault stay there. Hedge speed comes from</text>
+    <text x="976" y="1252">the API wallet, not from Elysium. Elysium keeps Season 1 tickets at 100-200 ms and, with phase 2, gets</text>
+    <text x="976" y="1274">keeper-free settlement reads and on-chain book depth for a verifiable premium floor.</text>
+    <text x="976" y="1296">Elysium contracts never own Core balances. That is Kinetiq's design, not a phase 2 gap, so the</text>
+    <text x="976" y="1318">Elysium-side cross-margin variant is possible but adds three trusted parties for no capital gain.</text>
+  </g>
+</svg>
