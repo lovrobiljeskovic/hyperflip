@@ -284,7 +284,7 @@ export default function BuildPage() {
   return (
     <div className="min-h-screen text-[13px] text-fg">
 
-      <main className="mx-auto grid max-w-[1280px] gap-8 px-4 py-8 pb-28 sm:px-6 sm:py-10 lg:grid-cols-[1fr_400px] lg:gap-0 lg:pb-10">
+      <main className="mx-auto grid max-w-[1280px] gap-8 px-4 py-8 pb-28 sm:px-6 sm:pt-10 lg:grid-cols-[1fr_400px] lg:gap-0 lg:pb-10">
         <section className="lg:border-r lg:border-line lg:pr-8">
           <div className="flex items-baseline justify-between gap-4">
             <h1 className="display text-[32px] [font-variation-settings:'wght'_700] tracking-[-0.03em]">Build a slip</h1>

@@ -32,11 +32,11 @@ export function SlipSheet({ legs, ticket, children }: { legs: BuilderLeg[]; tick
 
   return (
     <>
-      {open && <button type="button" aria-label="Collapse slip" onClick={() => setOpen(false)} className="fixed inset-0 z-20 bg-ink/60 lg:hidden" />}
-      <section aria-label="Your slip" className="sheet fixed inset-x-0 bottom-0 z-30 flex max-h-[85svh] flex-col rounded-t-[18px] border border-b-0 border-line bg-raised shadow-[0_-20px_60px_rgba(4,10,12,0.6)] lg:hidden">
+      {open && <button type="button" aria-label="Collapse slip" tabIndex={-1} onClick={() => setOpen(false)} className="fixed inset-0 z-40 bg-ink/60 lg:hidden" />}
+      <section aria-label="Your slip" className="sheet fixed inset-x-0 bottom-0 z-50 flex max-h-[85svh] flex-col rounded-t-[18px] border border-b-0 border-line bg-raised shadow-[0_-20px_60px_rgba(4,10,12,0.6)] lg:hidden">
         <div
           className="flex justify-center py-2 touch-none"
-          onPointerDown={(e) => { dragStart.current = e.clientY; }}
+          onPointerDown={(e) => { dragStart.current = e.clientY; e.currentTarget.setPointerCapture(e.pointerId); }}
           onPointerUp={(e) => {
             if (dragStart.current === null) return;
             const dy = e.clientY - dragStart.current;
@@ -46,15 +46,15 @@ export function SlipSheet({ legs, ticket, children }: { legs: BuilderLeg[]; tick
         >
           <span className="h-1 w-10 rounded-full bg-line" aria-hidden />
         </div>
-        {open ? (
-          <div className="min-h-0 overflow-y-auto px-4 pb-4">
+        {/* Stays mounted while collapsed so BridgeStep state survives. */}
+        <div hidden={!open} className="min-h-0 overflow-y-auto px-4 pb-4">
             <div className="mb-2 flex items-center justify-between">
               <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Your slip <span key={pulse} className="badge-pulse ml-1 inline-grid h-4 min-w-4 place-items-center rounded-full bg-accent px-1 text-[10px] text-on-accent">{legs.length}</span></span>
               <button type="button" onClick={() => setOpen(false)} aria-label="Collapse slip" className="text-dim">⌄</button>
             </div>
             {children}
-          </div>
-        ) : (
+        </div>
+        {!open && (
           <button type="button" aria-expanded={false} onClick={() => setOpen(true)} className="flex w-full items-center justify-between gap-3 px-4 pb-4 pt-1 text-left">
             <span className="flex flex-col">
               <span className="mono text-[14px] text-fg">{summary.primary} <span key={pulse} className="badge-pulse ml-1 inline-grid h-4 min-w-4 place-items-center rounded-full bg-accent px-1 text-[10px] text-on-accent">{legs.length}</span></span>
