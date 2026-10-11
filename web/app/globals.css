@@ -147,7 +147,8 @@ details[open] > summary::after { content: "-"; }
 @media (prefers-reduced-motion: reduce) { .sheet, .badge-pulse { animation: none; } }
 
 /* Minted slip: the ticket feeds out of the printer on open, then the stamp lands. */
-@keyframes slip-print { from { opacity: 0; transform: translateY(-40px) scale(.97); clip-path: inset(0 0 100% 0); } to { opacity: 1; transform: none; clip-path: inset(0); } }
+@keyframes slip-print { from { opacity: 0; transform: translateY(40px) scale(.97); } to { opacity: 1; transform: none; } }
+@media (min-width: 640px) { @keyframes slip-print { from { opacity: 0; transform: translateY(-40px) scale(.97); clip-path: inset(0 0 100% 0); } to { opacity: 1; transform: none; clip-path: inset(0); } } }
 @keyframes stamp-land { from { opacity: 0; transform: rotate(-9deg) scale(1.7); } 65% { opacity: .95; transform: rotate(-9deg) scale(.94); } to { opacity: .95; transform: rotate(-9deg) scale(1); } }
 @keyframes backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 .minted-dialog[open]::backdrop { animation: backdrop-in .3s ease-out both; }

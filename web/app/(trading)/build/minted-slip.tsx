@@ -64,7 +64,7 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
       onClose={onClose}
       onClick={(e) => e.target === e.currentTarget && onClose()}
       aria-labelledby="minted-title"
-      className="minted-dialog m-auto w-[min(100%-2rem,400px)] bg-transparent p-0 text-fg backdrop:bg-ink/85 backdrop:backdrop-blur-sm"
+      className="minted-dialog mt-auto mb-0 w-[min(100%,420px)] sm:m-auto sm:w-[min(100%-2rem,400px)] bg-transparent p-0 text-fg backdrop:bg-ink/85 backdrop:backdrop-blur-sm"
     >
       <div className="minted-slip text-[13px]">
         <div className="relative px-6 pt-6">
@@ -75,6 +75,7 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
           <h2 id="minted-title" className="display mt-6 text-[34px] [font-variation-settings:'wght'_700] tracking-[-0.03em]">
             {legs.length} leg combo
           </h2>
+          <p className="mono mt-2 text-[11px] text-dim">{slip.id ? `Ticket #${slip.id} · ` : ""}settles after the last leg · payout escrowed on-chain</p>
           <span aria-hidden className="minted-stamp mono">Minted</span>
         </div>
 
@@ -131,7 +132,7 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
           </button>
           {imageError && <p className="mono mt-2 text-center text-[11px] text-no">Could not render the image in this browser.</p>}
           <button type="button" onClick={onClose} className="mono mt-2 w-full py-1 text-[11px] text-dim transition-colors hover:text-fg">
-            Back to the board
+            Done
           </button>
         </div>
       </div>
