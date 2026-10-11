@@ -6,7 +6,8 @@ import { appHref } from "@/lib/site";
 import { compareKickoff, fetchMarketBoard, isPriced, marketMid, onlySports, sideLabel, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
-import { oddsLabel, pct1 } from "@/lib/format";
+import { pct1 } from "@/lib/format";
+import { formatOdds, useOddsFormat } from "@/lib/odds-format";
 import { CountUp, Kickoff } from "./live";
 
 /* One registry fetch shared by the hero slip, the stat line, and the board.
@@ -74,6 +75,7 @@ export interface BoardSnapshot {
 /* Odds cell that nudges on a mid change while the semantic YES/NO text color
    carries direction. */
 function OddsCell({ side, mid }: { side: "YES" | "NO"; mid: number | null }) {
+  const format = useOddsFormat();
   const prev = useRef<number | null>(null);
   const [flash, setFlash] = useState<{ dir: "up" | "down"; seq: number } | null>(null);
 
@@ -94,7 +96,7 @@ function OddsCell({ side, mid }: { side: "YES" | "NO"; mid: number | null }) {
       }`}
     >
       <span className={`text-[15px] ${side === "YES" ? "text-yes" : "text-no"}`}>
-        {oddsLabel(mid)}
+        {formatOdds(mid, format)}
       </span>
       <span className="ml-2 text-[10px] text-dim">
         {mid === null ? "-" : pct1(mid)}
