@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { loadSlip, restoreLegs, saveSlip, slipKey } from "./slip-storage";
+import { loadSlip, restorableBoard, restoreLegs, saveSlip, slipKey } from "./slip-storage";
 import type { Market } from "./writer";
 import type { BuilderLeg } from "./ticket";
 
@@ -37,4 +37,10 @@ test("restoreLegs drops legs whose market left the board and keeps board order o
   const legFor = (m: Market, isYes: boolean) => leg(m.vault, isYes);
   const restored = restoreLegs([{ vault: vaultB, isYes: false }, { vault: vaultA, isYes: true }, { vault: `0x${"c".repeat(40)}`, isYes: true }], [market(vaultA), market(vaultB)], legFor);
   expect(restored.map((l) => [l.vault, l.isYes])).toEqual([[vaultB, false], [vaultA, true]]);
+});
+
+test("restorableBoard drops expired markets, keeps unknown and future expiry", () => {
+  const now = 1_000;
+  const board = [{ ...market(vaultA), expiryMs: 500 }, market(vaultB), { ...market(`0x${"c".repeat(40)}`), expiryMs: 2_000 }];
+  expect(restorableBoard(board, now).map((m) => m.vault)).toEqual([vaultB, `0x${"c".repeat(40)}`]);
 });

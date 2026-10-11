@@ -180,6 +180,7 @@ export function useTicket(legs: BuilderLeg[]) {
         quote: q, sig, input, current: () => session.revision === revision,
         onQuote: (r) => { if (r.ok) signed = r.quote; setQuoteResult(r); } });
       if (session.revision === revision) setMintState(done ? "done" : "idle");
+      if (done) void refetchAllowance();
       if (done) setMinted({ legs, premium: BigInt(signed.premium), maxPayout: BigInt(signed.maxPayout), hash: done.hash, id: done.id });
     } catch (err) {
       if (session.revision !== revision) return;
@@ -206,8 +207,7 @@ export function useTicket(legs: BuilderLeg[]) {
     setMintErrorDetail("");
     try {
       await approveUsdc({ client: publicClient, write: writeContractAsync, usdc: usdcAddr, taker: address,
-        amount: standingAllowance(stakeBase, maxStake), current: () => session.revision === revision });
-      await refetchAllowance();
+        amount: standingAllowance(stakeBase, maxStake), current: () => true });
     } catch (err) {
       if (session.revision !== revision) return;
       setMintErrorMsg(shortMintError(err));
@@ -215,6 +215,7 @@ export function useTicket(legs: BuilderLeg[]) {
       setMintState("error");
     } finally {
       setApproving(false);
+      await refetchAllowance();
     }
   }
 

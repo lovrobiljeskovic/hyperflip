@@ -31,3 +31,8 @@ export function restoreLegs(saved: SavedLeg[], board: Market[], legFor: (m: Mark
   const byVault = new Map(board.map((m) => [m.vault.toLowerCase(), m]));
   return saved.flatMap((s) => { const m = byVault.get(s.vault.toLowerCase()); return m ? [legFor(m, s.isYes)] : []; });
 }
+
+/** Markets a saved leg may restore onto: unexpired. Mids may not be loaded yet, so price is not checked here. */
+export function restorableBoard<M extends { expiryMs?: number }>(markets: M[], now = Date.now()): M[] {
+  return markets.filter((m) => (m.expiryMs ?? Infinity) >= now);
+}

@@ -7,6 +7,7 @@ import { appChain, explorerAddress } from "@/lib/chain";
 import { formatUsdc, shortAddress } from "@/lib/format";
 import { useConnectAction, useDisconnectAction, useUsdc, useWalletState } from "@/lib/wallet";
 import { HyperflipLogo } from "./brand";
+import { RevokeAllowance } from "./revoke-allowance";
 
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -149,6 +150,8 @@ export function WalletButton() {
                 Switch to {appChain.name}
               </button>
             )}
+
+            <RevokeAllowance className="mt-3 flex w-full items-center justify-between gap-4 text-left" />
 
             <button
               type="button"

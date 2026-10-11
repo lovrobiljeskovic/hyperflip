@@ -64,7 +64,7 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
       onClose={onClose}
       onClick={(e) => e.target === e.currentTarget && onClose()}
       aria-labelledby="minted-title"
-      className="minted-dialog mt-auto mb-0 w-[min(100%,420px)] sm:m-auto sm:w-[min(100%-2rem,400px)] bg-transparent p-0 text-fg backdrop:bg-ink/85 backdrop:backdrop-blur-sm"
+      className="minted-dialog mx-auto mt-auto mb-0 pb-[env(safe-area-inset-bottom)] w-[min(100%,420px)] sm:m-auto sm:w-[min(100%-2rem,400px)] bg-transparent p-0 text-fg backdrop:bg-ink/85 backdrop:backdrop-blur-sm"
     >
       <div className="minted-slip text-[13px]">
         <div className="relative px-6 pt-6">

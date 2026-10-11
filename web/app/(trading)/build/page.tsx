@@ -7,7 +7,7 @@ import { useMids } from "@/lib/mids";
 import { formatOdds, useOddsFormat } from "@/lib/odds-format";
 import { OddsFormatToggle } from "@/app/odds-format-toggle";
 import { useIsDesktop } from "@/lib/media";
-import { loadSlip, restoreLegs, saveSlip } from "@/lib/slip-storage";
+import { loadSlip, restorableBoard, restoreLegs, saveSlip } from "@/lib/slip-storage";
 import { Kickoff } from "@/app/live";
 import { Ticket, type BuilderLeg } from "./ticket";
 import { useTicket } from "./use-ticket";
@@ -237,7 +237,7 @@ export default function BuildPage() {
       setMarkets(board);
       if (!restored.current) {
         restored.current = true;
-        const saved = restoreLegs(loadSlip(), board, legFor);
+        const saved = restoreLegs(loadSlip(), restorableBoard(board), legFor);
         if (saved.length) setLegs((prev) => (prev.length ? prev : saved));
       }
       // Landing-page rail hands off a market as ?leg=<vault>; pick its YES side.
@@ -345,13 +345,13 @@ export default function BuildPage() {
             <Ticket legs={legs} onRemove={removeLeg} ticket={ticket} />
           </aside>
         ) : (
-          <SlipSheet legs={legs} ticket={ticket}>
-            <Ticket legs={legs} onRemove={removeLeg} ticket={ticket} />
+          <SlipSheet legs={legs} ticket={ticket} onClear={() => setLegs([])}>
+            <Ticket legs={legs} onRemove={removeLeg} ticket={ticket} compact />
           </SlipSheet>
         )}
       </main>
 
-      <MintedSlipDialog slip={ticket.minted} onClose={ticket.dismissMinted} />
+      <MintedSlipDialog slip={ticket.minted} onClose={() => { ticket.dismissMinted(); setLegs([]); }} />
     </div>
   );
 }

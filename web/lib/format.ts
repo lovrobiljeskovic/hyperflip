@@ -99,10 +99,6 @@ export function pct1(mid: number): string {
   return `${(mid * 100).toFixed(1)}%`;
 }
 
-export function oddsLabel(mid: number | null): string {
-  return mid === null ? "—" : `${(1 / mid).toFixed(2)}x`;
-}
-
 export function quotedOverround(bd: PriceBreakdown): number {
   if (bd.actualMultiplier <= 0) return 0;
   return bd.fairMultiplier / bd.actualMultiplier - 1;

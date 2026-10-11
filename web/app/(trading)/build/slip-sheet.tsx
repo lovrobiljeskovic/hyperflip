@@ -10,7 +10,7 @@ const DRAG_PX = 40;
 /** Phone-only bottom sheet around the Ticket. Collapsed: one bar with legs, multiplier, stake and
  * to-win. Expanded: the whole ticket, scrolling inside the sheet. Collapses on backdrop tap,
  * Escape, a downward drag of the handle, and after a successful mint. */
-export function SlipSheet({ legs, ticket, children }: { legs: BuilderLeg[]; ticket: ReturnType<typeof useTicket>; children: ReactNode }) {
+export function SlipSheet({ legs, ticket, onClear, children }: { legs: BuilderLeg[]; ticket: ReturnType<typeof useTicket>; onClear: () => void; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const dragStart = useRef<number | null>(null);
   const summary = barSummary({ legs: legs.length, multiplier: ticket.multiplier, stakeUsdc: ticket.stakeBase, maxPayout: ticket.toWin });
@@ -37,6 +37,7 @@ export function SlipSheet({ legs, ticket, children }: { legs: BuilderLeg[]; tick
         <div
           className="flex justify-center py-2 touch-none"
           onPointerDown={(e) => { dragStart.current = e.clientY; e.currentTarget.setPointerCapture(e.pointerId); }}
+          onPointerCancel={() => { dragStart.current = null; }}
           onPointerUp={(e) => {
             if (dragStart.current === null) return;
             const dy = e.clientY - dragStart.current;
@@ -50,7 +51,10 @@ export function SlipSheet({ legs, ticket, children }: { legs: BuilderLeg[]; tick
         <div hidden={!open} className="min-h-0 overflow-y-auto px-4 pb-4">
             <div className="mb-2 flex items-center justify-between">
               <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Your slip <span key={pulse} className="badge-pulse ml-1 inline-grid h-4 min-w-4 place-items-center rounded-full bg-accent px-1 text-[10px] text-on-accent">{legs.length}</span></span>
-              <button type="button" onClick={() => setOpen(false)} aria-label="Collapse slip" className="text-dim">⌄</button>
+              <span className="flex items-center gap-3">
+                <button type="button" onClick={onClear} className="mono text-[11px] text-dim hover:text-fg">Clear</button>
+                <button type="button" onClick={() => setOpen(false)} aria-label="Collapse slip" className="text-dim">⌄</button>
+              </span>
             </div>
             {children}
         </div>

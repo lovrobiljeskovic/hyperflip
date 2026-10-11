@@ -158,10 +158,12 @@ export function Ticket({
   legs,
   onRemove,
   ticket,
+  compact = false,
 }: {
   legs: BuilderLeg[];
   onRemove: (vault: `0x${string}`) => void;
   ticket: ReturnType<typeof useTicket>;
+  compact?: boolean;
 }) {
   const mids = useMids();
   const printing = usePrinting();
@@ -171,6 +173,7 @@ export function Ticket({
   // Keep the last to-win dimmed while a requote is in flight, so it does not jump to a dash.
   const lastWin = useRef<bigint | null>(null);
   if (toWin !== null) lastWin.current = toWin;
+  if (legs.length < 2 || stakeBase === null || (quoteResult && !quoteResult.ok)) lastWin.current = null;
 
   // Quote-derived display values. premium/maxPayout are the signed truth;
   // `bd` re-derives the writer's pricing steps for the breakdown accordion.
@@ -205,10 +208,12 @@ export function Ticket({
     <div
       className={`rounded-card border border-line bg-panel px-5 py-6 text-[13px] shadow-[0_24px_60px_rgba(4,10,12,0.5)] sm:px-7 sm:py-8 ${printing}`}
     >
-      <div className="flex items-start justify-between">
-        <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Your slip</span>
-        <Overround size={44} margin={margin} />
-      </div>
+      {!compact && (
+        <div className="flex items-start justify-between">
+          <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Your slip</span>
+          <Overround size={44} margin={margin} />
+        </div>
+      )}
 
       {legs.length === 0 ? (
         <p className="mt-4 text-dim">Tap any price to start a slip.</p>
@@ -395,7 +400,7 @@ export function Ticket({
             <div className="mt-4 flex flex-col gap-2">
               {cta.needsApproval && (
                 <p className="rounded-[6px] border border-accent/30 bg-accent/10 px-3 py-2 text-[12px] text-fg">
-                  First ticket on this wallet: approve USDC once, then every ticket is a single wallet prompt.
+                  Approve USDC once so later tickets are a single wallet prompt.
                 </p>
               )}
               <button type="button" disabled={!cta.enabled}
