@@ -16,7 +16,7 @@ ExecStart=/usr/bin/npm start
 Restart=always
 RestartSec=5
 Environment=DEPLOYMENT_FILE=/opt/hype/registry/deployment.elysium-testnet.json
-Environment=WRITER_PORT=8788
+Environment=WRITER_PORT=8789
 Environment=PARLAY_INDEX_FILE=/opt/hype/writer/parlays-elysium.json
 Environment=QUOTE_JOURNAL_FILE=/opt/hype/writer/quotes-elysium.jsonl
 Environment=WAITLIST_FILE=/opt/hype/writer/waitlist-elysium.json

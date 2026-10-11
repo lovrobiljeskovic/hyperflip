@@ -138,7 +138,7 @@ with `Environment=` overrides (they beat the shared `.env`, which dotenv loads w
 | --- | --- | --- |
 | `DEPLOYMENT_FILE` | `/opt/hype/registry/deployment.hyperevm-testnet.json` | `/opt/hype/registry/deployment.elysium-testnet.json` |
 | `WRITER_RPC` | archive-capable 998 endpoint with quota | keyed Elysium (Conduit) URL |
-| `WRITER_PORT` | 8787 | 8788 |
+| `WRITER_PORT` | 8787 | 8789 (8788 and 8791+ belong to the v2 trial units under `/opt/hype-v2`) |
 | `PARLAY_INDEX_FILE` | `/opt/hype/writer/parlays.json` | `/opt/hype/writer/parlays-elysium.json` |
 | `PARLAY_INDEX_FROM_BLOCK` | a recent 998 block (the poker scans 100-block chunks; the v1 deploy block is millions back) | Elysium deploy block |
 | `QUOTE_JOURNAL_FILE`, `WAITLIST_FILE` | per lane | per lane |
@@ -149,7 +149,7 @@ are shared: USDC balances are per chain, so each lane's bankroll is its own, but
 per-cluster caps apply per lane (house exposure to one outcome can reach the cap on both chains).
 The keeper stays one process: it settles 998 vaults and relays to Elysium legs, reading the same
 registry. `ops/systemd/rotate.service` restarts `writer writer-elysium keeper` when the registry
-changes. Caddy: `writer.hyperflip.xyz` to 8787, `writer-elysium.hyperflip.xyz` to 8788.
+changes. Caddy: `writer.hyperflip.xyz` to 8787, `writer-elysium.hyperflip.xyz` to 8789.
 
 Web: one Vercel project per chain, same repo. `scripts/deployment.mjs` copies every manifest into
 `web/deployment/`; each project sets `DEPLOYMENT_FILE` to its copy, `APP_ORIGIN` to its app host
