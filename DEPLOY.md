@@ -126,6 +126,39 @@ the leg reports settled. The web build reads the manifest as usual; set
 for the bridge step, which moves the USDC shortfall and 0.01 HYPE of gas from 998 through
 the canonical bridge before the first mint.
 
+### Two lanes: HyperEVM (default) and Elysium side by side
+
+Both chains trade at once from one checkout and one `registry/markets.json`. Rows are written
+Elysium-first (`vault` = OutcomeLeg, `sourceVault` = 998 OutcomeVault); a writer whose manifest is
+the Core chain reads `sourceVault` as its vault (`laneRows` in `writer/src/markets.ts`), so no second
+registry exists. Chain identity is the manifest alone, so a second writer is a second systemd unit
+with `Environment=` overrides (they beat the shared `.env`, which dotenv loads without override):
+
+| var | `writer` (998, default) | `writer-elysium` |
+| --- | --- | --- |
+| `DEPLOYMENT_FILE` | `/opt/hype/registry/deployment.hyperevm-testnet.json` | `/opt/hype/registry/deployment.elysium-testnet.json` |
+| `WRITER_RPC` | archive-capable 998 endpoint with quota | keyed Elysium (Conduit) URL |
+| `WRITER_PORT` | 8787 | 8788 |
+| `PARLAY_INDEX_FILE` | `/opt/hype/writer/parlays.json` | `/opt/hype/writer/parlays-elysium.json` |
+| `PARLAY_INDEX_FROM_BLOCK` | a recent 998 block (the poker scans 100-block chunks; the v1 deploy block is millions back) | Elysium deploy block |
+| `QUOTE_JOURNAL_FILE`, `WAITLIST_FILE` | per lane | per lane |
+
+Unset `PARLAY_VAULT_ADDRESS`, `PARLAY_DEPLOY_BLOCK` and `EVM_CHAIN_ID` in `.env`; when set they must
+agree with the manifest and can only agree with one lane. `WRITER_ADDRESS` and the signer and poker keys
+are shared: USDC balances are per chain, so each lane's bankroll is its own, but the per-market and
+per-cluster caps apply per lane (house exposure to one outcome can reach the cap on both chains).
+The keeper stays one process: it settles 998 vaults and relays to Elysium legs, reading the same
+registry. `ops/systemd/rotate.service` restarts `writer writer-elysium keeper` when the registry
+changes. Caddy: `writer.hyperflip.xyz` to 8787, `writer-elysium.hyperflip.xyz` to 8788.
+
+Web: one Vercel project per chain, same repo. `scripts/deployment.mjs` copies every manifest into
+`web/deployment/`; each project sets `DEPLOYMENT_FILE` to its copy, `APP_ORIGIN` to its app host
+(default `https://app.hyperflip.xyz`), `NEXT_PUBLIC_WRITER_URL` to its writer host, and
+`NEXT_PUBLIC_ALT_LANE_URL` to the sibling app for the header link. The 998 project runs
+`NEXT_PUBLIC_POSITIONS_SOURCE=subgraph` against the Goldsky subgraph (998 only); the Elysium project
+keeps `legacy`, `ELYSIUM_RPC` and `NEXT_PUBLIC_CORE_RPC_URL`. `web/public/position-markets.json` is
+keyed by the 998 vault for the same reason.
+
 ## Persistent state
 
 Preserve these files across deployments, backups, and host replacement:

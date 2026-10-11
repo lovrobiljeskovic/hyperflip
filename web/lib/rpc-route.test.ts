@@ -1,3 +1,4 @@
+import { appChain } from "./chain";
 import { afterEach, expect, test, vi } from "vitest";
 import { POST } from "../app/api/rpc/route";
 
@@ -39,6 +40,7 @@ test("proxy falls back to the public app-chain endpoint when no key is configure
   const fetch = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
   vi.stubGlobal("fetch", fetch);
   await post(call("eth_chainId"));
-  expect(fetch.mock.calls[0][0]).toMatch(/^https:\/\//);
+  // The app chain's own endpoint (fixture URL under the repo gate), never a keyed one.
+  expect(fetch.mock.calls[0][0]).toBe(appChain.rpcUrls.default.http[0]);
   expect(fetch.mock.calls[0][0]).not.toContain("private");
 });

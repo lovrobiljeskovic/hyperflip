@@ -4,14 +4,14 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isAddress, type Address } from "viem";
-import { parseMarkets, type MarketInfo } from "./markets.js";
+import { laneRows, parseMarkets, type MarketInfo } from "./markets.js";
 import { BPS, parseDecimalToUnits } from "./pure.js";
 import { googleSheetsConfig, type GoogleSheetsConfig } from "./googleSheets.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 loadDotenv({ path: path.resolve(here, "../../.env") });
 
-export { parseMarkets } from "./markets.js";
+export { laneRows, parseMarkets } from "./markets.js";
 export type { MarketInfo } from "./markets.js";
 
 export interface WriterConfig extends Deployment {
@@ -83,7 +83,7 @@ function requireAddress(name: string): Address {
 }
 
 export const DEFAULT_CORS_ORIGINS =
-  "https://hyperflip.xyz,https://www.hyperflip.xyz,https://app.hyperflip.xyz,https://overround.xyz,https://overround-wine.vercel.app";
+  "https://hyperflip.xyz,https://www.hyperflip.xyz,https://app.hyperflip.xyz,https://elysium.hyperflip.xyz,https://overround.xyz,https://overround-wine.vercel.app";
 
 export function parseCorsOrigins(raw: string): string[] {
   return raw.split(",").map((s) => s.trim()).filter(Boolean);
@@ -107,7 +107,10 @@ export function loadConfig(): WriterConfig {
   if (process.env.PRICING_MODE && process.env.PRICING_MODE !== "independent") {
     throw new Error("PRICING_MODE must be independent or unset for sports pricing");
   }
-  const registry = JSON.parse(readFileSync(path.resolve(here, "../..", requireEnv("MARKETS_FILE")), "utf8"));
+  const deployment = loadDeployment();
+  const raw = JSON.parse(readFileSync(path.resolve(here, "../..", requireEnv("MARKETS_FILE")), "utf8"));
+  const lane = (rows: unknown) => Array.isArray(rows) ? laneRows(rows, deployment.chainId, deployment.coreChainId) : rows;
+  const registry = Array.isArray(raw) ? lane(raw) : { ...raw, markets: lane(raw.markets), archived: lane(raw.archived ?? []) };
   const markets = parseMarkets(JSON.stringify(registry));
   // Keep historical settlement metadata on disk; expose only sports to the app.
   const registryJson = JSON.stringify(Array.isArray(registry) ? registry : {
@@ -124,7 +127,7 @@ export function loadConfig(): WriterConfig {
   const pokerIntervalMs = Number(process.env.POKER_INTERVAL_MS ?? 15_000);
   if (!Number.isFinite(pokerIntervalMs) || pokerIntervalMs <= 0) throw new Error("POKER_INTERVAL_MS must be positive");
   return {
-    ...loadDeployment(),
+    ...deployment,
     markets,
     registryJson,
     infoApiUrl: process.env.INFO_API_URL ?? "https://api.hyperliquid-testnet.xyz/info",

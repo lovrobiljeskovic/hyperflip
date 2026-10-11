@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 // The frontend uploads independently, so include its build-time manifest loader.
 const root = resolve(import.meta.dirname, "..");
 const check = process.argv.includes("--check");
-for (const name of ["deployment.mts", "deployment.testnet.json"]) {
+for (const name of ["deployment.mts", "deployment.testnet.json", "deployment.hyperevm-testnet.json", "deployment.elysium-testnet.json"]) {
   const source = readFileSync(resolve(root, "registry", name), "utf8");
   const destination = resolve(root, "web/deployment", name);
   if (check) {

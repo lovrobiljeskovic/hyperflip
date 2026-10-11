@@ -43,6 +43,16 @@ function optionalString(market: Record<string, unknown>, key: string): string | 
   return v;
 }
 
+/**
+ * Registry rows are written Elysium-first: `vault` is the OutcomeLeg the Elysium ParlayVault reads,
+ * `sourceVault` the 998 OutcomeVault behind it. A writer on the Core chain reads the 998 vault instead,
+ * so both lanes share one registry file.
+ */
+export function laneRows<T extends { vault: string; sourceVault?: string | null }>(rows: T[], chainId: number, coreChainId: number): T[] {
+  if (chainId !== coreChainId) return rows;
+  return rows.map(({ sourceVault, ...row }) => (sourceVault ? { ...row, vault: sourceVault } : row) as T);
+}
+
 export function parseMarkets(raw: string): Map<string, MarketInfo> {
   const parsed = JSON.parse(raw);
   const list = Array.isArray(parsed) ? parsed : parsed?.markets;

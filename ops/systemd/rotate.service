@@ -12,6 +12,6 @@ Environment=ROTATE_MODE=sports
 # Core failure must not block rotation. Its registry write also arms the restart below.
 ExecStart=-/usr/bin/node tools/house-markets.mjs sync
 ExecStart=/usr/bin/node tools/rotate-markets.mjs
-# Restart writer + keeper only when the registry actually changed; an hourly
+# Restart both writer lanes + keeper only when the registry actually changed; an hourly
 # no-op run must not kill in-flight quotes.
-ExecStartPost=/bin/sh -c '[ /opt/hype/registry/markets.json -nt /run/rotate.stamp ] && systemctl restart writer keeper; touch /run/rotate.stamp'
+ExecStartPost=/bin/sh -c '[ /opt/hype/registry/markets.json -nt /run/rotate.stamp ] && systemctl restart writer writer-elysium keeper; touch /run/rotate.stamp'

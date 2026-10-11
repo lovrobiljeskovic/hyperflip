@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseMarkets, parseCorsOrigins, defaultPerCodeReservedCap, syncedPerCodeReservedCap, loadConfig } from "../src/config.js";
+import { parseMarkets, laneRows, parseCorsOrigins, defaultPerCodeReservedCap, syncedPerCodeReservedCap, loadConfig } from "../src/config.js";
 
 const VAULT = "0x1111111111111111111111111111111111111111";
 const MARKET = { vault: VAULT, coinYes: "#1", coinNo: "#2", underlying: "q844", cluster: "WC2026", title: "Draw", category: "sports", question: 844, startMs: 1, expiryMs: 2, sideYes: "Draw", sideNo: "No draw", group: "q844", groupTitle: "Saudi Arabia vs Uruguay" };
@@ -56,6 +56,15 @@ test("parseMarkets accepts sports metadata and rejects malformed active markets"
   assert.throws(() => parseMarkets("{}"), /JSON array/);
 });
 
+test("laneRows: a writer on the Core chain reads the 998 vault behind an Elysium row", () => {
+  const leg = "0x7d3f116e525ceaf7bfae310c091b8fcf82ac1612";
+  const rows = [{ ...MARKET, vault: leg, sourceVault: VAULT }, MARKET];
+  // Elysium writer: rows as written (vault = leg).
+  assert.deepEqual(laneRows(rows, 99801, 998), rows);
+  // 998 writer: vault = sourceVault, no sourceVault left; rows without one pass through.
+  assert.deepEqual(laneRows(rows, 998, 998), [MARKET, MARKET]);
+});
+
 test("writer boots with only sports configuration and filters historical public metadata", () => {
   const root = mkdtempSync(join(tmpdir(), "hype-config-sports-"));
   const marketsFile = join(root, "markets.json");
@@ -81,6 +90,14 @@ test("writer boots with only sports configuration and filters historical public 
     assert.equal(config.markets.get(VAULT)?.question, 844);
     assert.equal(config.quoteJournalFile, values.QUOTE_JOURNAL_FILE);
     assert.deepEqual(JSON.parse(config.registryJson).archived, [MARKET]);
+    // Shared registry, Elysium-shaped row: the 998 writer keys and serves it by the 998 vault.
+    const leg = "0x7d3f116e525ceaf7bfae310c091b8fcf82ac1612";
+    writeFileSync(marketsFile, JSON.stringify({ network: "testnet", markets: [{ ...MARKET, vault: leg, sourceVault: VAULT }], archived: [] }));
+    const lane998 = loadConfig();
+    assert.equal(lane998.markets.get(VAULT)?.title, "Draw");
+    assert.equal(lane998.markets.has(leg), false);
+    assert.deepEqual(JSON.parse(lane998.registryJson).markets, [MARKET]);
+    writeFileSync(marketsFile, JSON.stringify({ network: "testnet", markets: [MARKET], archived: [MARKET, legacy] }));
     process.env.PRICING_MODE = "independent";
     assert.equal(loadConfig().markets.size, 1);
     process.env.PRICING_MODE = "unsupported";

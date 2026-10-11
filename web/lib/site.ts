@@ -21,3 +21,8 @@ export function appCanonical(path = "/"): string {
 export function siteHref(path: string): string {
   return `${process.env.NEXT_PUBLIC_SITE_ORIGIN || ""}${path}`;
 }
+
+/** The other chain's app, when this deployment has a sibling (998 default, Elysium optional). */
+export const altLane = process.env.NEXT_PUBLIC_ALT_LANE_URL
+  ? { href: process.env.NEXT_PUBLIC_ALT_LANE_URL, label: process.env.NEXT_PUBLIC_CHAIN_ID === "998" ? "Elysium" : "HyperEVM" }
+  : undefined;

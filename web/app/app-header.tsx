@@ -1,6 +1,6 @@
 "use client";
 
-import { appHref, websiteHref } from "@/lib/site";
+import { altLane, appHref, websiteHref } from "@/lib/site";
 import { SiteHeader } from "./site-header";
 import { WalletButton } from "./wallet-button";
 
@@ -12,6 +12,7 @@ export function AppHeader() {
       { href: appHref("/positions"), label: "Positions", activePaths: ["/positions"] },
       { href: appHref("/pricing"), label: "Pricing", activePaths: ["/pricing"] },
       { href: websiteHref, label: "Website" },
+      ...(altLane ? [{ href: altLane.href, label: `${altLane.label} ↗` }] : []),
     ]}
     action={<WalletButton />}
   />;
