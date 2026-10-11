@@ -16,7 +16,7 @@ case $LANE in
   *) echo "unknown lane $LANE"; exit 1 ;;
 esac
 export VERCEL_ORG_ID=team_VCeCEs2us2sNaddFZgTQydrR
-VERCEL_PROJECT_ID=$(vercel project inspect "$PROJECT" --scope $SCOPE 2>/dev/null | awk '$1 == "ID" { print $2 }')
+VERCEL_PROJECT_ID=$(vercel project inspect "$PROJECT" --scope $SCOPE 2>&1 | awk '$1 == "ID" { print $2 }')
 export VERCEL_PROJECT_ID
 [ -n "$VERCEL_PROJECT_ID" ] || { echo "project $PROJECT not found; create it: vercel project add $PROJECT --scope $SCOPE"; exit 1; }
 echo "== $LANE -> $PROJECT ($VERCEL_PROJECT_ID)"
