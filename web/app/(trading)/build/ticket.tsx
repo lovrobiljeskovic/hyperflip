@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useTicket } from "./use-ticket";
+import { useRef } from "react";
+import type { useTicket } from "./use-ticket";
 import type { BuilderLeg } from "@/lib/ticket";
 import { formatUnits } from "viem";
 import {
@@ -13,8 +14,6 @@ import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
 import {
   formatUsdc,
-  impliedPct,
-  multiplier,
   edgeSteps,
   multiplierNum,
   priceBreakdown,
@@ -25,20 +24,13 @@ import {
 import { appChain, tradeUrl } from "@/lib/chain";
 import { BridgeStep } from "./bridge-step";
 import { MintedSlipDialog } from "./minted-slip";
+import { STAKE_CHIPS, chipState } from "@/lib/slip-summary";
+import { formatOdds, useOddsFormat } from "@/lib/odds-format";
 import { Overround } from "@/app/overround-motif";
 import { CountUp } from "@/app/live";
 
 export type { BuilderLeg } from "@/lib/ticket";
 const legLabel = (leg: BuilderLeg): string => leg.label ?? (leg.isYes ? "YES" : "NO");
-
-// Percent-of-cap stake chips - resolved against the writer's maxStake, or
-// treated as plain USDC amounts when /limits is unreachable.
-const STAKE_PRESETS = [25, 50, 100];
-
-function midPct(mids: Record<string, string>, coin: string): string {
-  const n = marketMid(mids, {}, coin);
-  return n === null ? "-" : impliedPct(n);
-}
 
 function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: BuilderLeg[] = []): string {
   if (res.status === 400 && res.error === "dominated") {
@@ -155,9 +147,9 @@ function HouseLimits({ limits, maxStake }: { limits: WriterLimits | null; maxSta
   );
 }
 
-/** Two-step pay buttons: live accent, done in the YES green, else muted. */
+/** The single pay button: live accent, else muted. */
 function payButtonClass(enabled: boolean, done: boolean): string {
-  const base = "mono rounded-card py-[11px] text-center text-[12px] uppercase tracking-[0.1em] transition-transform motion-reduce:transition-none";
+  const base = "mono rounded-card py-[14px] text-center text-[14px] font-semibold normal-case tracking-normal transition-transform motion-reduce:transition-none";
   if (enabled) return `${base} bg-accent text-on-accent active:scale-[0.98] hover:opacity-90`;
   if (done) return `${base} bg-yes/20 text-yes cursor-default`;
   return `${base} bg-raised text-dim cursor-not-allowed`;
@@ -166,16 +158,20 @@ function payButtonClass(enabled: boolean, done: boolean): string {
 export function Ticket({
   legs,
   onRemove,
-  display = false,
+  ticket,
 }: {
   legs: BuilderLeg[];
   onRemove: (vault: `0x${string}`) => void;
-  display?: boolean;
+  ticket: ReturnType<typeof useTicket>;
 }) {
   const mids = useMids();
   const printing = usePrinting();
+  const format = useOddsFormat();
   const { stake, setStake, quoteResult, ttlLeft, ttlSeconds, mintState, mintErrorMsg, mintErrorDetail,
-    maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain, address, minted, dismissMinted } = useTicket(legs, display);
+    maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain, address, minted, dismissMinted, stakeBase, toWin } = ticket;
+  // Keep the last to-win dimmed while a requote is in flight, so it does not jump to a dash.
+  const lastWin = useRef<bigint | null>(null);
+  if (toWin !== null) lastWin.current = toWin;
 
   // Quote-derived display values. premium/maxPayout are the signed truth;
   // `bd` re-derives the writer's pricing steps for the breakdown accordion.
@@ -206,21 +202,6 @@ export function Ticket({
         : usdcBalance < maxStake
           ? usdcBalance
           : maxStake;
-  // Presets scale off the cap so no chip is a button that always 400s.
-  const presets = STAKE_PRESETS.map((f) =>
-    maxStake === null ? BigInt(f) * 10n ** BigInt(USDC_DECIMALS) : (maxStake * BigInt(f)) / 100n,
-  );
-
-  // Display-mode sample math: fair combined odds off live mids, no house edge.
-  // Every leg must carry a real probability - treating an unpriced leg as
-  // certain would overstate the multiplier, so the figure goes unavailable
-  // instead.
-  const sampleProbs = legs.map((l) => marketMid(mids, {}, l.coin));
-  const combinedImplied =
-    legs.length && sampleProbs.every((p) => p !== null) ? (sampleProbs as number[]).reduce((acc, p) => acc * p, 1) : 0;
-  const sampleMultiplier = combinedImplied > 0 ? 1 / combinedImplied : null;
-  const samplePayout = sampleMultiplier === null ? null : 100 * sampleMultiplier;
-
   return (
     <div
       className={`rounded-card border border-line bg-panel px-5 py-6 text-[13px] shadow-[0_24px_60px_rgba(4,10,12,0.5)] sm:px-7 sm:py-8 ${printing}`}
@@ -231,7 +212,7 @@ export function Ticket({
       </div>
 
       {legs.length === 0 ? (
-        <p className="mt-4 text-dim">No legs yet - pick a side from the market list.</p>
+        <p className="mt-4 text-dim">Tap any price to start a slip.</p>
       ) : (
         <ul className="mt-4 flex flex-col gap-px bg-line">
           {legs.map((leg) => (
@@ -251,114 +232,81 @@ export function Ticket({
               >
                 {leg.title}
               </a>
-              <span className="mono text-dim">{midPct(mids, leg.coin)}</span>
-              {!display && (
-                <button
-                  type="button"
-                  onClick={() => onRemove(leg.vault)}
-                  aria-label={`Remove ${leg.title}`}
-                  className="text-dim transition-colors hover:text-no"
-                >
-                  ×
-                </button>
-              )}
+              <span className="mono text-dim">{formatOdds(marketMid(mids, {}, leg.coin), format)}</span>
+              <button
+                type="button"
+                onClick={() => onRemove(leg.vault)}
+                aria-label={`Remove ${leg.title}`}
+                className="text-dim transition-colors hover:text-no"
+              >
+                ×
+              </button>
             </li>
           ))}
         </ul>
       )}
 
-      {display ? (
-        <div className="mono mt-5 flex flex-col gap-2 border-t border-line pt-4 text-[12px]">
-          <div className="flex justify-between">
-            <span className="text-dim">Stake</span>
-            <span>100.00 USDC</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-dim">Combined implied</span>
-            <span>{combinedImplied > 0 ? impliedPct(combinedImplied) : "-"}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-dim">Fair</span>
-            <span className="text-dim">{sampleMultiplier === null ? "-" : mult(sampleMultiplier)}</span>
-          </div>
-          <div className="mt-3 flex items-end justify-between border-t border-line pt-4">
-            <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Max payout</span>
-            {samplePayout === null ? (
-              <span className="mono text-[30px] leading-none text-accent">-</span>
-            ) : (
-              <CountUp value={samplePayout} format={(x) => x.toFixed(2)} className="mono text-[30px] leading-none text-accent" />
-            )}
-          </div>
-        </div>
-      ) : (
-        <>
+      <>
           <div className="mt-4">
-            <div className="flex items-baseline justify-between">
-              <label htmlFor="stake" className="mono text-[10px] uppercase tracking-[0.16em] text-dim">
-                Stake (USDC)
-              </label>
-              <span className="mono text-[11px] text-dim">
-                Balance {usdcBalance === undefined ? "-" : formatUsdc(usdcBalance)}
-              </span>
+            <div className="grid grid-cols-2 items-end gap-3">
+              <div>
+                <label htmlFor="stake" className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Stake</label>
+                <div className="mt-1 flex items-baseline gap-1 rounded-card border border-line bg-ink px-3 py-2 focus-within:border-accent">
+                  <span className="mono text-dim">$</span>
+                  <input id="stake" inputMode="decimal" autoComplete="off" value={stake} onChange={(e) => setStake(e.target.value)} placeholder="0.00"
+                    className="mono w-full bg-transparent text-[20px] leading-none text-fg outline-none placeholder:text-dim" />
+                </div>
+              </div>
+              <div className="text-right">
+                <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">To win</span>
+                <div className={`mono mt-1 text-[22px] leading-none ${toWin === null ? "text-dim" : "text-accent"}`}>
+                  {toWin === null ? (lastWin.current === null ? "—" : `$${formatUsdc(lastWin.current)}`) : <CountUp value={Number(formatUnits(toWin, USDC_DECIMALS))} format={(x) => `$${usdc2(x)}`} />}
+                </div>
+              </div>
             </div>
-            <input
-              id="stake"
-              inputMode="decimal"
-              autoComplete="off"
-              value={stake}
-              onChange={(e) => setStake(e.target.value)}
-              placeholder="0.00"
-              className="mt-1 w-full rounded-card border border-line bg-panel px-3 py-2 mono text-sm text-fg placeholder:text-dim focus:border-accent"
-            />
-            <div className="mt-2 flex gap-2">
-              {presets.map((v, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => setStake(formatUnits(v, USDC_DECIMALS))}
-                  className="flex-1 rounded-[4px] border border-line py-1 mono text-[11px] text-dim transition-colors hover:border-dim hover:text-fg"
-                >
-                  {formatUsdc(v)}
-                </button>
-              ))}
-              <button
-                type="button"
-                disabled={maxAllowed === null || maxAllowed === 0n}
-                onClick={() => maxAllowed !== null && setStake(formatUnits(maxAllowed, USDC_DECIMALS))}
-                className="flex-1 rounded-[4px] border border-line py-1 mono text-[11px] text-dim transition-colors hover:border-dim hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
-              >
+            <div className="mt-2 flex gap-1.5">
+              {STAKE_CHIPS.map((v) => {
+                const s = chipState(v, maxStake, usdcBalance);
+                return (
+                  <button key={v} type="button" disabled={!s.enabled} title={s.title} aria-pressed={stake === String(v)} onClick={() => setStake(String(v))}
+                    className="mono flex-1 rounded-[6px] border border-line py-1.5 text-[11px] text-dim transition-colors hover:border-dim hover:text-fg aria-pressed:border-accent aria-pressed:text-accent disabled:cursor-not-allowed disabled:opacity-40">
+                    ${v}
+                  </button>
+                );
+              })}
+              <button type="button" disabled={maxAllowed === null || maxAllowed === 0n} onClick={() => maxAllowed !== null && setStake(formatUnits(maxAllowed, USDC_DECIMALS))}
+                className="mono flex-1 rounded-[6px] border border-line py-1.5 text-[11px] text-dim transition-colors hover:border-dim hover:text-fg disabled:cursor-not-allowed disabled:opacity-40">
                 Max
               </button>
             </div>
-            {maxStake !== null && <HouseLimits limits={limits} maxStake={maxStake} />}
+            <div className="mono mt-2 flex items-center justify-between text-[11px] text-dim">
+              <span>{quoteResult?.ok ? `Ticket ${mult(multiplierNum(premium, maxPayout))} · ${legs.length} legs` : `Balance $${usdcBalance === undefined ? "–" : formatUsdc(usdcBalance)}`}</span>
+              {quoteResult?.ok && <span>Quote locked {ttlLeft}s</span>}
+            </div>
           </div>
 
           {quoteResult?.ok && (
-            <div className="print-line mono mt-4 flex flex-col gap-2 border-t border-line pt-4 text-[12px]">
-              <DetailRow label="Stake">{formatUsdc(premium)} USDC</DetailRow>
-              <DetailRow label="Combined implied">{bd ? pct(1 / bd.fairMultiplier) : "-"}</DetailRow>
-              <DetailRow label="Fair" className="text-dim">
-                {bd ? mult(bd.fairMultiplier) : "-"}
-              </DetailRow>
-              <DetailRow label="Quoted" className="text-[20px] leading-none text-accent">
-                {premium === 0n ? multiplier(premium, maxPayout) : <CountUp value={multiplierNum(premium, maxPayout)} format={mult} />}
-              </DetailRow>
-              <div className="mt-3 flex items-end justify-between border-t border-line pt-4">
-                <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Max payout</span>
-                <CountUp value={Number(formatUnits(maxPayout, USDC_DECIMALS))} format={usdc2} className="mono text-[30px] leading-none text-accent" />
+            <div className="mt-4">
+              <div className="h-[3px] overflow-hidden rounded-full bg-raised">
+                <div
+                  className="h-full origin-left bg-accent transition-transform duration-1000 ease-linear motion-reduce:transition-none"
+                  style={{ transform: `scaleX(${Math.max(0, Math.min(1, ttlLeft / ttlSeconds))})` }}
+                />
               </div>
+            </div>
+          )}
 
-              {/* open by default: the multiplier's derivation is the point of the
-                  panel, not a footnote - collapsing it hides the one number a
-                  taker most needs to trust. */}
-              <details open className="mt-2 rounded-[4px] border border-line bg-raised/40 px-3 py-2">
-                <summary className="flex items-center justify-between text-[11px] text-dim">Quote details</summary>
+          {quoteResult?.ok && (
+            <div className="print-line mono mt-4 flex flex-col gap-2 text-[12px]">
+              <details className="rounded-[4px] border border-line bg-raised/40 px-3 py-2">
+                <summary className="flex cursor-pointer items-center justify-between text-[11px] text-dim">Quote details</summary>
                 <div className="mt-3 flex flex-col gap-3 text-[11px]">
                   {bd && bd.legProbs.length === legs.length ? (
                     <MathBreakdown legs={legs} bd={bd} />
                   ) : (
                     <p className="text-dim">Breakdown unavailable for this quote.</p>
                   )}
+                  {maxStake !== null && <HouseLimits limits={limits} maxStake={maxStake} />}
 
                   <div className="flex flex-col gap-1.5 border-t border-line pt-3">
                     <DetailRow label="Profit if won" className="text-yes">
@@ -371,18 +319,6 @@ export function Ticket({
                   </div>
                 </div>
               </details>
-            </div>
-          )}
-
-          {quoteResult?.ok && (
-            <div className="mt-5">
-              <div className="h-[3px] overflow-hidden rounded-full bg-raised">
-                <div
-                  className="h-full origin-left bg-accent transition-transform duration-1000 ease-linear motion-reduce:transition-none"
-                  style={{ transform: `scaleX(${Math.max(0, Math.min(1, ttlLeft / ttlSeconds))})` }}
-                />
-              </div>
-              <p className="mono mt-2 text-[11px] text-dim">Quote reprices in {ttlLeft}s</p>
             </div>
           )}
 
@@ -412,26 +348,9 @@ export function Ticket({
               )}
             </div>
           )}
-        </>
-      )}
+      </>
 
-      {display && (
-        <div className="mt-5">
-          <div className="h-[3px] overflow-hidden rounded-full bg-raised">
-            <div className="ttl-bar h-full bg-accent" />
-          </div>
-          <p className="mono mt-2 text-[11px] text-dim">Quote reprices in 30s</p>
-        </div>
-      )}
-
-      {display ? (
-        <div
-          className="mono mt-4 rounded-card bg-accent py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-on-accent"
-          aria-hidden
-        >
-          Mint slip - 100.00 USDC
-        </div>
-      ) : cta ? (
+      {cta ? (
         <>
           {cta.kind === "connect" && (
             <button
@@ -475,23 +394,15 @@ export function Ticket({
           )}
           {cta.kind === "pay" && (
             <div className="mt-4 flex flex-col gap-2">
-              <button
-                type="button"
-                disabled={!cta.approve.enabled}
-                onClick={() => void approve()}
-                className={payButtonClass(cta.approve.enabled, cta.approve.done)}
-              >
-                <span className="block text-[9px] tracking-[0.16em] opacity-70">Step 1</span>
-                {cta.approve.label}
-              </button>
-              <button
-                type="button"
-                disabled={!cta.mint.enabled}
-                onClick={() => quoteResult?.ok && mintQuoted(quoteResult.quote, quoteResult.sig)}
-                className={payButtonClass(cta.mint.enabled, false)}
-              >
-                <span className="block text-[9px] tracking-[0.16em] opacity-70">Step 2</span>
-                {cta.mint.label}
+              {cta.needsApproval && (
+                <p className="rounded-[6px] border border-accent/30 bg-accent/10 px-3 py-2 text-[12px] text-fg">
+                  First ticket on this wallet: approve USDC once, then every ticket is a single wallet prompt.
+                </p>
+              )}
+              <button type="button" disabled={!cta.enabled}
+                onClick={() => cta.step === "approve" ? void approve() : quoteResult?.ok && mintQuoted(quoteResult.quote, quoteResult.sig)}
+                className={payButtonClass(cta.enabled, false)}>
+                {cta.label}
               </button>
             </div>
           )}
@@ -518,7 +429,7 @@ export function Ticket({
           )}
         </>
       ) : null}
-      {!display && <MintedSlipDialog slip={minted} onClose={dismissMinted} />}
+      <MintedSlipDialog slip={minted} onClose={dismissMinted} />
     </div>
   );
 }
