@@ -1,6 +1,6 @@
 import { appChain } from "./chain";
 import { beforeEach, expect, test, vi } from "vitest";
-import { mintTicket, TicketSession } from "./ticket";
+import { ALLOWANCE_MULTIPLE, mintTicket, revokeUsdc, standingAllowance, TicketSession } from "./ticket";
 import { requestQuote, type QuoteResult } from "./writer";
 import { encodeAbiParameters, encodeEventTopics, type TransactionReceipt } from "viem";
 import { PARLAY_VAULT, parlayMintedEvent } from "./contracts";
@@ -93,4 +93,17 @@ test("expiring quotes reprice without approval; changed premiums never spend", a
   changed.fresh.quote.premium = "2000000";
   await expect(mintTicket(changed.args)).rejects.toThrow("changed ticket terms");
   expect(changed.calls).not.toContain("mint");
+});
+
+test("standing allowance is 25x the house max stake, never below the premium, exact when limits are unknown", () => {
+  expect(standingAllowance(1_000_000n, 8_000_000n)).toBe(8_000_000n * ALLOWANCE_MULTIPLE);
+  expect(standingAllowance(300_000_000n, 8_000_000n)).toBe(300_000_000n);
+  expect(standingAllowance(1_000_000n, null)).toBe(1_000_000n);
+  expect(standingAllowance(1_000_000n, 0n)).toBe(1_000_000n);
+});
+
+test("revokeUsdc approves zero for the vault", async () => {
+  const { client, write } = setup();
+  await revokeUsdc({ client: client as never, write: write as never, usdc: vault, taker, current: () => true });
+  expect(write.mock.calls[0][0]).toMatchObject({ functionName: "approve", args: [PARLAY_VAULT, 0n] });
 });

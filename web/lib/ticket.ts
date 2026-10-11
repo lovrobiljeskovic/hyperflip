@@ -28,6 +28,19 @@ export function tryParseStake(v: string): bigint | null {
   }
 }
 
+/** One approval per wallet, not one per ticket: the first mint approves a standing allowance
+ * so later mints are a single wallet prompt. Capped at a multiple of the house max stake;
+ * mainnet can lower the multiple. Exact premium when /limits is unavailable. */
+export const ALLOWANCE_MULTIPLE = 25n;
+export function standingAllowance(premium: bigint, maxStake: bigint | null): bigint {
+  const standing = maxStake === null ? 0n : maxStake * ALLOWANCE_MULTIPLE;
+  return standing > premium ? standing : premium;
+}
+
+export async function revokeUsdc(args: Omit<Parameters<typeof approveUsdc>[0], "amount">): Promise<void> {
+  await approveUsdc({ ...args, amount: 0n });
+}
+
 export class TicketSession {
   private key = "";
   private request = 0;
@@ -54,7 +67,7 @@ export class TicketSession {
   }
 }
 
-/** Step one of the two-tx flow: exact-amount USDC approval for the vault. */
+/** USDC approval for the vault. Callers pass `standingAllowance(...)` for the first ticket and `0n` to revoke; `mintTicket` passes the exact premium as a fallback. */
 export async function approveUsdc({ client, write, usdc, taker, amount, current }: {
   client: PublicClient;
   write: UseWriteContractReturnType["writeContractAsync"];
