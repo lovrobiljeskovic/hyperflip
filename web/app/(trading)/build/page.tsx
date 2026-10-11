@@ -94,8 +94,8 @@ function BoardRow({
         </p>
       </div>
       <div className="mt-1.5 flex items-end justify-between gap-3">
-        <p className="mono text-[10px] uppercase tracking-[0.14em] text-dim">{market.cluster}</p>
-        <Kickoff market={market} />
+        <p className="mono min-w-0 truncate text-[10px] uppercase tracking-[0.14em] text-dim">{market.cluster}</p>
+        <span className="shrink-0"><Kickoff market={market} /></span>
       </div>
       <div className="mt-auto grid gap-2 pt-3" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>{cells}</div>
     </div>
@@ -151,9 +151,7 @@ function GroupRow({
             <p className="truncate text-[13px]">
               <MarketLink coin={head.coinYes}>{title}</MarketLink>
             </p>
-            <p className="mono mt-0.5 text-[10px] uppercase tracking-[0.14em] text-dim">
-              {[head.cluster, `${members.length} outcomes`].filter(Boolean).join(" · ")}
-            </p>
+            <p className="mono mt-0.5 truncate text-[10px] uppercase tracking-[0.14em] text-dim">{head.cluster}</p>
           </div>
         </div>
         <span className="shrink-0">

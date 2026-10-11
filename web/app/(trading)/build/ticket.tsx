@@ -206,7 +206,7 @@ export function Ticket({
           : maxStake;
   return (
     <div
-      className={`rounded-card border border-line bg-panel px-5 py-6 text-[13px] shadow-[0_24px_60px_rgba(4,10,12,0.5)] sm:px-7 sm:py-8 ${printing}`}
+      className={`text-[13px] ${compact ? "" : "rounded-card border border-line bg-panel px-5 py-6 shadow-[0_24px_60px_rgba(4,10,12,0.5)] sm:px-7 sm:py-8"} ${printing}`}
     >
       {!compact && (
         <div className="flex items-start justify-between">
@@ -216,9 +216,9 @@ export function Ticket({
       )}
 
       {legs.length === 0 ? (
-        <p className="mt-4 text-dim">Tap any price to start a slip.</p>
+        <p className={`${compact ? "" : "mt-4"} text-dim`}>Tap any price to start a slip.</p>
       ) : (
-        <ul className="mt-4 flex flex-col gap-px bg-line">
+        <ul className={`${compact ? "" : "mt-4"} flex flex-col gap-px overflow-hidden rounded-[8px] border border-line bg-line`}>
           {legs.map((leg) => (
             <li key={leg.vault} className="print-line flex items-center gap-3 bg-ink px-4 py-[13px]">
               <span
@@ -241,7 +241,7 @@ export function Ticket({
                 type="button"
                 onClick={() => onRemove(leg.vault)}
                 aria-label={`Remove ${leg.title}`}
-                className="text-dim transition-colors hover:text-no"
+                className="grid h-7 w-7 shrink-0 place-items-center rounded-[6px] text-[16px] leading-none text-dim transition-colors hover:bg-raised hover:text-no"
               >
                 ×
               </button>
@@ -255,8 +255,8 @@ export function Ticket({
             <div className="grid grid-cols-2 items-end gap-3">
               <div>
                 <label htmlFor="stake" className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Stake</label>
-                <div className="mt-1 flex items-baseline gap-1 rounded-card border border-line bg-ink px-3 py-2 focus-within:border-accent">
-                  <span className="mono text-dim">$</span>
+                <div className="mt-1 flex items-center gap-1 rounded-card border border-line bg-ink px-3 py-2 focus-within:border-accent">
+                  <span className="mono text-[16px] leading-none text-dim">$</span>
                   <input id="stake" inputMode="decimal" autoComplete="off" value={stake} onChange={(e) => setStake(e.target.value)} placeholder="0.00"
                     className="mono w-full bg-transparent text-[20px] leading-none text-fg outline-none placeholder:text-dim" />
                 </div>
@@ -273,13 +273,13 @@ export function Ticket({
                 const s = chipState(v, maxStake, usdcBalance);
                 return (
                   <button key={v} type="button" disabled={!s.enabled} title={s.title} aria-pressed={stake === String(v)} onClick={() => setStake(String(v))}
-                    className="mono flex-1 rounded-[6px] border border-line py-1.5 text-[11px] text-dim transition-colors hover:border-dim hover:text-fg aria-pressed:border-accent aria-pressed:text-accent disabled:cursor-not-allowed disabled:opacity-40">
+                    className="mono flex-1 rounded-[6px] border border-line py-2 text-[11px] text-dim transition-colors hover:border-dim hover:text-fg aria-pressed:border-accent aria-pressed:text-accent disabled:cursor-not-allowed disabled:opacity-40">
                     ${v}
                   </button>
                 );
               })}
               <button type="button" disabled={maxAllowed === null || maxAllowed === 0n} onClick={() => maxAllowed !== null && setStake(formatUnits(maxAllowed, USDC_DECIMALS))}
-                className="mono flex-1 rounded-[6px] border border-line py-1.5 text-[11px] text-dim transition-colors hover:border-dim hover:text-fg disabled:cursor-not-allowed disabled:opacity-40">
+                className="mono flex-1 rounded-[6px] border border-line py-2 text-[11px] text-dim transition-colors hover:border-dim hover:text-fg disabled:cursor-not-allowed disabled:opacity-40">
                 Max
               </button>
             </div>
@@ -411,7 +411,7 @@ export function Ticket({
             </div>
           )}
           {cta.kind === "disabled" && (
-            <div className="mono mt-4 w-full cursor-not-allowed rounded-card bg-raised py-[15px] text-center text-[12px] uppercase tracking-[0.1em] text-dim">
+            <div className="mono mt-4 w-full cursor-not-allowed rounded-card bg-raised py-[14px] text-center text-[13px] font-medium text-dim">
               {cta.label}
             </div>
           )}
