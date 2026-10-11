@@ -16,7 +16,7 @@ export function AppHeader() {
       { href: websiteHref, label: "Website" },
       ...(altLane ? [{ href: altLane.href, label: `${altLane.label} ↗`, icon: altLane.icon }] : []),
     ]}
-    action={<span className="flex items-center gap-3"><FundsChip /><WalletButton /></span>}
+    action={<span className="flex items-center gap-3"><FundsChip connect={false} /><WalletButton /></span>}
     mobileAction={<FundsChip />}
     menu={<WalletMenu />}
   />;

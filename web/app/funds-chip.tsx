@@ -7,7 +7,7 @@ import { useConnectAction, useUsdc, useWalletState } from "@/lib/wallet";
 import { BridgeStep } from "@/app/(trading)/build/bridge-step";
 
 /** Balance plus Deposit. Deposit is the faucet on 998 and the bridge on a bridged lane. */
-export function FundsChip() {
+export function FundsChip({ connect: showConnect = true }: { connect?: boolean }) {
   const { ready, isConnected, address } = useWalletState();
   const connect = useConnectAction();
   const { balance } = useUsdc();
@@ -20,6 +20,7 @@ export function FundsChip() {
     if (!open && el.open) el.close();
   }, [open]);
 
+  if (!showConnect && (!ready || !isConnected || !address)) return null;
   if (!ready) return <div className="h-9 w-32 animate-pulse rounded-full bg-panel motion-reduce:animate-none" aria-hidden />;
   if (!isConnected || !address) {
     return (
@@ -40,7 +41,7 @@ export function FundsChip() {
       {BRIDGED && (
         <dialog ref={ref} onClose={() => setOpen(false)} onClick={(e) => e.target === e.currentTarget && setOpen(false)}
           className="m-auto w-[min(100%-2rem,420px)] rounded-card border border-line bg-panel p-4 text-fg backdrop:bg-ink/80">
-          <BridgeStep address={address} needUsdc={0n} needGas={false} />
+          {open && <BridgeStep address={address} needUsdc={0n} needGas={false} />}
           <button type="button" onClick={() => setOpen(false)} className="mono mt-3 w-full py-1 text-[11px] text-dim hover:text-fg">Close</button>
         </dialog>
       )}
