@@ -151,7 +151,7 @@ The keeper stays one process: it settles 998 vaults and relays to Elysium legs, 
 registry. `ops/systemd/rotate.service` restarts `writer writer-elysium keeper` when the registry
 changes. Caddy: `writer.hyperflip.xyz` to 8787, `writer-elysium.hyperflip.xyz` to 8789.
 
-Web: one Vercel project per chain, same repo. `scripts/deployment.mjs` copies every manifest into
+Web: one Vercel project per chain, same repo, configured and deployed by `tools/vercel-lanes.sh hyperevm|elysium`. `scripts/deployment.mjs` copies every manifest into
 `web/deployment/`; each project sets `DEPLOYMENT_FILE` to its copy, `APP_ORIGIN` to its app host
 (default `https://app.hyperflip.xyz`), `NEXT_PUBLIC_WRITER_URL` to its writer host, and
 `NEXT_PUBLIC_ALT_LANE_URL` to the sibling app for the header link. The 998 project runs
