@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+
 const deploymentHost = process.env.VERCEL_URL;
 
 export const websiteHref = process.env.NEXT_PUBLIC_SITE_ORIGIN || "/";
@@ -15,6 +17,24 @@ export const siteUrl =
 
 export function appCanonical(path = "/"): string {
   return new URL(appHref(path), siteUrl).href;
+}
+
+/** Host the app lane answers on: app.hyperflip.xyz or elysium.hyperflip.xyz in production. */
+export const appHost = new URL(appCanonical()).host;
+
+/** Full card metadata for one app page; og and twitter must both be set or the page inherits
+ * the landing title from the root layout (nested metadata is replaced, not merged). */
+export function appPageMetadata(title: string, description: string, path = "/"): Metadata {
+  const url = appCanonical(path);
+  return {
+    // Resolve the card image on this lane's host; the apex serves the 998 lane's card.
+    metadataBase: new URL(appCanonical()),
+    title,
+    description,
+    alternates: { canonical: url },
+    openGraph: { siteName: "Hyperflip", type: "website", url, title: `${title} | Hyperflip`, description },
+    twitter: { card: "summary_large_image", site: "@hyperflip_xyz", title: `${title} | Hyperflip`, description },
+  };
 }
 
 /** Absolute apex URL in production so app.hyperflip.xyz footers land on hyperflip.xyz pages. */

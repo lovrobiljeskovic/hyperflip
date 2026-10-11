@@ -1,14 +1,12 @@
-import type { Metadata } from "next";
 import Link from "next/link";
-import { appCanonical, appHref } from "@/lib/site";
+import { appHref, appPageMetadata } from "@/lib/site";
 import { currentPricing, fetchLimits } from "@/lib/writer";
 
-export const metadata: Metadata = {
-  title: "Current pricing",
-  description: "Inspect Hyperflip’s current beta pricing and how it affects your quoted odds.",
-  alternates: { canonical: appCanonical("/pricing") },
-  openGraph: { url: appCanonical("/pricing"), title: "Current pricing | Hyperflip" },
-};
+export const metadata = appPageMetadata(
+  "Current pricing",
+  "Inspect Hyperflip’s current beta pricing and how it affects your quoted odds.",
+  "/pricing",
+);
 
 export default async function PricingPage() {
   const pricing = currentPricing(await fetchLimits());

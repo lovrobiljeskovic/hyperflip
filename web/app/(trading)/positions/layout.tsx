@@ -1,11 +1,7 @@
-import type { Metadata } from "next";
-import { appCanonical } from "@/lib/site";
+import { appPageMetadata } from "@/lib/site";
 
-export const metadata: Metadata = {
-  title: "Positions",
-  description: "Your open and settled Hyperflip slips.",
-  alternates: { canonical: appCanonical("/positions") },
-  openGraph: { url: appCanonical("/positions"), title: "Positions | Hyperflip" },
+export const metadata = {
+  ...appPageMetadata("Positions", "Your open and settled Hyperflip slips.", "/positions"),
   robots: { index: false },
 };
 
