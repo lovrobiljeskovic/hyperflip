@@ -1,0 +1,28 @@
+# Elysium (99801) writer lane. Same checkout and /opt/hype/.env as the `writer` unit (the 998
+# lane, see writer-998.conf); systemd Environment= beats dotenv, so only the lane differs here.
+# The .env already carries the Elysium vault, deploy block, index block and keyed WRITER_RPC.
+[Unit]
+Description=hype-evm writer, Elysium lane
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=hype
+WorkingDirectory=/opt/hype/writer
+ExecStartPre=+/bin/chown -R hype:hype /opt/hype/writer
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+Environment=DEPLOYMENT_FILE=/opt/hype/registry/deployment.elysium-testnet.json
+Environment=WRITER_PORT=8788
+Environment=PARLAY_INDEX_FILE=/opt/hype/writer/parlays-elysium.json
+Environment=QUOTE_JOURNAL_FILE=/opt/hype/writer/quotes-elysium.jsonl
+Environment=WAITLIST_FILE=/opt/hype/writer/waitlist-elysium.json
+# One sheet syncer only (the 998 unit); two would double-write signups.
+Environment=GOOGLE_SHEETS_WEB_APP_URL=
+Environment=GOOGLE_SHEETS_SYNC_SECRET=
+
+[Install]
+WantedBy=multi-user.target
