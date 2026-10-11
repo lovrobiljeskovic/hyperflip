@@ -2,7 +2,7 @@
 # Configure and deploy one web lane on Vercel. Usage: tools/vercel-lanes.sh hyperevm|elysium
 #   hyperevm = project `overround`         (app.hyperflip.xyz, the default, 998, subgraph positions)
 #   elysium  = project `overround-elysium` (elysium.hyperflip.xyz, 99801, legacy positions)
-# Both deploy from web/; VERCEL_PROJECT_ID selects the project so web/.vercel stays linked to `overround`.
+# Both deploy from web/; the script links web/.vercel to the lane's project for the run and relinks to `overround`.
 # Secrets are never written here: `overround` keeps POSITIONS_SUBGRAPH_URL, POSITIONS_RPC_URL and
 # NEXT_PUBLIC_PRIVY_APP_ID from before the cutover; `overround-elysium` gets ELYSIUM_RPC and
 # NEXT_PUBLIC_PRIVY_APP_ID piped in once (see DEPLOY.md "Two lanes").
@@ -15,11 +15,12 @@ case $LANE in
   elysium) PROJECT=overround-elysium ;;
   *) echo "unknown lane $LANE"; exit 1 ;;
 esac
-export VERCEL_ORG_ID=team_VCeCEs2us2sNaddFZgTQydrR
-VERCEL_PROJECT_ID=$(vercel project inspect "$PROJECT" --scope $SCOPE 2>&1 | awk '$1 == "ID" { print $2 }')
-export VERCEL_PROJECT_ID
-[ -n "$VERCEL_PROJECT_ID" ] || { echo "project $PROJECT not found; create it: vercel project add $PROJECT --scope $SCOPE"; exit 1; }
-echo "== $LANE -> $PROJECT ($VERCEL_PROJECT_ID)"
+# CLI 59 reads web/.vercel/project.json only (VERCEL_PROJECT_ID is not honoured by `env`), so link
+# to the lane's project for the run and always relink to `overround`, the default lane, afterwards.
+unset VERCEL_ORG_ID VERCEL_PROJECT_ID
+trap 'vercel link --project overround --yes --scope $SCOPE >/dev/null 2>&1' EXIT
+vercel link --project "$PROJECT" --yes --scope $SCOPE 2>&1 | grep -v "^Vercel CLI" || { echo "project $PROJECT not found; create it: vercel project add $PROJECT --scope $SCOPE"; exit 1; }
+echo "== $LANE -> $PROJECT"
 rm_var() { vercel env rm "$1" production --yes --scope $SCOPE 2>&1 | grep -v "^Vercel CLI\|not found" || true; }
 set_var() { rm_var "$1"; vercel env add "$1" production --value "$2" --yes --scope $SCOPE 2>&1 | grep -v "^Vercel CLI"; }
 
