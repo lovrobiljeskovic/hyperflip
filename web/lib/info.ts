@@ -5,7 +5,7 @@ export const INFO_API =
   process.env.NEXT_PUBLIC_INFO_API ?? "https://api.hyperliquid-testnet.xyz/info";
 
 export const NO_MIDS: Record<string, string> = {};
-export const NO_VOLUMES: Record<string, number> = {};
+const NO_VOLUMES: Record<string, number> = {};
 
 /** HIP-4 side coin -> rolling 24h USDC notional from spotMetaAndAssetCtxs. */
 export function parseMarketVolumes(value: unknown): Record<string, number> {

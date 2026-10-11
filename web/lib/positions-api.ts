@@ -11,7 +11,7 @@ export type PositionPage = {
   failed: number;
 };
 
-export type WireRow = Omit<Row, "id" | "block" | "parlay"> & {
+type WireRow = Omit<Row, "id" | "block" | "parlay"> & {
   id: string; block: string;
   parlay: Omit<Row["parlay"], "premium" | "maxPayout"> & { premium: string; maxPayout: string };
 };
@@ -22,7 +22,7 @@ export function encodeRow(row: Row): WireRow {
   } };
 }
 
-export function decodeRow(row: WireRow): Row {
+function decodeRow(row: WireRow): Row {
   return { ...row, id: BigInt(row.id), block: BigInt(row.block), parlay: {
     ...row.parlay, premium: BigInt(row.parlay.premium), maxPayout: BigInt(row.parlay.maxPayout),
   } };

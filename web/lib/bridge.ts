@@ -11,11 +11,11 @@ export const BRIDGE = {
   usdc: "0x2B3370eE501B4a559b57D449569354196457D8Ab",
 } as const;
 
-export const inboxAbi = parseAbi([
+const inboxAbi = parseAbi([
   "function depositEth() payable returns (uint256)",
   "function calculateRetryableSubmissionFee(uint256 dataLength, uint256 baseFee) view returns (uint256)",
 ]);
-export const routerAbi = parseAbi([
+const routerAbi = parseAbi([
   "function outboundTransfer(address token, address to, uint256 amount, uint256 maxGas, uint256 gasPriceBid, bytes data) payable returns (bytes)",
 ]);
 

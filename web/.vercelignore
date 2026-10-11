@@ -3,5 +3,4 @@
 .next
 .vercel
 node_modules
-/brand/
 *.tsbuildinfo

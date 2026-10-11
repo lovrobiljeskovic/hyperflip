@@ -61,7 +61,7 @@ export function sideLabel(market: Pick<Market, "sideYes" | "sideNo"> | undefined
   return (isYes ? market?.sideYes : market?.sideNo) ?? (isYes ? "YES" : "NO");
 }
 
-export type BoardEntry = { kind: "market"; market: Market } | { kind: "group"; group: string; title: string; members: Market[] };
+type BoardEntry = { kind: "market"; market: Market } | { kind: "group"; group: string; title: string; members: Market[] };
 
 export function groupMarkets(markets: Market[]): BoardEntry[] {
   const entries: BoardEntry[] = [];
@@ -92,7 +92,7 @@ export interface WriterQuote {
 }
 
 // Display inputs are not covered by the quote signature.
-export interface QuoteBreakdown {
+interface QuoteBreakdown {
   legPricesWad: string[];
 
   jointProbWad?: string;
@@ -186,30 +186,6 @@ export async function fetchLimits(): Promise<WriterLimits | null> {
     return (await r.json()) as WriterLimits;
   } catch {
     return null;
-  }
-}
-
-export type WaitlistResult = { ok: true } | { ok: false; error: string };
-
-export const WAITLIST_ERRORS: Record<string, string> = {
-  "bad-email": "Enter a valid email address.",
-  "rate-limited": "Too many signups from your connection — try again later.",
-  "waitlist-unavailable": "Signups are paused right now — try again later.",
-  unreachable: "Writer unreachable — try again shortly.",
-};
-
-export async function joinWaitlist(email: string): Promise<WaitlistResult> {
-  try {
-    const r = await fetch(`${BASE}/waitlist`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email }),
-    });
-    if (r.ok) return { ok: true };
-    const j = (await r.json().catch(() => ({}))) as { error?: string };
-    return { ok: false, error: j.error ?? `waitlist ${r.status}` };
-  } catch {
-    return { ok: false, error: "unreachable" };
   }
 }
 

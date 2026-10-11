@@ -6,7 +6,7 @@ import { isMatchQuestion, kickoffKey } from "@/lib/writer";
 
 /** A clock that re-renders on a fixed beat. Countdowns tick, "live" flips on
  * its own, and nothing waits for the next data fetch to change. */
-export function useNow(everyMs = 1000): number {
+function useNow(everyMs = 1000): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), everyMs);

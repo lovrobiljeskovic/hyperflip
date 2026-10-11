@@ -112,8 +112,6 @@ details[open] > summary::after { content: "-"; }
 }
 .ticket-shell::before { left: -9px; }
 .ticket-shell::after { right: -9px; }
-.torn { filter: none; }
-
 @keyframes motif-drift { from { transform: rotate3d(1,1,0,0deg); } to { transform: rotate3d(1,1,0,360deg); } }
 .motif { position: relative; perspective: 200px; }
 .motif-spin { position: absolute; inset: 0; transform-style: preserve-3d; animation: motif-drift 22s linear infinite; }

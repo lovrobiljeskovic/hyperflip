@@ -1,7 +1,7 @@
 import { formatUsdc, multiplier } from "./format";
 import type { BuilderLeg } from "./ticket";
 
-export type SlipImageInput = { legs: Pick<BuilderLeg, "isYes" | "title" | "label" | "group">[]; premium: bigint; maxPayout: bigint };
+type SlipImageInput = { legs: Pick<BuilderLeg, "isYes" | "title" | "label" | "group">[]; premium: bigint; maxPayout: bigint };
 
 const W = 1080;
 const PAD = 72;

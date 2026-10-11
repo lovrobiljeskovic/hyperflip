@@ -12,7 +12,7 @@ export function AppHeader() {
       { href: appHref("/positions"), label: "Positions", activePaths: ["/positions"] },
       { href: appHref("/pricing"), label: "Pricing", activePaths: ["/pricing"] },
       { href: websiteHref, label: "Website" },
-      ...(altLane ? [{ href: altLane.href, label: `${altLane.label} ↗` }] : []),
+      ...(altLane ? [{ href: altLane.href, label: `${altLane.label} ↗`, icon: altLane.icon }] : []),
     ]}
     action={<WalletButton />}
   />;

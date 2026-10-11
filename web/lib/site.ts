@@ -24,5 +24,7 @@ export function siteHref(path: string): string {
 
 /** The other chain's app, when this deployment has a sibling (998 default, Elysium optional). */
 export const altLane = process.env.NEXT_PUBLIC_ALT_LANE_URL
-  ? { href: process.env.NEXT_PUBLIC_ALT_LANE_URL, label: process.env.NEXT_PUBLIC_CHAIN_ID === "998" ? "Elysium" : "HyperEVM" }
+  ? process.env.NEXT_PUBLIC_CHAIN_ID === "998"
+    ? { href: process.env.NEXT_PUBLIC_ALT_LANE_URL, label: "Elysium", icon: "/brand/elysium-logomark-colorized.svg" }
+    : { href: process.env.NEXT_PUBLIC_ALT_LANE_URL, label: "HyperEVM", icon: "/brand/hyperliquid-logomark.svg" }
   : undefined;

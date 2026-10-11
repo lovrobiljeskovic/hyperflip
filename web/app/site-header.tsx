@@ -7,7 +7,7 @@ import { HyperflipBrand } from "./brand";
 import { ScrollLink } from "./scroll-link";
 
 export function SiteHeader({ links, action, home = "/" }: {
-  links: { href: string; label: string; activePaths?: string[]; scrollTo?: string }[];
+  links: { href: string; label: string; activePaths?: string[]; scrollTo?: string; icon?: string }[];
   action: ReactNode;
   home?: string;
 }) {
@@ -25,7 +25,8 @@ export function SiteHeader({ links, action, home = "/" }: {
             const active = l.activePaths?.includes(pathname) ?? false;
             if (l.scrollTo) return <ScrollLink key={l.label} to={l.scrollTo} className={linkClass(false)}>{l.label}</ScrollLink>;
             return (
-              <Link key={l.label} href={l.href} prefetch={false} aria-current={active ? "page" : undefined} className={linkClass(active)}>
+              <Link key={l.label} href={l.href} prefetch={false} aria-current={active ? "page" : undefined} className={`${linkClass(active)} inline-flex items-center gap-1.5`}>
+                {l.icon && <img src={l.icon} alt="" className="size-4" />}
                 {l.label}
               </Link>
             );
@@ -65,8 +66,9 @@ export function SiteHeader({ links, action, home = "/" }: {
                 prefetch={false}
                 aria-current={active ? "page" : undefined}
                 onClick={() => setOpen(false)}
-                className={`py-2 ${active ? "text-fg" : "text-dim"}`}
+                className={`inline-flex items-center gap-1.5 py-2 ${active ? "text-fg" : "text-dim"}`}
               >
+                {l.icon && <img src={l.icon} alt="" className="size-4" />}
                 {l.label}
               </Link>
             );

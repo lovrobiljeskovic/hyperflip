@@ -38,9 +38,6 @@ export const BRIDGED = appChain.id !== coreChain.id;
 /** Explorer page for an address on the app chain, or null when the chain has no explorer. */
 export const explorerAddress = (address: string): string | null =>
   appChain.blockExplorers ? `${appChain.blockExplorers.default.url}/address/${address}` : null;
-/** Explorer page for a transaction on the app chain, or null when the chain has no explorer. */
-export const explorerTx = (hash: string): string | null =>
-  appChain.blockExplorers ? `${appChain.blockExplorers.default.url}/tx/${hash}` : null;
 
 /** Hyperliquid testnet frontend — Core order books and the testnet faucet. */
 export const HL_APP = "https://app.hyperliquid-testnet.xyz";
