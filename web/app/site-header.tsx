@@ -6,9 +6,13 @@ import { usePathname } from "next/navigation";
 import { HyperflipBrand } from "./brand";
 import { ScrollLink } from "./scroll-link";
 
-export function SiteHeader({ links, action, home = "/" }: {
+export function SiteHeader({ links, action, mobileAction, menu, home = "/" }: {
   links: { href: string; label: string; activePaths?: string[]; scrollTo?: string; icon?: string }[];
   action: ReactNode;
+  /** Phone header slot; falls back to `action`. */
+  mobileAction?: ReactNode;
+  /** Rows under the links in the hamburger. */
+  menu?: ReactNode;
   home?: string;
 }) {
   const pathname = usePathname();
@@ -36,7 +40,7 @@ export function SiteHeader({ links, action, home = "/" }: {
           </span>
         </nav>
         <div className="ml-auto flex items-center gap-3 lg:hidden">
-          {action}
+          {mobileAction ?? action}
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
@@ -73,6 +77,7 @@ export function SiteHeader({ links, action, home = "/" }: {
               </Link>
             );
           })}
+          {menu}
         </nav>
       )}
     </header>

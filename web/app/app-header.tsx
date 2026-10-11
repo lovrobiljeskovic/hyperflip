@@ -3,6 +3,8 @@
 import { altLane, appHref, websiteHref } from "@/lib/site";
 import { SiteHeader } from "./site-header";
 import { WalletButton } from "./wallet-button";
+import { FundsChip } from "./funds-chip";
+import { WalletMenu } from "./wallet-menu";
 
 export function AppHeader() {
   return <SiteHeader
@@ -14,6 +16,8 @@ export function AppHeader() {
       { href: websiteHref, label: "Website" },
       ...(altLane ? [{ href: altLane.href, label: `${altLane.label} ↗`, icon: altLane.icon }] : []),
     ]}
-    action={<WalletButton />}
+    action={<span className="flex items-center gap-3"><FundsChip /><WalletButton /></span>}
+    mobileAction={<FundsChip />}
+    menu={<WalletMenu />}
   />;
 }
