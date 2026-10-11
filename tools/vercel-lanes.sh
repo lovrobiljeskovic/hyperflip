@@ -17,12 +17,17 @@ case $LANE in
 esac
 # CLI 59 reads web/.vercel/project.json only (VERCEL_PROJECT_ID is not honoured by `env`), so link
 # to the lane's project for the run and always relink to `overround`, the default lane, afterwards.
+# Two lanes at once would relink under each other (2026-10-11: the 998 values landed on the Elysium
+# project), so runs serialize on a lock and every write checks the link first.
 unset VERCEL_ORG_ID VERCEL_PROJECT_ID
-trap 'vercel link --project overround --yes --scope $SCOPE >/dev/null 2>&1' EXIT
+LOCK=.vercel-lanes.lock
+until mkdir "$LOCK" 2>/dev/null; do echo "another lane run holds $PWD/$LOCK; waiting"; sleep 5; done
+trap 'vercel link --project overround --yes --scope $SCOPE >/dev/null 2>&1; rmdir "$LOCK"' EXIT
 vercel link --project "$PROJECT" --yes --scope $SCOPE 2>&1 | grep -v "^Vercel CLI" || { echo "project $PROJECT not found; create it: vercel project add $PROJECT --scope $SCOPE"; exit 1; }
 echo "== $LANE -> $PROJECT"
-rm_var() { vercel env rm "$1" production --yes --scope $SCOPE 2>&1 | grep -v "^Vercel CLI\|not found" || true; }
-set_var() { rm_var "$1"; vercel env add "$1" production --value "$2" --yes --scope $SCOPE 2>&1 | grep -v "^Vercel CLI"; }
+linked() { grep -q "\"projectName\":\"$PROJECT\"" .vercel/project.json || { echo "link moved away from $PROJECT; aborting"; exit 1; }; }
+rm_var() { linked; vercel env rm "$1" production --yes --scope $SCOPE 2>&1 | grep -v "^Vercel CLI\|not found" || true; }
+set_var() { rm_var "$1"; linked; vercel env add "$1" production --value "$2" --yes --scope $SCOPE 2>&1 | grep -v "^Vercel CLI"; }
 
 # The manifest is the chain identity; the path is where Vercel builds the uploaded web/ directory.
 set_var DEPLOYMENT_FILE "/vercel/path0/deployment/deployment.$LANE-testnet.json"
@@ -47,4 +52,5 @@ fi
 echo "== production env"
 vercel env ls production --scope $SCOPE 2>&1 | grep -v "^Vercel CLI"
 echo "== deploy"
+linked
 vercel --prod --yes --scope $SCOPE
