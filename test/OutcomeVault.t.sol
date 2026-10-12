@@ -57,7 +57,7 @@ contract OutcomeVaultTest is BaseTest {
         vault.requestRedeem(100e6);
     }
 
-    /// FINDINGS.md #4: Core→EVM spotSend goes to the token's system address,
+    /// docs/spike-findings.md #4: Core→EVM spotSend goes to the token's system address,
     /// never to the vault itself.
     function test_PayoutSpotSendTargetsSystemAddress() public {
         depositAndClaim(100e6);
@@ -191,7 +191,7 @@ contract OutcomeVaultTest is BaseTest {
         vault.cancelRedeem();
     }
 
-    /// FINDINGS.md #5: a live split+merge round trip lost 7 bps, unitemized.
+    /// docs/spike-findings.md #5: a live split+merge round trip lost 7 bps, unitemized.
     /// The payout must survive a merge credit that lands short — send what is
     /// actually there and credit the user exactly that, rather than
     /// underflowing on the nominal amount and wedging the pending slot.
@@ -411,7 +411,7 @@ contract OutcomeVaultTest is BaseTest {
         vault.settle(1e18);
     }
 
-    /// Core prunes settled outcomes fast (FINDINGS.md: 2→3 in ~10 minutes) and
+    /// Core prunes settled outcomes fast (docs/spike-findings.md: 2→3 in ~10 minutes) and
     /// the value is gone at status 3. Then, and only then, the keeper relays.
     function test_SettleFallsBackToKeeperOncePruned() public {
         outcomeStatus.set(CoreConstants.OUTCOME_SETTLED, 0.6e8, QUESTION);

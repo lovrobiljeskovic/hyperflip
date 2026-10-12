@@ -422,6 +422,12 @@ and funded with gas-token dust for transfer fees. Core-to-EVM transfers must be
 representable in EVM token units. The vault contracts enforce the rounding rule;
 operators must maintain the fee balance.
 
+After settlement, call `pullSettledFunds` only once Core has credited the settlement
+and every previously queued spotSend (cancel refunds, redeem payouts) has landed on
+the EVM side: the sweep takes the entire Core balance. A pull while the Core balance
+is still zero is a harmless no-op that does not open redemption; crank again after
+the credit lands.
+
 Restore the settlement cache before starting a replacement keeper. Fractions
 lost after Core pruning cannot be reconstructed by restarting. Do not overwrite
 the cache during recovery. `ops/alert-relay.sh` and its systemd timer can forward

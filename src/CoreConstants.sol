@@ -17,7 +17,7 @@ library CoreConstants {
     /// EVM→Core USDC deposit proxy (spotMeta's `evmContract` for USDC) — NOT
     /// the token address. `approve` + `deposit(amount, 4294967295)` here is
     /// the real EVM→Core USDC path; an ERC-20 transfer straight to the system
-    /// address reverts (blacklisted). See FINDINGS.md #3.
+    /// address reverts (blacklisted). See docs/spike-findings.md #3.
     address internal constant CORE_DEPOSIT_WALLET = 0x0B80659a4076E9E93C7DbE0f10675A16a3e5C206;
     /// Second arg observed on every successful spike deposit; meaning
     /// unconfirmed (uint32 max — possibly "no referral/sub-account id").
@@ -34,21 +34,18 @@ library CoreConstants {
     /// decimals, spotMeta `evm_extra_wei_decimals: -2`) — else silent drop.
     uint24 internal constant ACTION_SPOT_SEND = 6;
 
-    // UNVERIFIED: operation numbering within action 17
     uint8 internal constant OP_SPLIT_OUTCOME = 0;
     uint8 internal constant OP_MERGE_OUTCOME = 1;
-    uint8 internal constant OP_MERGE_QUESTION = 2;
-    uint8 internal constant OP_NEGATE_OUTCOME = 3;
 
     /// Outcome wei is 5-decimal: 1 share = 1e5 outcome wei = 1 USDC.
-    /// FINDINGS.md #2 — the vault's prior quote-wei multiplier was 1000x wrong
+    /// docs/spike-findings.md #2 — the vault's prior quote-wei multiplier was 1000x wrong
     /// here; split/merge amounts must go through this conversion, not the
     /// quote one below.
     uint256 internal constant OUTCOME_WEI_PER_SHARE = 1e5;
 
     /// Quote wei is 8-decimal: 1 share = 1 USDC = 1e8 quote wei. Confirmed
     /// live: a 5.0 EVM USDC deposit (6-dec, so 1e6 EVM units per share)
-    /// credited exactly 500,000,000 Core wei (FINDINGS.md "wei ratio").
+    /// credited exactly 500,000,000 Core wei (docs/spike-findings.md "wei ratio").
     uint256 internal constant QUOTE_WEI_PER_SHARE = 1e8;
 
     /// `outcomeStatus` status codes: 0 never existed, 1 active, 2 settled
@@ -66,7 +63,7 @@ library CoreConstants {
 
     /// Params are (op, question, outcome, wei) but the question word must be
     /// 0: CoreWriter silently drops split/merge payloads with a non-zero
-    /// unused field (FINDINGS.md #1 — our first live split with question=976
+    /// unused field (docs/spike-findings.md #1 — our first live split with question=976
     /// no-oped with no error). There is therefore no question parameter; the
     /// zero word is written unconditionally.
     function encodeOutcomeOp(uint8 op, uint32 outcome, uint64 wei_) internal pure returns (bytes memory) {
@@ -80,7 +77,7 @@ library CoreConstants {
 
     /// `deposit(uint256,uint32)` calldata for CORE_DEPOSIT_WALLET — call after
     /// `quote.approve(CORE_DEPOSIT_WALLET, amount)`. This is the EVM→Core
-    /// USDC path (FINDINGS.md #3), not a CoreWriter action.
+    /// USDC path (docs/spike-findings.md #3), not a CoreWriter action.
     function encodeDeposit(uint256 amount) internal pure returns (bytes memory) {
         return abi.encodeWithSignature("deposit(uint256,uint32)", amount, CORE_DEPOSIT_SENTINEL);
     }
@@ -111,16 +108,6 @@ library CoreConstants {
         require(w > 0 && w <= type(uint64).max, "BAD_AMOUNT");
         require(w * evmUnitsPerShare == scaled, "DUST");
         return uint64(w);
-    }
-
-    /// Encoded outcome asset id (coin `#<id>`, token name `+<id>`), confirmed by
-    /// docs: 100_000_000 + 10*outcome + side. Since 2026-08-25 the 0x801
-    /// spot-balance precompile accepts this id (testnet-verified; the keeper
-    /// reads outcome balances through it), so `spotBalance(vault, this)` is a
-    /// live outcome-token balance read. The 2026-08-14 kill-switch finding
-    /// (0x801 reverted for every encoding) is obsolete.
-    function outcomeTokenIndex(uint32 outcome, bool yes) internal pure returns (uint64) {
-        return 100_000_000 + 10 * uint64(outcome) + (yes ? 0 : 1);
     }
 
     /// Read a Core spot balance via the precompile. Reverts if the precompile

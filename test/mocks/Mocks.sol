@@ -98,7 +98,7 @@ contract MockOutcomeStatus {
 }
 
 /// Etched at CORE_DEPOSIT_WALLET. The real EVM→Core USDC path is approve +
-/// `deposit(amount, 4294967295)` here (FINDINGS.md #3); deposited quote sits in
+/// `deposit(amount, 4294967295)` here (docs/spike-findings.md #3); deposited quote sits in
 /// this contract until CoreSim credits it to the vault's Core balance.
 /// `quote` is set post-etch because vm.etch does not carry immutables.
 contract MockCoreDepositWallet {

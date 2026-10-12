@@ -18,7 +18,7 @@ import {OutcomeVault} from "../src/OutcomeVault.sol";
 /// Required env: QUOTE_TOKEN_ADDRESS, CORE_SYSTEM_ADDRESS, QUESTION_ID,
 /// OUTCOME_ID, KEEPER_ADDRESS, MARKET_SYMBOL.
 /// Optional env: QUOTE_TOKEN_CORE_INDEX (default 0 — confirmed USDC index,
-/// FINDINGS.md), QUOTE_DECIMALS (default 6 — real USDC), VERIFIER_ADDRESS
+/// docs/spike-findings.md), QUOTE_DECIMALS (default 6 — real USDC), VERIFIER_ADDRESS
 /// (reuse an already-deployed shared verifier instead of deploying a fresh
 /// one), MIN_DELAY_SECONDS (applied only to a freshly deployed verifier;
 /// KeeperVerifier's own default is 10 minutes), OWNER_ADDRESS (vault owner

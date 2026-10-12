@@ -37,12 +37,12 @@ contract CoreConstantsTest is Test {
         assertEq(CoreConstants.quoteWeiToEvm(quoteWei, ONE_USDC_EVM), ONE_USDC_EVM);
     }
 
-    /// FINDINGS.md: "5.0 EVM USDC deposit credited exactly 500,000,000 Core wei".
+    /// docs/spike-findings.md: "5.0 EVM USDC deposit credited exactly 500,000,000 Core wei".
     function test_QuoteWeiMatchesSpikeEvidence() public pure {
         assertEq(uint256(CoreConstants.evmToQuoteWei(5e6, ONE_USDC_EVM)), 500_000_000);
     }
 
-    /// FINDINGS.md #1: non-zero unused fields (question, on split/merge) are
+    /// docs/spike-findings.md #1: non-zero unused fields (question, on split/merge) are
     /// silently dropped by CoreWriter. The word is still in the payload layout,
     /// but encodeOutcomeOp takes no question argument and always writes 0.
     function test_EncodeOutcomeOpHardcodesQuestionZero() public pure {

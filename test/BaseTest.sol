@@ -23,7 +23,7 @@ abstract contract BaseTest is Test {
     address internal constant SYSTEM_ADDR = 0x2000000000000000000000000000000000000001;
     uint64 internal constant TOKEN_INDEX = 1;
     /// CoreWriter drops split/merge payloads with a non-zero question word
-    /// (FINDINGS.md #1), so the encoded — and therefore expected — question is 0.
+    /// (docs/spike-findings.md #1), so the encoded — and therefore expected — question is 0.
     uint32 internal constant QUESTION = 0;
     uint32 internal constant OUTCOME = 3;
     uint8 internal constant DECIMALS = 5;

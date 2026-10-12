@@ -14,7 +14,7 @@ import {OutcomeToken} from "./OutcomeToken.sol";
 /// than an on-chain balance proof. That was forced by the 2026-08-14 spike
 /// (outcome balances were unreadable from the EVM). Since 2026-08-25 the
 /// 0x801 precompile accepts encoded outcome asset ids
-/// (`CoreConstants.outcomeTokenIndex`), so a precompile-backed verifier is
+/// (`100_000_000 + 10*outcome + side`), so a precompile-backed verifier is
 /// now buildable and the keeper is a choice, not a constraint. Today that
 /// verifier is a keeper; the owner can swap it for anything else — a dead or
 /// lying keeper is recovered by `setVerifier`, not by a timeout. Cancel
@@ -52,7 +52,7 @@ contract OutcomeVault {
 
     IERC20 public immutable quote;
     /// spotSend destination for Core→EVM: the quote token's system address,
-    /// never address(this) (FINDINGS.md #4).
+    /// never address(this) (docs/spike-findings.md #4).
     address public immutable coreSystemAddress;
     uint64 public immutable quoteTokenCoreIndex;
     /// 10**quoteDecimals — EVM quote units in one share (1 share = 1 USDC).
@@ -143,7 +143,7 @@ contract OutcomeVault {
         uint8 quoteDecimals
     ) {
         // A raw call to a codeless address succeeds silently, which would send
-        // every deposit into the void while reporting success (FINDINGS.md #3).
+        // every deposit into the void while reporting success (docs/spike-findings.md #3).
         require(CoreConstants.CORE_DEPOSIT_WALLET.code.length > 0, "NO_DEPOSIT_WALLET");
         quote = quote_;
         coreSystemAddress = coreSystemAddress_;
@@ -209,7 +209,7 @@ contract OutcomeVault {
             PendingDeposit({user: msg.sender, amount: amount, opId: opId, quoteCoreBefore: _quoteCoreBalance()});
         quote.safeTransferFrom(msg.sender, address(this), amount);
         // EVM→Core is approve + deposit() on the Core deposit wallet; an ERC-20
-        // transfer to the system address reverts, it is blacklisted (FINDINGS.md #3).
+        // transfer to the system address reverts, it is blacklisted (docs/spike-findings.md #3).
         quote.forceApprove(CoreConstants.CORE_DEPOSIT_WALLET, amount);
         (bool ok,) = CoreConstants.CORE_DEPOSIT_WALLET.call(CoreConstants.encodeDeposit(amount));
         require(ok, "CORE_DEPOSIT_FAILED");
@@ -282,7 +282,7 @@ contract OutcomeVault {
 
     /// Settlement comes from the 0x814 precompile: at status 2 anyone can
     /// settle and the caller's `fractionWad` is ignored. Core prunes settled
-    /// outcomes fast (FINDINGS.md: 2→3 within ~10 minutes) and status 3 has no
+    /// outcomes fast (docs/spike-findings.md: 2→3 within ~10 minutes) and status 3 has no
     /// value left, so that — and only that — is where the keeper may relay the
     /// fraction it observed. A live market (status 0/1) can never be settled by
     /// anyone, keeper included: relaying a payout for a market Core has not
@@ -419,7 +419,7 @@ contract OutcomeVault {
     /// Queue the Core→EVM leg of a payout and record what the user may
     /// withdraw once it lands. Sends at most the vault's free Core quote
     /// balance and credits only what was actually sent, so a shortfall is never
-    /// paid out of another user's collateral. A fee-sized gap (FINDINGS.md #5
+    /// paid out of another user's collateral. A fee-sized gap (docs/spike-findings.md #5
     /// measured 7 bps) is absorbed; anything below PAYOUT_MIN_BPS is a credit
     /// that has not landed yet rather than a fee, so the call reverts and the
     /// pending slot survives for a retry instead of burning the user's claim.

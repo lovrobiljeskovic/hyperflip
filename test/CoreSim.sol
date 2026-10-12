@@ -45,7 +45,7 @@ contract CoreSim {
     bool public deferSpotSends;
     bytes[] internal deferredSends;
     uint256 public landedSends;
-    /// FINDINGS.md #5: a live split+merge round trip lost 7 bps, unitemized.
+    /// docs/spike-findings.md #5: a live split+merge round trip lost 7 bps, unitemized.
     /// Off by default so the exact-round-trip anchors stay exact.
     uint256 public mergeFeeBps;
 

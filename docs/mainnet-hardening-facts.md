@@ -99,7 +99,7 @@ Verify against the code before relying on any single line number.
   by more than that; `MAX_SAMPLE_AGE_MS = 60000` stops a stalled sampler serving an
   ancient sample as "current" (`keeper.ts:31-50`, `pure.ts:88-101`).
 - A rejected split/merge on Core is **silent** — no error, no event, no balance
-  change (FINDINGS.md step 5). So the no-delta timeout is **keeper-side policy**,
+  change (docs/spike-findings.md step 5). So the no-delta timeout is **keeper-side policy**,
   not chain-trusted. The real recovery anchor is `OutcomeVault.setVerifier` (owner
   can swap out a wrong keeper), never the timeout.
 
