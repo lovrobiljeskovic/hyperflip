@@ -114,6 +114,146 @@ export function validateQuoteRequest(
   return { ok: true, taker: b.taker as Address, legs, stake };
 }
 
+type Fail = { status: number; json: unknown };
+type ValidQuote = Extract<Validated, { ok: true }>;
+
+interface Priced {
+  vaults: Address[];
+  priceObservations: LegPriceObservation[];
+  allowance: bigint;
+  joint: bigint;
+  edge: ReturnType<typeof edgeBreakdown>;
+  premium: bigint;
+  maxPayout: bigint;
+}
+
+function rpcDown(metrics: Metrics, step: string, err: unknown): Fail {
+  console.error(JSON.stringify({ at: new Date().toISOString(), event: "rpc-down", step, error: String((err as Error).message).slice(0, 300) }));
+  reject(metrics, "rpc-down");
+  return { status: 503, json: { error: "rpc-down" } };
+}
+
+async function price(deps: QuoteDeps, v: ValidQuote): Promise<Priced | Fail> {
+  const { cfg, metrics } = deps;
+  const vaults = [...new Set(v.legs.map((l) => l.vault.toLowerCase()))].map((addr) => addr as Address);
+
+  let settled: Set<string>;
+  let priceObservations: LegPriceObservation[];
+  let allowance: bigint;
+  try {
+    settled = await deps.readSettled(vaults);
+  } catch (err) {
+    return rpcDown(metrics, "readSettled", err);
+  }
+  const settledLeg = v.legs.find((l) => settled.has(l.vault.toLowerCase()));
+  if (settledLeg) {
+    reject(metrics, "leg-settled");
+    return { status: 409, json: { error: "leg-settled", vault: settledLeg.vault } };
+  }
+  try {
+    priceObservations = await Promise.all(v.legs.map((l) => deps.fetchLegPrice(l)));
+  } catch {
+    reject(metrics, "stale-book");
+    return { status: 503, json: { error: "stale-book" } };
+  }
+  // Core uses 0.5 as an empty-book placeholder.
+  const unpriced = v.legs.findIndex((_, i) => priceObservations[i].source === "spotPx" && priceObservations[i].priceWad === WAD / 2n);
+  if (unpriced !== -1) {
+    reject(metrics, "unpriced-leg");
+    return { status: 503, json: { error: "unpriced-leg", vault: v.legs[unpriced].vault } };
+  }
+  try {
+    allowance = await deps.readAllowance();
+  } catch (err) {
+    return rpcDown(metrics, "readAllowance", err);
+  }
+
+  const joint = independentJointProbWad(priceObservations.map((p) => p.priceWad));
+  const edge = edgeBreakdown(v.legs.length, cfg.edgeBps, cfg.legEdgeBps);
+  const priced = priceParlay(joint, v.stake, totalEdgeBps(edge), cfg.minPremiumBps);
+  if (!priced.ok) {
+    reject(metrics, priced.reason);
+    return { status: 400, json: { error: priced.reason } };
+  }
+
+  const dom = dominatingLeg(priceObservations.map((p) => p.priceWad), v.stake, priced.maxPayout);
+  if (dom !== -1) {
+    reject(metrics, "dominated");
+    return { status: 400, json: { error: "dominated", vault: v.legs[dom].vault } };
+  }
+  return { vaults, priceObservations, allowance, joint, edge, premium: priced.premium, maxPayout: priced.maxPayout };
+}
+
+async function reserveAndSign(
+  deps: QuoteDeps,
+  v: ValidQuote,
+  p: Priced,
+  userId: string,
+): Promise<{ quote: ParlayQuote; sig: Hex } | Fail> {
+  const { cfg, exposure, metrics } = deps;
+  const now = deps.now();
+  const risk = p.maxPayout - p.premium;
+  // Keep check and reserve synchronous to prevent overlapping quotes exceeding caps.
+  // ponytail: one cap for the whole ticket; any in-play leg shrinks it to the in-play cap.
+  const inPlay = v.legs.some((l) => { const s = cfg.markets.get(l.vault.toLowerCase())?.startMs; return s !== undefined && now >= s; });
+  const marketCap = inPlay ? (cfg.perMarketCap * cfg.inPlayCapBps) / BPS : cfg.perMarketCap;
+  const check = exposure.check({
+    risk, vaults: p.vaults, allowance: p.allowance, perMarketCap: marketCap, now,
+    perClusterCap: cfg.perClusterCap, quotaKey: userId, perKeyCap: cfg.perCodeReservedCap,
+  });
+  if (!check.ok) {
+    reject(metrics, check.reason);
+    console.log(JSON.stringify({ at: new Date(now).toISOString(), event: "quote-rejected", reason: check.reason, risk: risk.toString() }));
+    const fitStake = risk > 0n ? (v.stake * check.headroom) / risk : 0n;
+    return { status: 409, json: { error: check.reason, maxStake: fitStake.toString() } };
+  }
+  const quoteId = deps.randomId();
+  exposure.reserve(quoteId, risk, p.vaults, now + cfg.quoteTtlMs, userId);
+
+  const quote: ParlayQuote = {
+    taker: v.taker,
+    legs: v.legs,
+    premium: p.premium,
+    maxPayout: p.maxPayout,
+    deadline: BigInt(Math.floor((now + cfg.quoteTtlMs) / 1000)),
+    quoteId,
+  };
+  try {
+    return { quote, sig: await deps.sign(quote) };
+  } catch {
+    exposure.release(quoteId);
+    reject(metrics, "sign-failed");
+    return { status: 503, json: { error: "sign-failed" } };
+  }
+}
+
+function toQuoteRecord(deps: QuoteDeps, p: Priced, quote: ParlayQuote, sig: Hex): QuoteRecord {
+  const { cfg } = deps;
+  return {
+    schemaVersion: 1,
+    recordedAtMs: deps.now(),
+    quoteId: quote.quoteId,
+    quoteDigest: quoteDigest(deps.chainId, cfg.parlayVault, quote),
+    chainId: deps.chainId,
+    parlayVault: cfg.parlayVault,
+    taker: quote.taker,
+    legs: quote.legs.map((leg) => {
+      const market = cfg.markets.get(leg.vault.toLowerCase())!;
+      return { vault: leg.vault, isYes: leg.isYes, underlying: market.underlying, cluster: market.cluster, outcomeCoin: leg.isYes ? market.coinYes : market.coinNo };
+    }),
+    bookInputs: p.priceObservations.map((price) => ({
+      priceWad: price.priceWad.toString(), source: price.source, observedAtMs: price.observedAtMs,
+      depthWad: price.depthWad?.toString() ?? null, vwapWad: price.vwapWad?.toString() ?? null, freshnessMs: price.freshnessMs,
+    })),
+    jointProbWad: p.joint.toString(),
+    edge: { baseBps: p.edge.baseBps.toString(), legBps: p.edge.legBps.toString(), totalBps: totalEdgeBps(p.edge).toString() },
+    premium: quote.premium.toString(),
+    maxPayout: quote.maxPayout.toString(),
+    deadline: quote.deadline.toString(),
+    signatureHash: keccak256(sig).slice(2),
+  };
+}
+
 export async function handleQuote(
   deps: QuoteDeps,
   body: unknown,
@@ -139,120 +279,16 @@ export async function handleQuote(
   if (!admission.account.wallets.includes(v.taker.toLowerCase())) {
     return { status: 403, json: { error: "wallet-not-linked" } };
   }
-  const vaults = [...new Set(v.legs.map((l) => l.vault.toLowerCase()))].map((addr) => addr as Address);
-
-  let settled: Set<string>;
-  let priceObservations: LegPriceObservation[];
-  let allowance: bigint;
+  const p = await price(deps, v);
+  if ("status" in p) return p;
+  const signed = await reserveAndSign(deps, v, p, admission.account.userId);
+  if ("status" in signed) return signed;
+  const { quote, sig } = signed;
   try {
-    settled = await deps.readSettled(vaults);
-  } catch (err) {
-    console.error(JSON.stringify({ at: new Date().toISOString(), event: "rpc-down", step: "readSettled", error: String((err as Error).message).slice(0, 300) }));
-    reject(metrics, "rpc-down");
-    return { status: 503, json: { error: "rpc-down" } };
-  }
-  const settledLeg = v.legs.find((l) => settled.has(l.vault.toLowerCase()));
-  if (settledLeg) {
-    reject(metrics, "leg-settled");
-    return { status: 409, json: { error: "leg-settled", vault: settledLeg.vault } };
-  }
-  try {
-    priceObservations = await Promise.all(v.legs.map((l) => deps.fetchLegPrice(l)));
-  } catch {
-    reject(metrics, "stale-book");
-    return { status: 503, json: { error: "stale-book" } };
-  }
-  // Core uses 0.5 as an empty-book placeholder.
-  const unpriced = v.legs.findIndex((_, i) => priceObservations[i].source === "spotPx" && priceObservations[i].priceWad === WAD / 2n);
-  if (unpriced !== -1) {
-    reject(metrics, "unpriced-leg");
-    return { status: 503, json: { error: "unpriced-leg", vault: v.legs[unpriced].vault } };
-  }
-  try {
-    allowance = await deps.readAllowance();
-  } catch (err) {
-    console.error(JSON.stringify({ at: new Date().toISOString(), event: "rpc-down", step: "readAllowance", error: String((err as Error).message).slice(0, 300) }));
-    reject(metrics, "rpc-down");
-    return { status: 503, json: { error: "rpc-down" } };
-  }
-
-  const joint = independentJointProbWad(priceObservations.map((price) => price.priceWad));
-  const edge = edgeBreakdown(v.legs.length, cfg.edgeBps, cfg.legEdgeBps);
-  const priced = priceParlay(joint, v.stake, totalEdgeBps(edge), cfg.minPremiumBps);
-  if (!priced.ok) {
-    reject(metrics, priced.reason);
-    return { status: 400, json: { error: priced.reason } };
-  }
-
-  const dom = dominatingLeg(priceObservations.map((price) => price.priceWad), v.stake, priced.maxPayout);
-  if (dom !== -1) {
-    reject(metrics, "dominated");
-    return { status: 400, json: { error: "dominated", vault: v.legs[dom].vault } };
-  }
-
-  const now = deps.now();
-  const risk = priced.maxPayout - priced.premium;
-  // Keep check and reserve synchronous to prevent overlapping quotes exceeding caps.
-  // ponytail: one cap for the whole ticket; any in-play leg shrinks it to the in-play cap.
-  const inPlay = v.legs.some((l) => { const s = cfg.markets.get(l.vault.toLowerCase())?.startMs; return s !== undefined && now >= s; });
-  const marketCap = inPlay ? (cfg.perMarketCap * cfg.inPlayCapBps) / BPS : cfg.perMarketCap;
-  const check = exposure.check({
-    risk, vaults, allowance, perMarketCap: marketCap, now,
-    perClusterCap: cfg.perClusterCap, quotaKey: admission.account.userId, perKeyCap: cfg.perCodeReservedCap,
-  });
-  if (!check.ok) {
-    reject(metrics, check.reason);
-    console.log(JSON.stringify({ at: new Date(now).toISOString(), event: "quote-rejected", reason: check.reason, risk: risk.toString() }));
-    const fitStake = risk > 0n ? (v.stake * check.headroom) / risk : 0n;
-    return { status: 409, json: { error: check.reason, maxStake: fitStake.toString() } };
-  }
-  const quoteId = deps.randomId();
-  exposure.reserve(quoteId, risk, vaults, now + cfg.quoteTtlMs, admission.account.userId);
-
-  const quote: ParlayQuote = {
-    taker: v.taker,
-    legs: v.legs,
-    premium: priced.premium,
-    maxPayout: priced.maxPayout,
-    deadline: BigInt(Math.floor((now + cfg.quoteTtlMs) / 1000)),
-    quoteId,
-  };
-  let sig: Hex;
-  try {
-    sig = await deps.sign(quote);
-  } catch {
-    exposure.release(quoteId);
-    reject(metrics, "sign-failed");
-    return { status: 503, json: { error: "sign-failed" } };
-  }
-  const decision: QuoteRecord = {
-    schemaVersion: 1,
-    recordedAtMs: deps.now(),
-    quoteId,
-    quoteDigest: quoteDigest(deps.chainId, cfg.parlayVault, quote),
-    chainId: deps.chainId,
-    parlayVault: cfg.parlayVault,
-    taker: quote.taker,
-    legs: v.legs.map((leg) => {
-      const market = cfg.markets.get(leg.vault.toLowerCase())!;
-      return { vault: leg.vault, isYes: leg.isYes, underlying: market.underlying, cluster: market.cluster, outcomeCoin: leg.isYes ? market.coinYes : market.coinNo };
-    }),
-    bookInputs: priceObservations.map((price) => ({
-      priceWad: price.priceWad.toString(), source: price.source, observedAtMs: price.observedAtMs,
-      depthWad: price.depthWad?.toString() ?? null, vwapWad: price.vwapWad?.toString() ?? null, freshnessMs: price.freshnessMs,
-    })),
-    jointProbWad: joint.toString(),
-    edge: { baseBps: edge.baseBps.toString(), legBps: edge.legBps.toString(), totalBps: totalEdgeBps(edge).toString() },
-    premium: quote.premium.toString(),
-    maxPayout: quote.maxPayout.toString(),
-    deadline: quote.deadline.toString(),
-    signatureHash: keccak256(sig).slice(2),
-  };
-  try {
-    await deps.recordQuote(decision);
+    await deps.recordQuote(toQuoteRecord(deps, p, quote, sig));
   } catch (err) {
     console.error(new Date().toISOString(), "quote journal append failed", (err as Error).message);
-    exposure.release(quoteId);
+    exposure.release(quote.quoteId);
     reject(metrics, "journal-failed");
     return { status: 503, json: { error: "journal-failed" } };
   }
@@ -271,10 +307,10 @@ export async function handleQuote(
       sig,
       // Display inputs are not covered by the signature.
       breakdown: {
-        legPricesWad: priceObservations.map((price) => price.priceWad.toString()),
-        jointProbWad: joint.toString(),
-        edgeBps: edge.baseBps.toString(),
-        legBps: edge.legBps.toString(),
+        legPricesWad: p.priceObservations.map((price) => price.priceWad.toString()),
+        jointProbWad: p.joint.toString(),
+        edgeBps: p.edge.baseBps.toString(),
+        legBps: p.edge.legBps.toString(),
       },
     },
   };
