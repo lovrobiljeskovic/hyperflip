@@ -1,15 +1,12 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { bigBlocks, deployPair, elysiumRpcs, info, pickSports, ROOT, rotatedRegistry, settledVaults, sportsRegistryEntry } from "./rotate-lib.mjs";
+import { bigBlocks, coinYes, deployPair, elysiumRpcs, info, pickSports, ROOT, settledVaults, sportsRegistryEntry, writeRegistry as saveRegistry } from "./rotate-lib.mjs";
 
 const REGISTRY = path.join(ROOT, "registry/markets.json");
 const ENV_FILE = path.join(ROOT, ".env");
 
 const dryRun = process.argv.includes("--dry-run");
 process.loadEnvFile(ENV_FILE);
-if (process.env.ROTATE_MODE && process.env.ROTATE_MODE !== "sports") {
-  throw new Error("ROTATE_MODE must be sports or unset");
-}
 for (const key of ["PRIVATE_KEY", "TESTNET_RPC", "KEEPER_ADDRESS"]) {
   if (!process.env[key]) {
     console.error(`${key} must be set in .env`);
@@ -40,7 +37,7 @@ const outcomesInScope = venues?.length ? outcomes.filter((o) => venues.includes(
 // A settled row is done regardless of its deadline: off the board, into archived.
 const retired = (m) => m.expiryMs <= nowMs || settled.has(m.vault.toLowerCase());
 const expired = registry.markets.filter(retired);
-const venueOf = new Map(outcomes.map((o) => [`#${o.outcome * 10}`, o.venue]));
+const venueOf = new Map(outcomes.map((o) => [coinYes(o), o.venue]));
 let backfilled = 0;
 const kept = registry.markets
   .filter((m) => !retired(m))
@@ -54,7 +51,7 @@ const picks = pickSports({ outcomes: outcomesInScope, questions, mids, knownCoin
 
 // Retain metadata for settlement recovery of retired vaults.
 const archived = [...(registry.archived ?? []), ...expired];
-const writeRegistry = (markets) => writeFileSync(REGISTRY, JSON.stringify(rotatedRegistry(registry, markets, archived), null, 2) + "\n");
+const writeRegistry = (markets) => saveRegistry(registry, markets, archived);
 
 console.log(`registry: ${kept.length} live, ${expired.length} expired (dropped)`);
 for (const m of expired) console.log(`  drop ${m.vault} — ${m.title}${settled.has(m.vault.toLowerCase()) ? " (settled)" : ""}`);

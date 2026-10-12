@@ -7,7 +7,6 @@ After=network-online.target
 Type=oneshot
 WorkingDirectory=/opt/hype/repo
 Environment=PATH=/root/.foundry/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-Environment=ROTATE_MODE=sports
 # House HIP-4 markets first (settle finals, register, wrap, priors). `-`: an ESPN or
 # Core failure must not block rotation. Its registry write also arms the restart below.
 ExecStart=-/usr/bin/node tools/house-markets.mjs sync

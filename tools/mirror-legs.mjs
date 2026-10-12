@@ -6,10 +6,10 @@
 //   node tools/mirror-legs.mjs [--dry-run|--apply]   (.env: PRIVATE_KEY, ELYSIUM_RPC, RELAY_ADDRESS, PARLAY_VAULT_ADDRESS)
 // --apply skips the broadcast and only maps the latest MirrorLegs broadcast into the registry.
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { VENUES } from "./house-lib.mjs";
-import { ELYSIUM_CHAIN_ID, ROOT, rotatedRegistry } from "./rotate-lib.mjs";
+import { ELYSIUM_CHAIN_ID, ROOT, writeRegistry } from "./rotate-lib.mjs";
 
 const REGISTRY = path.join(ROOT, "registry/markets.json");
 const dryRun = process.argv.includes("--dry-run");
@@ -50,5 +50,5 @@ const markets = registry.markets.filter((m) => !foreign.includes(m)).map((m) => 
   const { vault, ...rest } = m;
   return { vault: leg, sourceVault: vault, ...rest };
 });
-writeFileSync(REGISTRY, JSON.stringify(rotatedRegistry(registry, markets, [...(registry.archived ?? []), ...foreign]), null, 2) + "\n");
+writeRegistry(registry, markets, [...(registry.archived ?? []), ...foreign]);
 console.log(`mirrored ${mirrored} of ${todo.length}, archived ${foreign.length}; registry written. Restart writer and keeper.`);

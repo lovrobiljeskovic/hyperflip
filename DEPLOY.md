@@ -354,7 +354,7 @@ node tools/rotate-markets.mjs --dry-run
 
 The dry run reads the live board and reports candidates. Running without
 `--dry-run` broadcasts contract deployments and rewrites the registry. Rotation
-supports sports only; `ROTATE_MODE` may be unset or `sports`. It wraps complete
+supports sports only. It wraps complete
 questions and standalone sports outcomes, and retains expired vault metadata in
 `archived`. Keep any unsettled retired vaults on the keeper's explicit recovery
 list (`VAULT_ADDRESSES`) when needed; that override replaces the active registry

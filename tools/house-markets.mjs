@@ -5,9 +5,9 @@
 // Runs hourly from rotate.service ahead of rotate-markets.mjs; registry mtime triggers
 // the writer/keeper restart there.
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { bigBlocks, deployPair, info, ROOT, rotatedRegistry, sportsRegistryEntry } from "./rotate-lib.mjs";
+import { bigBlocks, deployPair, info, ROOT, sportsRegistryEntry, writeRegistry as saveRegistry } from "./rotate-lib.mjs";
 import { fixtureFromEspn, LEAGUE, LEAGUES, matchdayOf, plan, registerAction, registerQuestionAction, settleAction, settleQuestionAction, VENUES, withPriors } from "./house-lib.mjs";
 
 const REGISTRY = path.join(ROOT, "registry/markets.json");
@@ -201,8 +201,7 @@ if (settled || registered) {
 const kept = withPriors(registry.markets, p.priors);
 const priorsChanged = kept !== registry.markets;
 const deployed = [];
-const writeRegistry = () =>
-  writeFileSync(REGISTRY, JSON.stringify(rotatedRegistry(registry, [...kept, ...deployed], registry.archived ?? []), null, 2) + "\n");
+const writeRegistry = () => saveRegistry(registry, [...kept, ...deployed], registry.archived ?? []);
 
 if (p.toWrap.length) {
   bigBlocks("on");

@@ -1,8 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 const NOW = Date.UTC(2026, 7, 18, 12, 0);
 
-import { rotatedRegistry, parseSportsEvent, pickSports, sportsRegistryEntry, sportsMarketSymbol } from "./rotate-lib.mjs";
+import { parseSportsEvent, pickSports, sportsRegistryEntry } from "./rotate-lib.mjs";
 
 const NAMED_SIDES = [{ name: "template:{shortNameA}" }, { name: "template:{shortNameB}" }];
 const YN_SIDES = [{ name: "Yes" }, { name: "No" }];
@@ -138,11 +142,21 @@ test("sportsRegistryEntry satisfies the writer's registry shape with the sports 
   assert.equal(pair.sourceVault, "0xdef");
   assert.equal(Object.keys(pair)[1], "sourceVault");
   assert.equal(standalone.group, undefined);
-  assert.equal(sportsMarketSymbol(twins), "S12289");
 });
 
-test("rotatedRegistry preserves the network and historical entries", () => {
-  const archived = [{ vault: "0xold" }];
-  assert.deepEqual(rotatedRegistry({ network: "testnet" }, [], archived), { network: "testnet", markets: [], archived });
-  assert.throws(() => rotatedRegistry({ network: "mainnet" }, [], []), /network must be testnet/);
+test("writeRegistry preserves the network and historical entries", async () => {
+  // A copy of the lib in a temp root, so ROOT/registry/markets.json is not the real registry.
+  const root = mkdtempSync(join(tmpdir(), "hype-registry-"));
+  try {
+    mkdirSync(join(root, "tools"));
+    mkdirSync(join(root, "registry"));
+    cpSync(new URL("rotate-lib.mjs", import.meta.url), join(root, "tools/rotate-lib.mjs"));
+    const { writeRegistry } = await import(pathToFileURL(join(root, "tools/rotate-lib.mjs")).href);
+    const archived = [{ vault: "0xold" }];
+    writeRegistry({ network: "testnet" }, [], archived);
+    const file = readFileSync(join(root, "registry/markets.json"), "utf8");
+    assert.deepEqual(JSON.parse(file), { network: "testnet", markets: [], archived });
+    assert.ok(file.endsWith("}\n"));
+    assert.throws(() => writeRegistry({ network: "mainnet" }, [], []), /network must be testnet/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -73,7 +73,7 @@ globalThis.fetch = async (_url, init) => {
 `);
       const result = spawnSync(process.execPath, ["--import", preload, "tools/rotate-markets.mjs", ...(dryRun ? ["--dry-run"] : [])], {
         cwd: root, encoding: "utf8", timeout: 10_000,
-        env: { ...process.env, ROTATE_MODE: "", PRIVATE_KEY: "fixture-key", TESTNET_RPC: "http://localhost:1", KEEPER_ADDRESS: "0xkeeper", DEPLOY_RPCS: "", ELYSIUM_RPC: "http://localhost:2", RELAY_ADDRESS: "0xrelay", PARLAY_VAULT_ADDRESS: "0xparlay" },
+        env: { ...process.env, PRIVATE_KEY: "fixture-key", TESTNET_RPC: "http://localhost:1", KEEPER_ADDRESS: "0xkeeper", DEPLOY_RPCS: "", ELYSIUM_RPC: "http://localhost:2", RELAY_ADDRESS: "0xrelay", PARLAY_VAULT_ADDRESS: "0xparlay" },
       });
       const updated = JSON.parse(readFileSync(registryFile, "utf8"));
       if (dryRun) {

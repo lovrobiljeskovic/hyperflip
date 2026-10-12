@@ -1,55 +1,72 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-export const INFO_URL = "https://api.hyperliquid-testnet.xyz/info";
+const INFO_URL = "https://api.hyperliquid-testnet.xyz/info";
 const PUBLIC_DEPLOY_RPCS = ["https://rpc.hyperliquid-testnet.xyz/evm", "https://rpcs.chain.link/hyperevm/testnet", "https://hyperliquid-testnet.drpc.org"];
 export const ELYSIUM_CHAIN_ID = 99801;
-export const DEPLOY_ENV = {
+const DEPLOY_ENV = {
   QUOTE_TOKEN_ADDRESS: "0x2B3370eE501B4a559b57D449569354196457D8Ab",
   CORE_SYSTEM_ADDRESS: "0x2000000000000000000000000000000000000000",
   QUOTE_TOKEN_CORE_INDEX: "0",
   VERIFIER_ADDRESS: "0xc19d502255852C3D2564C027b61556EB2E89e431",
   QUESTION_ID: String(0xffffffff), // standalone-binary sentinel
 };
+const TIMEOUT_MS = 15_000;
 // Read at call time so `.env` (loaded by the CLI after import) is honoured.
 const deployRpcs = () => [...new Set([...(process.env.DEPLOY_RPCS ?? "").split(",").map((u) => u.trim()).filter(Boolean), ...PUBLIC_DEPLOY_RPCS])];
 /** Elysium RPC list; empty when the deployment is HyperEVM-only (no legs are deployed then). */
 export const elysiumRpcs = () => (process.env.ELYSIUM_RPC ?? "").split(",").map((u) => u.trim()).filter(Boolean);
+
+export const coinYes = (o) => `#${o.outcome * 10}`;
+export const coinNo = (o) => `#${o.outcome * 10 + 1}`;
 
 export async function info(type, extra = {}) {
   const res = await fetch(INFO_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ type, ...extra }),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`info ${type}: HTTP ${res.status}`);
   return res.json();
 }
 
-/** Vaults (or Elysium legs, given `rpcs`) whose `settled()` is true, lowercase. Registry
- * `expiryMs` is the vault deadline (kickoff + days), so without this a settled game stays listed
- * until the deadline. An RPC failure counts as not settled: the vault just waits for the next
- * hourly run. */
+/** JSON-RPC `result` from the first of `rpcs` that returns one (`null` included); throws when none does. */
+async function rpc(rpcs, method, params) {
+  for (const url of rpcs) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+      const { result, error } = await res.json();
+      if (result === undefined) throw new Error(error?.message ?? "no result");
+      return result;
+    } catch (err) {
+      console.warn(`${method} failed on ${url}: ${err.message}`);
+    }
+  }
+  throw new Error(`${method} failed on every RPC`);
+}
+
+/** Vaults (or Elysium legs, given `rpcs`) whose `settled()` is true, lowercase. Rows retire on
+ * `settled()`, not only on the registry deadline; an RPC failure counts as not settled. */
 export async function settledVaults(vaults, rpcs = deployRpcs()) {
   const out = new Set();
   const call = async (vault) => {
-    for (const rpc of rpcs) {
-      try {
-        const res = await fetch(rpc, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: vault, data: "0x8f775839" }, "latest"] }), // settled()
-        });
-        const { result } = await res.json();
-        if (typeof result !== "string") continue;
-        if (BigInt(result) === 1n) out.add(vault.toLowerCase());
-        return;
-      } catch {} // RPC flake — try the next
+    try {
+      const result = await rpc(rpcs, "eth_call", [{ to: vault, data: "0x8f775839" }, "latest"]); // settled()
+      if (typeof result !== "string") throw new Error("non-string result");
+      if (BigInt(result) === 1n) out.add(vault.toLowerCase());
+    } catch {
+      console.warn(`settled() unreadable for ${vault} — keeping it this run`);
     }
-    console.warn(`settled() unreadable for ${vault} — keeping it this run`);
   };
   // ponytail: 8 at a time on public RPCs; batch JSON-RPC if the registry grows past a few hundred.
   for (let i = 0; i < vaults.length; i += 8) await Promise.all(vaults.slice(i, i + 8).map(call));
@@ -60,17 +77,11 @@ export function bigBlocks(flag) {
   execFileSync("uv", ["run", "tools/bigblocks.py", flag], { cwd: ROOT, stdio: "inherit" });
 }
 
-export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const landedVault = (pick, polls = 6) =>
+  landedTx("Deploy.s.sol", 998, deployRpcs(), (t) => t.contractName === "OutcomeVault" && t.arguments?.[4] === String(pick.outcome), polls);
 
-export async function landedVault(pick, polls = 6) {
-  return landedTx("Deploy.s.sol", 998, deployRpcs(), (t) => t.contractName === "OutcomeVault" && t.arguments?.[4] === String(pick.outcome), polls);
-}
-
-/** The OutcomeLeg for `vault` from the latest DeployLeg broadcast, if its tx landed. */
-export async function landedLeg(vault, polls = 6, delayMs = 3_000) {
-  const match = (t) => t.contractName === "OutcomeLeg" && String(t.arguments?.[0]).toLowerCase() === vault.toLowerCase();
-  return landedTx("DeployLeg.s.sol", ELYSIUM_CHAIN_ID, elysiumRpcs(), match, polls, delayMs);
-}
+const landedLeg = (vault, polls = 6) =>
+  landedTx("DeployLeg.s.sol", ELYSIUM_CHAIN_ID, elysiumRpcs(), (t) => t.contractName === "OutcomeLeg" && String(t.arguments?.[0]).toLowerCase() === vault.toLowerCase(), polls, 3_000);
 
 async function landedTx(script, chainId, rpcs, match, polls, delayMs = 20_000) {
   let tx;
@@ -82,21 +93,39 @@ async function landedTx(script, chainId, rpcs, match, polls, delayMs = 20_000) {
   }
   if (!tx) return null;
   for (let i = 0; i < polls; i++) {
-    for (const rpc of rpcs) {
-      try {
-        const res = await fetch(rpc, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getTransactionReceipt", params: [tx.hash] }),
-        });
-        const receipt = (await res.json()).result;
-        if (receipt?.status === "0x1") return tx.contractAddress;
-        if (receipt) return null; // landed but reverted
-      } catch {} // RPC flake — try the other / next poll
+    // Per-RPC so a lagging RPC's null (pending) still asks the next one.
+    for (const url of rpcs) {
+      const receipt = await rpc([url], "eth_getTransactionReceipt", [tx.hash]).catch(() => null);
+      if (receipt?.status === "0x1") return tx.contractAddress;
+      if (receipt) return null; // landed but reverted
     }
     await sleep(delayMs); // big blocks tick ~60s; give a pending tx time
   }
   return null;
+}
+
+/** Runs `forge script` up to `attempts` times, rotating `rpcs`, and returns what `landed` finds;
+ * reuses an already-landed contract first. forge often exits non-zero after a tx did land. */
+async function forgeDeploy({ args, rpcs, env, landed, attempts, retryMs, say }) {
+  const prior = await landed(1);
+  if (prior) {
+    console.log(say.reused(prior));
+    return prior;
+  }
+  for (let i = 0; i < attempts; i++) {
+    try {
+      execFileSync("forge", args(rpcs[i % rpcs.length]), { cwd: ROOT, stdio: "inherit", env });
+    } catch {
+      console.log(`forge exited non-zero for ${say.what} (attempt ${i + 1}) — checking chain for a landed tx...`);
+    }
+    const addr = await landed();
+    if (addr) return addr;
+    if (i + 1 < attempts) {
+      if (say.retry) console.log(say.retry);
+      await sleep(retryMs);
+    }
+  }
+  throw new Error(say.failed);
 }
 
 /** Deploys the Elysium OutcomeLeg mirroring `vault` and lists it on the ParlayVault (registrar key). */
@@ -104,29 +133,21 @@ export async function deployLeg(vault, attempts = 4) {
   for (const key of ["RELAY_ADDRESS", "PARLAY_VAULT_ADDRESS"]) {
     if (!process.env[key]) throw new Error(`${key} must be set in .env to deploy Elysium legs`);
   }
-  const prior = await landedLeg(vault, 1);
-  if (prior) {
-    console.log(`reusing already-landed leg ${prior} for vault ${vault}`);
-    return prior;
-  }
-  const rpcs = elysiumRpcs();
-  for (let i = 0; i < attempts; i++) {
-    try {
-      execFileSync(
-        "forge",
-        // --skip-simulation: Nitro charges L1 data posting as gas units, so a locally simulated
-        // gas limit is "intrinsic gas too low" on Elysium; let the RPC estimate instead.
-        ["script", "script/DeployLeg.s.sol", "--rpc-url", rpcs[i % rpcs.length], "--broadcast", "--skip-simulation", "--gas-estimate-multiplier", "150", "--sig", "run()", "--retries", "12", "--delay", "2"],
-        { cwd: ROOT, stdio: "inherit", env: { ...process.env, SOURCE_VAULT: vault } },
-      );
-    } catch (err) {
-      console.log(`forge exited non-zero for leg of ${vault} (attempt ${i + 1}) — checking chain for a landed tx...`);
-    }
-    const leg = await landedLeg(vault);
-    if (leg) return leg;
-    if (i + 1 < attempts) await sleep(5_000);
-  }
-  throw new Error(`leg deploy failed for vault ${vault} after ${attempts} attempts`);
+  return forgeDeploy({
+    // --skip-simulation: Nitro charges L1 data posting as gas units, so a locally simulated
+    // gas limit is "intrinsic gas too low" on Elysium; let the RPC estimate instead.
+    args: (url) => ["script", "script/DeployLeg.s.sol", "--rpc-url", url, "--broadcast", "--skip-simulation", "--gas-estimate-multiplier", "150", "--sig", "run()", "--retries", "12", "--delay", "2"],
+    rpcs: elysiumRpcs(),
+    env: { ...process.env, SOURCE_VAULT: vault },
+    landed: (polls) => landedLeg(vault, polls),
+    attempts,
+    retryMs: 5_000,
+    say: {
+      reused: (leg) => `reusing already-landed leg ${leg} for vault ${vault}`,
+      what: `leg of ${vault}`,
+      failed: `leg deploy failed for vault ${vault} after ${attempts} attempts`,
+    },
+  });
 }
 
 /** One market: the 998 OutcomeVault, plus its Elysium leg when ELYSIUM_RPC is set. Returns the
@@ -138,44 +159,30 @@ export async function deployPair(pick) {
 }
 
 export async function deploy(pick, attempts = 4) {
-  const prior = await landedVault(pick, 1);
-  if (prior) {
-    console.log(`reusing already-landed vault ${prior} for outcome ${pick.outcome}`);
-    return prior;
-  }
-  const rpcs = deployRpcs();
-  for (let i = 0; i < attempts; i++) {
-    try {
-      execFileSync(
-        "forge",
-        // Pass the signing key through the environment, never command arguments.
-        // --disable-block-gas-limit: forge >= 1.8 caps the simulation at the forked block's gas
-        // limit, and a small 998 block (3M) cannot hold the vault (~8M); it lands in a big block.
-        ["script", "script/Deploy.s.sol", "--rpc-url", rpcs[i % rpcs.length], "--broadcast", "--legacy", "--disable-block-gas-limit", "--sig", "run()", "--retries", "12", "--delay", "10"],
-        {
-          cwd: ROOT,
-          stdio: "inherit",
-          env: {
-            ...process.env,
-            ...DEPLOY_ENV,
-            // Question members must settle against their actual question ID.
-            ...(pick.question != null ? { QUESTION_ID: String(pick.question) } : {}),
-            OUTCOME_ID: String(pick.outcome),
-            MARKET_SYMBOL: sportsMarketSymbol(pick),
-          },
-        },
-      );
-    } catch (err) {
-      console.log(`forge exited non-zero for outcome ${pick.outcome} (attempt ${i + 1}) — checking chain for a landed tx...`);
-    }
-    const vault = await landedVault(pick);
-    if (vault) return vault;
-    if (i + 1 < attempts) {
-      console.log(`no landed tx for outcome ${pick.outcome}, retrying on other RPC in 15s...`);
-      await sleep(15_000);
-    }
-  }
-  throw new Error(`deploy failed for outcome ${pick.outcome} after ${attempts} attempts`);
+  return forgeDeploy({
+    // Pass the signing key through the environment, never command arguments.
+    // --disable-block-gas-limit: forge >= 1.8 caps the simulation at the forked block's gas
+    // limit, and a small 998 block (3M) cannot hold the vault (~8M); it lands in a big block.
+    args: (url) => ["script", "script/Deploy.s.sol", "--rpc-url", url, "--broadcast", "--legacy", "--disable-block-gas-limit", "--sig", "run()", "--retries", "12", "--delay", "10"],
+    rpcs: deployRpcs(),
+    env: {
+      ...process.env,
+      ...DEPLOY_ENV,
+      // Question members must settle against their actual question ID.
+      ...(pick.question != null ? { QUESTION_ID: String(pick.question) } : {}),
+      OUTCOME_ID: String(pick.outcome),
+      MARKET_SYMBOL: `S${pick.outcome}`,
+    },
+    landed: (polls) => landedVault(pick, polls),
+    attempts,
+    retryMs: 15_000,
+    say: {
+      reused: (vault) => `reusing already-landed vault ${vault} for outcome ${pick.outcome}`,
+      what: `outcome ${pick.outcome}`,
+      retry: `no landed tx for outcome ${pick.outcome}, retrying on other RPC in 15s...`,
+      failed: `deploy failed for outcome ${pick.outcome} after ${attempts} attempts`,
+    },
+  });
 }
 
 function parseFields(description) {
@@ -192,9 +199,9 @@ export function parseStamp(stamp) {
   return m === null ? null : Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
 }
 
-export function rotatedRegistry(registry, markets, archived) {
+export function writeRegistry(registry, markets, archived) {
   if (registry.network !== "testnet") throw new Error("market registry network must be testnet");
-  return { network: registry.network, markets, archived };
+  writeFileSync(path.join(ROOT, "registry/markets.json"), JSON.stringify({ network: registry.network, markets, archived }, null, 2) + "\n");
 }
 
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -258,10 +265,9 @@ export function pickSports({
   maxMsLeft = 365 * 86400_000,
 }) {
   const byId = new Map(outcomes.map((o) => [o.outcome, o]));
-  const coinOf = (id) => `#${id * 10}`;
-  const mid = (id) => mids[coinOf(id)];
+  const mid = (o) => mids[coinYes(o)];
   const inWindow = (ev) => ev.expiryMs - nowMs >= minMsLeft && ev.expiryMs - nowMs <= maxMsLeft;
-  const events = []; // { key, competition, startMs, priced, legs: [candidate] }
+  const events = [];
 
   for (const q of questions) {
     if (!isSportsQuestion(q)) continue;
@@ -270,8 +276,8 @@ export function pickSports({
     const members = (q.namedOutcomes ?? []).map((id) => byId.get(id)).filter(Boolean);
     // Wrap every named outcome so the question remains complete.
     if (members.length < 2 || members.length !== (q.namedOutcomes ?? []).length) continue;
-    if (members.some((o) => o.quoteToken !== "USDC" || mid(o.outcome) === undefined || knownCoins.has(coinOf(o.outcome)))) continue;
-    const priced = members.some((o) => Number(mid(o.outcome)) !== 0.5) ? 1 : 0;
+    if (members.some((o) => o.quoteToken !== "USDC" || mid(o) === undefined || knownCoins.has(coinYes(o)))) continue;
+    const priced = members.some((o) => Number(mid(o)) !== 0.5) ? 1 : 0;
     const isMatch = /^(match|game)$/i.test(ev.contestType ?? "") || members.length <= 3;
     const groupTitle = isMatch && ev.participantA && ev.participantB
       ? `${ev.participantA} vs ${ev.participantB}`
@@ -282,10 +288,10 @@ export function pickSports({
       legs: members.map((o) => {
         const label = memberLabel(o);
         return {
-          outcome: o.outcome, coinYes: coinOf(o.outcome), coinNo: `#${o.outcome * 10 + 1}`,
+          outcome: o.outcome, coinYes: coinYes(o), coinNo: coinNo(o),
           question: q.question, group: underlying, groupTitle, title: label,
           sideYes: label, sideNo: `Not ${label}`, underlying, cluster: ev.competition,
-          sport: ev.sport, startMs: ev.startMs, expiryMs: ev.expiryMs, priced: Number(mid(o.outcome)) !== 0.5 ? 1 : 0,
+          sport: ev.sport, startMs: ev.startMs, expiryMs: ev.expiryMs, priced: Number(mid(o)) !== 0.5 ? 1 : 0,
           ...(o.venue ? { deployer: o.venue } : {}),
         };
       }),
@@ -296,10 +302,10 @@ export function pickSports({
     const winner = isSportsWinner(o);
     const scalar = isSportsScalar(o);
     if ((!winner && !scalar) || o.quoteToken !== "USDC" || o.sideSpecs?.length !== 2) continue;
-    if (knownCoins.has(coinOf(o.outcome)) || mid(o.outcome) === undefined) continue;
+    if (knownCoins.has(coinYes(o)) || mid(o) === undefined) continue;
     const ev = parseSportsEvent(o.description);
     if (!ev || !isRealSport(ev) || !inWindow(ev)) continue;
-    const priced = Number(mid(o.outcome)) !== 0.5 ? 1 : 0;
+    const priced = Number(mid(o)) !== 0.5 ? 1 : 0;
     let leg;
     if (winner) {
       if (!ev.participantA || !ev.participantB) continue;
@@ -319,7 +325,7 @@ export function pickSports({
     events.push({
       key: leg.underlying, competition: ev.competition, startMs: ev.startMs, priced,
       legs: [{
-        outcome: o.outcome, coinYes: coinOf(o.outcome), coinNo: `#${o.outcome * 10 + 1}`,
+        outcome: o.outcome, coinYes: coinYes(o), coinNo: coinNo(o),
         question: null, group: null, ...leg, cluster: ev.competition, sport: ev.sport,
         startMs: ev.startMs, expiryMs: ev.expiryMs, priced,
         ...(o.venue ? { deployer: o.venue } : {}),
@@ -365,8 +371,4 @@ export function sportsRegistryEntry(pick, vault, sourceVault) {
   if (pick.sport) entry.sport = pick.sport;
   if (pick.deployer) entry.deployer = pick.deployer;
   return entry;
-}
-
-export function sportsMarketSymbol(pick) {
-  return `S${pick.outcome}`;
 }
