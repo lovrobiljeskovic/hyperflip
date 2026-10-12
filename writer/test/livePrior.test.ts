@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Address } from "viem";
-import { espnDate, LivePrior, mainnetYesCoin, pmQuestionToken, pmSlug, toWad, yesOutcomeIndex } from "../src/livePrior.js";
+import { espnDate, LivePrior, mainnetYesCoin, pmQuestionToken, pmSlug, yesOutcomeIndex } from "../src/livePrior.js";
 import type { MarketInfo } from "../src/markets.js";
-import { WAD } from "../src/units.js";
+import { toWad, WAD } from "../src/units.js";
 
 const V = "0x1111111111111111111111111111111111111111" as Address;
 const KICKOFF = Date.UTC(2026, 8, 20, 17, 0); // 2026-09-20 13:00 EDT

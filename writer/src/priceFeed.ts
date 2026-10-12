@@ -5,9 +5,7 @@ import { defaultFetchJson, LivePrior } from "./livePrior.js";
 import type { QuoteLeg } from "./quotes.js";
 import { makeLegPriceFetcher, readSpotPxWad } from "./spotPx.js";
 
-/** Live prior + leg-price fetcher wired from config. The live feed (Polymarket mid, then
- * mainnet book mid, then ESPN win probability) wins; the registry prior is the pre-kickoff
- * fallback only, since in play it is stale by construction. */
+/** Live prior + leg-price fetcher wired from config; source order lives in the livePrior.ts header. */
 export function priceFeed(cfg: WriterConfig, publicClient: Pick<PublicClient, "call">) {
   const livePrior = new LivePrior({
     markets: cfg.markets.values(),

@@ -1,5 +1,5 @@
 import type { MarketInfo } from "./markets.js";
-import { WAD } from "./units.js";
+import { fromWad, toWad, WAD } from "./units.js";
 
 /** Live house prior for sports legs, polled off-chain so an in-play leg follows the score.
  *
@@ -52,8 +52,6 @@ const FAIL_RETRY_MS = 60_000;
 const MAINNET_MAX_SPREAD = 0.03;
 // Polymarket spells a few teams differently from ESPN.
 const PM_ALIAS: Record<string, string> = { wsh: "was", lar: "la" };
-
-export const toWad = (p: number): bigint => BigInt(Math.round(p * 1e6)) * 10n ** 12n;
 
 /** YYYY-MM-DD in UTC — Polymarket's slug date. */
 export function pmSlug(m: Pick<MarketInfo, "sideYes" | "sideNo" | "startMs">): string | null {
@@ -197,7 +195,7 @@ export class LivePrior {
     const coin = this.yesCoin.get(vault.toLowerCase());
     if (coin === undefined) return undefined;
     const wad = this.prior(coin);
-    return wad === undefined ? null : Number(wad / 10n ** 12n) / 1e6;
+    return wad === undefined ? null : fromWad(wad);
   }
 
   /** /health view: one row per live-tracked market. */
