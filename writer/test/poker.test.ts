@@ -1,11 +1,11 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import type { Address, PublicClient } from "viem";
 import { Poker, blockRanges, chainFetchers, isStalled, stallThresholdMs, type PokerDeps } from "../src/poker.js";
 import { ExposureBook } from "../src/exposure.js";
 import { newMetrics } from "../src/server.js";
 import { WAD } from "../src/units.js";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -13,13 +13,17 @@ const V1 = "0x1111111111111111111111111111111111111111" as Address;
 const VAULT = "0x9999999999999999999999999999999999999999" as Address;
 const T = "0x3333333333333333333333333333333333333333" as Address;
 
+const tmpDirs: string[] = [];
+const tmpDir = (): string => { const d = mkdtempSync(path.join(os.tmpdir(), "parlay-index-")); tmpDirs.push(d); return d; };
+after(() => { for (const d of tmpDirs) rmSync(d, { recursive: true, force: true }); });
+
 const unexpected = (name: string) => async (): Promise<never> => { throw new Error(`unexpected ${name}`); };
 function pokerDeps(overrides: Partial<PokerDeps>): PokerDeps {
   return {
     exposure: new ExposureBook(),
     metrics: newMetrics(),
     fromBlock: 0n,
-    indexFile: path.join(mkdtempSync(path.join(os.tmpdir(), "parlay-index-")), "parlays.json"),
+    indexFile: path.join(tmpDir(), "parlays.json"),
     resolve: async () => {},
     log: () => {},
     fetchEvents: unexpected("fetchEvents"),
@@ -234,7 +238,7 @@ test("fetchOpenParlays default: reads nextId + parlay(id), keeps only Status.Ope
 });
 
 test("index: persists taker refs, serves them newest first, and resumes from the checkpoint after restart", async () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "parlay-index-"));
+  const dir = tmpDir();
   const indexFile = path.join(dir, "parlays.json");
   const requestedFrom: bigint[] = [];
   const deps = () => pokerDeps({

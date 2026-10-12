@@ -9,7 +9,7 @@ import { fromWad, toWad, WAD } from "./units.js";
  *   2. Polymarket moneyline midpoint (YES token = away team = `sideYes`).
  *   3. ESPN `situation.lastPlay.probability` (in play only).
  * Soccer 3-way members use Polymarket only; all three mids are normalised to sum to 1.
- * Pregame with no fresh sample the caller falls back to the registry `priorYes`; in play a
+ * Pregame with no fresh sample `prior()` falls back to the registry `priorYes`; in play a
  * missing sample leaves the leg `unpriced-leg`.
  *
  * Suspension: a jump of more than `jumpWad` between consecutive samples refuses the leg for

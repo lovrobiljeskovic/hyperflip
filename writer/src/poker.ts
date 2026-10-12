@@ -100,7 +100,8 @@ export class Poker {
       this.open.set(p.id, p.legs);
       exposure.onMinted(`seed-${p.id}`, p.id.toString(), p.risk, p.legs.map((l) => l.vault));
     }
-    // Taker index has no chain-state fallback: resume from its checkpoint when older than head.
+    // Taker index has no chain-state fallback: resume from its checkpoint when older than head;
+    // re-seen mints/resolves are idempotent Map.set/delete, so the replay is safe.
     const resume = this.indexFrom ?? headBlock + 1n;
     this.nextBlock = resume < headBlock + 1n ? resume : headBlock + 1n;
   }

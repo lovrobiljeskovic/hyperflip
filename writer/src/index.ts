@@ -5,7 +5,7 @@ import { createPublicClient, createWalletClient, fallback, http, type Hex, type 
 import { privateKeyToAccount } from "viem/accounts";
 import { parlayVaultAbi } from "./abi.js";
 import { bankrollReader } from "./bankroll.js";
-import { defaultPerCodeReservedCap, loadConfig, type WriterConfig } from "./config.js";
+import { defaultPerCodeReservedCap, loadConfig, type LoadedConfig, type WriterConfig } from "./config.js";
 import { ExposureBook } from "./exposure.js";
 import { buildPriceFreshness } from "./spotPx.js";
 import { LivePrior } from "./livePrior.js";
@@ -112,7 +112,7 @@ async function main(): Promise<void> {
 }
 
 /** The chain's minPremiumBps wins over env; the per-code reserved cap defaults off it. */
-async function withChainMinPremium(publicClient: Pick<PublicClient, "readContract">, loaded: ReturnType<typeof loadConfig>): Promise<WriterConfig> {
+async function withChainMinPremium(publicClient: Pick<PublicClient, "readContract">, loaded: LoadedConfig): Promise<WriterConfig> {
   const chainMinPremiumBps = BigInt(
     (await publicClient.readContract({
       address: loaded.parlayVault,

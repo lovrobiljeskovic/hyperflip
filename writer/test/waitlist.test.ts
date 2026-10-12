@@ -90,6 +90,7 @@ test("rate limiter: a stale key no longer counts after a later check sweeps it",
   assert.ok(!rl.allow("stale"));
   t = 100;
   assert.ok(rl.allow("other")); // sweep drops "stale"
+  assert.equal((rl as unknown as { hits: Map<string, number[]> }).hits.size, 1);
   assert.ok(rl.allow("stale"));
   assert.ok(!rl.allow("stale"));
 });
