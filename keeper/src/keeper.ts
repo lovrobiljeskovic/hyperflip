@@ -9,7 +9,7 @@ import { createBalanceLoop } from "./balance.js";
 import type { KeeperConfig } from "./config.js";
 import { createSerializer } from "./pure.js";
 import { createSettlementLoop, loadFractionCache } from "./settlement.js";
-import { RECEIPT_TIMEOUT_MS, type KeeperState, type PendingOp, type VaultInfo } from "./state.js";
+import { RECEIPT_TIMEOUT_MS, type KeeperState, type VaultInfo } from "./state.js";
 
 export async function runKeeper(config: KeeperConfig): Promise<void> {
   const account = privateKeyToAccount(config.keeperPrivateKey);
@@ -38,7 +38,6 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   const sendTx = createSerializer();
 
   const vaultInfo = new Map<Address, VaultInfo>();
-  const pendingOps = new Map<Address, PendingOp>();
   // Persisted: Core prunes within ~10 min and the pruned path can only replay a fraction seen at status 2.
   const lastKnownFraction = loadFractionCache(config.settlementCachePath);
   if (lastKnownFraction.size > 0) log("loaded settlement cache", lastKnownFraction.size, "entries");
@@ -62,7 +61,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   const settledVaults = new Set<Address>();
   const state: KeeperState = {
     config, chain, account, publicClient, elysiumClient, walletClient, sendTx,
-    vaultInfo, pendingOps, settledVaults, lastKnownFraction, readVault,
+    vaultInfo, settledVaults, lastKnownFraction, readVault,
   };
   const balance = createBalanceLoop(state);
   const settlement = createSettlementLoop(state);

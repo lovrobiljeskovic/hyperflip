@@ -36,7 +36,10 @@ export const encodedOutcomeAssetId = (outcome: number, yes: boolean): bigint =>
 /** abi.encode of uint/address args: each one 32-byte left-padded word. */
 const encode = (...args: (bigint | number | Hex)[]): Hex =>
   `0x${args.map((a) => (typeof a === "string" ? a.slice(2).toLowerCase() : BigInt(a).toString(16)).padStart(64, "0")).join("")}`;
-const word = (data: Hex, i: number): bigint => BigInt(`0x${data.slice(2 + 64 * i, 2 + 64 * (i + 1))}`);
+const word = (data: Hex, i: number): bigint => {
+  if (data.length < 2 + 64 * (i + 1)) throw new Error("short precompile response");
+  return BigInt(`0x${data.slice(2 + 64 * i, 2 + 64 * (i + 1))}`);
+};
 
 /** Return is abi.encode(uint8 status, uint64 settledValue, uint32 question). */
 export async function readOutcomeStatus(client: PrecompileClient, outcome: number): Promise<OutcomeStatus> {

@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(import.meta.dirname, "..");
-const contracts = { writer: ["ParlayVault", "OutcomeVault"], keeper: ["OutcomeVault", "KeeperVerifier"] };
+const contracts = { writer: ["ParlayVault"], keeper: ["OutcomeVault", "KeeperVerifier"] };
 
 export function generateAbis(directory, check = false) {
   for (const [service, names] of Object.entries(contracts)) {

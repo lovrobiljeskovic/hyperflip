@@ -36,7 +36,6 @@ export interface KeeperState {
   walletClient: WalletClient<Transport, Chain, PrivateKeyAccount>;
   sendTx: <T>(fn: () => Promise<T>) => Promise<T>;
   vaultInfo: Map<Address, VaultInfo>;
-  pendingOps: Map<Address, PendingOp>;
   settledVaults: Set<Address>;
   lastKnownFraction: Map<string, bigint>;
   readVault: <T>(vault: Address, functionName: string, args?: readonly unknown[]) => Promise<T>;

@@ -1,7 +1,8 @@
-import type { Address, PublicClient } from "viem";
-import { outcomeVaultAbi } from "./abi.js";
+import { parseAbi, type Address, type PublicClient } from "viem";
 import { WAD } from "./units.js";
 import type { QuoteLeg } from "./quotes.js";
+
+const outcomeVaultAbi = parseAbi(["function settled() view returns (bool)", "function settleFractionWad() view returns (uint256)"]);
 
 export interface LegState {
   settled: boolean;

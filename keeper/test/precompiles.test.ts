@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decodeAbiParameters, encodeAbiParameters } from "viem";
+import { decodeAbiParameters, encodeAbiParameters, getAddress } from "viem";
 import {
   encodedOutcomeAssetId,
   OUTCOME_STATUS_PRECOMPILE,
@@ -45,6 +45,19 @@ test("readSpotBalanceWei sends abi.encode(user, token) to 0x801 and returns only
 test("readSpotBalanceWei throws on an empty response rather than inventing a zero balance", async () => {
   const client = { call: async () => ({ data: undefined }) };
   await assert.rejects(() => readSpotBalanceWei(client as never, VAULT, 100_137_340n), /empty spotBalance/);
+});
+
+test("readSpotBalanceWei throws on a response shorter than the words read", async () => {
+  const client = fakeClient("0x1234");
+  await assert.rejects(() => readSpotBalanceWei(client as never, VAULT, 100_137_340n), /short precompile response/);
+});
+
+test("readSpotBalanceWei calldata for a checksummed user equals viem's encoding", async () => {
+  const mixed = getAddress(VAULT);
+  assert.notEqual(mixed, VAULT);
+  const client = fakeClient(encodeAbiParameters([{ type: "uint64" }], [1n]));
+  await readSpotBalanceWei(client as never, mixed, 5n);
+  assert.equal(client.calls[0].data, encodeAbiParameters([{ type: "address" }, { type: "uint64" }], [mixed, 5n]));
 });
 
 test("readOutcomeStatus sends abi.encode(uint32 outcome) to 0x814 and decodes status, settledValue, question", async () => {

@@ -6,4 +6,3 @@ function loadAbi(name: string): Abi {
 }
 
 export const parlayVaultAbi = loadAbi("ParlayVault");
-export const outcomeVaultAbi = loadAbi("OutcomeVault");

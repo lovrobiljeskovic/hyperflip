@@ -10,7 +10,7 @@ import {
   type BalanceSample,
   type OpType,
 } from "./pure.js";
-import { RECEIPT_TIMEOUT_MS, type KeeperState, type VaultInfo } from "./state.js";
+import { RECEIPT_TIMEOUT_MS, type KeeperState, type PendingOp, type VaultInfo } from "./state.js";
 
 const STATUS_PENDING = 0;
 /** Ambient samples kept per vault, in ticks: longer than the ~4s event poll so a pre-op sample is usually in hand. */
@@ -21,8 +21,9 @@ const CLOCK_SKEW_MARGIN_MS = 2_000;
 const MAX_SAMPLE_AGE_MS = 60_000;
 
 export function createBalanceLoop(state: KeeperState) {
-  const { config, chain, account, publicClient, walletClient, sendTx, vaultInfo, pendingOps, settledVaults, readVault } = state;
+  const { config, chain, account, publicClient, walletClient, sendTx, vaultInfo, settledVaults, readVault } = state;
   // Consecutive failed balance-read samples per vault — throttles the alert, nothing else.
+  const pendingOps = new Map<Address, PendingOp>();
   const sampleFailures = new Map<string, number>();
   const balanceHistory = new Map<Address, BalanceSample[]>(); // ambient yes-coin samples, per vault
 

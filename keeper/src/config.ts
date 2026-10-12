@@ -20,7 +20,7 @@ export interface KeeperConfig extends Deployment {
   vaultAddresses: Address[];
   /** How often the balance loop and settlement loop each tick. */
   pollIntervalMs: number;
-  /** Keeper-side policy timeout for "no balance delta observed" — see keeper.ts balanceLoop. */
+  /** Keeper-side policy timeout for "no balance delta observed" — see balance.ts. */
   balanceTimeoutMs: number;
   /** Where settlement fractions observed pre-prune are persisted, so a restart inside Core's
    * ~10-minute settled->pruned window does not lose the only fraction that can still relay. */

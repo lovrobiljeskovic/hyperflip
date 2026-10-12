@@ -19,7 +19,7 @@ test("fetchBestAskWad returns null on an empty book instead of consulting allMid
   assert.equal(calls.length, 1); // one l2Book call, no second allMids request
 });
 
-test("bestAskWad takes first ask level px as WAD when it alone covers minDepthWad", () => {
+test("bestAsk takes first ask level px as WAD when it alone covers minDepthWad", () => {
   const book = {
     levels: [
       [{ px: "0.60", sz: "100", n: 1 }],
@@ -29,12 +29,12 @@ test("bestAskWad takes first ask level px as WAD when it alone covers minDepthWa
   assert.equal(bestAsk(book, DEPTH_10)?.priceWad ?? null, 650_000_000_000_000_000n);
 });
 
-test("bestAskWad returns null on empty ask side", () => {
+test("bestAsk returns null on empty ask side", () => {
   assert.equal(bestAsk({ levels: [[{ px: "0.6", sz: "1", n: 1 }], []] }, DEPTH_10)?.priceWad ?? null, null);
   assert.equal(bestAsk({}, DEPTH_10)?.priceWad ?? null, null);
 });
 
-test("bestAskWad ignores a spoofed 1-lot top and volume-weights across the depth-covering level", () => {
+test("bestAsk ignores a spoofed 1-lot top and volume-weights across the depth-covering level", () => {
   // 1-lot spoof at 0.50, fat second level at 0.70. minDepth 10 isn't covered by
   // the 1-lot alone, so the walk continues into the second level.
   const book = {
@@ -68,7 +68,7 @@ test("price metadata: a depth-covering book preserves cumulative depth, VWAP, so
   );
 });
 
-test("bestAskWad returns null when the book never reaches minDepthWad — too thin, same signal as empty", () => {
+test("bestAsk returns null when the book never reaches minDepthWad — too thin, same signal as empty", () => {
   const book = {
     levels: [
       [],
@@ -81,7 +81,7 @@ test("bestAskWad returns null when the book never reaches minDepthWad — too th
   assert.equal(bestAsk(book, DEPTH_50)?.priceWad ?? null, null);
 });
 
-test("bestAskWad: minDepthWad 0 restores plain best-ask behavior", () => {
+test("bestAsk: minDepthWad 0 restores plain best-ask behavior", () => {
   const book = { levels: [[], [{ px: "0.65", sz: "1", n: 1 }]] };
   assert.equal(bestAsk(book, 0n)?.priceWad ?? null, 650_000_000_000_000_000n);
 });

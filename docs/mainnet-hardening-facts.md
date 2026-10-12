@@ -66,13 +66,13 @@ Verify against the code before relying on any single line number.
   is **ignored** by 0x800–0x814 — it returns current Core state regardless of the
   block number given (0x809 probe, 2026-08-25). Never try to read a historical /
   pre-op baseline by pinning a precompile call to a block
-  (`keeper/src/core814.ts:34-40`, `writer/src/spotPx.ts` header). This is the whole
+  (`services/precompiles.mts`, `writer/src/spotPx.ts` header). This is the whole
   reason the keeper uses ambient sampling for baselines.
 - **0x808 spotPx = last-trade price**, a 1e8-scaled `uint64`; WAD = `raw × 1e10`.
   Can be stale on a dead market — this is the root of handoff task P0-1
   (`writer/src/spotPx.ts`).
 - **0x801 spot balance** returns Core wei (5-decimal for outcome coins), live state
-  only (`keeper/src/core814.ts:41`).
+  only (`services/precompiles.mts`).
 - **Outcome asset id encoding:** `100_000_000 + 10×outcome + side` (side: 0 = yes,
   1 = no). Used by both 0x801 and 0x808 since the 2026-08 testnet update
   (`keeper/src/pure.ts:29`).

@@ -14,7 +14,6 @@ installation root; adjust paths for your host.
     abi/OutcomeVault.json
     abi/KeeperVerifier.json
   writer/
-    abi/OutcomeVault.json
     abi/ParlayVault.json
   registry/markets.json
   registry/deployment.testnet.json
