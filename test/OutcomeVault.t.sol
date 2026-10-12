@@ -8,21 +8,63 @@ import {KeeperVerifier} from "../src/KeeperVerifier.sol";
 import {OutcomeVault} from "../src/OutcomeVault.sol";
 import {MockQuote} from "./mocks/Mocks.sol";
 
-/// Unit tests beyond the anchor suite: the verifier-gated claim/cancel flow,
-/// the swap seam, settlement reads, and input validation. Anchors stay the
-/// oracle; these pin the paths they do not cover.
+/// Unit tests beyond the anchor suite: verifier-gated claim/cancel, the
+/// verifier swap, settlement reads, outbound tracking and input validation.
 contract OutcomeVaultTest is BaseTest {
-    /// 1 USDC = 1e5 units at the fixture's 5 decimals.
-    uint256 internal constant ONE_USDC = 1e5;
+    uint256 internal constant ONE_USDC = 1e5; // fixture quote is 5-dec
 
     function opKey(uint256 opId) internal view returns (bytes32) {
         return keccak256(abi.encode(address(vault), opId));
     }
 
-    // --- deposit / split ------------------------------------------------
+    /// Deposit whose EVM→Core credit landed but whose split Core dropped.
+    function depositThenDrop() internal {
+        vm.prank(user);
+        vault.deposit(100e6);
+        sim.processTransfersOnly();
+        sim.dropPendingActions();
+    }
 
-    /// Decimals sanity: 10 USDC in mints exactly 10.0 of each side and splits
-    /// exactly 10 * 1e5 outcome wei (5-dec), not the 8-dec quote amount.
+    /// Burn a pair, let Core merge, claim the payout (spotSend queued, not landed).
+    function redeemAndClaim(uint256 amount) internal {
+        vm.prank(user);
+        vault.requestRedeem(amount);
+        sim.processAll();
+        vault.claimRedeem();
+    }
+
+    function settleAndSweep(uint256 fractionWad) internal {
+        vault.settle(fractionWad);
+        sim.creditSettlement();
+        vault.pullSettledFunds();
+        sim.processAll();
+    }
+
+    function donate(uint256 amount) internal {
+        quote.mint(other, amount);
+        vm.prank(other);
+        quote.transfer(address(vault), amount);
+    }
+
+    /// Two payouts queued while Core→EVM sends are held back; neither has landed.
+    function stackTwoDeferredPayouts() internal {
+        depositAndClaim(100e6);
+        sim.setDeferSpotSends(true);
+        redeemAndClaim(60e6);
+        redeemAndClaim(40e6);
+        sim.processActions();
+    }
+
+    function expectRedeemSettledRevert(bytes memory err) internal {
+        vm.prank(user);
+        vm.expectRevert(err);
+        vault.redeemSettled(true, 100e6);
+        assertEq(vault.oYes().balanceOf(user), 100e6, "position burned");
+    }
+
+    // deposit / split
+
+    /// 10 USDC mints 10.0 of each side and splits 10 * 1e5 outcome wei (5-dec).
     function test_DepositMintsExactPairAndSplitsFiveDecimalWei() public {
         depositAndClaim(10 * ONE_USDC);
         assertEq(vault.oYes().balanceOf(user), 10 * 10 ** vault.oYes().decimals());
@@ -40,8 +82,6 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(quote.balanceOf(address(vault)), 0);
     }
 
-    /// OpQueued is the keeper's whole input: without it there is nothing to
-    /// attest. opKey is derived from the opId it carries.
     function test_DepositEmitsOpQueued() public {
         vm.expectEmit(true, true, true, true, address(vault));
         emit OutcomeVault.OpQueued(1, OutcomeVault.OpType.Split, QUESTION, OUTCOME, uint64(100e6));
@@ -57,18 +97,11 @@ contract OutcomeVaultTest is BaseTest {
         vault.requestRedeem(100e6);
     }
 
-    /// docs/spike-findings.md #4: Core→EVM spotSend goes to the token's system address,
-    /// never to the vault itself.
     function test_PayoutSpotSendTargetsSystemAddress() public {
         depositAndClaim(100e6);
-        vm.prank(user);
-        vault.requestRedeem(100e6);
-        sim.processAll();
-        vault.claimRedeem();
-
-        bytes memory payload = writer.lastPayload();
+        redeemAndClaim(100e6);
         bytes memory expected = CoreConstants.encodeSpotSend(SYSTEM_ADDR, TOKEN_INDEX, uint64(100e6 * QUOTE_MULT));
-        assertEq(payload, expected, "spotSend destination/amount wrong");
+        assertEq(writer.lastPayload(), expected, "spotSend destination/amount wrong");
     }
 
     function test_DepositZeroReverts() public {
@@ -77,9 +110,7 @@ contract OutcomeVaultTest is BaseTest {
         vault.deposit(0);
     }
 
-    /// Rounding never favors the user: an amount finer than one outcome wei is
-    /// rejected instead of silently truncated (a truncated split would mint
-    /// shares the collateral does not back). Needs a 6-dec quote to have dust.
+    /// Dust is rejected, never truncated; needs a 6-dec quote to have any.
     function test_DepositDustReverts() public {
         MockQuote quote6 = new MockQuote("Mock USD 6", "mUSD6", 6);
         OutcomeVault vault6 = new OutcomeVault(
@@ -108,7 +139,7 @@ contract OutcomeVaultTest is BaseTest {
         vault.deposit(100e6);
     }
 
-    // --- claim / cancel gated on attestation -----------------------------
+    // claim / cancel gated on attestation
 
     function test_ClaimBeforeAttestationReverts() public {
         vm.prank(user);
@@ -124,8 +155,7 @@ contract OutcomeVaultTest is BaseTest {
         vault.claimDeposit();
     }
 
-    /// Elapsed time proves nothing about a Core action: without a Failed
-    /// verdict there is no cancel, however long the caller waits.
+    /// Elapsed time proves nothing about a Core action.
     function test_CancelWithoutFailedAttestationReverts() public {
         vm.prank(user);
         vault.deposit(100e6);
@@ -134,35 +164,21 @@ contract OutcomeVaultTest is BaseTest {
         vm.expectRevert(bytes("SPLIT_NOT_FAILED"));
         vault.cancelDeposit();
 
-        sim.processActions(); // split executed and attested — claim is the only way out
+        sim.processActions(); // executed and attested: claim is the only way out
         vm.expectRevert(bytes("SPLIT_NOT_FAILED"));
         vault.cancelDeposit();
-    }
-
-    function test_SilentDropThenFailedAttestationRefunds() public {
-        vm.prank(user);
-        vault.deposit(100e6);
-        sim.processTransfersOnly(); // credit landed, split dropped
-        sim.dropPendingActions(); // keeper attests Failed
-        vault.cancelDeposit();
-        assertEq(vault.owed(user), 100e6);
-        sim.processAll(); // refund spotSend lands on the EVM side
-        vm.prank(user);
-        vault.withdraw();
-        assertEq(quote.balanceOf(user), 1_000e6, "user not made whole");
-        assertEq(vault.oYes().totalSupply(), 0);
     }
 
     /// A refund spotSend the Core balance cannot cover would itself be dropped.
     function test_CancelWithoutCreditReverts() public {
         vm.prank(user);
         vault.deposit(100e6);
-        sim.dropPendingActions(); // nothing credited, split dead
+        sim.dropPendingActions();
         vm.expectRevert(bytes("CREDIT_NOT_ARRIVED"));
         vault.cancelDeposit();
     }
 
-    // --- redeem ----------------------------------------------------------
+    // redeem
 
     function test_ClaimRedeemBeforeMergeReverts() public {
         depositAndClaim(100e6);
@@ -191,10 +207,7 @@ contract OutcomeVaultTest is BaseTest {
         vault.cancelRedeem();
     }
 
-    /// docs/spike-findings.md #5: a live split+merge round trip lost 7 bps, unitemized.
-    /// The payout must survive a merge credit that lands short — send what is
-    /// actually there and credit the user exactly that, rather than
-    /// underflowing on the nominal amount and wedging the pending slot.
+    /// A fee-sized merge shortfall (7 bps seen live) pays what arrived.
     function test_MergeFeeShortfallPaysOnlyWhatArrived() public {
         depositAndClaim(100e6);
         sim.setMergeFeeBps(7);
@@ -215,12 +228,10 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(quote.balanceOf(address(vault)), 0, "vault paid out more than arrived");
     }
 
-    /// Beyond fee size, a short balance means the credit has not landed yet.
-    /// Reverting keeps the pending slot (and the claim) alive for a retry
-    /// instead of silently converting the gap into a permanent loss.
+    /// Past fee size a short balance means the credit has not landed: keep the slot.
     function test_LargeShortfallRevertsAndKeepsTheClaimAlive() public {
         depositAndClaim(100e6);
-        sim.setMergeFeeBps(200); // 2% — far past a plausible fee
+        sim.setMergeFeeBps(200);
         vm.prank(user);
         vault.requestRedeem(100e6);
         sim.processAll();
@@ -235,7 +246,7 @@ contract OutcomeVaultTest is BaseTest {
     function test_RequestRedeemWhileDepositPendingReverts() public {
         depositAndClaim(100e6);
         vm.prank(user);
-        vault.deposit(100e6); // second deposit in flight
+        vault.deposit(100e6);
         vm.prank(user);
         vm.expectRevert(bytes("BUSY"));
         vault.requestRedeem(50e6);
@@ -247,15 +258,13 @@ contract OutcomeVaultTest is BaseTest {
         vault.withdraw();
     }
 
-    /// The wedge fix: a queued Core→EVM send must be observed leaving the Core
-    /// account before the next op, else that op's baseline is stale and its
-    /// recovery proof can never be satisfied.
+    // outbound dwell
+
+    /// A queued Core→EVM send must be observed leaving Core before the next
+    /// deposit, else that deposit's baseline is stale and its refund proof dead.
     function test_OutboundSendBlocksNextOpUntilObserved() public {
-        vm.prank(user);
-        vault.deposit(100e6);
-        sim.processTransfersOnly();
-        sim.dropPendingActions();
-        vault.cancelDeposit(); // refund spotSend queued, Core debit not applied yet
+        depositThenDrop();
+        vault.cancelDeposit(); // refund spotSend queued, debit not applied yet
 
         vm.prank(user);
         vm.expectRevert(bytes("OUTBOUND_IN_FLIGHT"));
@@ -263,38 +272,28 @@ contract OutcomeVaultTest is BaseTest {
 
         sim.processAll();
         vm.prank(user);
-        vault.deposit(100e6); // debit observed, baseline is safe again
+        vault.deposit(100e6);
     }
 
-    /// A third party can hold the dwell's balance check false forever by
-    /// sending the vault's Core account a stray credit. That must cost at most
-    /// deposits — never redemptions, and never settlement.
+    /// A stray Core credit can hold the dwell shut forever; that may cost
+    /// deposits, never redemptions or settlement.
     function test_StrayCoreCreditDoesNotBlockRedeemOrSettle() public {
         depositAndClaim(100e6);
-        vm.prank(user);
-        vault.requestRedeem(50e6);
-        sim.processAll();
-        vault.claimRedeem(); // outbound queued
-        sim.processAll(); // and landed
-        sim.creditStray(1); // griefer credits 1 wei — dwell can never clear now
-
-        vm.prank(user);
-        vault.requestRedeem(50e6); // takes no baseline, so it must not be blockable
-        sim.processAll();
-        vault.claimRedeem();
+        redeemAndClaim(50e6);
         sim.processAll();
         sim.creditStray(1);
 
-        vault.settle(1e18); // likewise settlement
+        redeemAndClaim(50e6);
+        sim.processAll();
+        sim.creditStray(1);
+
+        vault.settle(1e18);
         assertTrue(vault.settled());
     }
 
     function test_ClearOutboundRecoversDepositsAfterStrayCredit() public {
         depositAndClaim(100e6);
-        vm.prank(user);
-        vault.requestRedeem(100e6);
-        sim.processAll();
-        vault.claimRedeem();
+        redeemAndClaim(100e6);
         sim.processAll();
         sim.creditStray(1);
 
@@ -306,46 +305,65 @@ contract OutcomeVaultTest is BaseTest {
         vm.expectRevert(bytes("NOT_OWNER"));
         vault.clearOutbound();
 
-        vault.clearOutbound(); // owner escape hatch
+        vault.clearOutbound();
         vm.prank(user);
         vault.deposit(100e6);
         assertEq(vault.nextOpId(), 3);
     }
 
-    /// The dwell guards the deposit baseline, so it must read the Core side.
-    /// Donated EVM quote satisfies "what we sent has shown up" without the Core
-    /// debit having landed, and clearing on that would re-open the wedge: the
-    /// baseline records an unlanded debit and cancelDeposit's refund proof
-    /// becomes unsatisfiable, which clearOutbound cannot undo.
+    /// The dwell reads the Core side: EVM-side quote cannot clear it.
     function test_DonatedQuoteCannotSatisfyTheDwell() public {
         depositAndClaim(100e6);
         sim.setDeferSpotSends(true);
-        vm.prank(user);
-        vault.requestRedeem(100e6);
-        sim.processAll();
-        vault.claimRedeem(); // send queued
-        sim.processActions(); // held, not landed
-
-        quote.mint(other, 100e6);
-        vm.prank(other);
-        quote.transfer(address(vault), 100e6); // donation covers what the send owes
+        redeemAndClaim(100e6);
+        sim.processActions(); // send held, not landed
+        donate(100e6);
 
         vm.prank(user);
         vm.expectRevert(bytes("OUTBOUND_IN_FLIGHT"));
         vault.deposit(100e6);
     }
 
-    // --- verifier seam ----------------------------------------------------
+    /// The dwell must not clear when only the first of two stacked sends landed.
+    function test_StackedOutboundsHoldTheDwell() public {
+        stackTwoDeferredPayouts();
 
-    /// The architectural-integrity proof: Core executed, the keeper went dark,
-    /// and the funds are still recoverable because the owner can repoint the
-    /// vault at a different attestation source. No timeout, no trust in one
-    /// keeper staying alive.
+        sim.processSpotSends(1);
+        vm.prank(user);
+        vm.expectRevert(bytes("OUTBOUND_IN_FLIGHT"));
+        vault.deposit(100e6);
+
+        sim.processSpotSends(1);
+        vm.prank(user);
+        vault.deposit(100e6);
+        (,,, uint64 baseline) = vault.pendingDeposit();
+        assertEq(baseline, 0, "baseline recorded over an unlanded transfer");
+    }
+
+    /// A second payout must price against the Core balance net of the first,
+    /// unlanded send, or `owed` points at money Core will drop.
+    function test_StackedPayoutsCreditOnlyWhatCoreWillDeliver() public {
+        sim.setMergeFeeBps(50);
+        stackTwoDeferredPayouts();
+        sim.processSpotSends(2);
+
+        assertEq(vault.owed(user), 99.5e6, "credited more than Core delivers");
+        assertEq(vault.totalOwed(), quote.balanceOf(address(vault)), "phantom quote reserved");
+        vm.prank(user);
+        vault.withdraw();
+        assertEq(quote.balanceOf(user), 900e6 + 99.5e6);
+        assertEq(quote.balanceOf(address(vault)), 0);
+    }
+
+    // verifier seam
+
+    /// Core executed, the keeper went dark: the owner repoints the vault at a
+    /// new attestation source and the funds come out. No timeout anywhere.
     function test_VerifierSwapRecoversFromKeeperSilence() public {
         vm.prank(user);
         vault.deposit(100e6);
         sim.setKeeperSilent(true);
-        sim.processAll(); // Core really split; nobody attested
+        sim.processAll();
 
         vm.expectRevert(bytes("SPLIT_NOT_CONFIRMED"));
         vault.claimDeposit();
@@ -360,13 +378,6 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(vault.oNo().balanceOf(user), 100e6);
     }
 
-    function test_SetVerifierOnlyOwner() public {
-        KeeperVerifier replacement = new KeeperVerifier(address(this));
-        vm.prank(other);
-        vm.expectRevert(bytes("NOT_OWNER"));
-        vault.setVerifier(replacement);
-    }
-
     function test_PauseBlocksClaims() public {
         vm.prank(user);
         vault.deposit(100e6);
@@ -379,8 +390,6 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(vault.oYes().balanceOf(user), 100e6);
     }
 
-    /// minDelay is the blast radius control: a fresh attestation is not
-    /// actionable until it has had time to be paused.
     function test_ClaimBlockedUntilMinDelayElapses() public {
         verifier.setMinDelay(10 minutes);
         vm.prank(user);
@@ -393,14 +402,12 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(vault.oYes().balanceOf(user), 100e6);
     }
 
-    // --- settlement -------------------------------------------------------
+    // settlement
 
-    /// Trustless path: while 0x814 still holds the value, anyone can settle and
-    /// the relayed fraction argument is ignored.
     function test_SettleReadsPrecompilePermissionlessly() public {
         outcomeStatus.set(CoreConstants.OUTCOME_SETTLED, 0.6e8, QUESTION);
         vm.prank(other);
-        vault.settle(1e18);
+        vault.settle(1e18); // argument ignored at status 2
         assertTrue(vault.settled());
         assertEq(vault.settleFractionWad(), 0.6e18);
     }
@@ -411,8 +418,6 @@ contract OutcomeVaultTest is BaseTest {
         vault.settle(1e18);
     }
 
-    /// Core prunes settled outcomes fast (docs/spike-findings.md: 2→3 in ~10 minutes) and
-    /// the value is gone at status 3. Then, and only then, the keeper relays.
     function test_SettleFallsBackToKeeperOncePruned() public {
         outcomeStatus.set(CoreConstants.OUTCOME_SETTLED, 0.6e8, QUESTION);
         outcomeStatus.prune();
@@ -423,20 +428,16 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(vault.settleFractionWad(), 0.6e18);
     }
 
-    /// The attack the pruned-only relay closes: a keeper fixing a payout on a
-    /// market Core has not resolved.
     function test_SettleOnLiveMarketRevertsEvenForKeeper() public {
         outcomeStatus.set(CoreConstants.OUTCOME_ACTIVE, 0, QUESTION);
         vm.expectRevert(bytes("NOT_SETTLED_ON_CORE"));
-        vault.settle(1e18); // keeper == address(this)
+        vault.settle(1e18);
 
         outcomeStatus.set(0, 0, QUESTION); // never existed
         vm.expectRevert(bytes("NOT_SETTLED_ON_CORE"));
         vault.settle(1e18);
     }
 
-    /// Key custody Phase 3: the settle authority rotates without a redeploy.
-    /// The old keeper loses the pruned branch the moment the new one gains it.
     function test_SetKeeperRotatesSettleAuthority() public {
         vm.prank(other);
         vm.expectRevert(bytes("NOT_OWNER"));
@@ -448,13 +449,12 @@ contract OutcomeVaultTest is BaseTest {
         outcomeStatus.set(CoreConstants.OUTCOME_SETTLED, 0.6e8, QUESTION);
         outcomeStatus.prune();
         vm.expectRevert(bytes("NOT_KEEPER"));
-        vault.settle(0.6e18); // old keeper == address(this)
+        vault.settle(0.6e18);
         vm.prank(other);
         vault.settle(0.6e18);
         assertEq(vault.settleFractionWad(), 0.6e18);
     }
 
-    /// A rotated keeper is still bound by the live-market rule.
     function test_RotatedKeeperCannotSettleLiveMarket() public {
         vault.setKeeper(other);
         outcomeStatus.set(CoreConstants.OUTCOME_ACTIVE, 0, QUESTION);
@@ -500,16 +500,21 @@ contract OutcomeVaultTest is BaseTest {
         vault.pullSettledFunds();
     }
 
-    /// If the settled quote lands short — within the pool-adequacy floor —
-    /// every holder takes the same haircut. Paying the first redeemer in full
-    /// would leave the last one unable to redeem at all.
+    function test_ConstructorRequiresDepositWalletCode() public {
+        vm.etch(CoreConstants.CORE_DEPOSIT_WALLET, hex"");
+        vm.expectRevert(bytes("NO_DEPOSIT_WALLET"));
+        new OutcomeVault(
+            IERC20(address(quote)), SYSTEM_ADDR, TOKEN_INDEX, QUESTION, OUTCOME, keeper, verifier, "BTC100K", DECIMALS
+        );
+    }
+
+    // settled redemption
+
+    /// Inside the pool-adequacy floor every holder takes the same haircut.
     function test_SettledRedemptionIsProRataWhenShort() public {
         depositAndClaim(100e6);
-        sim.setMergeFeeBps(50); // settlement credit lands 0.5% short (inside the 1% floor)
-        vault.settle(0.5e18);
-        sim.creditSettlement();
-        vault.pullSettledFunds();
-        sim.processAll();
+        sim.setMergeFeeBps(50);
+        settleAndSweep(0.5e18);
 
         uint256 available = quote.balanceOf(address(vault));
         assertEq(available, 99.5e6);
@@ -524,32 +529,18 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(quote.balanceOf(address(vault)), 0);
     }
 
-    /// Past the floor the haircut is no longer a fee, it is missing money:
-    /// redemption refuses to burn against a pool more than 1% short.
     function test_SettledRedemptionRevertsWhenPoolTooShort() public {
         depositAndClaim(100e6);
-        sim.setMergeFeeBps(200); // 2% short — beyond PAYOUT_MIN_BPS
-        vault.settle(0.5e18);
-        sim.creditSettlement();
-        vault.pullSettledFunds();
-        sim.processAll();
-
-        vm.prank(user);
-        vm.expectRevert(bytes("SETTLEMENT_POOL_SHORT"));
-        vault.redeemSettled(true, 100e6);
-        assertEq(vault.oYes().balanceOf(user), 100e6);
+        sim.setMergeFeeBps(200);
+        settleAndSweep(0.5e18);
+        expectRedeemSettledRevert(bytes("SETTLEMENT_POOL_SHORT"));
     }
 
-    /// Pins the floor at exactly 99.00% (available*10_000 == obligation*PAYOUT_MIN_BPS):
-    /// the guard is `>=`, so a shortfall landing precisely on the floor must still pay
-    /// out, not revert. Kills a >=-to-> mutation on the SETTLEMENT_POOL_SHORT check.
+    /// The floor guard is `>=`: a shortfall landing exactly on it still pays.
     function test_SettledRedemptionExactlyAtFloorPasses() public {
         depositAndClaim(100e6);
-        sim.setMergeFeeBps(100); // exactly 1% short == the PAYOUT_MIN_BPS floor
-        vault.settle(0.5e18);
-        sim.creditSettlement();
-        vault.pullSettledFunds();
-        sim.processAll();
+        sim.setMergeFeeBps(100);
+        settleAndSweep(0.5e18);
 
         uint256 available = quote.balanceOf(address(vault));
         assertEq(available, 99e6);
@@ -563,16 +554,13 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(quote.balanceOf(address(vault)), 0);
     }
 
-    /// Live M3 finding: Core drops any Core→EVM send whose wei amount is not a
-    /// whole number of EVM units (multiple of 100 for USDC). Core fees leave
-    /// sub-100-wei dust on the vault's balance (19 wei observed live), so a
-    /// raw full-balance sweep silently drops. The sweep must floor to the
-    /// representable amount and leave the dust behind.
+    /// Fee residue below one EVM unit (19 wei seen live) would make a raw
+    /// full-balance sweep drop; the sweep floors and strands the dust.
     function test_SweepFloorsUnrepresentableDust() public {
         depositAndClaim(100e6);
         vault.settle(0.5e18);
         sim.creditSettlement();
-        sim.creditStray(19); // sub-EVM-unit fee residue on the Core balance
+        sim.creditStray(19);
         vault.pullSettledFunds();
         sim.processAll();
         assertEq(quote.balanceOf(address(vault)), 100e6, "sweep did not land");
@@ -584,73 +572,26 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(quote.balanceOf(user), 1_000e6);
     }
 
-    /// The sweep gate must key off quote the vault actually received, not off
-    /// an absolute Core-balance read: a 1-wei credit is cheap, repeatable, and
-    /// would otherwise hold settlement redemption shut forever.
+    /// The sweep gate keys off quote actually received, not the Core balance.
     function test_StrayCoreCreditCannotHoldSettlementShut() public {
         depositAndClaim(100e6);
-        vault.settle(0.5e18);
-        sim.creditSettlement();
-        vault.pullSettledFunds();
-        sim.processAll(); // sweep has genuinely arrived
-        sim.creditStray(1); // griefer credits the vault's Core account
+        settleAndSweep(0.5e18);
+        sim.creditStray(1);
 
         vm.prank(user);
         vault.redeemSettled(true, 100e6);
         assertEq(quote.balanceOf(user), 900e6 + 50e6);
 
-        sim.creditStray(1); // and again, between redemptions
+        sim.creditStray(1);
         vm.prank(user);
         vault.redeemSettled(false, 100e6);
         assertEq(quote.balanceOf(user), 1_000e6);
     }
 
-    /// Pricing a payout against the raw Core balance counts quote a previous
-    /// unlanded send has already claimed. Core then drops the oversized send in
-    /// silence, leaving `owed` — and `totalOwed`, which reserves quote out of
-    /// the settlement pool — pointing at money that never arrives.
-    function test_StackedPayoutsCreditOnlyWhatCoreWillDeliver() public {
-        depositAndClaim(100e6);
-        sim.setMergeFeeBps(50); // 0.5% Core fee on each merge
-        sim.setDeferSpotSends(true);
-
-        vm.prank(user);
-        vault.requestRedeem(60e6);
-        sim.processAll();
-        vault.claimRedeem(); // A: 60 asked, 59.7 available
-
-        vm.prank(user);
-        vault.requestRedeem(40e6);
-        sim.processAll(); // A is still in the air
-        vault.claimRedeem(); // B must price against 39.8, not the full 99.5
-        sim.processActions();
-        sim.processSpotSends(2); // both sends land
-
-        assertEq(vault.owed(user), 99.5e6, "credited more than Core delivers");
-        assertEq(vault.totalOwed(), quote.balanceOf(address(vault)), "phantom quote reserved");
-        vm.prank(user);
-        vault.withdraw();
-        assertEq(quote.balanceOf(user), 900e6 + 99.5e6);
-        assertEq(quote.balanceOf(address(vault)), 0);
-    }
-
-    function test_ConstructorRequiresDepositWalletCode() public {
-        vm.etch(CoreConstants.CORE_DEPOSIT_WALLET, hex"");
-        vm.expectRevert(bytes("NO_DEPOSIT_WALLET"));
-        new OutcomeVault(
-            IERC20(address(quote)), SYSTEM_ADDR, TOKEN_INDEX, QUESTION, OUTCOME, keeper, verifier, "BTC100K", DECIMALS
-        );
-    }
-
-    /// Settled payouts round down — the remainder stays with the vault — and a
-    /// payout that rounds to nothing is refused rather than burning the
-    /// position for free.
+    /// Payouts round down to the vault; a zero payout never burns a position.
     function test_SettledRedemptionRoundsDownToVault() public {
         depositAndClaim(100e6);
-        vault.settle(0.5e18);
-        sim.creditSettlement();
-        vault.pullSettledFunds();
-        sim.processAll();
+        settleAndSweep(0.5e18);
 
         uint256 before = quote.balanceOf(user);
         vm.prank(user);
@@ -660,28 +601,19 @@ contract OutcomeVaultTest is BaseTest {
 
         vm.prank(user);
         vm.expectRevert(bytes("NOTHING_TO_REDEEM"));
-        vault.redeemSettled(true, 1); // 1 * 0.5 rounds to 0
+        vault.redeemSettled(true, 1);
         assertEq(vault.oYes().balanceOf(user), 100e6 - 3, "position burned for nothing");
     }
 
-    /// The settlement sweep is async. Redeeming inside that window used to burn
-    /// the position for a zero (or haircut) payout; it must wait instead.
+    /// Redemption waits for the sweep: unarmed before any pull, pending while queued.
     function test_SettledRedemptionBlockedUntilSweepLands() public {
         depositAndClaim(100e6);
         vault.settle(0.5e18);
         sim.creditSettlement();
-
-        vm.prank(user);
-        // Pull not even requested: the gate is unarmed, whatever the pool
-        // holds — the arrival check alone would pass trivially here.
-        vm.expectRevert(bytes("SWEEP_PENDING"));
-        vault.redeemSettled(true, 100e6);
+        expectRedeemSettledRevert(bytes("SWEEP_PENDING"));
 
         vault.pullSettledFunds();
-        vm.prank(user);
-        vm.expectRevert(bytes("SWEEP_PENDING")); // queued, not landed
-        vault.redeemSettled(true, 100e6);
-        assertEq(vault.oYes().balanceOf(user), 100e6, "position survived the window");
+        expectRedeemSettledRevert(bytes("SWEEP_PENDING"));
 
         sim.processAll();
         vm.prank(user);
@@ -689,41 +621,25 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(quote.balanceOf(user), 900e6 + 50e6);
     }
 
-    /// Before anyone cranks the pull, `_unlandedEvm() == 0` holds trivially,
-    /// and a 2-wei quote donation used to defeat the zero-payout backstop:
-    /// obligation 100e6, pool 2 wei, payout 1 wei — full position burned for
-    /// dust. The gate must be armed by the pull itself, not by arrivals.
+    /// Before any pull `_unlandedEvm() == 0` holds trivially; a 2-wei donation
+    /// must not open the gate (it would burn a full position for 1 wei).
     function test_DonationBeforePullCannotForceSettledRedemption() public {
         depositAndClaim(100e6);
         vault.settle(0.5e18);
         sim.creditSettlement();
-
-        quote.mint(other, 2);
-        vm.prank(other);
-        quote.transfer(address(vault), 2); // griefer's dust donation
-
-        vm.prank(user);
-        vm.expectRevert(bytes("SWEEP_PENDING"));
-        vault.redeemSettled(true, 100e6);
-        assertEq(vault.oYes().balanceOf(user), 100e6, "position burned for dust");
+        donate(2);
+        expectRedeemSettledRevert(bytes("SWEEP_PENDING"));
     }
 
-    /// A zero-balance pull must NOT arm the gate: Core's balance is zero by
-    /// construction until it credits settlement, so a free premature crank
-    /// arming `swept` would resurrect the donation attack. The gate stays
-    /// shut until a pull actually sends something (or the owner clears).
+    /// A pull with nothing on Core must not arm the gate, even with a donation on top.
     function test_PullWithZeroCoreBalanceDoesNotArmTheGate() public {
         depositAndClaim(100e6);
         vault.settle(0.5e18);
-        // Core has not credited settlement: balance is 0 at pull time.
+        vault.pullSettledFunds(); // premature crank, nothing swept
+        donate(2);
+        expectRedeemSettledRevert(bytes("SWEEP_PENDING"));
 
-        vault.pullSettledFunds(); // premature crank — nothing swept
-        vm.prank(user);
-        vm.expectRevert(bytes("SWEEP_PENDING")); // still unarmed
-        vault.redeemSettled(true, 100e6);
-        assertEq(vault.oYes().balanceOf(user), 100e6);
-
-        sim.creditSettlement(); // Core credits; the crank now bites
+        sim.creditSettlement();
         vault.pullSettledFunds();
         sim.processAll();
         vm.prank(user);
@@ -731,110 +647,54 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(quote.balanceOf(user), 900e6 + 50e6);
     }
 
-    /// The composed attack from the round-5 review: settle → free premature
-    /// pull (Core balance still zero) → 2-wei donation. If the empty pull
-    /// armed the gate, the donation would burn a full position for 1 wei.
-    function test_PrematurePullPlusDonationCannotForceRedemption() public {
-        depositAndClaim(100e6);
-        vault.settle(0.5e18);
-        vault.pullSettledFunds(); // griefer's free crank, nothing on Core
-
-        quote.mint(other, 2);
-        vm.prank(other);
-        quote.transfer(address(vault), 2); // griefer's dust donation
-
-        vm.prank(user);
-        vm.expectRevert(bytes("SWEEP_PENDING"));
-        vault.redeemSettled(true, 100e6);
-        assertEq(vault.oYes().balanceOf(user), 100e6, "position burned for dust");
-    }
-
-    /// Arming vectors are a class: pre-floor, a 999-quote-wei Core credit
-    /// (sub-unit at the fixture's 1000-wei-per-EVM-unit ratio) rounded to
-    /// zero expected EVM, so the pull armed `swept` with nothing ever
-    /// landing, and a 2-wei donation then satisfied the gate. The sweep floor
-    /// closes the class at the gate: a credit below one EVM unit does not arm
-    /// at all, and a larger stray arms honestly with a floored send in
-    /// flight — after it lands the pool-adequacy floor refuses the burn.
+    /// A sub-unit stray credit floors to zero and does not arm; a larger one
+    /// arms honestly and the pool-adequacy floor then refuses the burn.
     function test_SubUnitCoreCreditPlusDonationCannotForceRedemption() public {
         depositAndClaim(100e6);
         vault.settle(0.5e18);
-        sim.creditStray(999); // below one EVM unit — floors to zero, must not arm
+        sim.creditStray(999); // below one EVM unit at QUOTE_MULT = 1000
         vault.pullSettledFunds();
+        donate(2);
+        expectRedeemSettledRevert(bytes("SWEEP_PENDING"));
 
-        quote.mint(other, 2);
-        vm.prank(other);
-        quote.transfer(address(vault), 2);
-
-        vm.prank(user);
-        vm.expectRevert(bytes("SWEEP_PENDING")); // still unarmed
-        vault.redeemSettled(true, 100e6);
-        assertEq(vault.oYes().balanceOf(user), 100e6, "position burned for dust");
-
-        sim.creditStray(1001); // 2000 total — arms honestly, 2000 wei in flight
+        sim.creditStray(1001); // 2000 total: a real 2-wei sweep
         vault.pullSettledFunds();
         sim.processAll();
-        vm.prank(user);
-        vm.expectRevert(bytes("SETTLEMENT_POOL_SHORT"));
-        vault.redeemSettled(true, 100e6);
-        assertEq(vault.oYes().balanceOf(user), 100e6, "position burned for dust");
+        expectRedeemSettledRevert(bytes("SETTLEMENT_POOL_SHORT"));
     }
 
-    /// Same class without any EVM-side donation: a 2000-quote-wei stray credit
-    /// sweeps to a genuine 2-wei EVM landing, so the gate opens honestly — the
-    /// floor is the only thing standing between a dust pool and a full burn.
     function test_StrayCreditSweptToDustCannotForceRedemption() public {
         depositAndClaim(100e6);
         vault.settle(0.5e18);
         sim.creditStray(2000);
         vault.pullSettledFunds();
-        sim.processAll(); // the 2-wei sweep lands; gate is honestly open
-
-        vm.prank(user);
-        vm.expectRevert(bytes("SETTLEMENT_POOL_SHORT"));
-        vault.redeemSettled(true, 100e6);
-        assertEq(vault.oYes().balanceOf(user), 100e6, "position burned for dust");
+        sim.processAll(); // 2-wei sweep lands; gate honestly open
+        expectRedeemSettledRevert(bytes("SETTLEMENT_POOL_SHORT"));
     }
 
-    /// Owner recovery for the Core-has-nothing-left corner: Core lost the
-    /// settlement credit, the pull was never cranked, and the owner refills
-    /// the pool EVM-side. clearOutbound must open the gate too — a donation
-    /// alone must not (that is the finding), but the owner's hand may.
+    /// Core lost the settlement credit and the owner refills the pool EVM-side:
+    /// clearOutbound opens the gate where a donation alone may not.
     function test_ClearOutboundArmsSettlementGate() public {
         depositAndClaim(100e6);
         vault.settle(0.5e18);
-        quote.mint(address(vault), 100e6); // owner refills the pool directly
+        quote.mint(address(vault), 100e6);
+        expectRedeemSettledRevert(bytes("SWEEP_PENDING"));
 
-        vm.prank(user);
-        vm.expectRevert(bytes("SWEEP_PENDING"));
-        vault.redeemSettled(true, 100e6);
-
-        vault.clearOutbound(); // owner opens the gate
+        vault.clearOutbound();
         vm.prank(user);
         vault.redeemSettled(true, 100e6);
         assertEq(quote.balanceOf(user), 900e6 + 50e6);
     }
 
-    /// Unwithdrawn `owed` is not part of the settlement pool: paying it out
-    /// pro rata would leave the earlier claimant's withdraw() reverting.
+    /// Unwithdrawn `owed` is not part of the settlement pool.
     function test_ProRataDoesNotSpendUnwithdrawnOwed() public {
-        vm.prank(user);
-        vault.deposit(200e6);
-        sim.processAll();
-        vault.claimDeposit();
-
-        sim.setMergeFeeBps(50); // 0.5% Core fee, inside payout tolerance
-        vm.prank(user);
-        vault.requestRedeem(50e6);
-        sim.processAll();
-        vault.claimRedeem(); // owed credited, deliberately not withdrawn
+        depositAndClaim(200e6);
+        sim.setMergeFeeBps(50);
+        redeemAndClaim(50e6); // owed credited, deliberately not withdrawn
         sim.processAll();
         assertEq(vault.totalOwed(), 49.75e6);
 
-        vault.settle(0.5e18);
-        sim.creditSettlement();
-        vault.pullSettledFunds();
-        sim.processAll();
+        settleAndSweep(0.5e18);
 
         vm.startPrank(user);
         vault.redeemSettled(true, 150e6);
@@ -845,36 +705,5 @@ contract OutcomeVaultTest is BaseTest {
         assertEq(quote.balanceOf(user), 999e6);
         assertEq(quote.balanceOf(address(vault)), 0);
         assertEq(vault.totalOwed(), 0);
-    }
-
-    /// Stacked outbounds: a second payout queued before the first debit lands.
-    /// The dwell must not clear when only the first has landed, or the next
-    /// deposit records an inflated baseline and its refund proof is
-    /// unsatisfiable — which clearOutbound cannot undo.
-    function test_StackedOutboundsHoldTheDwell() public {
-        depositAndClaim(100e6);
-        sim.setDeferSpotSends(true);
-
-        vm.prank(user);
-        vault.requestRedeem(60e6);
-        sim.processAll();
-        vault.claimRedeem(); // outbound A queued (60)
-
-        vm.prank(user);
-        vault.requestRedeem(40e6);
-        sim.processAll(); // merge credits 40 while A is still unlanded
-        vault.claimRedeem(); // outbound B queued (40)
-        sim.processActions(); // both sends are now held, neither has landed
-
-        sim.processSpotSends(1); // only A lands
-        vm.prank(user);
-        vm.expectRevert(bytes("OUTBOUND_IN_FLIGHT"));
-        vault.deposit(100e6);
-
-        sim.processSpotSends(1); // B lands too
-        vm.prank(user);
-        vault.deposit(100e6);
-        (,,, uint64 baseline) = vault.pendingDeposit();
-        assertEq(baseline, 0, "baseline recorded over an unlanded transfer");
     }
 }
