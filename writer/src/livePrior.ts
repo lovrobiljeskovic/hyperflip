@@ -1,5 +1,5 @@
 import type { MarketInfo } from "./markets.js";
-import { WAD } from "./pure.js";
+import { WAD } from "./units.js";
 
 /** Live house prior for sports legs, polled off-chain so an in-play leg follows the score.
  *

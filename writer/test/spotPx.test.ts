@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decodeAbiParameters, encodeAbiParameters } from "viem";
+import { decodeAbiParameters, encodeAbiParameters, parseUnits } from "viem";
 import { buildPriceFreshness, isSpotPxStale, makeLegPriceFetcher, readSpotPxWad, SPOT_PX_PRECOMPILE } from "../src/spotPx.js";
 import { bestAsk } from "../src/infoApi.js";
-import { parseDecimalToUnits } from "../src/pure.js";
 
 const bookPrice = (priceWad: bigint) => ({ priceWad, source: "l2Book" as const, observedAtMs: 0, depthWad: 1n, vwapWad: priceWad, freshnessMs: null });
 
@@ -149,7 +148,7 @@ test("buildPriceFreshness: /health per-coin age — fresh coin is a number, unco
 // spoofed 1-lot could fake liveness and keep the staleness clock from ever
 // expiring.
 test("makeLegPriceFetcher: a too-thin book falls back to spotPx and does not stamp freshness", async () => {
-  const minDepthWad = parseDecimalToUnits("50", 18);
+  const minDepthWad = parseUnits("50", 18);
   const thinBook = { levels: [[], [{ px: "0.05", sz: "1", n: 1 }]] }; // 1-lot spoof, short of depth
   const fetcher = makeLegPriceFetcher({
     fetchBook: async () => {
@@ -166,7 +165,7 @@ test("makeLegPriceFetcher: a too-thin book falls back to spotPx and does not sta
 });
 
 test("makeLegPriceFetcher: a depth-covering ask stamps freshness; a later too-thin read doesn't erase it", async () => {
-  const minDepthWad = parseDecimalToUnits("50", 18);
+  const minDepthWad = parseUnits("50", 18);
   const fatBook = { levels: [[], [{ px: "0.60", sz: "100", n: 1 }]] }; // covers depth alone
   const thinBook = { levels: [[], [{ px: "0.05", sz: "1", n: 1 }]] }; // 1-lot spoof, short of depth
   let now = 1_000_000;

@@ -5,9 +5,9 @@ import { join } from "node:path";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import type { Address, Hex } from "viem";
-import { handleAccess, handleQuote as authenticatedQuote, marketsJson, sameGameLeg, validateQuoteRequest, startServer, type QuoteDeps } from "../src/server.js";
+import { clientIp, handleAccess, handleQuote as authenticatedQuote, marketsJson, sameGameLeg, validateQuoteRequest, startServer, type QuoteDeps } from "../src/server.js";
 import { RateLimiter, Waitlist } from "../src/waitlist.js";
-import { WAD } from "../src/pure.js";
+import { WAD } from "../src/units.js";
 import type { WriterConfig } from "../src/config.js";
 import { quoteDigest, type QuoteRecord } from "../src/quotes.js";
 import { testCfg as cfg, testDeps as deps, V1, V2, TAKER } from "./testDeps.js";
@@ -573,4 +573,14 @@ test("HTTP waitlist: sheet admission requires a server credential and pending us
     server.close();
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("clientIp reads the proxy-observed hop, not the client's header", () => {
+  // Caddy appends the real peer, so a spoofed leftmost entry must not become the key.
+  assert.equal(clientIp("1.2.3.4, 203.0.113.7"), "203.0.113.7");
+  assert.equal(clientIp("203.0.113.7"), "203.0.113.7");
+  // Repeated headers arrive as an array; the last one is the one our proxy set.
+  assert.equal(clientIp(["1.2.3.4", "9.9.9.9, 203.0.113.7"]), "203.0.113.7");
+  assert.equal(clientIp(undefined, "198.51.100.2"), "198.51.100.2");
+  assert.equal(clientIp("", undefined), "unknown");
 });

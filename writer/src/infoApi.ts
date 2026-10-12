@@ -1,4 +1,4 @@
-import { parseDecimalToUnits } from "./pure.js";
+import { parseUnits } from "viem";
 
 export interface LegPriceObservation {
   priceWad: bigint;
@@ -23,12 +23,12 @@ export function bestAsk(book: unknown, minDepthWad: bigint): Pick<LegPriceObserv
   const levels = (book as { levels?: L2Level[][] })?.levels;
   const asks = levels?.[1];
   if (!asks || asks.length === 0) return null;
-  const bestPxWad = parseDecimalToUnits(asks[0].px, 18);
+  const bestPxWad = parseUnits(asks[0].px, 18);
   let cumSzWad = 0n;
   let cumNotionalWad = 0n; // sum(px*sz), WAD*WAD scale until divided by cumSzWad below
   for (const level of asks) {
-    const pxWad = parseDecimalToUnits(level.px, 18);
-    const szWad = parseDecimalToUnits(level.sz, 18);
+    const pxWad = parseUnits(level.px, 18);
+    const szWad = parseUnits(level.sz, 18);
     cumSzWad += szWad;
     cumNotionalWad += pxWad * szWad;
     if (cumSzWad > 0n && cumSzWad >= minDepthWad) {

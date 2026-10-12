@@ -1,6 +1,6 @@
 import type { Address, PublicClient } from "viem";
 import { outcomeVaultAbi } from "./abi.js";
-import { WAD } from "./pure.js";
+import { WAD } from "./units.js";
 import type { QuoteLeg } from "./quotes.js";
 
 export interface LegState {

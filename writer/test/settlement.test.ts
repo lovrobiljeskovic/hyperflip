@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parlayIsDead, parlayIsVoid, type LegState } from "../src/settlement.js";
-import { WAD } from "../src/pure.js";
+import { WAD } from "../src/units.js";
 import type { QuoteLeg } from "../src/quotes.js";
 
 const V1 = "0x1111111111111111111111111111111111111111";

@@ -6,7 +6,7 @@ import type { Address, Hex } from "viem";
 import { newMetrics, type QuoteDeps } from "../src/server.js";
 import { ExposureBook } from "../src/exposure.js";
 import { RateLimiter, Waitlist } from "../src/waitlist.js";
-import { WAD } from "../src/pure.js";
+import { WAD } from "../src/units.js";
 import type { WriterConfig } from "../src/config.js";
 
 export const V1 = "0x1111111111111111111111111111111111111111" as Address;

@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { bestAsk, fetchBestAskWad } from "../src/infoApi.js";
-import { parseDecimalToUnits } from "../src/pure.js";
+import { parseUnits } from "viem";
 
-const DEPTH_10 = parseDecimalToUnits("10", 18);
-const DEPTH_50 = parseDecimalToUnits("50", 18);
+const DEPTH_10 = parseUnits("10", 18);
+const DEPTH_50 = parseUnits("50", 18);
 
 test("fetchBestAskWad returns null on an empty book instead of consulting allMids", async (t) => {
   // allMids carries zero outcome coins (verified 2026-08-25), so the old
@@ -84,4 +84,24 @@ test("bestAskWad returns null when the book never reaches minDepthWad — too th
 test("bestAskWad: minDepthWad 0 restores plain best-ask behavior", () => {
   const book = { levels: [[], [{ px: "0.65", sz: "1", n: 1 }]] };
   assert.equal(bestAsk(book, 0n)?.priceWad ?? null, 650_000_000_000_000_000n);
+});
+
+test("viem parseUnits matches the old truncating parser on every fixture", () => {
+  const fixtures: [string, number, bigint][] = [
+    ["10", 18, 10_000_000_000_000_000_000n],
+    ["50", 18, 50_000_000_000_000_000_000n],
+    ["0.60", 18, 600_000_000_000_000_000n],
+    ["0.65", 18, 650_000_000_000_000_000n],
+    ["0.6", 18, 600_000_000_000_000_000n],
+    ["0.50", 18, 500_000_000_000_000_000n],
+    ["0.70", 18, 700_000_000_000_000_000n],
+    ["0.05", 18, 50_000_000_000_000_000n],
+    ["0.10", 18, 100_000_000_000_000_000n],
+    ["100", 18, 100_000_000_000_000_000_000n],
+    ["99", 18, 99_000_000_000_000_000_000n],
+    ["1", 18, 1_000_000_000_000_000_000n],
+    ["2", 18, 2_000_000_000_000_000_000n],
+    ["100", 6, 100_000_000n],
+  ];
+  for (const [value, decimals, expected] of fixtures) assert.equal(parseUnits(value, decimals), expected, value);
 });

@@ -1,7 +1,7 @@
 import { verifyDeploymentRpc } from "../../registry/deployment.mjs";
 import crypto from "node:crypto";
 import { QuoteJournal } from "./journal.js";
-import { createPublicClient, createWalletClient, erc20Abi, fallback, http, type Hex } from "viem";
+import { createPublicClient, createWalletClient, erc20Abi, fallback, http, parseUnits, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { parlayVaultAbi } from "./abi.js";
 import { defaultPerCodeReservedCap, loadConfig, type WriterConfig } from "./config.js";
@@ -9,8 +9,8 @@ import { ExposureBook } from "./exposure.js";
 import { fetchBestAskWad } from "./infoApi.js";
 import { buildPriceFreshness, makeLegPriceFetcher, readSpotPxWad } from "./spotPx.js";
 import { defaultFetchJson, LivePrior } from "./livePrior.js";
-import { Poker, chainFetchers } from "./poker.js";
-import { bankrollRoom, isStalled, lowBankrollAlerter, parseDecimalToUnits, stallThresholdMs, WAD } from "./pure.js";
+import { Poker, chainFetchers, isStalled, stallThresholdMs } from "./poker.js";
+import { bankrollRoom, lowBankrollAlerter } from "./bankroll.js";
 import { signQuote, type ParlayQuote, type QuoteLeg } from "./quotes.js";
 import { newMetrics, startServer, type QuoteDeps } from "./server.js";
 import { readLegStates } from "./settlement.js";
@@ -33,7 +33,7 @@ async function main(): Promise<void> {
     abi: parlayVaultAbi,
     functionName: "usdc",
   })) as `0x${string}`;
-  const lowBankroll = parseDecimalToUnits(process.env.LOW_BANKROLL ?? "100", 6);
+  const lowBankroll = parseUnits(process.env.LOW_BANKROLL ?? "100", 6);
   const shouldAlertLowBankroll = lowBankrollAlerter(lowBankroll);
   let lastBankroll: bigint | null = null;
 

@@ -1,4 +1,4 @@
-import { BPS, WAD } from "./pure.js";
+import { BPS, WAD } from "./units.js";
 
 export interface EdgeParts {
   baseBps: bigint;

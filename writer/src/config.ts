@@ -3,9 +3,9 @@ import { config as loadDotenv } from "dotenv";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isAddress, type Address } from "viem";
+import { isAddress, parseUnits, type Address } from "viem";
 import { laneRows, parseMarkets, type MarketInfo } from "./markets.js";
-import { BPS, parseDecimalToUnits } from "./pure.js";
+import { BPS } from "./units.js";
 import { googleSheetsConfig, type GoogleSheetsConfig } from "./googleSheets.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -129,12 +129,12 @@ export function loadConfig(): LoadedConfig {
     quoteTtlMs: Number(process.env.QUOTE_TTL_MS ?? 10_000),
     spotPxStaleMs,
     // ponytail: testnet depth floor; measure liquidity before a real-money launch.
-    minBookDepthWad: parseDecimalToUnits(process.env.MIN_BOOK_DEPTH ?? "50", 18),
+    minBookDepthWad: parseUnits(process.env.MIN_BOOK_DEPTH ?? "50", 18),
     lockoutMs: Number(process.env.LOCKOUT_MS ?? 600_000),
     inPlayCapBps: BigInt(process.env.IN_PLAY_CAP_BPS ?? 5000),
     livePriorPollMs: Number(process.env.LIVE_PRIOR_POLL_MS ?? 3_000),
     livePriorStaleMs: Number(process.env.LIVE_PRIOR_STALE_MS ?? 15_000),
-    livePriorJumpWad: parseDecimalToUnits(process.env.LIVE_PRIOR_JUMP ?? "0.10", 18),
+    livePriorJumpWad: parseUnits(process.env.LIVE_PRIOR_JUMP ?? "0.10", 18),
     livePriorSuspendMs: Number(process.env.LIVE_PRIOR_SUSPEND_MS ?? 30_000),
     ...(process.env.MAINNET_INFO_URL ? { mainnetInfoUrl: process.env.MAINNET_INFO_URL } : {}),
     pokerIntervalMs,

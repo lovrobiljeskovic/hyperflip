@@ -3,7 +3,6 @@ import { parlayVaultAbi } from "./abi.js";
 import { ExposureBook } from "./exposure.js";
 import type { Metrics } from "./server.js";
 import { parlayIsDead, parlayIsVoid, readLegStates, type LegState } from "./settlement.js";
-import { blockRanges } from "./pure.js";
 import type { QuoteLeg } from "./quotes.js";
 import { readOptionalFile, replaceFile } from "../../services/files.mjs";
 
@@ -232,4 +231,30 @@ export function chainFetchers(publicClient: PublicClient, parlayVault: Address, 
 
     fetchLegStates: (vaults: Address[]) => readLegStates(publicClient, vaults),
   };
+}
+
+/** Split [from, to] into inclusive ranges of at most `size` blocks — testnet RPC
+ * rejects getLogs spans over 1000 blocks. Empty when to < from. */
+export function blockRanges(from: bigint, to: bigint, size: bigint): { from: bigint; to: bigint }[] {
+  const out: { from: bigint; to: bigint }[] = [];
+  for (let start = from; start <= to; start += size) {
+    out.push({ from: start, to: start + size - 1n > to ? to : start + size - 1n });
+  }
+  return out;
+}
+
+/** Watchdog stall threshold for the poker tick loop (same formula as the keeper): a tick
+ * sequentially pokes every open parlay, each resolve() receipt wait capped at receiptTimeoutMs,
+ * plus the gap between ticks; marginMs covers the calls with no explicit timeout. */
+export function stallThresholdMs(
+  openCount: number,
+  receiptTimeoutMs: number,
+  tickIntervalMs: number,
+  marginMs = 120_000,
+): number {
+  return openCount * receiptTimeoutMs + tickIntervalMs + marginMs;
+}
+
+export function isStalled(lastTickAt: number, now: number, thresholdMs: number): boolean {
+  return now - lastTickAt > thresholdMs;
 }

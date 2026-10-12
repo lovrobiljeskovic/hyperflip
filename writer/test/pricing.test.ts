@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { dominatingLeg, independentJointProbWad, edgeBreakdown, priceParlay, totalEdgeBps } from "../src/pricing.js";
-import { WAD } from "../src/pure.js";
+import { WAD } from "../src/units.js";
 
 const QUARTER = WAD / 4n; // joint probability 0.25 — e.g. two independent 0.50 legs
 
