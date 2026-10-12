@@ -21,11 +21,16 @@ export interface LiveSample {
   source: "polymarket" | "mainnet" | "espn";
 }
 
+/** undefined = unresolved, null = not listed (yet) or gone; `retryAt` re-arms a null —
+ * Polymarket and mainnet both list games late. */
+interface Resolved<T> {
+  value?: T | null;
+  retryAt?: number;
+}
+
 interface State {
-  pmToken?: string | null; // undefined = unresolved, null = no Polymarket market (yet)
-  pmRetryAt?: number; // when a null resolution is tried again — Polymarket lists games late
-  mnCoin?: string | null; // mainnet YES coin; undefined = unresolved, null = not listed / gone
-  mnRetryAt?: number;
+  pm: Resolved<string>; // Polymarket YES CLOB token
+  mn: Resolved<string>; // mainnet YES coin
   espnDate: string; // YYYYMMDD in US/Eastern, the ESPN scoreboard day
   sample?: LiveSample;
   suspendedUntil: number;
@@ -52,6 +57,19 @@ const FAIL_RETRY_MS = 60_000;
 const MAINNET_MAX_SPREAD = 0.03;
 // Polymarket spells a few teams differently from ESPN.
 const PM_ALIAS: Record<string, string> = { wsh: "was", lar: "la" };
+
+/** Resolve once, cache, and retry a null after PM_RETRY_MS. */
+async function resolveCached<T>(r: Resolved<T>, now: () => number, resolve: () => Promise<T | null>): Promise<T | null> {
+  if (r.value === null && r.retryAt !== undefined && now() >= r.retryAt) r.value = undefined;
+  if (r.value === undefined) {
+    // Held until the lookup lands, so a throwing fetch waits FAIL_RETRY_MS instead of every tick.
+    r.value = null;
+    r.retryAt = now() + FAIL_RETRY_MS;
+    r.value = await resolve();
+    r.retryAt = now() + PM_RETRY_MS;
+  }
+  return r.value;
+}
 
 /** YYYY-MM-DD in UTC — Polymarket's slug date. */
 export function pmSlug(m: Pick<MarketInfo, "sideYes" | "sideNo" | "startMs">): string | null {
@@ -168,7 +186,7 @@ export class LivePrior {
       if (m.startMs === undefined || !(nfl || isSoccerQuestion(m))) continue;
       this.markets.push(m);
       const key = m.vault.toLowerCase();
-      this.states.set(key, { espnDate: espnDate(m.startMs), suspendedUntil: 0, final: false });
+      this.states.set(key, { pm: {}, mn: {}, espnDate: espnDate(m.startMs), suspendedUntil: 0, final: false });
       this.byCoin.set(m.coinYes, { vault: key, isYes: true });
       this.byCoin.set(m.coinNo, { vault: key, isYes: false });
     }
@@ -258,43 +276,46 @@ export class LivePrior {
   }
 
   private async polymarket(m: MarketInfo, s: State, get: Get): Promise<LiveSample | null> {
-    if (s.pmToken === null && s.pmRetryAt !== undefined && this.opts.now() >= s.pmRetryAt) s.pmToken = undefined;
-    if (s.pmToken === undefined) {
-      // Held until the lookup lands, so a throwing fetch waits FAIL_RETRY_MS instead of every tick.
-      s.pmToken = null;
-      s.pmRetryAt = this.opts.now() + FAIL_RETRY_MS;
-      if (isSoccerQuestion(m)) {
+    const token = await this.resolveToken(m, s, get);
+    return token === null ? null : this.midpoint(s, token);
+  }
+
+  private async resolveToken(m: MarketInfo, s: State, get: Get): Promise<string | null> {
+    const now = () => this.opts.now();
+    if (isSoccerQuestion(m)) {
+      return resolveCached(s.pm, now, async () => {
         const [home, away] = m.groupTitle!.split(" vs ").map((t) => t.trim());
         let hit: ReturnType<typeof pmQuestionToken> = null;
         if (home && away) {
           const res = (await get(`${this.gamma}/public-search?q=${encodeURIComponent(`${home} ${away}`)}&limit_per_type=6`)) as { events?: PmSearchEvent[] };
           hit = pmQuestionToken(res?.events ?? [], m);
         }
-        s.pmToken = hit?.token ?? null;
-        s.pmRetryAt = this.opts.now() + PM_RETRY_MS;
-        this.opts.log?.({ event: "live-prior-resolved", vault: m.vault, slug: hit?.slug ?? null, question: hit?.question ?? null, polymarket: s.pmToken !== null });
-      } else {
-        const slug = pmSlug(m);
-        if (!slug) return null;
-        const events = (await get(`${this.gamma}/events?slug=${slug}`)) as { markets?: Record<string, unknown>[] }[];
-        const ml = events?.[0]?.markets?.find((x) => x.sportsMarketType === "moneyline" && x.closed !== true && x.acceptingOrders !== false);
-        const outcomes = typeof ml?.outcomes === "string" ? (JSON.parse(ml.outcomes) as string[]) : null;
-        const tokens = typeof ml?.clobTokenIds === "string" ? (JSON.parse(ml.clobTokenIds) as string[]) : null;
-        const idx = outcomes ? yesOutcomeIndex(outcomes, m.title) : -1;
-        s.pmToken = idx >= 0 && tokens?.[idx] ? tokens[idx] : null;
-        s.pmRetryAt = this.opts.now() + PM_RETRY_MS;
-        this.opts.log?.({ event: "live-prior-resolved", vault: m.vault, slug, polymarket: s.pmToken !== null });
-      }
+        this.opts.log?.({ event: "live-prior-resolved", vault: m.vault, slug: hit?.slug ?? null, question: hit?.question ?? null, polymarket: hit !== null });
+        return hit?.token ?? null;
+      });
     }
-    if (s.pmToken === null) return null;
+    const slug = pmSlug(m);
+    if (!slug) return null;
+    return resolveCached(s.pm, now, async () => {
+      const events = (await get(`${this.gamma}/events?slug=${slug}`)) as { markets?: Record<string, unknown>[] }[];
+      const ml = events?.[0]?.markets?.find((x) => x.sportsMarketType === "moneyline" && x.closed !== true && x.acceptingOrders !== false);
+      const outcomes = typeof ml?.outcomes === "string" ? (JSON.parse(ml.outcomes) as string[]) : null;
+      const tokens = typeof ml?.clobTokenIds === "string" ? (JSON.parse(ml.clobTokenIds) as string[]) : null;
+      const idx = outcomes ? yesOutcomeIndex(outcomes, m.title) : -1;
+      const token = idx >= 0 && tokens?.[idx] ? tokens[idx] : null;
+      this.opts.log?.({ event: "live-prior-resolved", vault: m.vault, slug, polymarket: token !== null });
+      return token;
+    });
+  }
+
+  private async midpoint(s: State, token: string): Promise<LiveSample | null> {
     let mid: string | undefined;
     try {
-      ({ mid } = (await this.opts.fetchJson(`${this.clob}/midpoint?token_id=${s.pmToken}`)) as { mid?: string });
+      ({ mid } = (await this.opts.fetchJson(`${this.clob}/midpoint?token_id=${token}`)) as { mid?: string });
     } catch (err) {
       // A settled market loses its book (404): drop the token, retry the listing later.
       if (!/HTTP 404/.test((err as Error).message)) throw err;
-      s.pmToken = null;
-      s.pmRetryAt = this.opts.now() + PM_RETRY_MS;
+      s.pm = { value: null, retryAt: this.opts.now() + PM_RETRY_MS };
       return null;
     }
     const p = Number(mid);
@@ -303,25 +324,22 @@ export class LivePrior {
   }
 
   private async mainnet(m: MarketInfo, s: State, get: Get): Promise<LiveSample | null> {
-    if (!this.opts.mainnetInfoUrl) return null;
+    const url = this.opts.mainnetInfoUrl;
+    if (!url) return null;
     const now = this.opts.now();
-    if (s.mnCoin === null && s.mnRetryAt !== undefined && now >= s.mnRetryAt) s.mnCoin = undefined;
-    if (s.mnCoin === undefined) {
-      s.mnCoin = null;
-      s.mnRetryAt = now + FAIL_RETRY_MS;
-      const { outcomes } = (await get(this.opts.mainnetInfoUrl, { type: "outcomeMeta" })) as { outcomes?: { outcome: number; name?: string; description?: string }[] };
-      s.mnCoin = mainnetYesCoin(outcomes ?? [], m);
-      s.mnRetryAt = now + PM_RETRY_MS;
-      this.opts.log?.({ event: "live-prior-resolved", vault: m.vault, mainnet: s.mnCoin });
-    }
-    if (s.mnCoin === null) return null;
+    const coin = await resolveCached(s.mn, () => now, async () => {
+      const { outcomes } = (await get(url, { type: "outcomeMeta" })) as { outcomes?: { outcome: number; name?: string; description?: string }[] };
+      const c = mainnetYesCoin(outcomes ?? [], m);
+      this.opts.log?.({ event: "live-prior-resolved", vault: m.vault, mainnet: c });
+      return c;
+    });
+    if (coin === null) return null;
     let book: { levels?: { px: string }[][] };
     try {
-      book = (await this.opts.fetchJson(this.opts.mainnetInfoUrl, { type: "l2Book", coin: s.mnCoin })) as typeof book;
+      book = (await this.opts.fetchJson(url, { type: "l2Book", coin })) as typeof book;
     } catch {
       // Settled outcomes are pruned from Core; drop the coin, re-resolve later.
-      s.mnCoin = null;
-      s.mnRetryAt = now + PM_RETRY_MS;
+      s.mn = { value: null, retryAt: now + PM_RETRY_MS };
       return null;
     }
     const bid = Number(book.levels?.[0]?.[0]?.px);
