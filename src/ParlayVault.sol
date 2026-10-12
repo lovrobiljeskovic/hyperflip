@@ -8,17 +8,13 @@ import {ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/ECDSA.s
 import {EIP712} from "openzeppelin-contracts/contracts/utils/cryptography/EIP712.sol";
 import {IOutcomeLeg} from "./IOutcomeLeg.sol";
 
-/// Layer-2 parlay over Layer-1 OutcomeVaults (design spec:
-/// ~/docs/superpowers/specs/2026-08-17-parlay-contract-design.md).
+/// Parlay positions (ERC-721) over OutcomeVault / OutcomeLeg legs.
 ///
-/// Trust model A: the contract blindly trusts a quote signed by `quoteSigner`.
-/// Exposure is bounded structurally — escrow is pulled from `writer`'s ERC-20
-/// allowance (the house approves only the bankroll it will risk), and
-/// `minPremiumBps` floors the worst quote at a bounded loss ratio. Pausing
-/// mints = the house revokes the writer allowance; there is no pause switch.
-///
-/// Each position is an ERC-721. Full max payout is escrowed at mint: the
-/// house-as-writer beta has no other solvency guarantee users can check.
+/// The contract blindly trusts a quote signed by `quoteSigner`. Exposure is
+/// bounded structurally: escrow comes from `writer`'s ERC-20 allowance (the
+/// house approves only the bankroll it will risk) and `minPremiumBps` floors
+/// the worst quote. Pausing mints = revoking that allowance; there is no pause
+/// switch. Full max payout is escrowed at mint.
 contract ParlayVault is ERC721, EIP712 {
     using SafeERC20 for IERC20;
 
@@ -45,16 +41,14 @@ contract ParlayVault is ERC721, EIP712 {
 
     struct Parlay {
         Leg[] legs;
-        /// Escrow return address, snapshotted at mint so a `setWriter` config
-        /// change mid-flight cannot redirect refunds.
+        /// Snapshotted at mint so `setWriter` cannot redirect escrow mid-flight.
         address writer;
         uint96 premium;
         uint96 maxPayout;
         Status status;
     }
 
-    /// Bounds resolveParlay's settlement-loop gas. All other risk caps
-    /// (max stake, exposure, min legs) are writer-service policy.
+    /// Bounds resolveParlay's loop gas; every other cap is writer-service policy.
     uint256 public constant MAX_LEGS = 10;
 
     bytes32 internal constant LEG_TYPEHASH = keccak256("Leg(address vault,bool isYes)");
@@ -68,9 +62,8 @@ contract ParlayVault is ERC721, EIP712 {
     address public writer;
     address public quoteSigner;
     uint16 public minPremiumBps;
-    /// Key custody Phase 2: the online rotation key may only *add* legs. Its
-    /// worst case is "lists a vault", never "moves money" — a signer-only
-    /// compromise cannot mint against an attacker's leg.
+    /// Online rotation key that may only *add* legs: its worst case is "lists a
+    /// vault", never "moves money".
     address public legRegistrar;
     mapping(address => bool) public allowedLeg;
 
@@ -99,9 +92,6 @@ contract ParlayVault is ERC721, EIP712 {
         minPremiumBps = minPremiumBps_;
     }
 
-    /// Zero-signer guard: ECDSA.recover reverts on garbage rather than
-    /// returning address(0), but a zero signer would still make the intent
-    /// ambiguous — pausing is done via the writer allowance, never this.
     function setQuoteSigner(address quoteSigner_) external {
         require(msg.sender == owner, "NOT_OWNER");
         require(quoteSigner_ != address(0), "ZERO_SIGNER");
@@ -115,8 +105,7 @@ contract ParlayVault is ERC721, EIP712 {
         emit WriterChanged(writer_);
     }
 
-    /// Bounded below 100%: a floor at or above 100% would brick minting,
-    /// since premium < maxPayout is also required.
+    /// A floor at or above 100% would brick minting (premium < maxPayout).
     function setMinPremiumBps(uint16 minPremiumBps_) external {
         require(msg.sender == owner, "NOT_OWNER");
         require(minPremiumBps_ < 10_000, "BAD_BPS");
@@ -130,8 +119,7 @@ contract ParlayVault is ERC721, EIP712 {
         emit LegRegistrarChanged(legRegistrar_);
     }
 
-    /// Add-only by design: there is no removal, so the registrar key cannot
-    /// strand open tickets or gate the house out of its own legs.
+    /// Add-only: the registrar key cannot strand open tickets.
     function allowLeg(address leg) external {
         require(msg.sender == owner || msg.sender == legRegistrar, "NOT_REGISTRAR");
         allowedLeg[leg] = true;
@@ -145,13 +133,11 @@ contract ParlayVault is ERC721, EIP712 {
         emit OwnerChanged(owner_);
     }
 
-    /// Explicit getter: the auto-generated one cannot return the legs array.
     function parlay(uint256 id) external view returns (Parlay memory) {
         return _parlays[id];
     }
 
-    /// Public so the writer service and tests hash quotes the exact same way
-    /// the contract does.
+    /// Public: the writer service hashes quotes exactly this way (EIP-712 "ParlayVault" v1).
     function quoteDigest(Quote calldata q) public view returns (bytes32) {
         bytes32[] memory legHashes = new bytes32[](q.legs.length);
         for (uint256 i; i < q.legs.length; i++) {
@@ -172,12 +158,9 @@ contract ParlayVault is ERC721, EIP712 {
         );
     }
 
-    /// Mint a parlay from a house-signed quote. Escrow model: premium from the
-    /// taker + (maxPayout − premium) from the writer's allowance, both held
-    /// here until resolution. A leg already settled at mint is a stale quote —
-    /// frontend requotes. Duplicate/rogue vault addresses are deliberately not
-    /// checked: quotes are house-signed and house-signed garbage only hurts
-    /// the house (design Q1, model A).
+    /// Escrow = premium from the taker + (maxPayout − premium) from the writer's
+    /// allowance. Duplicate legs are not checked: house-signed garbage only
+    /// hurts the house.
     function mint(Quote calldata q, bytes calldata sig) external returns (uint256 id) {
         require(ECDSA.recover(quoteDigest(q), sig) == quoteSigner, "BAD_SIG");
         require(block.timestamp <= q.deadline, "QUOTE_EXPIRED");
@@ -203,26 +186,16 @@ contract ParlayVault is ERC721, EIP712 {
         emit ParlayMinted(id, msg.sender, q.quoteId, q.premium, q.maxPayout);
     }
 
-    /// Permissionless — the writer service pokes dead parlays to recycle its
-    /// bankroll. Leg-hit rule: YES hits iff fraction == 1e18, NO hits iff
-    /// == 0; strictly between is ambiguous. Resolution order: lost beats
-    /// fractional — a lost leg kills the ticket even when another leg voided.
-    /// Void (design decision A): whole-parlay void, premium back to holder,
-    /// remainder to writer, token burned. Dead: full pot to the snapshotted
-    /// writer immediately, token kept as receipt (never pays again — status
-    /// gate). Won: funds move on claim so the payout follows token ownership.
-    /// CEI: status write / burn before every transfer; USDC has no hooks.
+    /// Permissionless. YES hits iff fraction == 1e18, NO iff == 0, between is
+    /// fractional. Lost beats fractional. Dead: full pot to the snapshotted
+    /// writer, token kept as receipt. Void: premium back to the holder, rest to
+    /// the writer, token burned. Won: paid on claim so payout follows ownership.
+    /// Leg reads are `view` on IOutcomeLeg, so the loop is STATICCALL-only.
     function resolveParlay(uint256 id) public {
         Parlay storage p = _parlays[id];
         require(p.status == Status.Open && p.maxPayout != 0, "NOT_OPEN");
         bool anyFractional;
         bool allSettled = true;
-        // Reentrancy safety for this loop rests on settled/settleFractionWad
-        // being public state-variable getters -> view -> STATICCALL, so a
-        // rogue leg vault cannot write state or reenter here even though the
-        // status write hasn't happened yet. If Layer 1 ever makes either
-        // getter state-mutating, this loop must be restructured to write
-        // status before any external call.
         for (uint256 i; i < p.legs.length; i++) {
             IOutcomeLeg v = IOutcomeLeg(p.legs[i].vault);
             if (!v.settled()) {
@@ -254,14 +227,9 @@ contract ParlayVault is ERC721, EIP712 {
         emit ParlayResolved(id, Status.Won);
     }
 
-    /// Pays maxPayout to the token's current owner. Auto-resolve means the
-    /// winner never needs a separate resolve tx. Burn before transfer is the
-    /// double-pay guard (status stays Won, but ownerOf reverts forever after).
-    /// If the auto-resolve lands on Dead or Void, the NOT_WON require below
-    /// reverts the whole transaction — the writer payout / premium refund /
-    /// burn that resolveParlay just did is rolled back with it. The parlay
-    /// stays Open; call resolveParlay directly to settle a Dead or Void
-    /// ticket, claim only ever pays a Won one.
+    /// Auto-resolves, then pays maxPayout to the current owner. The burn is the
+    /// double-pay guard. An auto-resolve that lands on Dead/Void is rolled back
+    /// by NOT_WON; call resolveParlay directly for those.
     function claim(uint256 id) external {
         Parlay storage p = _parlays[id];
         if (p.status == Status.Open) resolveParlay(id);

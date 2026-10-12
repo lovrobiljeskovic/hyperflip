@@ -5,51 +5,40 @@ interface ICoreWriter {
     function sendRawAction(bytes calldata data) external;
 }
 
-/// HyperCore interop constants and payload encoding.
-/// Values marked UNVERIFIED are confirmed or patched by the testnet spike
-/// (script/spike/) before any mainnet use. Keep every unverified value in this
-/// file so a spike finding is a one-line patch.
+/// HyperCore interop constants and payload encoding. Every value here was
+/// verified live on testnet (docs/spike-findings.md).
 library CoreConstants {
     address internal constant CORE_WRITER = 0x3333333333333333333333333333333333333333;
     address internal constant SPOT_BALANCE_PRECOMPILE = 0x0000000000000000000000000000000000000801;
     address internal constant OUTCOME_STATUS_PRECOMPILE = 0x0000000000000000000000000000000000000814;
 
-    /// EVM→Core USDC deposit proxy (spotMeta's `evmContract` for USDC) — NOT
-    /// the token address. `approve` + `deposit(amount, 4294967295)` here is
-    /// the real EVM→Core USDC path; an ERC-20 transfer straight to the system
-    /// address reverts (blacklisted). See docs/spike-findings.md #3.
+    /// EVM→Core USDC path is `approve` + `deposit(amount, SENTINEL)` on this proxy
+    /// (spotMeta `evmContract`); an ERC-20 transfer to the system address reverts.
     address internal constant CORE_DEPOSIT_WALLET = 0x0B80659a4076E9E93C7DbE0f10675A16a3e5C206;
-    /// Second arg observed on every successful spike deposit; meaning
-    /// unconfirmed (uint32 max — possibly "no referral/sub-account id").
+    /// Second `deposit` arg seen on every successful deposit; meaning unconfirmed.
     uint32 internal constant CORE_DEPOSIT_SENTINEL = 4294967295;
 
     uint8 internal constant ENCODING_VERSION = 1;
     uint24 internal constant ACTION_OUTCOME_OP = 17;
-    /// VERIFIED live (e2e 2026-08-16, M3 spike 2026-08-17). Fee is charged on
-    /// top of the sent amount, sender side, never netted: in Core HYPE
-    /// (0.00002 observed) when the sender holds any, else in the sent token
-    /// (~$0.00056, floats with HYPE price). amount + fee > balance → silent
-    /// drop. Core→EVM sends additionally require the wei amount to be a whole
-    /// number of EVM token units (multiple of 100 for USDC's 8 Core vs 6 EVM
-    /// decimals, spotMeta `evm_extra_wei_decimals: -2`) — else silent drop.
+    /// spotSend fee is charged on top of the amount, never netted: in Core HYPE
+    /// when the sender holds any, else in the sent token; amount + fee > balance
+    /// is a silent drop. Core→EVM amounts must be whole EVM units (multiple of
+    /// 100 for USDC's 8 Core vs 6 EVM decimals) or the send is silently dropped.
     uint24 internal constant ACTION_SPOT_SEND = 6;
 
     uint8 internal constant OP_SPLIT_OUTCOME = 0;
     uint8 internal constant OP_MERGE_OUTCOME = 1;
 
-    /// Outcome wei is 5-decimal: 1 share = 1e5 outcome wei = 1 USDC.
-    /// docs/spike-findings.md #2 — the vault's prior quote-wei multiplier was 1000x wrong
-    /// here; split/merge amounts must go through this conversion, not the
-    /// quote one below.
+    /// Outcome wei is 5-decimal: 1 share = 1e5 outcome wei = 1 USDC. Split/merge
+    /// amounts use this, never the quote conversion.
     uint256 internal constant OUTCOME_WEI_PER_SHARE = 1e5;
 
-    /// Quote wei is 8-decimal: 1 share = 1 USDC = 1e8 quote wei. Confirmed
-    /// live: a 5.0 EVM USDC deposit (6-dec, so 1e6 EVM units per share)
-    /// credited exactly 500,000,000 Core wei (docs/spike-findings.md "wei ratio").
+    /// Quote wei is 8-decimal: 1 share = 1 USDC = 1e8 quote wei.
     uint256 internal constant QUOTE_WEI_PER_SHARE = 1e8;
 
-    /// `outcomeStatus` status codes: 0 never existed, 1 active, 2 settled
-    /// (settledValue readable), 3 settled-and-pruned (settledValue GONE).
+    /// 0x814 status codes: 0 never existed, 1 active, 2 settled (settledValue
+    /// readable), 3 settled-and-pruned (settledValue gone; Core prunes within
+    /// ~10 minutes).
     uint8 internal constant OUTCOME_ACTIVE = 1;
     uint8 internal constant OUTCOME_SETTLED = 2;
     uint8 internal constant OUTCOME_PRUNED = 3;
@@ -61,43 +50,32 @@ library CoreConstants {
         return abi.encodePacked(ENCODING_VERSION, actionId, params);
     }
 
-    /// Params are (op, question, outcome, wei) but the question word must be
-    /// 0: CoreWriter silently drops split/merge payloads with a non-zero
-    /// unused field (docs/spike-findings.md #1 — our first live split with question=976
-    /// no-oped with no error). There is therefore no question parameter; the
-    /// zero word is written unconditionally.
+    /// Params are (op, question, outcome, wei) but the question word must be 0:
+    /// CoreWriter silently drops a split/merge whose unused field is non-zero.
     function encodeOutcomeOp(uint8 op, uint32 outcome, uint64 wei_) internal pure returns (bytes memory) {
         return encodeAction(ACTION_OUTCOME_OP, abi.encode(op, uint32(0), outcome, wei_));
     }
 
-    /// Param layout (destination, token index, wei) — verified live.
     function encodeSpotSend(address destination, uint64 token, uint64 wei_) internal pure returns (bytes memory) {
         return encodeAction(ACTION_SPOT_SEND, abi.encode(destination, token, wei_));
     }
 
-    /// `deposit(uint256,uint32)` calldata for CORE_DEPOSIT_WALLET — call after
-    /// `quote.approve(CORE_DEPOSIT_WALLET, amount)`. This is the EVM→Core
-    /// USDC path (docs/spike-findings.md #3), not a CoreWriter action.
+    /// `deposit(uint256,uint32)` calldata for CORE_DEPOSIT_WALLET (after approve).
     function encodeDeposit(uint256 amount) internal pure returns (bytes memory) {
         return abi.encodeWithSignature("deposit(uint256,uint32)", amount, CORE_DEPOSIT_SENTINEL);
     }
 
-    /// EVM quote units → outcome wei (5-dec) for split/merge amounts.
-    /// `evmUnitsPerShare` is 10**quoteDecimals (1 share = 1 quote unit-worth =
-    /// 1 USDC), a per-vault value: real USDC is 6-dec, but the conversion is
-    /// not allowed to assume it. Reverts on dust instead of truncating —
-    /// a truncated split would mint more shares than the collateral backs.
+    /// EVM quote units → outcome wei. Reverts on dust instead of truncating: a
+    /// truncated split would mint more shares than the collateral backs.
     function evmToOutcomeWei(uint256 amountEvm, uint256 evmUnitsPerShare) internal pure returns (uint64) {
         return _convert(amountEvm, OUTCOME_WEI_PER_SHARE, evmUnitsPerShare);
     }
 
-    /// EVM quote units → Core quote wei (8-dec) for deposit/transfer amounts.
     function evmToQuoteWei(uint256 amountEvm, uint256 evmUnitsPerShare) internal pure returns (uint64) {
         return _convert(amountEvm, QUOTE_WEI_PER_SHARE, evmUnitsPerShare);
     }
 
-    /// Core quote wei (8-dec) → EVM quote units, rounded down (the caller is
-    /// the vault crediting a user: dust stays with the vault).
+    /// Core quote wei → EVM quote units, rounded down (dust stays with the vault).
     function quoteWeiToEvm(uint64 quoteWei, uint256 evmUnitsPerShare) internal pure returns (uint256) {
         return uint256(quoteWei) * evmUnitsPerShare / QUOTE_WEI_PER_SHARE;
     }
@@ -110,18 +88,14 @@ library CoreConstants {
         return uint64(w);
     }
 
-    /// Read a Core spot balance via the precompile. Reverts if the precompile
-    /// is absent (i.e. not running on HyperEVM or a test without the mock).
+    /// Reverts when the precompile is absent (not HyperEVM, or a test without the mock).
     function spotBalance(address user, uint64 token) internal view returns (uint64 total) {
         (bool ok, bytes memory ret) = SPOT_BALANCE_PRECOMPILE.staticcall(abi.encode(user, token));
         require(ok, "SPOT_BALANCE_READ_FAILED");
         (total,,) = abi.decode(ret, (uint64, uint64, uint64));
     }
 
-    /// Read outcome settlement status via the 0x814 precompile: status 0
-    /// never existed, 1 active, 2 settled (settledValue readable, scaled 1e8
-    /// = fraction 1.0), 3 settled-and-pruned (settledValue GONE). `question`
-    /// is the outcome's parent question, for binding validation.
+    /// `question` is the outcome's parent question, for binding validation.
     function outcomeStatus(uint32 outcome) internal view returns (uint8 status, uint64 settledValue, uint32 question) {
         (bool ok, bytes memory ret) = OUTCOME_STATUS_PRECOMPILE.staticcall(abi.encode(outcome));
         require(ok, "OUTCOME_STATUS_READ_FAILED");

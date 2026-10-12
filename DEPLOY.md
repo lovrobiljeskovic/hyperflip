@@ -433,3 +433,16 @@ lost after Core pruning cannot be reconstructed by restarting. Do not overwrite
 the cache during recovery. `ops/alert-relay.sh` and its systemd timer can forward
 service alerts using a separately configured private `alert.env`; pair this with
 an external health monitor because a stopped host cannot report its own failure.
+
+## Known issues
+
+**M1 (pre-mainnet gate): a deposit Core never credits wedges the vault.** Testnet e2e
+showed a deposit's EVM→Core USDC leg can be sent to the CoreDepositWallet and never
+credited (cause unconfirmed: testnet regression or a CCTP recipient-existence rule).
+`cancelDeposit`'s `CREDIT_NOT_ARRIVED` guard then never clears, the pending slot is
+stuck, and `_requireIdle` blocks every other deposit, redeem and settle on that vault.
+The only recovery is the owner installing a verifier that attests the op `Failed`,
+which refunds the EVM-side principal but, since the Core split never happened, mints an
+unbacked oYES/oNO pair that dilutes every other holder. Mainnet needs proof the deposit
+leg credits reliably for a contract recipient and an owner recovery path that does not
+mint unbacked pairs.

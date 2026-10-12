@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// Seam between OutcomeVault and whatever attests off-chain execution
-/// (today: a keeper; later: something less trusted).
+/// Attests whether a queued Core action executed.
 interface IExecutionVerifier {
     enum Status {
         Pending,

@@ -3,11 +3,9 @@ pragma solidity ^0.8.24;
 
 import {IExecutionVerifier} from "./IExecutionVerifier.sol";
 
-/// Keeper-attested IExecutionVerifier. The keeper posts a verdict once per
-/// opKey; statusOf holds it at Pending for `minDelay` after attestation so a
-/// bad attestation can be paused before OutcomeVault acts on it. Delay is a
+/// Keeper-attested IExecutionVerifier. A verdict stays Pending for `minDelay`
+/// so a bad attestation can be paused before a vault acts on it: a
 /// blast-radius control, not a trustless challenge window.
-/// Owner = deployer EOA for testnet; mainnet: replace with a timelock.
 contract KeeperVerifier is IExecutionVerifier {
     struct Attestation {
         bool attested;

@@ -8,40 +8,13 @@ import {IExecutionVerifier} from "./IExecutionVerifier.sol";
 import {OutcomeToken} from "./OutcomeToken.sol";
 
 /// Per-market vault wrapping a HIP-4 binary outcome as oYES/oNO ERC-20s.
-/// See ~/docs/superpowers/specs/2026-08-12-hyperevm-outcome-composability-design.md for the design spec.
 ///
-/// Every claim/cancel is gated on an `IExecutionVerifier` attestation rather
-/// than an on-chain balance proof. That was forced by the 2026-08-14 spike
-/// (outcome balances were unreadable from the EVM). Since 2026-08-25 the
-/// 0x801 precompile accepts encoded outcome asset ids
-/// (`100_000_000 + 10*outcome + side`), so a precompile-backed verifier is
-/// now buildable and the keeper is a choice, not a constraint. Today that
-/// verifier is a keeper; the owner can swap it for anything else — a dead or
-/// lying keeper is recovered by `setVerifier`, not by a timeout. Cancel
-/// therefore requires an explicit `Failed` verdict: elapsed time proves
-/// nothing about a Core action.
-///
-/// The one thing the vault still reads on-chain is its own Core *quote*
-/// balance (token 0 at 0x801), used to prove a refund is actually funded, and
-/// the settlement fraction at 0x814.
-///
-/// KNOWN ISSUE, pre-mainnet (mainnet gate M1, see task-6-report.md /
-/// progress.md): testnet e2e proved a deposit's EVM→Core USDC leg can be
-/// silently sent to the CoreDepositWallet and never credited (Core-side
-/// non-crediting, cause unconfirmed — testnet regression or a CCTP
-/// recipient-existence rule). If that happens to a live `pendingDeposit`,
-/// `cancelDeposit`'s `CREDIT_NOT_ARRIVED` guard above can never clear
-/// honestly (the credit that would satisfy it never lands), so the pending
-/// slot is stuck forever — and `_requireIdle` then blocks every other
-/// deposit/redeem/settle on this vault, stranding every other holder too,
-/// not just the wedged depositor. The only current recovery is the owner
-/// calling `setVerifier` with a verifier that attests this op `Failed`,
-/// which lets `cancelDeposit` return the EVM-side principal — but the
-/// matching Core-side split never happened, so this mints an unbacked
-/// oYES/oNO pair backed by nothing (dilutes every other holder's claim on
-/// the vault's Core balance). Mainnet needs M1 resolved (proof the deposit
-/// leg reliably credits for a contract recipient) and a proper owner
-/// recovery path that does not rely on minting unbacked pairs.
+/// Claims and cancels are gated on an `IExecutionVerifier` attestation (today a
+/// keeper), never on elapsed time: a dead or lying keeper is replaced through
+/// `setVerifier`, and cancel needs an explicit `Failed` verdict. The vault reads
+/// Core itself only for its own quote balance (0x801) and the settlement fraction
+/// (0x814). Known pre-mainnet issue M1 (a deposit Core never credits wedges the
+/// vault) is documented in DEPLOY.md.
 contract OutcomeVault {
     using SafeERC20 for IERC20;
 
@@ -51,17 +24,14 @@ contract OutcomeVault {
     }
 
     IERC20 public immutable quote;
-    /// spotSend destination for Core→EVM: the quote token's system address,
-    /// never address(this) (docs/spike-findings.md #4).
+    /// Core→EVM spotSend destination: the quote token's system address, never address(this).
     address public immutable coreSystemAddress;
     uint64 public immutable quoteTokenCoreIndex;
     /// 10**quoteDecimals — EVM quote units in one share (1 share = 1 USDC).
     uint256 public immutable evmUnitsPerShare;
     uint32 public immutable question;
     uint32 public immutable outcome;
-    /// Settle authority for the pruned branch only. Rotatable by the owner
-    /// (key custody Phase 3) so a lost or compromised keeper key is swapped,
-    /// not redeployed around.
+    /// Settle authority for the pruned branch only; owner-rotatable.
     address public keeper;
     OutcomeToken public immutable oYes;
     OutcomeToken public immutable oNo;
@@ -69,9 +39,7 @@ contract OutcomeVault {
     address public owner;
     IExecutionVerifier public verifier;
 
-    /// Vestigial. Cancel is gated on a Failed attestation, never on elapsed
-    /// time; this constant survives only because the do-not-edit anchor suite
-    /// warps by it. Delete when that file is next regenerated.
+    /// Unused by the vault; read by the frozen test/anchor suite.
     uint256 public constant CANCEL_TIMEOUT = 1 hours;
 
     struct PendingDeposit {
@@ -90,38 +58,29 @@ contract OutcomeVault {
     PendingDeposit public pendingDeposit;
     PendingRedeem public pendingRedeem;
     mapping(address => uint256) public owed;
-    /// Sum of `owed`: quote already promised to earlier claimants, which
-    /// settlement redemption must not treat as part of its pool.
+    /// Sum of `owed`; settlement redemption must not pay out of it.
     uint256 public totalOwed;
     uint256 public nextOpId;
     bool public settled;
     uint256 public settleFractionWad;
 
-    /// spotSend is asynchronous and the Core-side debit lands later. A pending
-    /// deposit's `quoteCoreBefore` baseline taken in that window would be
-    /// stale, making a later refund proof unsatisfiable (the wedge bug), so
-    /// new operations wait until the debit is observed.
+    /// Core-side dwell: a spotSend debits Core later, and a deposit baseline taken
+    /// in that window would be stale, so deposits wait until the debit is observed.
     uint64 internal outboundTarget;
     uint64 internal outboundWei;
 
-    /// Cumulative EVM quote our Core→EVM sends should have delivered, and
-    /// cumulative EVM quote that has left the vault. Whatever the first exceeds
-    /// the second plus the balance on hand is still in the air. Both are
-    /// derived from the vault's own transfers, so unlike a Core-balance read
-    /// nobody can hold them false with a stray credit.
+    /// EVM-side arrival tracker: what our sends should have delivered vs what has
+    /// left the vault. Derived from our own transfers, so a stray Core credit cannot
+    /// perturb it; the excess over balance + paid out is still in the air.
     uint256 internal outboundExpectedEvm;
     uint256 internal totalPaidOutEvm;
 
-    /// Armed only by `pullSettledFunds` (and the owner's `clearOutbound`),
-    /// never by arrivals: before any pull, `_unlandedEvm() == 0` holds
-    /// trivially and a 2-wei quote donation (or stray EVM dust) would slip
-    /// past the zero-payout backstop, burning a full position for dust. The
-    /// flag says "a sweep was actually sent"; `_unlandedEvm()` then says it
-    /// landed. It never un-arms — a later stray can at most be swept again.
+    /// "A settlement sweep was sent." Armed only by `pullSettledFunds` and
+    /// `clearOutbound`, never by arrivals: before any pull `_unlandedEvm() == 0`
+    /// holds trivially and a dust donation could burn a full position for nothing.
     bool internal swept;
 
-    /// A payout is credited in full unless Core returned less than asked; both
-    /// numbers are logged so a shortfall is visible off-chain.
+    /// Shortfall tolerance for Core fees; anything larger is treated as "not landed yet".
     uint256 internal constant PAYOUT_MIN_BPS = 9_900;
 
     /// Everything a keeper needs to attest: opKey is keccak256(abi.encode(vault, opId)).
@@ -142,8 +101,7 @@ contract OutcomeVault {
         string memory marketSymbol,
         uint8 quoteDecimals
     ) {
-        // A raw call to a codeless address succeeds silently, which would send
-        // every deposit into the void while reporting success (docs/spike-findings.md #3).
+        // A raw call to a codeless address succeeds silently, sending every deposit into the void.
         require(CoreConstants.CORE_DEPOSIT_WALLET.code.length > 0, "NO_DEPOSIT_WALLET");
         quote = quote_;
         coreSystemAddress = coreSystemAddress_;
@@ -154,7 +112,6 @@ contract OutcomeVault {
         keeper = keeper_;
         owner = msg.sender;
         verifier = verifier_;
-        // oYES/oNO are minted 1:1 with quote units, so they carry its decimals.
         oYes = new OutcomeToken(
             string.concat("Outcome Yes ", marketSymbol), string.concat("oYES-", marketSymbol), quoteDecimals
         );
@@ -163,8 +120,6 @@ contract OutcomeVault {
         );
     }
 
-    /// The swap seam: if the keeper dies or lies, the owner points the vault at
-    /// a different attestation source and stuck funds become claimable again.
     function setVerifier(IExecutionVerifier verifier_) external {
         require(msg.sender == owner, "NOT_OWNER");
         verifier = verifier_;
@@ -177,8 +132,6 @@ contract OutcomeVault {
         emit KeeperChanged(keeper_);
     }
 
-    /// Deployer starts as owner (rotation deploys from the box key); the deploy
-    /// script hands ownership to the cold key in the same broadcast.
     function setOwner(address owner_) external {
         require(msg.sender == owner, "NOT_OWNER");
         require(owner_ != address(0), "ZERO_ADDRESS");
@@ -186,16 +139,13 @@ contract OutcomeVault {
         emit OwnerChanged(owner_);
     }
 
-    /// Escape hatch for both outbound trackers. An unsolicited Core credit can
-    /// hold the unlanded accumulator above zero indefinitely (it masks the
-    /// balance drop that retires it), and a sweep whose spotSend Core dropped
-    /// on the floor would otherwise keep settlement redemption shut.
+    /// Owner escape hatch for both outbound trackers: a stray Core credit can hold
+    /// the dwell shut forever, and a sweep Core dropped would keep redemption shut.
     function clearOutbound() external {
         require(msg.sender == owner, "NOT_OWNER");
         outboundWei = 0;
         outboundExpectedEvm = quote.balanceOf(address(this)) + totalPaidOutEvm;
-        // Core-has-nothing-left corner: a settlement sweep Core dropped can
-        // never land, so the owner writing reality down also opens the gate.
+        // A dropped settlement sweep can never land; writing reality down opens the gate.
         if (settled) swept = true;
     }
 
@@ -208,8 +158,7 @@ contract OutcomeVault {
         pendingDeposit =
             PendingDeposit({user: msg.sender, amount: amount, opId: opId, quoteCoreBefore: _quoteCoreBalance()});
         quote.safeTransferFrom(msg.sender, address(this), amount);
-        // EVM→Core is approve + deposit() on the Core deposit wallet; an ERC-20
-        // transfer to the system address reverts, it is blacklisted (docs/spike-findings.md #3).
+        // EVM→Core is approve + deposit() on the deposit wallet (see CoreConstants).
         quote.forceApprove(CoreConstants.CORE_DEPOSIT_WALLET, amount);
         (bool ok,) = CoreConstants.CORE_DEPOSIT_WALLET.call(CoreConstants.encodeDeposit(amount));
         require(ok, "CORE_DEPOSIT_FAILED");
@@ -226,10 +175,8 @@ contract OutcomeVault {
         oNo.mint(p.user, p.amount);
     }
 
-    /// Recovery when Core dropped the split: refund the depositor from the
-    /// vault's Core quote balance. Requires an explicit Failed attestation AND
-    /// proof the EVM→Core credit landed (else the refund spotSend would itself
-    /// be silently rejected).
+    /// Refund after a dropped split. Needs a Failed attestation AND proof the
+    /// EVM→Core credit landed, else the refund spotSend would itself be dropped.
     function cancelDeposit() external {
         PendingDeposit memory p = pendingDeposit;
         require(p.user != address(0), "NO_PENDING");
@@ -259,9 +206,7 @@ contract OutcomeVault {
         _payOut(p.user, p.amount);
     }
 
-    /// Recovery when Core never delivered the merge: re-mint the burned pair to
-    /// the redeemer. Proof is the exact complement of claimRedeem's, so the two
-    /// paths can never both fire.
+    /// Re-mint after a dropped merge; the complement of claimRedeem's proof.
     function cancelRedeem() external {
         PendingRedeem memory p = pendingRedeem;
         require(p.user != address(0), "NO_PENDING");
@@ -280,15 +225,10 @@ contract OutcomeVault {
         quote.safeTransfer(msg.sender, amount);
     }
 
-    /// Settlement comes from the 0x814 precompile: at status 2 anyone can
-    /// settle and the caller's `fractionWad` is ignored. Core prunes settled
-    /// outcomes fast (docs/spike-findings.md: 2→3 within ~10 minutes) and status 3 has no
-    /// value left, so that — and only that — is where the keeper may relay the
-    /// fraction it observed. A live market (status 0/1) can never be settled by
-    /// anyone, keeper included: relaying a payout for a market Core has not
-    /// resolved is the whole attack. Crank early.
-    /// Reverts while an operation is in flight — pending slots must clear
-    /// first, else the settlement sweep would strand their recovery proofs.
+    /// At Core status 2 anyone settles and `fractionWad` is ignored (read from
+    /// 0x814). At status 3 the value is pruned, so only there may the keeper relay
+    /// the fraction it observed. A live market can never be settled by anyone.
+    /// Pending slots must clear first or the sweep would strand their proofs.
     function settle(uint256 fractionWad) external {
         require(!settled, "ALREADY_SETTLED");
         _requireIdle();
@@ -305,22 +245,14 @@ contract OutcomeVault {
         settleFractionWad = fractionWad;
     }
 
-    /// Move the settled quote from the vault's Core account to the EVM side so
-    /// redeemSettled can pay. Permissionless — and (with the owner's
-    /// clearOutbound) the only thing that arms the redemption gate, so
-    /// cranking it is part of settling. A zero-balance pull must NOT arm:
-    /// Core's balance is zero by construction until it credits settlement, so
-    /// a free premature pull would arm the gate with nothing swept and hand
-    /// the 2-wei donation attack right back. Pull again once the credit
-    /// lands; if Core never credits, recovery is the owner's clearOutbound.
+    /// Sweep the settled quote from Core to the EVM side. Permissionless, and the
+    /// thing that arms `swept`. A zero-balance pull must not arm: Core holds
+    /// nothing until it credits settlement, and an armed gate with nothing swept
+    /// reopens the dust-donation burn. Pull again once the credit lands.
     function pullSettledFunds() external {
         require(settled, "NOT_SETTLED");
-        // Core silently drops a Core→EVM send whose wei amount is not a whole
-        // number of EVM units (multiple of 100 for USDC's 8→6 decimals; live
-        // M3 finding). Core fees leave sub-unit dust on the balance, so floor
-        // through the EVM-unit round trip and strand the dust rather than
-        // dropping the whole sweep. Guarding on the floored amount also means
-        // a sub-unit stray credit cannot arm the gate at all.
+        // Floor to whole EVM units (Core drops non-representable sends, see
+        // CoreConstants) and strand fee dust; a sub-unit stray cannot arm the gate.
         uint64 bal = _quoteCoreBalance();
         uint256 evm = CoreConstants.quoteWeiToEvm(bal, evmUnitsPerShare);
         if (evm > 0) {
@@ -329,21 +261,11 @@ contract OutcomeVault {
         }
     }
 
-    /// Payouts round down and, if the settled quote that came back is short of
-    /// what the outstanding supply is owed, scale pro rata against what is
-    /// actually here. Paying the early redeemers in full would leave the last
-    /// one holding tokens the vault cannot honor at all.
-    ///
-    /// Blocked until a settlement sweep was requested (`swept`) AND is no
-    /// longer in the air (`_unlandedEvm() == 0`): pro-rata against a pool that
-    /// has not arrived would haircut (or wipe out) whoever redeems first while
-    /// the stragglers over-collect. Without the flag the arrival check holds
-    /// trivially before any pull, and dust donated to the vault defeats the
-    /// zero-payout backstop. Arrival is measured on the EVM side — the quote
-    /// the sweep owes has shown up — never by reading the Core balance, which
-    /// anyone can perturb with a 1-wei credit. Once observed, the expectation
-    /// is retired, so a later stray cannot re-lock redemption; a fresh
-    /// `pullSettledFunds` is the only thing that arms it again.
+    /// Pays pro rata against the pool actually here, and only once the sweep was
+    /// sent (`swept`) and has landed on the EVM side (`_unlandedEvm() == 0`):
+    /// paying early redeemers in full from a pool still in the air would haircut
+    /// the last ones. Arrival is measured on the EVM side, never from the Core
+    /// balance, which anyone can perturb with a 1-wei credit.
     function redeemSettled(bool isYes, uint256 amount) external {
         require(settled, "NOT_SETTLED");
         require(swept && _unlandedEvm() == 0, "SWEEP_PENDING");
@@ -351,28 +273,19 @@ contract OutcomeVault {
         uint256 payout = amount * fraction / 1e18;
         uint256 obligation = _settlementObligation();
         uint256 available = _unreservedBalance();
-        // Pool-adequacy floor — the actual anti-burn property. Arming vectors
-        // for `swept` are a class (the sub-1-EVM-unit stray credit is closed
-        // at the gate by the sweep's representability floor, but the class
-        // stays guarded here), and `payout > 0` is
-        // no backstop once pro-rata is in play: a 2-wei pool against a 100e6
-        // obligation still pays 1 wei for a full burn. So the pool itself must
-        // cover PAYOUT_MIN_BPS of the obligation the pro-rata scales against.
-        // Tradeoff (same as _payOut's floor): a genuine >1% settlement
-        // shortfall reverts rather than paying a haircut — recovery is the
-        // owner topping up the pool (and clearOutbound if the gate is stuck).
+        // Pool must cover PAYOUT_MIN_BPS of the obligation: `payout > 0` is no
+        // backstop under pro-rata (a 2-wei pool still pays 1 wei for a full burn).
+        // A genuine >1% shortfall reverts; recovery is the owner topping up.
         require(available * 10_000 >= obligation * PAYOUT_MIN_BPS, "SETTLEMENT_POOL_SHORT");
         if (obligation > available) payout = payout * available / obligation;
-        // Never burn a position for nothing.
         require(payout > 0, "NOTHING_TO_REDEEM");
         (isYes ? oYes : oNo).burn(msg.sender, amount);
         totalPaidOutEvm += payout;
         quote.safeTransfer(msg.sender, payout);
     }
 
-    /// EVM quote that settlement may pay out: the balance less what withdraw()
-    /// still owes earlier claimants. Saturates because a payout's `owed` is
-    /// credited when it is queued, before the quote lands on the EVM side.
+    /// Balance less what withdraw() still owes; saturates because `owed` is
+    /// credited before the quote lands.
     function _unreservedBalance() internal view returns (uint256) {
         uint256 bal = quote.balanceOf(address(this));
         return bal > totalOwed ? bal - totalOwed : 0;
@@ -391,43 +304,30 @@ contract OutcomeVault {
         require(pendingDeposit.user == address(0) && pendingRedeem.user == address(0), "BUSY");
     }
 
-    /// Only `deposit` records a Core-balance baseline, so only `deposit` has to
-    /// wait for outbound debits to land. Kept off `requestRedeem`/`settle`,
-    /// which take no baseline and must never be blockable by a third party.
-    /// The dwell reads the Core side because that is where a stale baseline
-    /// would do its damage, and a stray credit can only hold it SHUT — the safe
-    /// direction, escapable by `clearOutbound`. Note the accumulator is a
-    /// conservative ratchet, not an exact figure: it counts every send since
-    /// the last successful check, and a stray credit masks the balance drop
-    /// that would retire it. Nothing else may price against it; money
-    /// decisions use `_unlandedEvm`, which no third party can perturb.
+    /// Only `deposit` takes a Core baseline, so only `deposit` dwells; redeem and
+    /// settle must never be blockable by a third party. A stray credit can only
+    /// hold the dwell shut (safe direction, escapable by `clearOutbound`). The
+    /// accumulator is a conservative ratchet; money decisions use `_unlandedEvm`.
     function _requireOutboundLanded() internal {
         if (outboundWei == 0) return;
         require(_quoteCoreBalance() <= outboundTarget, "OUTBOUND_IN_FLIGHT");
         outboundWei = 0;
     }
 
-    /// EVM quote our own sends still owe us: what they should have delivered,
-    /// less what is on hand plus what has already been paid out. Donated quote
-    /// makes this retire early, but a donation is quote actually sitting in the
-    /// vault, so nothing is credited that cannot be honored.
+    /// EVM quote our sends still owe us. Donations retire it early, but a
+    /// donation is quote actually here, so nothing uncoverable is credited.
     function _unlandedEvm() internal view returns (uint256) {
         uint256 arrived = quote.balanceOf(address(this)) + totalPaidOutEvm;
         return outboundExpectedEvm > arrived ? outboundExpectedEvm - arrived : 0;
     }
 
-    /// Queue the Core→EVM leg of a payout and record what the user may
-    /// withdraw once it lands. Sends at most the vault's free Core quote
-    /// balance and credits only what was actually sent, so a shortfall is never
-    /// paid out of another user's collateral. A fee-sized gap (docs/spike-findings.md #5
-    /// measured 7 bps) is absorbed; anything below PAYOUT_MIN_BPS is a credit
-    /// that has not landed yet rather than a fee, so the call reverts and the
-    /// pending slot survives for a retry instead of burning the user's claim.
+    /// Queue the Core→EVM leg of a payout and record what the user may withdraw.
+    /// Credits only what was actually sent, so a shortfall is never paid from
+    /// another user's collateral. A fee-sized gap (~7 bps live) is absorbed;
+    /// below PAYOUT_MIN_BPS the credit has not landed yet, so revert and keep the
+    /// pending slot for a retry.
     function _payOut(address user, uint256 amount) internal {
-        // Quote already promised to a send that has not arrived is not ours to
-        // pay with: pricing against the raw Core balance would credit `owed`
-        // for quote that never lands (Core drops the oversized send in
-        // silence) and reserve it out of the settlement pool forever.
+        // Quote promised to an unlanded send is not ours to pay with.
         uint256 coreEvm = CoreConstants.quoteWeiToEvm(_quoteCoreBalance(), evmUnitsPerShare);
         uint256 unlanded = _unlandedEvm();
         uint256 available = coreEvm > unlanded ? coreEvm - unlanded : 0;
@@ -440,18 +340,11 @@ contract OutcomeVault {
         _spotSendOut(credited);
     }
 
-    /// Operational requirement (M3, live-verified): Core charges the spotSend
-    /// fee ON TOP of `w`, never netted — from the vault's Core HYPE balance if
-    /// it holds any, else from the quote itself, in which case an
-    /// exact-balance send silently drops (recovery: clearOutbound). The
-    /// deploy runbook therefore keeps HYPE dust on the vault's Core account.
-    ///
-    /// Sends stack: a second payout can be queued before the first debit lands,
-    /// and the balance read here still contains every unlanded debit. Summing
-    /// them and subtracting from the live balance therefore gives the balance
-    /// expected once all counted sends land, so the dwell cannot clear on a
-    /// partial landing. Saturating at 0 rather than reverting only makes the
-    /// target harder to reach — never easier.
+    /// Core charges the spotSend fee on top of `w` (see CoreConstants), so the
+    /// runbook keeps HYPE dust on the vault's Core account. Sends stack: the
+    /// balance read here still contains every unlanded debit, so target = live
+    /// balance minus all counted sends and the dwell cannot clear on a partial
+    /// landing. Saturating at 0 only makes the target harder to reach.
     function _spotSendOut(uint64 w) internal {
         outboundExpectedEvm += CoreConstants.quoteWeiToEvm(w, evmUnitsPerShare);
         outboundWei += w;

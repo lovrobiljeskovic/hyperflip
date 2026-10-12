@@ -4,9 +4,8 @@ pragma solidity ^0.8.24;
 import {IOutcomeLeg} from "./IOutcomeLeg.sol";
 import {OutcomeLeg} from "./OutcomeLeg.sol";
 
-/// Stock Nitro delayed inbox, the one call we use. Elysium bridges with HYPE
-/// as msg.value (canonical bridge, per Kinetiq docs), so this is the native
-/// value variant, not ERC20Inbox.
+/// Stock Nitro delayed inbox, native-value variant (Elysium bridges HYPE as
+/// msg.value, not ERC20Inbox).
 interface IInbox {
     function createRetryableTicket(
         address to,
@@ -34,9 +33,7 @@ contract SettlementRelay {
         inbox = inbox_;
     }
 
-    /// Fee params are the caller's (stock retryable pricing; refunds go back
-    /// to the caller on Elysium). Reverts if the vault has not settled — a
-    /// live market can never be relayed.
+    /// Fee params are the caller's; refunds go back to the caller on Elysium.
     function relay(address vault, address leg, uint256 maxSubmissionCost, uint256 gasLimit, uint256 maxFeePerGas)
         external
         payable

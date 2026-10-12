@@ -3,15 +3,10 @@ pragma solidity ^0.8.24;
 
 import {IOutcomeLeg} from "./IOutcomeLeg.sol";
 
-/// Elysium-side leg for one HIP-4 outcome. Holds no Core balance. Its
-/// settlement arrives from the HyperEVM `SettlementRelay`, which reads the
-/// 998 OutcomeVault's stored fraction and sends it up as a retryable ticket.
-/// Trust added over 998: the canonical bridge, nothing else — the only caller
-/// accepted is the L1→L2 alias of the relay, and the relay only ever forwards
-/// what a settled vault stores.
-///
-/// Phase two (Elysium read precompile): add a `settle()` that reads outcome
-/// status directly; this path stays as the fallback.
+/// Elysium-side leg for one HIP-4 outcome. Holds no Core balance; its
+/// settlement arrives from the HyperEVM `SettlementRelay` as a retryable
+/// ticket. Only the relay's L1→L2 alias may call, and the relay only forwards
+/// what a settled vault stores, so the added trust is the canonical bridge.
 contract OutcomeLeg is IOutcomeLeg {
     /// Stock Nitro: an L1 contract's calls arrive on L2 from address + this.
     uint160 internal constant ALIAS_OFFSET = uint160(0x1111000000000000000000000000000000001111);
@@ -32,8 +27,7 @@ contract OutcomeLeg is IOutcomeLeg {
         aliasedRelay = address(uint160(relay_) + ALIAS_OFFSET);
     }
 
-    /// Entry point of the relay's retryable ticket. `vault` is echoed by the
-    /// relay so a ticket aimed at the wrong leg is rejected here, not trusted.
+    /// `vault` is echoed by the relay so a ticket aimed at the wrong leg is rejected.
     function receiveSettlement(address vault, uint256 fractionWad) external {
         require(msg.sender == aliasedRelay, "NOT_RELAY");
         require(vault == sourceVault, "WRONG_VAULT");
