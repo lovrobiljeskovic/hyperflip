@@ -5,6 +5,7 @@ import type { WriterConfig } from "./config.js";
 import { ExposureBook } from "./exposure.js";
 import { dominatingLeg, edgeBreakdown, independentJointProbWad, priceParlay, totalEdgeBps } from "./pricing.js";
 import { BPS, WAD } from "./units.js";
+import { logError } from "./log.js";
 import { quoteDigest, type ParlayQuote, type QuoteLeg, type QuoteRecord } from "./quotes.js";
 import type { LegPriceObservation } from "./infoApi.js";
 import { isValidEmail, validCohort, type RateLimiter, type Waitlist } from "./waitlist.js";
@@ -114,7 +115,7 @@ export function validateQuoteRequest(
   return { ok: true, taker: b.taker as Address, legs, stake };
 }
 
-type Fail = { status: number; json: unknown };
+type Res = { status: number; json: unknown; headers?: Record<string, string> };
 type ValidQuote = Extract<Validated, { ok: true }>;
 
 interface Priced {
@@ -127,13 +128,13 @@ interface Priced {
   maxPayout: bigint;
 }
 
-function rpcDown(metrics: Metrics, step: string, err: unknown): Fail {
-  console.error(JSON.stringify({ at: new Date().toISOString(), event: "rpc-down", step, error: String((err as Error).message).slice(0, 300) }));
-  reject(metrics, "rpc-down");
-  return { status: 503, json: { error: "rpc-down" } };
+function fail(metrics: Metrics, reason: string, err: unknown, extra?: object): Res {
+  logError(reason, err, extra);
+  reject(metrics, reason);
+  return { status: 503, json: { error: reason } };
 }
 
-async function price(deps: QuoteDeps, v: ValidQuote): Promise<Priced | Fail> {
+async function price(deps: QuoteDeps, v: ValidQuote): Promise<Priced | Res> {
   const { cfg, metrics } = deps;
   const vaults = [...new Set(v.legs.map((l) => l.vault.toLowerCase()))].map((addr) => addr as Address);
 
@@ -143,7 +144,7 @@ async function price(deps: QuoteDeps, v: ValidQuote): Promise<Priced | Fail> {
   try {
     settled = await deps.readSettled(vaults);
   } catch (err) {
-    return rpcDown(metrics, "readSettled", err);
+    return fail(metrics, "rpc-down", err, { step: "readSettled" });
   }
   const settledLeg = v.legs.find((l) => settled.has(l.vault.toLowerCase()));
   if (settledLeg) {
@@ -153,9 +154,7 @@ async function price(deps: QuoteDeps, v: ValidQuote): Promise<Priced | Fail> {
   try {
     priceObservations = await Promise.all(v.legs.map((l) => deps.fetchLegPrice(l)));
   } catch (err) {
-    console.error(JSON.stringify({ at: new Date().toISOString(), event: "stale-book", error: String((err as Error).message).slice(0, 300) }));
-    reject(metrics, "stale-book");
-    return { status: 503, json: { error: "stale-book" } };
+    return fail(metrics, "stale-book", err);
   }
   // Core uses 0.5 as an empty-book placeholder.
   const unpriced = v.legs.findIndex((_, i) => priceObservations[i].source === "spotPx" && priceObservations[i].priceWad === WAD / 2n);
@@ -166,7 +165,7 @@ async function price(deps: QuoteDeps, v: ValidQuote): Promise<Priced | Fail> {
   try {
     allowance = await deps.readAllowance();
   } catch (err) {
-    return rpcDown(metrics, "readAllowance", err);
+    return fail(metrics, "rpc-down", err, { step: "readAllowance" });
   }
 
   const joint = independentJointProbWad(priceObservations.map((p) => p.priceWad));
@@ -190,7 +189,7 @@ async function reserveAndSign(
   v: ValidQuote,
   p: Priced,
   userId: string,
-): Promise<{ quote: ParlayQuote; sig: Hex } | Fail> {
+): Promise<{ quote: ParlayQuote; sig: Hex } | Res> {
   const { cfg, exposure, metrics } = deps;
   const now = deps.now();
   const risk = p.maxPayout - p.premium;
@@ -222,10 +221,8 @@ async function reserveAndSign(
   try {
     return { quote, sig: await deps.sign(quote) };
   } catch (err) {
-    console.error(JSON.stringify({ at: new Date().toISOString(), event: "sign-failed", error: String((err as Error).message).slice(0, 300) }));
     exposure.release(quoteId);
-    reject(metrics, "sign-failed");
-    return { status: 503, json: { error: "sign-failed" } };
+    return fail(metrics, "sign-failed", err);
   }
 }
 
@@ -261,7 +258,7 @@ export async function handleQuote(
   body: unknown,
   ip = "unknown",
   authorization?: string,
-): Promise<{ status: number; json: unknown }> {
+): Promise<Res> {
   const { cfg, exposure, metrics } = deps;
   if (!deps.ready()) {
     reject(metrics, "warming-up");
@@ -323,7 +320,7 @@ export async function handleWaitlist(
   deps: QuoteDeps,
   body: unknown,
   ip: string,
-): Promise<{ status: number; json: unknown }> {
+): Promise<Res> {
   const { waitlist, signupLimiter } = deps;
   const raw = (body as { email?: unknown })?.email;
   if (typeof raw !== "string" || !isValidEmail(raw.trim())) {
@@ -334,7 +331,7 @@ export async function handleWaitlist(
   const { isNew } = waitlist.signup(email);
   // The signup is already durable. A Google outage must not lose it or grant access.
   if (deps.syncWaitlist) void deps.syncWaitlist().catch((err) => {
-    console.error(JSON.stringify({ at: new Date().toISOString(), event: "google-sheets-sync-failed", reason: "Signup queued for retry", error: String((err as Error)?.message).slice(0, 300) }));
+    logError("google-sheets-sync-failed", err, { reason: "Signup queued for retry" });
   });
   console.log(
     JSON.stringify({ at: new Date(deps.now()).toISOString(), event: "waitlist-signup", isNew, total: waitlist.size() }),
@@ -342,7 +339,7 @@ export async function handleWaitlist(
   return { status: 200, json: { ok: true } };
 }
 
-async function authenticateAdmission(deps: QuoteDeps, authorization: string | undefined, ip: string): Promise<{ account: AuthenticatedAccount } | { status: number; json: { error: string } }> {
+async function authenticateAdmission(deps: QuoteDeps, authorization: string | undefined, ip: string): Promise<{ account: AuthenticatedAccount } | Res> {
   const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : "";
   let account: AuthenticatedAccount | null = null;
   if (!deps.authenticate) return { status: 503, json: { error: "access-unavailable" } };
@@ -422,10 +419,9 @@ export function marketsJson(deps: Pick<QuoteDeps, "cfg" | "livePriorYes">): stri
   return JSON.stringify(Array.isArray(registry) ? markets : { ...registry, markets });
 }
 
-type RouteResult = { status: number; json: unknown; headers?: Record<string, string> };
-type Route = (req: http.IncomingMessage, body: unknown) => RouteResult | Promise<RouteResult>;
+type Route = (req: http.IncomingMessage, body: unknown) => Res | Promise<Res>;
 
-function readJson(req: http.IncomingMessage): Promise<{ body: unknown } | RouteResult> {
+function readJson(req: http.IncomingMessage): Promise<{ body: unknown } | Res> {
   return new Promise((resolve) => {
     let raw = "";
     req.on("data", (c) => {

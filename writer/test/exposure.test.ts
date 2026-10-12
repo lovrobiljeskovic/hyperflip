@@ -8,18 +8,19 @@ const V3 = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd";
 const T1 = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const T2 = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const NO_CAP = 10n ** 30n;
+const base = { perClusterCap: NO_CAP, quotaKey: T1, perKeyCap: NO_CAP };
 
 test("check fails at-capacity when risk exceeds allowance minus reservations", () => {
   const b = new ExposureBook();
   b.reserve("q1", 60n, [V1], 1000, T1);
-  const r = b.check({ risk: 50n, vaults: [V2], allowance: 100n, perMarketCap: 1000n, now: 0, perClusterCap: NO_CAP, quotaKey: T1, perKeyCap: NO_CAP });
+  const r = b.check({ ...base, risk: 50n, vaults: [V2], allowance: 100n, perMarketCap: 1000n, now: 0 });
   assert.deepEqual(r, { ok: false, reason: "at-capacity", headroom: 40n }); // 100 allowance - 60 reserved
 });
 
 test("expired reservations free capacity", () => {
   const b = new ExposureBook();
   b.reserve("q1", 60n, [V1], 1000, T1);
-  assert.equal(b.check({ risk: 50n, vaults: [V2], allowance: 100n, perMarketCap: 1000n, now: 1001, perClusterCap: NO_CAP, quotaKey: T1, perKeyCap: NO_CAP }).ok, true);
+  assert.equal(b.check({ ...base, risk: 50n, vaults: [V2], allowance: 100n, perMarketCap: 1000n, now: 1001 }).ok, true);
 });
 
 test("per-market cap counts reserved + open, case-insensitive", () => {
@@ -29,9 +30,9 @@ test("per-market cap counts reserved + open, case-insensitive", () => {
   b.reserve("q1", 30n, [V3.toUpperCase().replace("0X", "0x")], 10_000, T1);
   b.onMinted("q0", "7", 30n, [V3]);
   // market total 60; cap 80 -> risk 25 breaches V3 but not global (allowance 1000)
-  const r = b.check({ risk: 25n, vaults: [V3], allowance: 1000n, perMarketCap: 80n, now: 0, perClusterCap: NO_CAP, quotaKey: T1, perKeyCap: NO_CAP });
+  const r = b.check({ ...base, risk: 25n, vaults: [V3], allowance: 1000n, perMarketCap: 80n, now: 0 });
   assert.deepEqual(r, { ok: false, reason: "market-cap", headroom: 20n }); // cap 80 - market total 60
-  assert.equal(b.check({ risk: 25n, vaults: [V2], allowance: 1000n, perMarketCap: 80n, now: 0, perClusterCap: NO_CAP, quotaKey: T1, perKeyCap: NO_CAP }).ok, true);
+  assert.equal(b.check({ ...base, risk: 25n, vaults: [V2], allowance: 1000n, perMarketCap: 80n, now: 0 }).ok, true);
 });
 
 test("onMinted converts reservation to open exposure (global freed, market kept)", () => {
@@ -61,10 +62,10 @@ test("cluster cap counts reserved + open across same-cluster markets", () => {
   b.reserve("q1", 30n, [V1], 10_000, T1);
   b.onMinted("q0", "7", 30n, [V2]);
   // cluster total 60; cap 80 -> risk 25 breaches crypto cluster
-  const r = b.check({ risk: 25n, vaults: [V1], allowance: 1000n, perMarketCap: 1000n, now: 0, perClusterCap: 80n, quotaKey: T1, perKeyCap: NO_CAP });
+  const r = b.check({ ...base, risk: 25n, vaults: [V1], allowance: 1000n, perMarketCap: 1000n, now: 0, perClusterCap: 80n });
   assert.deepEqual(r, { ok: false, reason: "cluster-cap", headroom: 20n }); // cap 80 - cluster total 60
   // V3 has no cluster -> unaffected
-  assert.equal(b.check({ risk: 25n, vaults: [V3], allowance: 1000n, perMarketCap: 1000n, now: 0, perClusterCap: 80n, quotaKey: T1, perKeyCap: NO_CAP }).ok, true);
+  assert.equal(b.check({ ...base, risk: 25n, vaults: [V3], allowance: 1000n, perMarketCap: 1000n, now: 0, perClusterCap: 80n }).ok, true);
 });
 
 test("cluster cap admits risk up to exactly the remaining room", () => {
@@ -85,7 +86,7 @@ test("release undoes a reservation that never minted (e.g. signing failed)", () 
 test("headroom never goes negative when a cap is already breached", () => {
   const b = new ExposureBook();
   b.onMinted("q0", "7", 90n, [V1]); // market already 90 against a cap of 80
-  const r = b.check({ risk: 25n, vaults: [V1], allowance: 1000n, perMarketCap: 80n, now: 0, perClusterCap: NO_CAP, quotaKey: T1, perKeyCap: NO_CAP });
+  const r = b.check({ ...base, risk: 25n, vaults: [V1], allowance: 1000n, perMarketCap: 80n, now: 0 });
   assert.equal(r.ok, false);
   assert.ok(!r.ok && r.headroom === 0n, "headroom clamps at 0, so a suggested stake is never negative");
 });
@@ -96,7 +97,7 @@ test("quota-cap: one taker cannot reserve past their per-taker cap", () => {
   const b = new ExposureBook();
   b.reserve("q1", 60n, [V1], 10_000, T1);
   // T1 already holds 60 of unminted risk against a 80 cap; a further 25 breaches it.
-  const r = b.check({ risk: 25n, vaults: [V2], allowance: 1_000_000n, perMarketCap: 1_000_000n, now: 0, perClusterCap: NO_CAP, quotaKey: T1, perKeyCap: 80n });
+  const r = b.check({ ...base, risk: 25n, vaults: [V2], allowance: 1_000_000n, perMarketCap: 1_000_000n, now: 0, perKeyCap: 80n });
   assert.deepEqual(r, { ok: false, reason: "quota-cap", headroom: 20n }); // cap 80 - reserved 60
 });
 
@@ -104,7 +105,7 @@ test("quota-cap: a second taker is unaffected by the first taker's reservations"
   const b = new ExposureBook();
   b.reserve("q1", 60n, [V1], 10_000, T1);
   // Same 80 cap, but T2 has no reservations of its own.
-  const r = b.check({ risk: 25n, vaults: [V2], allowance: 1_000_000n, perMarketCap: 1_000_000n, now: 0, perClusterCap: NO_CAP, quotaKey: T2, perKeyCap: 80n });
+  const r = b.check({ ...base, risk: 25n, vaults: [V2], allowance: 1_000_000n, perMarketCap: 1_000_000n, now: 0, quotaKey: T2, perKeyCap: 80n });
   assert.equal(r.ok, true);
 });
 
@@ -113,7 +114,7 @@ test("quota-cap: expiry frees the taker's reserved budget", () => {
   b.reserve("q1", 60n, [V1], 1000, T1);
   assert.equal(b.reservedByKey(T1, 500), 60n);
   assert.equal(b.reservedByKey(T1, 1001), 0n); // reservation expired at t=1000
-  assert.equal(b.check({ risk: 75n, vaults: [V2], allowance: 1_000_000n, perMarketCap: 1_000_000n, now: 1001, perClusterCap: NO_CAP, quotaKey: T1, perKeyCap: 80n }).ok, true);
+  assert.equal(b.check({ ...base, risk: 75n, vaults: [V2], allowance: 1_000_000n, perMarketCap: 1_000_000n, now: 1001, perKeyCap: 80n }).ok, true);
 });
 
 test("quota-cap: minting converts the reservation, freeing the taker's budget immediately", () => {
@@ -123,7 +124,7 @@ test("quota-cap: minting converts the reservation, freeing the taker's budget im
   // Risk is now "open", not "reserved" — reservedByKey no longer counts it,
   // so T1 can quote again right away instead of waiting for the TTL.
   assert.equal(b.reservedByKey(T1, 0), 0n);
-  assert.equal(b.check({ risk: 75n, vaults: [V2], allowance: 1_000_000n, perMarketCap: 1_000_000n, now: 0, perClusterCap: NO_CAP, quotaKey: T1, perKeyCap: 80n }).ok, true);
+  assert.equal(b.check({ ...base, risk: 75n, vaults: [V2], allowance: 1_000_000n, perMarketCap: 1_000_000n, now: 0, perKeyCap: 80n }).ok, true);
 });
 
 test("quota-cap: keys are opaque exact-match strings (invite codes), shared across takers", () => {
@@ -145,7 +146,7 @@ test("reservationGraceMs: an expired-but-undetected reservation keeps counting u
   const b = new ExposureBook(undefined, 500);
   b.reserve("q1", 60n, [V1], 1000, T1); // TTL expires at t=1000
   // t=1001: past the TTL, but still within the 500ms grace -> still counted.
-  const r = b.check({ risk: 50n, vaults: [V2], allowance: 100n, perMarketCap: 1000n, now: 1001, perClusterCap: NO_CAP, quotaKey: T1, perKeyCap: NO_CAP });
+  const r = b.check({ ...base, risk: 50n, vaults: [V2], allowance: 100n, perMarketCap: 1000n, now: 1001 });
   assert.deepEqual(r, { ok: false, reason: "at-capacity", headroom: 40n }); // 100 allowance - 60 still held
 });
 
@@ -160,5 +161,5 @@ test("reservationGraceMs: onMinted converts the reservation immediately, grace o
 test("reservationGraceMs: a truly abandoned reservation is still pruned once grace elapses", () => {
   const b = new ExposureBook(undefined, 500);
   b.reserve("q1", 60n, [V1], 1000, T1);
-  assert.equal(b.check({ risk: 50n, vaults: [V2], allowance: 100n, perMarketCap: 1000n, now: 1501, perClusterCap: NO_CAP, quotaKey: T1, perKeyCap: NO_CAP }).ok, true); // 1000 + 500 <= 1501
+  assert.equal(b.check({ ...base, risk: 50n, vaults: [V2], allowance: 100n, perMarketCap: 1000n, now: 1501 }).ok, true); // 1000 + 500 <= 1501
 });

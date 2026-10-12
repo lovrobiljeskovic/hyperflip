@@ -2,6 +2,7 @@ import type { PublicClient } from "viem";
 import type { WriterConfig } from "./config.js";
 import { fetchBestAskWad } from "./infoApi.js";
 import { defaultFetchJson, LivePrior } from "./livePrior.js";
+import { logJson } from "./log.js";
 import type { QuoteLeg } from "./quotes.js";
 import { makeLegPriceFetcher, readSpotPxWad } from "./spotPx.js";
 
@@ -15,7 +16,7 @@ export function priceFeed(cfg: WriterConfig, publicClient: Pick<PublicClient, "c
     jumpWad: cfg.livePriorJumpWad,
     suspendMs: cfg.livePriorSuspendMs,
     mainnetInfoUrl: cfg.mainnetInfoUrl,
-    log: (msg) => console.log(JSON.stringify({ at: new Date().toISOString(), ...msg })),
+    log: logJson,
   });
   const legPrices = makeLegPriceFetcher({
     fetchBook: (coin) => fetchBestAskWad(cfg.infoApiUrl, coin, cfg.minBookDepthWad),

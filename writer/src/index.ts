@@ -9,6 +9,7 @@ import { defaultPerCodeReservedCap, loadConfig, type LoadedConfig, type WriterCo
 import { ExposureBook } from "./exposure.js";
 import { buildPriceFreshness } from "./spotPx.js";
 import { LivePrior } from "./livePrior.js";
+import { logJson } from "./log.js";
 import { Poker, chainFetchers, isStalled, stallThresholdMs } from "./poker.js";
 import { priceFeed } from "./priceFeed.js";
 import { quoteSigner } from "./quotes.js";
@@ -19,8 +20,6 @@ import { GoogleSheetsWaitlist } from "./googleSheets.js";
 import { privyAuthenticator } from "./auth.js";
 
 const RECEIPT_TIMEOUT_MS = 60_000;
-
-const logJson = (msg: object) => console.log(JSON.stringify({ at: new Date().toISOString(), ...msg }));
 
 async function main(): Promise<void> {
   const loaded = loadConfig();
@@ -153,60 +152,46 @@ function makePoker(cfg: WriterConfig, publicClient: PublicClient, transport: Tra
   });
 }
 
+/** Self-rescheduling loop: the next run is scheduled whether or not this one threw. */
+function every(ms: number, fn: () => Promise<unknown>, onError: (err: unknown) => void, unref = false): void {
+  const run = async () => {
+    try {
+      await fn();
+    } catch (err) {
+      onError(err);
+    } finally {
+      const t = setTimeout(run, ms);
+      if (unref) t.unref();
+    }
+  };
+  void run();
+}
+
 function startSheetsSync(sheetsCfg: NonNullable<WriterConfig["googleSheets"]>, deps: QuoteDeps): void {
   const sheets = new GoogleSheetsWaitlist(sheetsCfg, deps.waitlist);
   deps.syncWaitlist = () => sheets.sync();
-  const sync = async () => {
-    try {
-      await sheets.sync();
-    } catch (error) {
-      console.error(JSON.stringify({ event: "google-sheets-sync-failed", reason: (error as Error).message }));
-    } finally {
-      // Only retry unsent signups; idle ticks make no Google requests.
-      setTimeout(sync, 60_000).unref();
-    }
-  };
-  void sync();
+  // Only retry unsent signups; idle ticks make no Google requests.
+  every(60_000, () => sheets.sync(), (error) => {
+    console.error(JSON.stringify({ event: "google-sheets-sync-failed", reason: (error as Error).message }));
+  }, true);
 }
 
 function startLivePriorLoop(livePrior: LivePrior, pollMs: number): void {
-  const liveTick = async () => {
-    try {
-      await livePrior.tick();
-    } catch (err) {
-      console.error(new Date().toISOString(), "live prior tick failed", err);
-    } finally {
-      setTimeout(liveTick, pollMs);
-    }
-  };
-  void liveTick();
+  every(pollMs, () => livePrior.tick(), (err) => console.error(new Date().toISOString(), "live prior tick failed", err));
 }
 
 function startPokerLoop(poker: Poker, intervalMs: number): void {
   let lastTickAt = Date.now();
-  const tick = async () => {
-    try {
-      await poker.tick();
-    } catch (err) {
-      console.error(new Date().toISOString(), "poker tick failed", err);
-    } finally {
-      lastTickAt = Date.now();
-      setTimeout(tick, intervalMs);
-    }
-  };
-  void tick();
+  every(
+    intervalMs,
+    () => poker.tick().finally(() => { lastTickAt = Date.now(); }),
+    (err) => console.error(new Date().toISOString(), "poker tick failed", err),
+  );
 
   setInterval(() => {
     const threshold = stallThresholdMs(poker.openCount(), RECEIPT_TIMEOUT_MS, intervalMs);
     if (isStalled(lastTickAt, Date.now(), threshold)) {
-      console.error(
-        JSON.stringify({
-          at: new Date().toISOString(),
-          event: "poker-watchdog-stalled",
-          staleMs: Date.now() - lastTickAt,
-          thresholdMs: threshold,
-        }),
-      );
+      console.error(JSON.stringify({ at: new Date().toISOString(), event: "poker-watchdog-stalled", staleMs: Date.now() - lastTickAt, thresholdMs: threshold }));
       process.exit(1);
     }
   }, 10_000);
