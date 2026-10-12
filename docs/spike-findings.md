@@ -1,6 +1,6 @@
 # Testnet spike findings — 2026-08-14
 
-Session executed README steps 1–4 against Hyperliquid testnet, then stopped
+Session executed spike steps 1–4 against Hyperliquid testnet, then stopped
 at the step-3 kill-switch (outcome balances unreadable from the EVM).
 Steps 5–8 not run. Wallet `0xC1b15e354D5E4561B5692735070d874727001e48`;
 market: question 976 (daily BTC price bucket), outcome 12385 ("above",
@@ -111,4 +111,4 @@ Implications:
 - Blocked on: Hyperliquid team answers (outcome-balance read; pruning
   trigger), then claim-verification redesign.
 - Ids churn daily: refetch question/outcome ids at next session start
-  (see HANDOVER.md for the curl).
+  (`curl -X POST https://api.hyperliquid-testnet.xyz/info -d '{"type":"outcomeMeta"}'`).

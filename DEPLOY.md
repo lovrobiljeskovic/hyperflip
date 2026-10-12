@@ -411,7 +411,10 @@ The bankroll is `WRITER_ADDRESS`. The writer limits quotes to the smaller of its
 USDC balance and allowance to ParlayVault. A mint pulls `maxPayout - premium` into
 escrow; dead tickets return that escrow, while winning tickets pay the taker.
 Replenishing the wallet does not replenish a spent allowance. Use the bankroll
-wallet to review and renew approval when needed.
+wallet to review and renew approval when needed. After deploy a ParlayVault is
+inert until that approval exists: the allowance is the exposure cap and the pause
+switch. `MIN_PREMIUM_BPS` (100 = 1% on testnet) is a signer-bug backstop, not
+pricing: it caps any single parlay at 100x premium, and the writer quotes well above it.
 
 `LOW_BANKROLL` is human-readable USDC and defaults to 100. The writer emits an
 `ALERT low-bankroll` line when headroom falls below it. Long-dated events can hold

@@ -386,7 +386,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
         if (verdict === "attest-false") {
           // Failed-attestation rule: attest executed=false only on positive evidence of a
           // dropped op if such evidence exists. Core gives none — a rejected split/merge is
-          // silent (FINDINGS.md step 5: oversized send rejected with no error, no event, no
+          // silent (docs/spike-findings.md step 5: oversized send rejected with no error, no event, no
           // balance change). So a generous no-delta timeout is KEEPER-SIDE POLICY, not something
           // the chain trusts: it only decides which verdict this keeper attests, never proves
           // anything on its own. If the keeper is wrong here the owner can always swap it out via
@@ -470,7 +470,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
 
   // Settlement watcher: 0x814 status 2 (settled) is trustlessly relayable by anyone, and settle()
   // ignores our fractionWad there. Status 3 (pruned) is the keeper-relay path — Core prunes fast
-  // (FINDINGS.md: 2->3 observed within ~10 minutes), so this crank must fire promptly on status 2,
+  // (docs/spike-findings.md: 2->3 observed within ~10 minutes), so this crank must fire promptly on status 2,
   // and cache the fraction in case the tx lands after pruning flips status to 3.
   async function settlementLoop(): Promise<void> {
     for (const vault of config.vaultAddresses) {

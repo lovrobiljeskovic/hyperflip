@@ -80,7 +80,7 @@ contract OutcomeVault {
     /// holds trivially and a dust donation could burn a full position for nothing.
     bool internal swept;
 
-    /// Shortfall tolerance for Core fees; anything larger is treated as "not landed yet".
+    /// Fee tolerance for the payout credit (`_payOut`) and the settlement pool floor (`redeemSettled`).
     uint256 internal constant PAYOUT_MIN_BPS = 9_900;
 
     /// Everything a keeper needs to attest: opKey is keccak256(abi.encode(vault, opId)).
