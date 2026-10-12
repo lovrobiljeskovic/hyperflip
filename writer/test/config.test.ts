@@ -75,6 +75,9 @@ test("writer boots with only sports configuration and filters historical public 
     assert.equal(config.deployBlock, 1n);
     assert.deepEqual(config.corsOrigins, ["https://a.test", "https://b.test"]);
     assert.equal(config.perCodeReservedCap, undefined);
+    process.env.PER_CODE_RESERVED_CAP = "42";
+    assert.equal(loadConfig().perCodeReservedCap, 42n);
+    process.env.PER_CODE_RESERVED_CAP = "";
     assert.equal(config.markets.get(VAULT)?.question, 844);
     assert.equal(config.quoteJournalFile, values.QUOTE_JOURNAL_FILE);
     assert.deepEqual(JSON.parse(config.registryJson).archived, [MARKET]);
