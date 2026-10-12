@@ -419,8 +419,68 @@ export function marketsJson(deps: Pick<QuoteDeps, "cfg" | "livePriorYes">): stri
   return JSON.stringify(Array.isArray(registry) ? markets : { ...registry, markets });
 }
 
+type RouteResult = { status: number; json: unknown; headers?: Record<string, string> };
+type Route = (req: http.IncomingMessage, body: unknown) => RouteResult | Promise<RouteResult>;
+
+function readJson(req: http.IncomingMessage): Promise<{ body: unknown } | RouteResult> {
+  return new Promise((resolve) => {
+    let raw = "";
+    req.on("data", (c) => {
+      if (raw.length > MAX_BODY) return;
+      raw += c;
+      if (raw.length > MAX_BODY) {
+        resolve({ status: 413, json: { error: "body-too-large" } });
+        req.destroy();
+      }
+    });
+    req.on("end", () => {
+      try {
+        resolve({ body: JSON.parse(raw) });
+      } catch {
+        resolve({ status: 400, json: { error: "bad-json" } });
+      }
+    });
+  });
+}
+
 export function startServer(deps: QuoteDeps, port: number, health: () => unknown): http.Server {
-  const server = http.createServer((req, res) => {
+  const ip = (req: http.IncomingMessage) => clientIp(req.headers["x-forwarded-for"], req.socket.remoteAddress);
+  const routes: Record<string, Route> = {
+    "GET /health": () => ({ status: 200, json: health() }),
+    "GET /metrics": () => ({ status: 200, json: deps.metrics }),
+    "GET /parlays?": (req) => {
+      const taker = new URL(req.url!, "http://writer").searchParams.get("taker");
+      if (!taker || !isAddress(taker)) return { status: 400, json: { error: "taker must be an address" } };
+      return { status: 200, json: deps.parlaysOf(taker).map((p) => ({ id: p.id.toString(), block: p.block.toString() })) };
+    },
+    "GET /markets": () => ({ status: 200, json: marketsJson(deps), headers: { "Access-Control-Allow-Origin": "*" } }),
+    "GET /limits": () => {
+      // Caps are on house risk (maxPayout - premium). bankroll is the cached
+      // allowance/balance room from the last quote, null before the first one;
+      // reserved is live quote reservations not yet minted.
+      const h = health() as { bankroll?: string | null };
+      return {
+        status: 200,
+        json: {
+          maxStake: deps.cfg.maxStake.toString(),
+          edgeBps: deps.cfg.edgeBps.toString(),
+          legEdgeBps: deps.cfg.legEdgeBps.toString(),
+          quoteTtlMs: deps.cfg.quoteTtlMs,
+          perMarketCap: deps.cfg.perMarketCap.toString(),
+          perClusterCap: deps.cfg.perClusterCap.toString(),
+          perCodeReservedCap: deps.cfg.perCodeReservedCap.toString(),
+          bankroll: h.bankroll ?? null,
+          reserved: deps.exposure.reservedGlobal(deps.now()).toString(),
+        },
+      };
+    },
+    "POST /quote": (req, body) => handleQuote(deps, body, ip(req), req.headers.authorization),
+    "POST /waitlist": (req, body) => handleWaitlist(deps, body, ip(req)),
+    "POST /access": (req) => handleAccess(deps, req.headers.authorization, ip(req)),
+    "POST /integrations/google-sheets/admit": (_req, body) => handleAdmission(deps, body),
+  };
+
+  const server = http.createServer(async (req, res) => {
     req.on("error", (err) => {
       console.error(new Date().toISOString(), "request stream error", err);
       req.destroy();
@@ -428,9 +488,10 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
     res.on("error", (err) => {
       console.error(new Date().toISOString(), "response stream error", err);
     });
-    const send = (status: number, json: unknown) => {
-      res.writeHead(status, { "Content-Type": "application/json", ...lockedCors(req, deps.cfg.corsOrigins) });
-      res.end(JSON.stringify(json));
+    // `headers` replaces the locked CORS headers; a string body is already JSON.
+    const send = (status: number, json: unknown, headers: Record<string, string> = lockedCors(req, deps.cfg.corsOrigins)) => {
+      res.writeHead(status, { "Content-Type": "application/json", ...headers });
+      res.end(typeof json === "string" ? json : JSON.stringify(json));
     };
     if (req.url === "/integrations/google-sheets/admit" && req.method !== "OPTIONS") {
       res.setHeader("Cache-Control", "no-store");
@@ -451,79 +512,24 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
       });
       return res.end();
     }
-    if (req.method === "GET" && req.url === "/health") return send(200, health());
-    if (req.method === "GET" && req.url === "/metrics") return send(200, deps.metrics);
-    if (req.method === "GET" && req.url?.startsWith("/parlays?")) {
-      const taker = new URL(req.url, "http://writer").searchParams.get("taker");
-      if (!taker || !isAddress(taker)) return send(400, { error: "taker must be an address" });
-      return send(200, deps.parlaysOf(taker).map((p) => ({ id: p.id.toString(), block: p.block.toString() })));
+    // Routes match the exact URL; only /parlays? takes (and requires) a query string.
+    const path = req.url?.startsWith("/parlays?") ? "/parlays?" : req.url;
+    const route = routes[`${req.method} ${path}`];
+    if (!route) return send(404, { error: "not-found" });
+    if (path === "/access") res.setHeader("Cache-Control", "no-store");
+    let body: unknown;
+    if (req.method === "POST") {
+      const read = await readJson(req);
+      if ("status" in read) return send(read.status, read.json);
+      body = read.body;
     }
-    if (req.method === "GET" && req.url === "/markets") {
-      res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
-      return res.end(marketsJson(deps));
+    try {
+      const r = await route(req, body);
+      send(r.status, r.json, r.headers);
+    } catch (err) {
+      console.error(new Date().toISOString(), `${req.url} handler error`, err);
+      send(500, { error: "internal" });
     }
-    if (req.method === "GET" && req.url === "/limits") {
-      // Caps are on house risk (maxPayout - premium). bankroll is the cached
-      // allowance/balance room from the last quote, null before the first one;
-      // reserved is live quote reservations not yet minted.
-      const h = health() as { bankroll?: string | null };
-      res.writeHead(200, { "Content-Type": "application/json", ...lockedCors(req, deps.cfg.corsOrigins) });
-      return res.end(
-        JSON.stringify({
-          maxStake: deps.cfg.maxStake.toString(),
-          edgeBps: deps.cfg.edgeBps.toString(),
-          legEdgeBps: deps.cfg.legEdgeBps.toString(),
-          quoteTtlMs: deps.cfg.quoteTtlMs,
-          perMarketCap: deps.cfg.perMarketCap.toString(),
-          perClusterCap: deps.cfg.perClusterCap.toString(),
-          perCodeReservedCap: deps.cfg.perCodeReservedCap.toString(),
-          bankroll: h.bankroll ?? null,
-          reserved: deps.exposure.reservedGlobal(deps.now()).toString(),
-        }),
-      );
-    }
-    if (req.method === "POST" && (req.url === "/quote" || req.url === "/waitlist" || req.url === "/access" || req.url === "/integrations/google-sheets/admit")) {
-      const url = req.url;
-      if (url === "/access") res.setHeader("Cache-Control", "no-store");
-      let raw = "";
-      let tooLarge = false;
-      req.on("data", (c) => {
-        if (tooLarge) return;
-        raw += c;
-        if (raw.length > MAX_BODY) {
-          tooLarge = true;
-          send(413, { error: "body-too-large" });
-          req.destroy();
-        }
-      });
-      req.on("end", async () => {
-        if (tooLarge) return;
-        let body: unknown;
-        try {
-          body = JSON.parse(raw);
-        } catch {
-          return send(400, { error: "bad-json" });
-        }
-        try {
-          const ip = clientIp(req.headers["x-forwarded-for"], req.socket.remoteAddress);
-          if (url === "/access") {
-            const r = await handleAccess(deps, req.headers.authorization, ip);
-            return send(r.status, r.json);
-          }
-          if (url === "/quote") {
-            const r = await handleQuote(deps, body, ip, req.headers.authorization);
-            return send(r.status, r.json);
-          }
-          const r = url === "/integrations/google-sheets/admit" ? await handleAdmission(deps, body) : await handleWaitlist(deps, body, ip);
-          send(r.status, r.json);
-        } catch (err) {
-          console.error(new Date().toISOString(), `${url} handler error`, err);
-          send(500, { error: "internal" });
-        }
-      });
-      return;
-    }
-    send(404, { error: "not-found" });
   });
   server.listen(port);
   return server;
