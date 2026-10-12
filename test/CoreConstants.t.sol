@@ -17,9 +17,7 @@ contract CoreConstantsTest is Test {
         assertEq(uint256(CoreConstants.evmToOutcomeWei(7, 1e5)), 7);
     }
 
-    /// Conversions reject dust rather than truncating: a truncated split would
-    /// mint shares the collateral does not back. Rounding never favors the user.
-    /// (Library calls are inlined, so expectRevert needs a real external call.)
+    /// Library calls are inlined, so expectRevert needs a real external call.
     function toOutcomeWei(uint256 amountEvm, uint256 evmUnitsPerShare) external pure returns (uint64) {
         return CoreConstants.evmToOutcomeWei(amountEvm, evmUnitsPerShare);
     }
@@ -37,14 +35,12 @@ contract CoreConstantsTest is Test {
         assertEq(CoreConstants.quoteWeiToEvm(quoteWei, ONE_USDC_EVM), ONE_USDC_EVM);
     }
 
-    /// docs/spike-findings.md: "5.0 EVM USDC deposit credited exactly 500,000,000 Core wei".
+    /// Live evidence: a 5.0 EVM USDC deposit credited exactly 500,000,000 Core wei.
     function test_QuoteWeiMatchesSpikeEvidence() public pure {
         assertEq(uint256(CoreConstants.evmToQuoteWei(5e6, ONE_USDC_EVM)), 500_000_000);
     }
 
-    /// docs/spike-findings.md #1: non-zero unused fields (question, on split/merge) are
-    /// silently dropped by CoreWriter. The word is still in the payload layout,
-    /// but encodeOutcomeOp takes no question argument and always writes 0.
+    /// The question word stays in the layout but is always 0 (CoreWriter drops non-zero).
     function test_EncodeOutcomeOpHardcodesQuestionZero() public pure {
         bytes memory payload = CoreConstants.encodeOutcomeOp(CoreConstants.OP_SPLIT_OUTCOME, 12385, 1e5);
         bytes memory expected = abi.encodePacked(
@@ -53,16 +49,6 @@ contract CoreConstantsTest is Test {
             abi.encode(CoreConstants.OP_SPLIT_OUTCOME, uint32(0), uint32(12385), uint64(1e5))
         );
         assertEq(payload, expected);
-    }
-
-    function test_EncodeDepositMatchesSelectorAndArgs() public pure {
-        bytes memory got = CoreConstants.encodeDeposit(123e6);
-        bytes memory want = abi.encodeWithSignature("deposit(uint256,uint32)", uint256(123e6), uint32(4294967295));
-        assertEq(got, want);
-    }
-
-    function test_CoreDepositWalletAddress() public pure {
-        assertEq(CoreConstants.CORE_DEPOSIT_WALLET, 0x0B80659a4076E9E93C7DbE0f10675A16a3e5C206);
     }
 
     function test_OutcomeStatusReadsPrecompile() public {

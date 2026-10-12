@@ -5,7 +5,7 @@ import {ERC20} from "openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {CoreConstants} from "../../src/CoreConstants.sol";
 
-/// Freely mintable quote-token stand-in (collateral identity is a spike question).
+/// Freely mintable quote-token stand-in.
 contract MockQuote is ERC20 {
     uint8 private immutable _decimals;
 
@@ -22,9 +22,7 @@ contract MockQuote is ERC20 {
     }
 }
 
-/// Etched at the real CoreWriter address. Records every payload verbatim so
-/// tests can assert byte-exact encodings; CoreSim consumes the queue to model
-/// HyperCore's asynchronous execution.
+/// Etched at the real CoreWriter address; records every payload verbatim.
 contract MockCoreWriter {
     bytes[] public payloads;
     uint256 public processedCount;
@@ -48,16 +46,10 @@ contract MockCoreWriter {
     function markProcessed(uint256 n) external {
         processedCount = n;
     }
-
-    /// Models Core silently rejecting all queued-but-unprocessed actions.
-    function dropPending() external {
-        processedCount = payloads.length;
-    }
 }
 
-/// Etched at the real spot-balance precompile address. The precompile is
-/// called with raw abi.encode(user, token) — no selector — so queries land in
-/// the fallback; `set` has a normal selector and never collides.
+/// Etched at the 0x801 address. Reads arrive as raw abi.encode(user, token)
+/// with no selector, so they land in the fallback; `set` never collides.
 contract MockSpotBalance {
     mapping(address => mapping(uint64 => uint64)) public total;
 
@@ -71,10 +63,7 @@ contract MockSpotBalance {
     }
 }
 
-/// Etched at the outcome-status precompile (0x814). `set` has a normal
-/// selector; reads land in the fallback via raw abi.encode(outcome), mirroring
-/// MockSpotBalance's convention. Models the pruning risk: a test can flip a
-/// settled outcome (status 2, value readable) to pruned (status 3, value gone).
+/// Etched at the 0x814 address, same fallback convention as MockSpotBalance.
 contract MockOutcomeStatus {
     uint8 internal _status;
     uint64 internal _settledValue;
@@ -86,7 +75,7 @@ contract MockOutcomeStatus {
         _question = question_;
     }
 
-    /// Core drops settledValue when it prunes — observed within ~10 minutes.
+    /// Core drops settledValue when it prunes.
     function prune() external {
         _status = 3;
         _settledValue = 0;
@@ -97,10 +86,8 @@ contract MockOutcomeStatus {
     }
 }
 
-/// Etched at CORE_DEPOSIT_WALLET. The real EVM→Core USDC path is approve +
-/// `deposit(amount, 4294967295)` here (docs/spike-findings.md #3); deposited quote sits in
-/// this contract until CoreSim credits it to the vault's Core balance.
-/// `quote` is set post-etch because vm.etch does not carry immutables.
+/// Etched at CORE_DEPOSIT_WALLET; deposited quote sits here until CoreSim
+/// credits it. `quote` is set post-etch because vm.etch drops immutables.
 contract MockCoreDepositWallet {
     IERC20 public quote;
 

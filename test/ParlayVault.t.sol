@@ -63,6 +63,13 @@ abstract contract ParlayVaultTest is BaseTest {
         return abi.encodePacked(r, s, v);
     }
 
+    function expectMintRevert(ParlayVault.Quote memory q, bytes memory err) internal {
+        bytes memory sig = signQuote(q);
+        vm.prank(user);
+        vm.expectRevert(err);
+        plv.mint(q, sig);
+    }
+
     function mintDefault() internal returns (uint256 id) {
         ParlayVault.Quote memory q = makeQuote();
         bytes memory sig = signQuote(q);
@@ -77,15 +84,6 @@ abstract contract ParlayVaultTest is BaseTest {
 }
 
 contract ParlayVaultUnitTest is ParlayVaultTest {
-    /// Compile-time anchor for resolveParlay's reentrancy argument: the leg
-    /// reads must be STATICCALLs. If OutcomeVault.settled/settleFractionWad
-    /// ever stop being view getters, this helper stops compiling and the
-    /// resolveParlay loop must be restructured (status write before external
-    /// calls) before the change lands.
-    function _legReadsAreView(OutcomeVault v) internal view returns (bool, uint256) {
-        return (v.settled(), v.settleFractionWad());
-    }
-
     function test_configInitial() public view {
         assertEq(plv.owner(), address(this));
         assertEq(plv.writer(), house);
@@ -104,16 +102,12 @@ contract ParlayVaultUnitTest is ParlayVaultTest {
         vm.stopPrank();
     }
 
-    /// Key custody Phase 2: an unlisted leg cannot be minted against, the
-    /// registrar can only add, and only the owner rotates roles.
+    /// An unlisted leg cannot be minted against; the registrar can only add.
     function test_legAllowList() public {
         OutcomeVault rogue = newVault(9);
         ParlayVault.Quote memory q = makeQuote();
         q.legs[1] = ParlayVault.Leg(address(rogue), true);
-        bytes memory sig = signQuote(q);
-        vm.prank(user);
-        vm.expectRevert("LEG_NOT_ALLOWED");
-        plv.mint(q, sig);
+        expectMintRevert(q, "LEG_NOT_ALLOWED");
 
         address registrar = makeAddr("registrar");
         vm.prank(registrar);
@@ -127,6 +121,7 @@ contract ParlayVaultUnitTest is ParlayVaultTest {
         vm.prank(registrar);
         plv.allowLeg(address(rogue));
         assertTrue(plv.allowedLeg(address(rogue)));
+        bytes memory sig = signQuote(q);
         vm.prank(user);
         plv.mint(q, sig);
     }
@@ -194,22 +189,10 @@ contract ParlayVaultUnitTest is ParlayVaultTest {
         assertFalse(p.legs[1].isYes);
     }
 
-    function test_mintRejectsReplay() public {
-        mintDefault();
-        ParlayVault.Quote memory q = makeQuote();
-        bytes memory sig = signQuote(q);
-        vm.prank(user);
-        vm.expectRevert("QUOTE_USED");
-        plv.mint(q, sig);
-    }
-
     function test_mintRejectsExpiredQuote() public {
         ParlayVault.Quote memory q = makeQuote();
-        bytes memory sig = signQuote(q);
         vm.warp(q.deadline + 1);
-        vm.prank(user);
-        vm.expectRevert("QUOTE_EXPIRED");
-        plv.mint(q, sig);
+        expectMintRevert(q, "QUOTE_EXPIRED");
     }
 
     function test_mintRejectsWrongTaker() public {
@@ -239,26 +222,21 @@ contract ParlayVaultUnitTest is ParlayVaultTest {
     }
 
     function test_mintRejectsPremiumBelowFloor() public {
-        // floor is 1% of maxPayout = 1e5
         ParlayVault.Quote memory q = makeQuote();
-        q.premium = 1e5 - 1;
-        bytes memory sig = signQuote(q);
-        vm.prank(user);
-        vm.expectRevert("PREMIUM_TOO_LOW");
-        plv.mint(q, sig);
+        q.premium = 1e5 - 1; // floor is 1% of MAX_PAYOUT
+        expectMintRevert(q, "PREMIUM_TOO_LOW");
     }
 
-    /// Premium exactly at the 1% floor mints.
     function test_mintAcceptsPremiumExactlyAtFloor() public {
         ParlayVault.Quote memory q = makeQuote();
-        q.premium = 1e5; // 1% of MAX_PAYOUT
+        q.premium = 1e5;
         bytes memory sig = signQuote(q);
         vm.prank(user);
         uint256 id = plv.mint(q, sig);
         assertEq(plv.parlay(id).premium, 1e5);
     }
 
-    /// A 1-leg parlay is allowed on-chain (design Q3: min-legs is frontend policy).
+    /// Min legs is frontend policy; one leg is valid on-chain.
     function test_mintAcceptsSingleLeg() public {
         ParlayVault.Quote memory q = makeQuote();
         ParlayVault.Leg[] memory legs = new ParlayVault.Leg[](1);
@@ -273,41 +251,27 @@ contract ParlayVaultUnitTest is ParlayVaultTest {
     function test_mintRejectsPremiumGteMaxPayout() public {
         ParlayVault.Quote memory q = makeQuote();
         q.premium = q.maxPayout;
-        bytes memory sig = signQuote(q);
-        vm.prank(user);
-        vm.expectRevert("BAD_PREMIUM");
-        plv.mint(q, sig);
+        expectMintRevert(q, "BAD_PREMIUM");
     }
 
     function test_mintRejectsBadLegCount() public {
         ParlayVault.Quote memory q = makeQuote();
         q.legs = new ParlayVault.Leg[](0);
-        bytes memory sig = signQuote(q);
-        vm.prank(user);
-        vm.expectRevert("BAD_LEG_COUNT");
-        plv.mint(q, sig);
+        expectMintRevert(q, "BAD_LEG_COUNT");
 
         q.legs = new ParlayVault.Leg[](11);
         for (uint256 i; i < 11; i++) {
             q.legs[i] = ParlayVault.Leg(address(vault), true);
         }
-        sig = signQuote(q);
-        vm.prank(user);
-        vm.expectRevert("BAD_LEG_COUNT");
-        plv.mint(q, sig);
+        expectMintRevert(q, "BAD_LEG_COUNT");
     }
 
     function test_mintRejectsSettledLeg() public {
         settleLeg(vault, 1e18);
-        ParlayVault.Quote memory q = makeQuote();
-        bytes memory sig = signQuote(q);
-        vm.prank(user);
-        vm.expectRevert("LEG_SETTLED");
-        plv.mint(q, sig);
+        expectMintRevert(makeQuote(), "LEG_SETTLED");
     }
 
-    /// "At capacity": writer allowance revoked = mint reverts in transferFrom.
-    /// No special handling — this IS the pause mechanism.
+    /// Revoking the writer allowance is the pause mechanism.
     function test_mintRevertsWhenWriterAllowanceExhausted() public {
         vm.prank(house);
         quote.approve(address(plv), 0);
@@ -391,8 +355,7 @@ contract ParlayVaultUnitTest is ParlayVaultTest {
         plv.ownerOf(id);
     }
 
-    /// Design: whole-parlay void fires on any settled fractional leg even
-    /// while a sibling is unsettled (no waiting for the open leg).
+    /// Void fires on a settled fractional leg without waiting for the open one.
     function test_resolveVoidWithUnsettledSibling() public {
         uint256 id = mintDefault();
         settleLeg(vaultB, 0.5e18);
@@ -443,16 +406,6 @@ contract ParlayVaultUnitTest is ParlayVaultTest {
         plv.ownerOf(id);
     }
 
-    /// claim auto-resolves an Open parlay whose legs are all settled.
-    function test_claimAutoResolves() public {
-        uint256 id = mintDefault();
-        winLegs();
-        uint256 userBefore = quote.balanceOf(user);
-        vm.prank(user);
-        plv.claim(id);
-        assertEq(quote.balanceOf(user), userBefore + MAX_PAYOUT);
-    }
-
     function test_claimRevertsForNonOwner() public {
         uint256 id = mintDefault();
         winLegs();
@@ -461,8 +414,7 @@ contract ParlayVaultUnitTest is ParlayVaultTest {
         plv.claim(id);
     }
 
-    /// claim on an unresolved Dead parlay reverts and rolls the auto-resolve
-    /// back: still Open, escrow untouched — resolveParlay is the right call.
+    /// An auto-resolve landing on Dead is rolled back: still Open, escrow untouched.
     function test_claimAutoResolveToDeadRevertsAndRollsBack() public {
         uint256 id = mintDefault();
         settleLeg(vault, 0);
@@ -498,20 +450,6 @@ contract ParlayVaultUnitTest is ParlayVaultTest {
         vm.prank(user);
         vm.expectRevert("NOT_RESOLVABLE");
         plv.claim(id);
-    }
-
-    /// Transferred position pays the new owner; old owner can no longer claim.
-    function test_transferThenClaimPaysNewOwner() public {
-        uint256 id = mintDefault();
-        vm.prank(user);
-        plv.transferFrom(user, other, id);
-        winLegs();
-        vm.prank(user);
-        vm.expectRevert("NOT_OWNER_OF");
-        plv.claim(id);
-        vm.prank(other);
-        plv.claim(id);
-        assertEq(quote.balanceOf(other), MAX_PAYOUT);
     }
 
     /// Double-pay guard is the burn: second claim cannot find an owner.

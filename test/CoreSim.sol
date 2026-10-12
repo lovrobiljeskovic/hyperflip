@@ -6,30 +6,21 @@ import {KeeperVerifier} from "../src/KeeperVerifier.sol";
 import {OutcomeVault} from "../src/OutcomeVault.sol";
 import {MockCoreDepositWallet, MockCoreWriter, MockSpotBalance, MockQuote} from "./mocks/Mocks.sol";
 
-/// Applies documented HyperCore semantics to the actions recorded by
-/// MockCoreWriter, modeling the async gap: nothing happens until a test calls
-/// processAll()/processTransfersOnly()/processActions().
+/// Applies HyperCore semantics to the actions MockCoreWriter recorded, with the
+/// async gap modeled: nothing happens until a test calls processAll() /
+/// processTransfersOnly() / processActions(). Also plays the keeper, attesting
+/// the verdict it just applied to the KeeperVerifier.
 ///
-/// Also plays the keeper: outcome ops are unobservable from the EVM, so the sim
-/// attests the verdict it just applied (executed / silently rejected) to the
-/// KeeperVerifier the vault reads. Tests that want keeper silence simply never
-/// call the processing helpers.
-///
-/// Simplifications (test model, not production semantics):
-/// - Core→EVM spotSend mints fresh MockQuote to the vault instead of moving it
-///   from the system address; user-visible amounts are identical.
-/// - creditSettlement() converts all outstanding split collateral into quote
-///   balance, standing in for Core's validator-final settlement.
+/// Simplifications: a Core→EVM spotSend mints fresh MockQuote to the vault, and
+/// creditSettlement() turns all outstanding split collateral into quote.
 contract CoreSim {
     MockCoreWriter public immutable writer = MockCoreWriter(CoreConstants.CORE_WRITER);
     MockSpotBalance public immutable spot = MockSpotBalance(payable(CoreConstants.SPOT_BALANCE_PRECOMPILE));
     MockCoreDepositWallet public immutable depositWallet = MockCoreDepositWallet(CoreConstants.CORE_DEPOSIT_WALLET);
     MockQuote public immutable quote;
-    address public immutable systemAddress;
     uint64 public immutable tokenIndex;
     /// EVM quote units → Core quote wei (8-dec).
     uint256 public immutable weiMultiplier;
-    uint256 public immutable weiDivisor;
 
     OutcomeVault public vault;
     KeeperVerifier public verifier;
@@ -37,24 +28,19 @@ contract CoreSim {
     /// Quote wei locked inside outstanding splits.
     uint256 public splitOutstandingWei;
     mapping(uint256 => bool) public attested;
-    /// Core still executes, the keeper just stops reporting — the state the
-    /// verifier swap exists to recover from.
+    /// Core still executes, the keeper just stops reporting.
     bool public keeperSilent;
-    /// Hold Core→EVM sends back so a test can land them one at a time — the
-    /// window in which a second send is queued before the first has landed.
+    /// Hold Core→EVM sends back so a test can land them one at a time.
     bool public deferSpotSends;
     bytes[] internal deferredSends;
     uint256 public landedSends;
-    /// docs/spike-findings.md #5: a live split+merge round trip lost 7 bps, unitemized.
-    /// Off by default so the exact-round-trip anchors stay exact.
+    /// A live split+merge round trip lost 7 bps; off by default so anchors stay exact.
     uint256 public mergeFeeBps;
 
-    constructor(MockQuote quote_, address systemAddress_, uint64 tokenIndex_, uint256 mult, uint256 div) {
+    constructor(MockQuote quote_, uint64 tokenIndex_, uint256 mult) {
         quote = quote_;
-        systemAddress = systemAddress_;
         tokenIndex = tokenIndex_;
         weiMultiplier = mult;
-        weiDivisor = div;
     }
 
     function setVault(OutcomeVault vault_) external {
@@ -84,8 +70,7 @@ contract CoreSim {
         mergeFeeBps = bps;
     }
 
-    /// Anyone can spotSend to the vault's Core account — modeled so tests can
-    /// check that a stray credit cannot wedge the vault.
+    /// Anyone can spotSend to the vault's Core account.
     function creditStray(uint64 quoteWei) external {
         _setCoreBalance(coreBalance() + quoteWei);
     }
@@ -94,8 +79,7 @@ contract CoreSim {
         return spot.total(address(vault), tokenIndex);
     }
 
-    /// Credit EVM→Core deposits (quote parked in the Core deposit wallet) to
-    /// the vault's Core balance, without executing queued actions.
+    /// Credit EVM→Core deposits without executing queued actions.
     function processTransfersOnly() public {
         uint256 bal = quote.balanceOf(address(depositWallet));
         uint256 newUnits = bal - creditedTransferUnits;
@@ -118,8 +102,7 @@ contract CoreSim {
         processActions();
     }
 
-    /// Core silently discards everything queued — no error feedback, so the
-    /// only signal is the keeper reporting the op did not execute.
+    /// Core silently discards everything queued; the keeper reports Failed.
     function dropPendingActions() external {
         uint256 n = writer.payloadCount();
         for (uint256 i = writer.processedCount(); i < n; i++) {
@@ -136,11 +119,11 @@ contract CoreSim {
     }
 
     function toWei(uint256 evmUnits) public view returns (uint64) {
-        return uint64(evmUnits * weiMultiplier / weiDivisor);
+        return uint64(evmUnits * weiMultiplier);
     }
 
     function toUnits(uint64 wei_) public view returns (uint256) {
-        return uint256(wei_) * weiDivisor / weiMultiplier;
+        return uint256(wei_) / weiMultiplier;
     }
 
     /// Split/merge amounts travel as 5-dec outcome wei; the collateral they
@@ -149,8 +132,7 @@ contract CoreSim {
         return uint64(uint256(outcomeWei) * CoreConstants.QUOTE_WEI_PER_SHARE / CoreConstants.OUTCOME_WEI_PER_SHARE);
     }
 
-    /// Ops are serialized one at a time, so the vault's open pending slot names
-    /// the op the payload just processed belongs to.
+    /// Ops are serialized, so the open pending slot names the op just processed.
     function _attest(bool executed) internal {
         if (keeperSilent) return;
         (,, uint256 depositOpId,) = vault.pendingDeposit();
@@ -210,10 +192,7 @@ contract CoreSim {
         (,, uint64 wei_) = abi.decode(params, (address, uint64, uint64));
         uint64 bal = coreBalance();
         if (bal < wei_) return; // silent rejection
-        // Live M3 finding (2026-08-17): Core silently drops a Core→EVM send
-        // whose wei amount is not representable in the EVM token's decimals
-        // (USDC: 8 Core vs 6 EVM, so wei must be a multiple of 100).
-        if (toWei(toUnits(wei_)) != wei_) return;
+        if (toWei(toUnits(wei_)) != wei_) return; // not a whole EVM unit: silent drop
         _setCoreBalance(bal - wei_);
         quote.mint(address(vault), toUnits(wei_));
     }

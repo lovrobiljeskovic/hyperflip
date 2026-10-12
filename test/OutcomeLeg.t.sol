@@ -7,8 +7,7 @@ import {ParlayVault} from "../src/ParlayVault.sol";
 import {OutcomeLeg} from "../src/OutcomeLeg.sol";
 import {SettlementRelay, IInbox} from "../src/SettlementRelay.sol";
 
-/// Records the one retryable call; the test then "delivers" it by calling the
-/// leg from the relay's L2 alias, which is what stock Nitro does.
+/// Records the one retryable call; `deliver()` replays it from the relay's L2 alias.
 contract MockInbox is IInbox {
     address public to;
     uint256 public value;
@@ -35,9 +34,8 @@ contract MockInbox is IInbox {
     }
 }
 
-/// HyperEVM vault (998) → SettlementRelay → bridge → OutcomeLeg (Elysium) →
-/// ParlayVault resolves off the leg. Same ParlayVault fixture, `vaultB`
-/// replaced by its Elysium mirror.
+/// 998 vault → SettlementRelay → bridge → OutcomeLeg → ParlayVault resolves off
+/// the leg. Same parlay fixture with `vaultB` mirrored by `leg`.
 contract OutcomeLegTest is ParlayVaultTest {
     MockInbox internal inbox;
     SettlementRelay internal relay;
@@ -50,10 +48,9 @@ contract OutcomeLegTest is ParlayVaultTest {
         relay = new SettlementRelay(inbox);
         leg = new OutcomeLeg(address(vaultB), address(relay));
         plv.allowLeg(address(leg));
-        aliasedRelay = address(uint160(address(relay)) + uint160(0x1111000000000000000000000000000000001111));
+        aliasedRelay = leg.aliasedRelay();
     }
 
-    /// Replays the recorded ticket on the "L2" side.
     function deliver() internal {
         address to = inbox.to();
         bytes memory data = inbox.data();
