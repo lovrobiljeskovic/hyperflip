@@ -72,16 +72,17 @@ export class ExposureBook {
     return sum;
   }
 
-  check(
-    risk: bigint,
-    vaults: string[],
-    allowance: bigint,
-    perMarketCap: bigint,
-    now: number,
-    perClusterCap?: bigint,
-    quotaKey?: string,
-    perKeyCap?: bigint,
-  ): { ok: true } | { ok: false; reason: "at-capacity" | "market-cap" | "cluster-cap" | "quota-cap"; headroom: bigint } {
+  check(o: {
+    risk: bigint;
+    vaults: string[];
+    allowance: bigint;
+    perMarketCap: bigint;
+    now: number;
+    perClusterCap: bigint;
+    quotaKey: string;
+    perKeyCap: bigint;
+  }): { ok: true } | { ok: false; reason: "at-capacity" | "market-cap" | "cluster-cap" | "quota-cap"; headroom: bigint } {
+    const { risk, vaults, allowance, perMarketCap, now, perClusterCap, quotaKey, perKeyCap } = o;
     // `headroom` is what the binding cap has left. Risk scales linearly with
     // stake, so the caller can turn it into "this ticket fits at stake X"
     // instead of a dead end the taker cannot act on.
@@ -93,21 +94,17 @@ export class ExposureBook {
       const room = perMarketCap - this.perMarket(v, now);
       if (risk > room) return { ok: false, reason: "market-cap", headroom: room > 0n ? room : 0n };
     }
-    if (perClusterCap !== undefined) {
-      const clusters = new Set<string>();
-      for (const v of vaults) {
-        const c = this.clusterOf(v.toLowerCase());
-        if (c !== undefined) clusters.add(c);
-      }
-      for (const c of clusters) {
-        const room = perClusterCap - this.perCluster(c, now);
-        if (risk > room) return { ok: false, reason: "cluster-cap", headroom: room > 0n ? room : 0n };
-      }
+    const clusters = new Set<string>();
+    for (const v of vaults) {
+      const c = this.clusterOf(v.toLowerCase());
+      if (c !== undefined) clusters.add(c);
     }
-    if (quotaKey !== undefined && perKeyCap !== undefined) {
-      const room = perKeyCap - this.reservedByKey(quotaKey, now);
-      if (risk > room) return { ok: false, reason: "quota-cap", headroom: room > 0n ? room : 0n };
+    for (const c of clusters) {
+      const room = perClusterCap - this.perCluster(c, now);
+      if (risk > room) return { ok: false, reason: "cluster-cap", headroom: room > 0n ? room : 0n };
     }
+    const room = perKeyCap - this.reservedByKey(quotaKey, now);
+    if (risk > room) return { ok: false, reason: "quota-cap", headroom: room > 0n ? room : 0n };
     return { ok: true };
   }
 

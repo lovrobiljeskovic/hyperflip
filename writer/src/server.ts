@@ -199,7 +199,10 @@ export async function handleQuote(
   // ponytail: one cap for the whole ticket; any in-play leg shrinks it to the in-play cap.
   const inPlay = v.legs.some((l) => { const s = cfg.markets.get(l.vault.toLowerCase())?.startMs; return s !== undefined && now >= s; });
   const marketCap = inPlay ? (cfg.perMarketCap * cfg.inPlayCapBps) / BPS : cfg.perMarketCap;
-  const check = exposure.check(risk, vaults, allowance, marketCap, now, cfg.perClusterCap, admission.account.userId, cfg.perCodeReservedCap);
+  const check = exposure.check({
+    risk, vaults, allowance, perMarketCap: marketCap, now,
+    perClusterCap: cfg.perClusterCap, quotaKey: admission.account.userId, perKeyCap: cfg.perCodeReservedCap,
+  });
   if (!check.ok) {
     reject(metrics, check.reason);
     console.log(JSON.stringify({ at: new Date(now).toISOString(), event: "quote-rejected", reason: check.reason, risk: risk.toString() }));
