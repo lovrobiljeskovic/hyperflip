@@ -49,7 +49,10 @@ async function rpc(rpcs, method, params) {
       if (result === undefined) throw new Error(error?.message ?? "no result");
       return result;
     } catch (err) {
-      console.warn(`${method} failed on ${url}: ${err.message}`);
+      // Host only: RPC urls can carry API keys and the journal is relayed.
+      let host = "rpc";
+      try { host = new URL(url).host; } catch {}
+      console.warn(`${method} failed on ${host}: ${err.message}`);
     }
   }
   throw new Error(`${method} failed on every RPC`);
@@ -60,13 +63,16 @@ async function rpc(rpcs, method, params) {
 export async function settledVaults(vaults, rpcs = deployRpcs()) {
   const out = new Set();
   const call = async (vault) => {
-    try {
-      const result = await rpc(rpcs, "eth_call", [{ to: vault, data: "0x8f775839" }, "latest"]); // settled()
-      if (typeof result !== "string") throw new Error("non-string result");
-      if (BigInt(result) === 1n) out.add(vault.toLowerCase());
-    } catch {
-      console.warn(`settled() unreadable for ${vault} — keeping it this run`);
+    // Per-RPC so a null or junk answer still asks the next one.
+    for (const url of rpcs) {
+      const result = await rpc([url], "eth_call", [{ to: vault, data: "0x8f775839" }, "latest"]).catch(() => undefined); // settled()
+      if (typeof result !== "string") continue;
+      try {
+        if (BigInt(result) === 1n) out.add(vault.toLowerCase());
+        return;
+      } catch {}
     }
+    console.warn(`settled() unreadable for ${vault} — keeping it this run`);
   };
   // ponytail: 8 at a time on public RPCs; batch JSON-RPC if the registry grows past a few hundred.
   for (let i = 0; i < vaults.length; i += 8) await Promise.all(vaults.slice(i, i + 8).map(call));
