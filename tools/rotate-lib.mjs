@@ -205,6 +205,13 @@ export function parseStamp(stamp) {
   return m === null ? null : Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
 }
 
+/** Exit 1 with the same message the CLIs printed before; thrown errors would add a stack trace to the journal. */
+export function requireEnvKeys(...keys) {
+  for (const key of keys) {
+    if (!process.env[key]) { console.error(`${key} must be set in .env`); process.exit(1); }
+  }
+}
+
 export function writeRegistry(registry, markets, archived) {
   if (registry.network !== "testnet") throw new Error("market registry network must be testnet");
   writeFileSync(path.join(ROOT, "registry/markets.json"), JSON.stringify({ network: registry.network, markets, archived }, null, 2) + "\n");

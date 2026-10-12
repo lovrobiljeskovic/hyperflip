@@ -1,18 +1,13 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { bigBlocks, coinYes, deployPair, elysiumRpcs, info, pickSports, ROOT, settledVaults, sportsRegistryEntry, writeRegistry as saveRegistry } from "./rotate-lib.mjs";
+import { bigBlocks, coinYes, deployPair, elysiumRpcs, info, pickSports, requireEnvKeys, ROOT, settledVaults, sportsRegistryEntry, writeRegistry as saveRegistry } from "./rotate-lib.mjs";
 
 const REGISTRY = path.join(ROOT, "registry/markets.json");
 const ENV_FILE = path.join(ROOT, ".env");
 
 const dryRun = process.argv.includes("--dry-run");
 process.loadEnvFile(ENV_FILE);
-for (const key of ["PRIVATE_KEY", "TESTNET_RPC", "KEEPER_ADDRESS"]) {
-  if (!process.env[key]) {
-    console.error(`${key} must be set in .env`);
-    process.exit(1);
-  }
-}
+requireEnvKeys("PRIVATE_KEY", "TESTNET_RPC", "KEEPER_ADDRESS");
 console.log(`keeper: ${process.env.KEEPER_ADDRESS} (must be KEEPER_PRIVATE_KEY's address)`);
 
 const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));

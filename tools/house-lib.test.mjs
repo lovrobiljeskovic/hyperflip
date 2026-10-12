@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { devig, devig3, fixtureFromEspn, housePick, LEAGUES, matchdayOf, outcomeKey, plan, questionFixtureKey, questionPick, questionSides, registerAction, registerQuestionAction, settleAction, settleQuestionAction, stamp, winnerSide, withPriors } from "./house-lib.mjs";
+import { devig, fixtureFromEspn, housePick, LEAGUES, matchdayOf, outcomeKey, plan, questionPick, questionSides, registerAction, registerQuestionAction, settleAction, settleQuestionAction, stamp, winnerSide, withPriors } from "./house-lib.mjs";
 
 const T0 = Date.UTC(2026, 8, 17, 12); // Thu 2026-09-17 12:00Z
 const H = 3600_000;
@@ -47,9 +47,9 @@ function outcomeFor(fx, id, venue = "flip") {
   };
 }
 
-test("devig removes the vig and returns P(away)", () => {
-  assert.equal(devig(180, -218), 0.3425);
-  assert.equal(devig(-110, -110), 0.5);
+test("devig removes the vig and returns P(away) first", () => {
+  assert.equal(devig(180, -218)[0], 0.3425);
+  assert.equal(devig(-110, -110)[0], 0.5);
   assert.equal(stamp(Date.UTC(2026, 8, 18, 0, 15)), "20260918-0015");
 });
 
@@ -145,9 +145,9 @@ test("withPriors returns the same reference when nothing changes", () => {
   assert.equal(housePick({ outcome: 5 }, { participantA: "A", participantB: "B", shortNameA: "A", shortNameB: "B", competition: "NFL", sport: "x", startMs: 1, expiryMs: 2 }, undefined).priorYes, undefined);
 });
 
-test("devig3 normalises a 3-way line; matchdayOf clusters the season by gaps of more than 3 days", () => {
-  assert.deepEqual(devig3(-140, 300, 320), { home: 0.5444, draw: 0.2333, away: 0.2222 });
-  assert.deepEqual(devig3(100, 100, 100), { home: 0.3333, draw: 0.3333, away: 0.3333 });
+test("devig normalises a 3-way line; matchdayOf clusters the season by gaps of more than 3 days", () => {
+  assert.deepEqual(devig(-140, 300, 320), [0.5444, 0.2333, 0.2222]);
+  assert.deepEqual(devig(100, 100, 100), [0.3333, 0.3333, 0.3333]);
   const day = (m, d) => Date.UTC(2026, m - 1, d, 15);
   // One team's league fixtures, Fri-Mon rounds plus a midweek round: the matchday is how many
   // of its fixtures fall on or before the kickoff, whatever the gaps.
@@ -193,7 +193,6 @@ test("registerQuestionAction reproduces the hand-built Liverpool v Manchester Ci
     } },
   });
   assert.equal(registerQuestionAction({ ...livMci(), venue: "flp" }, PL()).venue, "flp");
-  assert.equal(questionFixtureKey(livMci()), `Liverpool|Manchester City|${KO}`);
   assert.throws(() => registerQuestionAction(livMci(), PL(), "zzz"), /unknown venue/);
   assert.throws(() => registerQuestionAction({ ...livMci(), matchday: undefined }, PL(), "flip"), /matchday/);
   assert.throws(() => registerQuestionAction({ ...livMci(), home: { abbr: "X", name: "A".repeat(26) } }, PL(), "flip"), /participant > 25/);

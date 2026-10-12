@@ -1,14 +1,11 @@
-// House HIP-4 deployer sync: settle finished games, register upcoming ones (20 slots per venue on testnet,
-// `flip` filled before `flp`; NFL keeps a 16-slot weekly budget, soccer 3-way questions take the rest at
-// 4 slots a match), wrap our outcomes in OutcomeVaults, refresh registry priors from ESPN odds.
+// House HIP-4 deployer sync: settle finals, register upcoming games, wrap them in OutcomeVaults, refresh priors.
+// rotate.service runs it hourly ahead of rotate-markets.mjs (registry mtime triggers the writer/keeper restart).
 //   node tools/house-markets.mjs sync [--dry-run]
-// Runs hourly from rotate.service ahead of rotate-markets.mjs; registry mtime triggers
-// the writer/keeper restart there.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { bigBlocks, deployPair, info, ROOT, sportsRegistryEntry, writeRegistry as saveRegistry } from "./rotate-lib.mjs";
-import { fixtureFromEspn, LEAGUE, LEAGUES, matchdayOf, plan, registerAction, registerQuestionAction, settleAction, settleQuestionAction, VENUES, withPriors } from "./house-lib.mjs";
+import { bigBlocks, deployPair, info, requireEnvKeys, ROOT, sportsRegistryEntry, writeRegistry as saveRegistry } from "./rotate-lib.mjs";
+import { fixtureFromEspn, HOUSE_DEFAULTS, LEAGUES, matchdayOf, plan, registerAction, registerQuestionAction, settleAction, settleQuestionAction, VENUES, withPriors } from "./house-lib.mjs";
 
 const REGISTRY = path.join(ROOT, "registry/markets.json");
 const dryRun = process.argv.includes("--dry-run");
@@ -17,17 +14,13 @@ if (process.argv[2] !== "sync") {
   process.exit(2);
 }
 process.loadEnvFile(path.join(ROOT, ".env"));
-for (const key of ["PRIVATE_KEY", "TESTNET_RPC", "KEEPER_ADDRESS"]) {
-  if (!process.env[key]) {
-    console.error(`${key} must be set in .env`);
-    process.exit(1);
-  }
-}
-const horizonMs = Number(process.env.HOUSE_HORIZON_DAYS ?? 7) * 86400_000;
-const maxActive = Number(process.env.HOUSE_MAX_ACTIVE ?? 10);
-const minWindowMs = Number(process.env.HOUSE_MIN_WINDOW_HOURS ?? 18) * 3600_000;
-const soccerHorizonMs = Number(process.env.HOUSE_SOCCER_HORIZON_DAYS ?? 14) * 86400_000;
-const nflMaxActive = Number(process.env.HOUSE_NFL_MAX_ACTIVE ?? 16);
+requireEnvKeys("PRIVATE_KEY", "TESTNET_RPC", "KEEPER_ADDRESS");
+const D = HOUSE_DEFAULTS;
+const horizonMs = Number(process.env.HOUSE_HORIZON_DAYS ?? D.horizonMs / 86400_000) * 86400_000;
+const maxActive = Number(process.env.HOUSE_MAX_ACTIVE ?? D.maxActive);
+const minWindowMs = Number(process.env.HOUSE_MIN_WINDOW_HOURS ?? D.minWindowMs / 3600_000) * 3600_000;
+const soccerHorizonMs = Number(process.env.HOUSE_SOCCER_HORIZON_DAYS ?? D.soccerHorizonMs / 86400_000) * 86400_000;
+const nflMaxActive = Number(process.env.HOUSE_NFL_MAX_ACTIVE ?? D.nflMaxActive);
 const leagueKeys = (process.env.HOUSE_LEAGUES ?? "nfl").split(",").map((s) => s.trim()).filter(Boolean);
 const leagues = LEAGUES.filter((l) => leagueKeys.includes(l.key));
 for (const key of leagueKeys) if (!leagues.some((l) => l.key === key)) throw new Error(`HOUSE_LEAGUES: unknown league ${key}`);
@@ -39,9 +32,21 @@ async function getJson(url) {
   return res.json();
 }
 
+const nfl = LEAGUES.find((l) => l.kind === "standalone");
+
+/** First odds item of the ESPN core-API odds feed, or undefined (logged) when it is unavailable. */
+async function espnOdds(leaguePath, event) {
+  try {
+    const odds = await getJson(`https://sports.core.api.espn.com/v2/sports/${leaguePath.replace("/", "/leagues/")}/events/${event.id}/competitions/${event.id}/odds`);
+    return odds.items?.[0];
+  } catch (err) {
+    console.log(`odds unavailable for ${event.name}: ${err.message}`);
+  }
+}
+
 async function espnFixtures() {
-  const base = `https://site.api.espn.com/apis/site/v2/sports/${LEAGUE.path}/scoreboard`;
-  const byWeek = (w) => getJson(`${base}?week=${w}&seasontype=${LEAGUE.seasontype}&dates=${LEAGUE.season}`);
+  const base = `https://site.api.espn.com/apis/site/v2/sports/${nfl.path}/scoreboard`;
+  const byWeek = (w) => getJson(`${base}?week=${w}&seasontype=${nfl.seasontype}&dates=${nfl.season}`);
   const board = process.env.HOUSE_WEEK ? await byWeek(process.env.HOUSE_WEEK) : await getJson(base);
   const weekNo = Number(process.env.HOUSE_WEEK ?? board.week?.number);
   // A slot freed by Sunday's finals should be refilled at once, not on Tuesday when ESPN's
@@ -51,16 +56,10 @@ async function espnFixtures() {
   if (weekNo) boards.push({ week: weekNo + 1, board: await byWeek(weekNo + 1).catch(() => ({ events: [] })) });
   const events = boards.flatMap(({ week, board: b }) => (b.events ?? []).map((event) => ({ week, event })));
   const fixtures = await Promise.all(events.map(async ({ week, event }) => {
-    let moneyline;
-    try {
-      const odds = await getJson(`https://sports.core.api.espn.com/v2/sports/${LEAGUE.path.replace("/", "/leagues/")}/events/${event.id}/competitions/${event.id}/odds`);
-      const item = odds.items?.[0];
-      const away = item?.awayTeamOdds?.moneyLine;
-      const home = item?.homeTeamOdds?.moneyLine;
-      if (Number.isFinite(away) && Number.isFinite(home)) moneyline = { away, home };
-    } catch (err) {
-      console.log(`odds unavailable for ${event.name}: ${err.message}`);
-    }
+    const item = await espnOdds(nfl.path, event);
+    const away = item?.awayTeamOdds?.moneyLine;
+    const home = item?.homeTeamOdds?.moneyLine;
+    const moneyline = Number.isFinite(away) && Number.isFinite(home) ? { away, home } : undefined;
     return { ...fixtureFromEspn(event, moneyline), week };
   }));
   return { weekNo, fixtures };
@@ -91,14 +90,9 @@ async function espnSoccerFixtures(league, nowMs) {
     if (kickoffMs < nowMs - 7 * 86400_000 || kickoffMs > nowMs + soccerHorizonMs) continue;
     let odds;
     if (kickoffMs > nowMs) {
-      try {
-        const o = await getJson(`https://sports.core.api.espn.com/v2/sports/${league.path.replace("/", "/leagues/")}/events/${event.id}/competitions/${event.id}/odds`);
-        const item = o.items?.[0];
-        const line = [item?.homeTeamOdds?.moneyLine, item?.drawOdds?.moneyLine, item?.awayTeamOdds?.moneyLine];
-        if (line.every(Number.isFinite)) odds = { home: line[0], draw: line[1], away: line[2] };
-      } catch (err) {
-        console.log(`odds unavailable for ${event.name}: ${err.message}`);
-      }
+      const item = await espnOdds(league.path, event);
+      const line = [item?.homeTeamOdds?.moneyLine, item?.drawOdds?.moneyLine, item?.awayTeamOdds?.moneyLine];
+      if (line.every(Number.isFinite)) odds = { home: line[0], draw: line[1], away: line[2] };
     }
     const fx = fixtureFromEspn(event);
     fixtures.push({ ...fx, ...(odds ? { odds } : {}), league: league.key, matchday: matchdayOf(kickoffMs, teamKickoffs.get(fx.home.name)) });
@@ -114,8 +108,7 @@ const meta = async () => {
 
 const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));
 const nowMs = Date.now();
-const nfl = leagues.find((l) => l.kind === "standalone");
-const { weekNo, fixtures } = nfl ? await espnFixtures() : { weekNo: undefined, fixtures: [] };
+const { weekNo, fixtures } = leagues.some((l) => l.kind === "standalone") ? await espnFixtures() : { weekNo: undefined, fixtures: [] };
 // A league whose ESPN fetch fails this hour is dropped from the run entirely (no settle, no
 // register, no priors) so one feed outage neither blocks NFL nor settles anything blind.
 const questionLeagues = [];

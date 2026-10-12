@@ -1,39 +1,29 @@
 // Pure planning for house-deployed HIP-4 markets. State lives on Core (outcomeMeta) and at
 // ESPN; nothing is persisted here. CLI: tools/house-markets.mjs.
-import { eventKey, parseSportsEvent } from "./rotate-lib.mjs";
+import { coinNo, coinYes, eventKey, parseSportsEvent } from "./rotate-lib.mjs";
 
 // Testnet caps each venue owner at 10 active outcomes, so we own two venues. Fill order matters:
 // `flip` first, `flp` only takes the overflow. Sub-deployer (box EOA) is the same on both.
 export const VENUES = ["flip", "flp"];
-export const TEMPLATE = "sportsContestWinner7";
+const TEMPLATE = "sportsContestWinner7";
 // One entry per league we deploy. `standalone` leagues use sportsContestWinner7 (one Yes/No outcome
 // per game); `question` leagues use sportsContestResult5 (Home / Draw / Away + fallback, 4 slots).
-export const LEAGUE = { key: "nfl", kind: "standalone", path: "football/nfl", competition: "NFL", sport: "American football", officialSource: "NFL", season: "2026", seasontype: 2 };
 export const LEAGUES = [
-  LEAGUE,
+  { key: "nfl", kind: "standalone", path: "football/nfl", competition: "NFL", sport: "American football", officialSource: "NFL", season: "2026", seasontype: 2 },
   { key: "eng.1", kind: "question", path: "soccer/eng.1", competition: "Premier League", officialSource: "Premier League", sport: "Soccer", season: "2026/27", contestType: "Match", seasonStartMs: Date.UTC(2026, 7, 1) },
   { key: "esp.1", kind: "question", path: "soccer/esp.1", competition: "La Liga", officialSource: "La Liga", sport: "Soccer", season: "2026/27", contestType: "Match", seasonStartMs: Date.UTC(2026, 7, 1) },
 ];
-export const QUESTION_TEMPLATE = "sportsContestResult5";
+const QUESTION_TEMPLATE = "sportsContestResult5";
+// Defaults for plan(); house-markets.mjs lets HOUSE_* env vars override them (in days / hours).
+export const HOUSE_DEFAULTS = { horizonMs: 7 * 86400_000, maxActive: 10, minWindowMs: 18 * 3600_000, soccerHorizonMs: 14 * 86400_000, nflMaxActive: 16 };
 const DEADLINE_MS = 3 * 86400_000; // resolutionDeadline = kickoff + 3d (NFL: postponement voids to 0.5; soccer: Draw)
 
-/** Implied P(away) from two American moneylines, vig removed by normalisation. */
-export function devig(awayMl, homeMl) {
-  const dec = (ml) => (ml > 0 ? 1 + ml / 100 : 1 + 100 / -ml);
-  const a = 1 / dec(awayMl);
-  const h = 1 / dec(homeMl);
-  return Math.round((a / (a + h)) * 1e4) / 1e4;
-}
-
-/** Implied Home/Draw/Away from three American moneylines, vig removed by normalisation. */
-export function devig3(homeMl, drawMl, awayMl) {
-  const dec = (ml) => (ml > 0 ? 1 + ml / 100 : 1 + 100 / -ml);
-  const h = 1 / dec(homeMl);
-  const d = 1 / dec(drawMl);
-  const a = 1 / dec(awayMl);
-  const s = h + d + a;
-  const r = (x) => Math.round((x / s) * 1e4) / 1e4;
-  return { home: r(h), draw: r(d), away: r(a) };
+/** Implied probabilities from American moneylines (any number of outcomes), vig removed by
+ * normalisation, in input order. */
+export function devig(...mls) {
+  const p = mls.map((ml) => 1 / (ml > 0 ? 1 + ml / 100 : 1 + 100 / -ml));
+  const s = p.reduce((a, b) => a + b, 0);
+  return p.map((x) => Math.round((x / s) * 1e4) / 1e4);
 }
 
 /** 1-based matchday of `kickoffMs` for one team: how many of that team's league fixtures fall on
@@ -80,11 +70,12 @@ const checkValue = (k, v) => {
 export function registerAction(fx, week, venue = fx.venue) {
   if (!VENUES.includes(venue)) throw new Error(`unknown venue: ${venue}`);
   const stage = `Week ${week}`;
+  const nfl = LEAGUES[0];
   const kv = {
-    competition: LEAGUE.competition, contestType: "game", officialSource: LEAGUE.officialSource,
+    competition: nfl.competition, contestType: "game", officialSource: nfl.officialSource,
     participantA: fx.away.name, participantB: fx.home.name,
     resolutionDeadline: stamp(fx.kickoffMs + DEADLINE_MS), scheduledStart: stamp(fx.kickoffMs),
-    season: LEAGUE.season, shortNameA: fx.away.abbr, shortNameB: fx.home.abbr, sport: LEAGUE.sport, stage,
+    season: nfl.season, shortNameA: fx.away.abbr, shortNameB: fx.home.abbr, sport: nfl.sport, stage,
   };
   for (const [k, v] of Object.entries(kv)) checkValue(k, v);
   if (kv.shortNameA.length > 10 || kv.shortNameB.length > 10) throw new Error("shortName > 10 chars");
@@ -93,8 +84,6 @@ export function registerAction(fx, week, venue = fx.venue) {
   const keywordToValue = Object.entries(kv).sort(([a], [b]) => (a < b ? -1 : 1));
   return { type: "outcomeDeploy", venue, operation: { registerStandaloneOutcomeFromTemplate: { id: TEMPLATE, keywordToValue, deployerFeeScale: "1" } } };
 }
-
-export const questionFixtureKey = (fx) => `${fx.home.name}|${fx.away.name}|${fx.kickoffMs}`;
 
 /** Soccer questions list the home side as participantA (question 1392 set the precedent). */
 export function registerQuestionAction(fx, league, venue = fx.venue) {
@@ -183,7 +172,7 @@ const fractionFor = (winner) => (winner === "A" ? "1" : winner === "B" ? "0" : "
 export function housePick(o, ev, priorYes) {
   const title = `${ev.participantA} vs ${ev.participantB}`;
   return {
-    outcome: o.outcome, coinYes: `#${o.outcome * 10}`, coinNo: `#${o.outcome * 10 + 1}`, question: null, group: null,
+    outcome: o.outcome, coinYes: coinYes(o), coinNo: coinNo(o), question: null, group: null,
     title, groupTitle: title, sideYes: ev.shortNameA, sideNo: ev.shortNameB, underlying: eventKey(ev), cluster: ev.competition,
     sport: ev.sport, startMs: ev.startMs, expiryMs: ev.expiryMs, deployer: o.venue, ...(priorYes !== undefined ? { priorYes } : {}),
   };
@@ -197,16 +186,20 @@ export function questionPick(q, o, ev, side, priorYes) {
   const label = sideLabel(ev, side);
   const underlying = `q${q.question}`;
   return {
-    outcome: o.outcome, coinYes: `#${o.outcome * 10}`, coinNo: `#${o.outcome * 10 + 1}`, question: q.question, group: underlying,
+    outcome: o.outcome, coinYes: coinYes(o), coinNo: coinNo(o), question: q.question, group: underlying,
     groupTitle: `${ev.participantA} vs ${ev.participantB}`, title: label, sideYes: label, sideNo: `Not ${label}`, underlying,
     cluster: ev.competition, sport: ev.sport, startMs: ev.startMs, expiryMs: ev.expiryMs, deployer: o.venue,
     ...(priorYes !== undefined ? { priorYes } : {}),
   };
 }
 
-const prior3 = (fx) => (fx?.odds ? devig3(fx.odds.home, fx.odds.draw, fx.odds.away) : undefined);
+const prior3 = (fx) => {
+  if (!fx?.odds) return undefined;
+  const [home, draw, away] = devig(fx.odds.home, fx.odds.draw, fx.odds.away);
+  return { home, draw, away };
+};
 
-export function plan({ outcomes, questions = [], fixtures, soccerFixtures = [], registry, nowMs, horizonMs = 7 * 86400_000, soccerHorizonMs = 14 * 86400_000, maxActive = 10, nflMaxActive = 16, minWindowMs = 18 * 3600_000, questionLeagues = LEAGUES.filter((l) => l.kind === "question") }) {
+export function plan({ outcomes, questions = [], fixtures, soccerFixtures = [], registry, nowMs, horizonMs = HOUSE_DEFAULTS.horizonMs, soccerHorizonMs = HOUSE_DEFAULTS.soccerHorizonMs, maxActive = HOUSE_DEFAULTS.maxActive, nflMaxActive = HOUSE_DEFAULTS.nflMaxActive, minWindowMs = HOUSE_DEFAULTS.minWindowMs, questionLeagues = LEAGUES.filter((l) => l.kind === "question") }) {
   const mine = outcomes.filter((o) => VENUES.includes(o.venue) && o.name === `template:${TEMPLATE}`);
   const byKey = new Map(fixtures.map((fx) => [fixtureKey(fx), fx]));
   const knownCoins = new Set(registry.markets.map((m) => m.coinYes));
@@ -258,7 +251,7 @@ export function plan({ outcomes, questions = [], fixtures, soccerFixtures = [], 
   }
   const settlingQ = new Set(toSettleQuestions.map((s) => s.q.question));
 
-  const priorOf = (fx) => (fx?.moneyline ? devig(fx.moneyline.away, fx.moneyline.home) : undefined);
+  const priorOf = (fx) => (fx?.moneyline ? devig(fx.moneyline.away, fx.moneyline.home)[0] : undefined);
   // Slots are scarce (20 per venue on testnet): a game must keep at least minWindowMs of pre-kickoff
   // trading to be worth a slot, and balanced games (prior nearest 0.5) win contested slots.
   const lopsided = (fx) => Math.abs((priorOf(fx) ?? 0.5) - 0.5);
@@ -298,7 +291,7 @@ export function plan({ outcomes, questions = [], fixtures, soccerFixtures = [], 
 
   const toWrap = [];
   for (const o of mine) {
-    if (settling.has(o.outcome) || knownCoins.has(`#${o.outcome * 10}`)) continue;
+    if (settling.has(o.outcome) || knownCoins.has(coinYes(o))) continue;
     const ev = parseSportsEvent(o.description);
     if (!ev || ev.startMs <= nowMs) continue;
     toWrap.push(housePick(o, ev, priorOf(byKey.get(outcomeKey(o)))));
@@ -308,18 +301,18 @@ export function plan({ outcomes, questions = [], fixtures, soccerFixtures = [], 
     if (settlingQ.has(m.q.question) || m.ev.startMs <= nowMs) continue;
     const p = prior3(fixtureOf(m));
     for (const { o, side } of m.sides) {
-      if (knownCoins.has(`#${o.outcome * 10}`)) continue;
+      if (knownCoins.has(coinYes(o))) continue;
       toWrap.push(questionPick(m.q, o, m.ev, side, p?.[side]));
     }
   }
 
   // Priors refresh pre-kickoff only; after kickoff the last pre-game number is frozen.
   const priors = new Map();
-  const fxByCoin = new Map(mine.map((o) => [`#${o.outcome * 10}`, byKey.get(outcomeKey(o))]));
+  const fxByCoin = new Map(mine.map((o) => [coinYes(o), byKey.get(outcomeKey(o))]));
   const qByCoin = new Map();
   for (const m of mineQ) {
     const fx = fixtureOf(m);
-    for (const { o, side } of m.sides) qByCoin.set(`#${o.outcome * 10}`, { fx, side });
+    for (const { o, side } of m.sides) qByCoin.set(coinYes(o), { fx, side });
   }
   for (const m of registry.markets) {
     if (!VENUES.includes(m.deployer) || !(m.startMs > nowMs)) continue;

@@ -9,15 +9,13 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { VENUES } from "./house-lib.mjs";
-import { ELYSIUM_CHAIN_ID, ROOT, writeRegistry } from "./rotate-lib.mjs";
+import { ELYSIUM_CHAIN_ID, requireEnvKeys, ROOT, writeRegistry } from "./rotate-lib.mjs";
 
 const REGISTRY = path.join(ROOT, "registry/markets.json");
 const dryRun = process.argv.includes("--dry-run");
 const applyOnly = process.argv.includes("--apply");
 process.loadEnvFile(path.join(ROOT, ".env"));
-for (const key of ["PRIVATE_KEY", "ELYSIUM_RPC", "RELAY_ADDRESS", "PARLAY_VAULT_ADDRESS"]) {
-  if (!process.env[key]) throw new Error(`${key} must be set in .env`);
-}
+requireEnvKeys("PRIVATE_KEY", "ELYSIUM_RPC", "RELAY_ADDRESS", "PARLAY_VAULT_ADDRESS");
 
 const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));
 const nowMs = Date.now();
