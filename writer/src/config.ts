@@ -3,7 +3,8 @@ import { config as loadDotenv } from "dotenv";
 import { readFileSync } from "node:fs";
 import { isAddress, parseUnits, type Address } from "viem";
 import { requireEnv, requireKey, rootPath } from "../../services/env.mjs";
-import { laneRows, parseMarkets, type MarketInfo } from "./markets.js";
+import { laneRows } from "../../services/markets.mjs";
+import { parseMarkets, type MarketInfo } from "./markets.js";
 import { BPS } from "./units.js";
 import { googleSheetsConfig, type GoogleSheetsConfig } from "./googleSheets.js";
 

@@ -1,4 +1,5 @@
 import { encodeAbiParameters, isAddress, keccak256, type Address, type Hex } from "viem";
+import { coreVault } from "../../services/markets.mjs";
 
 /** CoreConstants.OUTCOME_WEI_PER_SHARE — outcome wei is 5-decimal. */
 const OUTCOME_WEI_PER_SHARE = 100_000n;
@@ -128,10 +129,9 @@ export function parseRegistryMarkets(json: string): { vault: Address; leg?: Addr
     if (m.sourceVault !== undefined && (typeof m.sourceVault !== "string" || !isAddress(m.sourceVault))) {
       throw new Error(`invalid sourceVault in registry: ${String(m.sourceVault)}`);
     }
-    // On Elysium a row's `vault` is the OutcomeLeg the ParlayVault reads and `sourceVault` is
-    // the HyperEVM OutcomeVault it mirrors: the Core account, and the one this keeper settles.
+    // Lane rule: services/markets.mts. The keeper settles the Core account (`coreVault`).
     return {
-      vault: (m.sourceVault ?? m.vault) as Address,
+      vault: coreVault(m as { vault: string; sourceVault?: string }) as Address,
       ...(m.sourceVault ? { leg: m.vault as Address } : {}),
       expiryMs: typeof m.expiryMs === "number" ? m.expiryMs : undefined,
     };

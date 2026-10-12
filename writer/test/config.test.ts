@@ -4,7 +4,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultPerCodeReservedCap, loadConfig } from "../src/config.js";
-import { laneRows, parseMarkets } from "../src/markets.js";
+import { parseMarkets } from "../src/markets.js";
+import { laneRows } from "../../services/markets.mjs";
 
 const VAULT = "0x1111111111111111111111111111111111111111";
 const MARKET = { vault: VAULT, coinYes: "#1", coinNo: "#2", underlying: "q844", cluster: "WC2026", title: "Draw", category: "sports", question: 844, startMs: 1, expiryMs: 2, sideYes: "Draw", sideNo: "No draw", group: "q844", groupTitle: "Saudi Arabia vs Uruguay" };
