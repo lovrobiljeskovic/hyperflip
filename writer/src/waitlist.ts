@@ -172,6 +172,8 @@ export class RateLimiter {
 
   allow(key: string): boolean {
     const t = this.now();
+    // ponytail: O(keys) sweep per check; fine at signup/quote volumes, move to a timer if keys explode.
+    for (const [k, hs] of this.hits) if (t - hs[hs.length - 1] >= this.windowMs) this.hits.delete(k);
     const recent = (this.hits.get(key) ?? []).filter((h) => t - h < this.windowMs);
     if (recent.length >= this.max) {
       this.hits.set(key, recent);

@@ -83,6 +83,17 @@ test("rate limiter slides its window", () => {
   assert.ok(rl.allow("ip"));
 });
 
+test("rate limiter: a stale key no longer counts after a later check sweeps it", () => {
+  let t = 0;
+  const rl = new RateLimiter(1, 100, () => t);
+  assert.ok(rl.allow("stale"));
+  assert.ok(!rl.allow("stale"));
+  t = 100;
+  assert.ok(rl.allow("other")); // sweep drops "stale"
+  assert.ok(rl.allow("stale"));
+  assert.ok(!rl.allow("stale"));
+});
+
 test("handleWaitlist never sends or returns an invite, even for admitted emails", async () => {
   const wl = new Waitlist(file());
   const deps = testDeps({ waitlist: wl, sendInvite: async () => { assert.fail("signup must not send email"); } });

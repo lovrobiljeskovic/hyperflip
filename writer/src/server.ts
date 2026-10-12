@@ -152,7 +152,8 @@ async function price(deps: QuoteDeps, v: ValidQuote): Promise<Priced | Fail> {
   }
   try {
     priceObservations = await Promise.all(v.legs.map((l) => deps.fetchLegPrice(l)));
-  } catch {
+  } catch (err) {
+    console.error(JSON.stringify({ at: new Date().toISOString(), event: "stale-book", error: String((err as Error).message).slice(0, 300) }));
     reject(metrics, "stale-book");
     return { status: 503, json: { error: "stale-book" } };
   }
@@ -330,8 +331,8 @@ export async function handleWaitlist(
   const email = raw.trim().toLowerCase();
   const { isNew } = waitlist.signup(email);
   // The signup is already durable. A Google outage must not lose it or grant access.
-  if (deps.syncWaitlist) void deps.syncWaitlist().catch(() => {
-    console.error(JSON.stringify({ event: "google-sheets-sync-failed", reason: "Signup queued for retry" }));
+  if (deps.syncWaitlist) void deps.syncWaitlist().catch((err) => {
+    console.error(JSON.stringify({ at: new Date().toISOString(), event: "google-sheets-sync-failed", reason: "Signup queued for retry", error: String((err as Error)?.message).slice(0, 300) }));
   });
   console.log(
     JSON.stringify({ at: new Date(deps.now()).toISOString(), event: "waitlist-signup", isNew, total: waitlist.size() }),
