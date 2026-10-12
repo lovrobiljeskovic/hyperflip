@@ -22,12 +22,14 @@ const PARLAY_VAULT = "0x407CDc0B15E8d81f4D122481Ecf92Dbe07DC0169";
 const KNOWN_OUTCOME = 13162;
 const BURST = 20; // one tick of a modest catch-up scan
 
-// A live outcome asset id, derived from the registry (nightly rotation would stale a hardcoded
-// one): coinYes "#137340" -> 100000000 + 137340.
+// A live outcome asset id and its holder, both from the same registry row (nightly rotation would
+// stale a hardcoded one): coinYes "#137340" -> 100000000 + 137340. Outcome coins sit on the
+// OutcomeVault's Core account, never the ParlayVault's.
 const registry = JSON.parse(readFileSync(new URL("../registry/markets.json", import.meta.url), "utf8"));
 // Prefer an unexpired market: a pruned coin makes 0x801 throw, failing the probe for the wrong reason.
 const liveMarket = registry.markets.find((m: { expiryMs?: number }) => m.expiryMs === undefined || m.expiryMs > Date.now()) ?? registry.markets[0];
 const OUTCOME_ASSET_ID = encodedAssetId(BigInt(liveMarket.coinYes.slice(1)));
+const OUTCOME_HOLDER = liveMarket.sourceVault ?? liveMarket.vault;
 
 const urls = process.argv.slice(2);
 if (urls.length === 0) {
@@ -65,7 +67,7 @@ async function check(url: string, idx: number) {
 
   // 1b. 0x801 with an outcome-encoded asset id at latest — the keeper's balance-read path.
   try {
-    const total = await readSpotBalanceWei(client, PARLAY_VAULT, OUTCOME_ASSET_ID);
+    const total = await readSpotBalanceWei(client, OUTCOME_HOLDER, OUTCOME_ASSET_ID);
     results.push(["0x801 outcome latest", true, `total ${total}`]);
   } catch (err) {
     results.push(["0x801 outcome latest", false, short(err)]);

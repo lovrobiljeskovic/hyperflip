@@ -50,9 +50,7 @@ export function handleMint(event: ParlayMinted): void {
 export function handleTransfer(event: Transfer): void {
   // ERC-721 mint Transfer precedes ParlayMinted; that handler creates the ticket.
   if (event.params.from.toHexString() == ZERO) return;
-  const ticket = Ticket.load(SCOPE + ":" + event.params.tokenId.toString());
-  assert(ticket != null, "Transfer without indexed mint");
-  if (ticket == null) return;
+  const ticket = assert(Ticket.load(SCOPE + ":" + event.params.tokenId.toString()), "Transfer without indexed mint");
   associate(event.params.from, ticket);
   associate(event.params.to, ticket);
   if (event.params.to.toHexString() == ZERO) {
@@ -68,9 +66,7 @@ export function handleTransfer(event: Transfer): void {
 }
 
 export function handleResolve(event: ParlayResolved): void {
-  const ticket = Ticket.load(SCOPE + ":" + event.params.id.toString());
-  assert(ticket != null, "Resolution without indexed mint");
-  if (ticket == null) return;
+  const ticket = assert(Ticket.load(SCOPE + ":" + event.params.id.toString()), "Resolution without indexed mint");
   assert(event.params.status > 0 && event.params.status <= 3, "Invalid resolution status");
   ticket.status = event.params.status;
   ticket.resolutionBlock = event.block.number;
