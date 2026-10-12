@@ -8,7 +8,7 @@ export interface LegState {
   fractionWad: bigint;
 }
 
-/** Precompile-swap boundary (spec §7): settlement state is read from the vaults'
+/** Precompile-swap boundary: settlement state is read from the vaults'
  * keeper-attested on-chain getters today; when settlement read precompiles ship,
  * only this module changes. */
 export async function readLegStates(

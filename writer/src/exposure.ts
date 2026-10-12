@@ -15,29 +15,18 @@ interface OpenParlay {
   vaults: string[];
 }
 
-/** In-memory exposure state (spec §4). Global truth is the on-chain writer allowance —
- * this book only tracks live quote reservations on top of it, plus per-market open
- * exposure (which the flat allowance number cannot break down). Lost on restart by
- * design: reservations expire within the quote TTL (+ grace, see below); per-market
- * opens are rebuilt from on-chain state at startup (Poker.seed(), mainnet-hardening
- * P1-6) instead of replaying ParlayMinted/ParlayResolved from genesis. */
+/** In-memory book of live quote reservations plus per-market open exposure, on top of the
+ * on-chain writer allowance. Lost on restart by design: reservations expire within the
+ * quote TTL; opens are rebuilt from chain by Poker.seed(). */
 export class ExposureBook {
   private reservations = new Map<string, Reservation>();
   private open = new Map<string, OpenParlay>();
 
-  /** @param clusterOf Maps a lowercase vault address to its competition exposure group;
-   * injected so the book can bucket entries recorded before/after registry changes
-   * without storing cluster snapshots. Default: no clusters (cluster cap inert).
-   * @param reservationGraceMs Keeps an expired-but-undetected reservation counted
-   * past its TTL (mainnet-hardening P1-7). Without this, a taker who mints right at
-   * the TTL deadline has their risk vanish from the book the instant the reservation
-   * expires, but the poker doesn't detect the mint (and re-add it as `open`) until
-   * its next tick — up to `pokerIntervalMs` later. A second quote request landing in
-   * that gap would see stale headroom and could push real per-market/cluster exposure
-   * past the configured cap. `onMinted` still deletes the reservation immediately
-   * once the mint IS detected, so a real mint is never double-counted; this grace
-   * only delays pruning a reservation nobody has confirmed onto/off chain yet.
-   * Default 0 (exact-TTL pruning, pre-P1-7 behavior). */
+  /** @param clusterOf lowercase vault -> exposure group; default none (cluster cap inert).
+   * @param reservationGraceMs Keeps an expired reservation counted past its TTL: a mint at
+   * the deadline is not seen by the poker until its next tick, and a quote landing in that
+   * gap would see stale headroom. onMinted still deletes the reservation on detection, so
+   * a real mint is never double-counted. */
   constructor(
     private clusterOf: (vault: string) => string | undefined = () => undefined,
     private reservationGraceMs: number = 0,
@@ -74,12 +63,8 @@ export class ExposureBook {
     return sum;
   }
 
-  /** Reserved-but-unminted risk for one quota key — the invite code
-   * (mainnet-hardening P0-4, re-keyed from taker address). Opens are
-   * deliberately excluded: once a reservation converts via onMinted it's covered
-   * by the allowance/per-market/per-cluster caps like any other open position,
-   * so counting it again here would punish honest sequential minting instead of
-   * throttling a caller who never mints. */
+  /** Reserved-but-unminted risk for one quota key (the invite code). Opens are excluded
+   * so honest sequential minting is not throttled; only never-minting callers are. */
   reservedByKey(quotaKey: string, now: number): bigint {
     this.pruneExpired(now);
     let sum = 0n;

@@ -25,10 +25,8 @@ export async function readSpotPxWad(client: Pick<PublicClient, "call">, coinId: 
  * coin the book has never had liquidity for) counts as infinitely stale so a fresh
  * restart fails safe, not open. */
 export function isSpotPxStale(lastFreshMs: number | undefined, now: number, staleMs: number): boolean {
-  // Infinity = gate disabled (SPOT_PX_STALE_MS=0). Testnet outcome books are
-  // empty, so no coin ever earns a book-ask freshness stamp and the gate would
-  // 503 every quote — the pickoff risk the gate closes is accepted there.
-  // Mainnet keeps the finite default; never disable it with real bankroll.
+  // Infinity = gate disabled (SPOT_PX_STALE_MS=0): testnet books are empty, so no coin
+  // ever earns a freshness stamp and the gate would 503 every quote. Never disable with real bankroll.
   if (staleMs === Infinity) return false;
   return lastFreshMs === undefined || now - lastFreshMs > staleMs;
 }
@@ -85,9 +83,7 @@ export function makeLegPriceFetcher(opts: {
   };
 }
 
-/** Builds the /health per-coin freshness map: every coinYes/coinNo across the
- * registry, keyed to its age via the supplied lookup. Pulled out of index.ts's
- * health closure so it's unit-testable without booting main(). */
+/** /health per-coin freshness map: every coinYes/coinNo in the registry -> its age. */
 export function buildPriceFreshness(
   markets: Iterable<{ coinYes: string; coinNo: string }>,
   ageMs: (coin: string) => number | null,

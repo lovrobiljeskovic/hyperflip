@@ -1,8 +1,6 @@
 export const WAD = 1_000_000_000_000_000_000n;
 export const BPS = 10_000n;
 
-/** Decimal string ("0.65", "10.0") -> bigint at `decimals` precision. Truncates extra
- * fractional digits — inputs are exact info-API output, not user entry. */
 /** Split [from, to] into inclusive ranges of at most `size` blocks — testnet RPC
  * rejects getLogs spans over 1000 blocks. Empty when to < from. */
 export function blockRanges(from: bigint, to: bigint, size: bigint): { from: bigint; to: bigint }[] {
@@ -14,7 +12,7 @@ export function blockRanges(from: bigint, to: bigint, size: bigint): { from: big
 }
 
 /** Watchdog stall threshold for the poker tick loop — mirrors the keeper's formula
- * (keeper/src/keeper.ts:468, docs/mainnet-hardening-facts.md): a tick sequentially pokes every
+ * (docs/mainnet-hardening-facts.md): a tick sequentially pokes every
  * open parlay, each resolve() receipt wait capped at receiptTimeoutMs, plus the gap the tick
  * loop itself leaves between ticks (tickIntervalMs); marginMs covers everything else with no
  * explicit timeout (getLogs/getBlockNumber/readContract). */
@@ -32,6 +30,8 @@ export function isStalled(lastTickAt: number, now: number, thresholdMs: number):
   return now - lastTickAt > thresholdMs;
 }
 
+/** Decimal string ("0.65", "10.0") -> bigint at `decimals` precision. Truncates extra
+ * fractional digits — inputs are exact info-API output, not user entry. */
 export function parseDecimalToUnits(value: string, decimals: number): bigint {
   const neg = value.startsWith("-");
   const body = neg ? value.slice(1) : value;

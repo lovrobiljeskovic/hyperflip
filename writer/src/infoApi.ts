@@ -15,24 +15,10 @@ interface L2Level {
   n: number;
 }
 
-/** l2Book response: levels[0] = bids, levels[1] = asks, best first. A single 1-lot
- * resting order at the top would otherwise set the price for an arbitrary-size
- * parlay (mainnet-hardening P0-3), so this walks ask levels until cumulative `sz`
- * covers `minDepthWad` (same units as the book's `sz` field — coin units, WAD-scaled
- * for arithmetic) and volume-weights the price across the levels consumed.
- *
- * A book that never reaches minDepthWad is too thin to trust: same null signal as
- * an empty book, so the caller (spotPx.ts's makeLegPriceFetcher) falls through to
- * the P0-1 freshness-gated spotPx path. That fallthrough is deliberate for
- * freshness too: only a depth-covering ask stamps a coin "confirmed live" — a
- * spoofed 1-lot must not be able to fake liveness and keep the staleness clock
- * from ever expiring.
- *
- * "Never sell below the book": the volume-weighted price across a normally-ordered
- * ask book is always >= the plain best ask, but the max() is explicit rather than
- * assumed, so a malformed/out-of-order book can't quote better than top-of-book.
- *
- * minDepthWad = 0 restores pre-P0-3 behavior (price off the first level alone). */
+/** l2Book: levels[0] = bids, levels[1] = asks, best first. VWAP across asks until depth >=
+ * minDepthWad (a lone 1-lot must not price a big parlay); never below best ask; too thin
+ * -> null, which also denies a spoofed 1-lot the "confirmed live" freshness stamp
+ * (spotPx.ts). minDepthWad = 0 prices off the first level alone. */
 export function bestAskWad(book: unknown, minDepthWad: bigint): bigint | null {
   return bestAsk(book, minDepthWad)?.priceWad ?? null;
 }
@@ -57,15 +43,8 @@ function bestAsk(book: unknown, minDepthWad: bigint): Pick<LegPriceObservation, 
   return null; // depth never covered — too thin to trust, same signal as an empty book
 }
 
-/** POST {type:"l2Book", coin} — depth-covering ask for the coin as WAD (see
- * bestAskWad), or null on an empty/too-thin book.
- * Coin strings come from the config market map; exact outcome-coin naming is
- * testnet-verified config, not code (spec §3, keeper FINDINGS pattern).
- * The old allMids fallback is gone: allMids carries no outcome coins at all
- * (verified 2026-08-25), so it could never answer — null lets the caller fall
- * back to the 0x808 spotPx precompile instead. The timeout mirrors the keeper's
- * hard-learned rule (0x232a strand): a stalled fetch must fail the quote, not
- * hang the request. */
+/** POST {type:"l2Book", coin}: depth-covering ask as WAD (see bestAskWad), or null on an
+ * empty/too-thin book. Timeout: a stalled fetch must fail the quote, not hang it. */
 export async function fetchBestAskWad(
   infoApiUrl: string,
   coin: string,

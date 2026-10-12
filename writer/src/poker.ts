@@ -41,10 +41,7 @@ export interface PokerDeps {
   fetchEvents?(fromBlock: bigint): Promise<{ minted: MintedEvent[]; resolvedIds: bigint[]; toBlock: bigint }>;
   fetchLegs?(id: bigint): Promise<QuoteLeg[]>;
   fetchLegStates?(vaults: Address[]): Promise<Map<string, LegState>>;
-  /** Cold-start rebuild (mainnet-hardening P1-6): every currently-open parlay read
-   * straight from chain state, plus the block `nextId` was read at (so the log scan
-   * can resume at head instead of deployBlock). Overridable for tests; the default
-   * reads `nextId` + `parlay(id)` per id, batched. */
+  /** Every currently-open parlay from chain state, plus the head block it was read at. */
   fetchOpenParlays?(): Promise<{ open: { id: bigint; legs: QuoteLeg[]; risk: bigint }[]; headBlock: bigint }>;
 }
 
@@ -53,27 +50,13 @@ const MINTED = parseAbiItem(
 );
 const RESOLVED = parseAbiItem("event ParlayResolved(uint256 indexed id, uint8 status)");
 
-/** Dead-parlay poker (spec §5). Owns ParlayMinted/ParlayResolved sync: converts
- * reservations to open exposure on mint, releases on resolve, and pokes
- * resolveParlay on any open parlay that can no longer pay out — DEAD tickets have no
- * incentivized caller and VOID ones only a weakly incentivized taker, and unresolved
- * ones lock house bankroll and exposure caps.
+/** Converts reservations to open exposure on mint, releases on resolve, and pokes
+ * resolveParlay on any open parlay that can no longer pay out (DEAD has no incentivized
+ * caller, VOID only a weak one; unresolved ones lock bankroll and exposure caps).
  * Idempotent per tick; failures retry next tick. */
 export class Poker {
   private open = new Map<bigint, QuoteLeg[]>();
-  // Cold-start rescans used to always start at deployBlock (in-memory nextBlock is
-  // lost on restart), so every nightly rotate.service bounce blinded per-market caps
-  // until the chunked scan caught up — a window that grows with chain age
-  // (mainnet-hardening P1-6). seed() rebuilds `open` from on-chain state instead
-  // (same stateless-rebuild trick as the keeper's seedPendingOps) and moves
-  // nextBlock to head, so the log scan only has to cover what seed() couldn't have
-  // seen yet. Callers must await seed() before the first tick(); tests that skip it
-  // just get the old from-fromBlock behavior.
   private nextBlock: bigint;
-  // Taker index for the app's positions page: every ParlayMinted seen, by id. The
-  // browser used to eth_getLogs from deployBlock in 1000-block chunks on a public
-  // RPC — thousands of requests per wallet, minutes of spinner, then a rate-limit
-  // error. Here the same scan runs once, checkpointed, on the writer's RPC.
   private index = new Map<bigint, { taker: Address; block: bigint }>();
   /** Block the index resumes from; undefined means "the head seen at seed()". */
   private indexFrom: bigint | undefined;
@@ -116,11 +99,7 @@ export class Poker {
   private async fetchOpenParlays(): Promise<{ open: { id: bigint; legs: QuoteLeg[]; risk: bigint }[]; headBlock: bigint }> {
     if (this.deps.fetchOpenParlays) return this.deps.fetchOpenParlays();
     const { publicClient, parlayVault } = this.deps;
-    // Snapshot head BEFORE reading nextId: nextId read after is guaranteed to reflect
-    // every parlay minted at or before headBlock, so resuming the log scan at
-    // headBlock+1 can never miss one. A parlay minted between the two reads just gets
-    // seeded here AND picked up again by the log scan — both paths are idempotent
-    // Map.set calls (see tick()), so no double-counting either way.
+    // Snapshot head before reading nextId; resuming the log scan at headBlock+1 then cannot miss a mint.
     const headBlock = await publicClient.getBlockNumber();
     const nextId = (await publicClient.readContract({
       address: parlayVault,
@@ -128,12 +107,7 @@ export class Poker {
       functionName: "nextId",
     })) as bigint;
     const open: { id: bigint; legs: QuoteLeg[]; risk: bigint }[] = [];
-    // ids are 1..nextId inclusive (mint does `id = ++nextId`) and never reused — a
-    // won-but-unclaimed or void-but-unresolved parlay can sit at Status.Open forever
-    // (claim()/resolveParlay are both permissionless-but-nobody's-job), so nextId
-    // only grows with total historical volume, not with true open count. Batch the
-    // reads instead of firing one RPC per id so a cold start months into testnet beta
-    // doesn't take forever or trip the -32005 rate limiter.
+    // ids run 1..nextId and are never reused; unresolved parlays can sit Open forever, so batch the reads.
     // ponytail: bounded-concurrency batching, not real batching (no Multicall3 on
     // testnet) — still one round-trip per 50 ids. Fine at beta scale; if nextId ever
     // reaches the tens of thousands, aggregate via Multicall3 instead.
@@ -158,23 +132,15 @@ export class Poker {
     return { open, headBlock };
   }
 
-  /** Rebuilds `open` (and thus the exposure book's per-market/cluster totals) from
-   * on-chain state and fast-forwards the log scan to head. Must be awaited before the
-   * first tick() in production wiring — every nightly rotate.service restart depends
-   * on this running before the writer starts quoting again (mainnet-hardening P1-6). */
+  /** Rebuilds `open` from chain state and fast-forwards the log scan; await before the first tick(). */
   async seed(): Promise<void> {
     const { exposure } = this.deps;
     const { open, headBlock } = await this.fetchOpenParlays();
     for (const p of open) {
       this.open.set(p.id, p.legs);
-      // Reuses onMinted's reservation-delete-then-open-set path; the synthetic
-      // quoteId never collides with a real one (those are 32-byte random hex) and a
-      // delete on a missing key is a no-op, so this is exactly "record as open".
       exposure.onMinted(`seed-${p.id}`, p.id.toString(), p.risk, p.legs.map((l) => l.vault));
     }
-    // Exposure is rebuilt, so the scan could start at head — but the taker index
-    // has no chain-state fallback, so resume from its checkpoint when that is
-    // older. Re-seen mints/resolves are idempotent Map.set/delete (see tick()).
+    // Taker index has no chain-state fallback: resume from its checkpoint when older than head.
     const resume = this.indexFrom ?? headBlock + 1n;
     this.nextBlock = resume < headBlock + 1n ? resume : headBlock + 1n;
   }

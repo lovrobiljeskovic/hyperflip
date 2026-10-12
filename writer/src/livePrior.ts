@@ -1,29 +1,19 @@
 import type { MarketInfo } from "./markets.js";
 import { WAD } from "./pure.js";
 
-/** Live house prior for sports legs, polled off-chain so an in-play leg is priced from a
- * feed that moves with the score instead of an empty Core book or a frozen pregame line.
+/** Live house prior for sports legs, polled off-chain so an in-play leg follows the score.
  *
  * Source order per market, every tick:
- *   1. HyperCore mainnet HIP-4 book midpoint (D41: read-only info API, no signer). The game
- *      is matched by both team names + UTC kickoff date against mainnet `outcomeMeta`; the
- *      YES coin is the participant named first in our title. A wide book (> 3c) is skipped,
- *      so a thin in-play book falls through to Polymarket. First since 2026-09-20 (D43): Core
- *      is the intended main venue, so its book is what we test against. Unset
- *      `MAINNET_INFO_URL` = Polymarket first, as before.
- *   2. Polymarket moneyline midpoint (real-money book, ticks in play; Gamma slug is
- *      `nfl-<away>-<home>-<UTC date>`, the YES token is the away team = `sideYes`).
- *   3. ESPN scoreboard `situation.lastPlay.probability` (model win probability, in play only).
- * Soccer 3-way question members (Home / Draw / Away, `question` set) use source 2 only: the
- * event is found by Gamma `public-search` on both club names and the UTC kickoff date, the
- * market by question text. When all three members price in one tick their mids are scaled to
- * sum to 1 (vig removed by normalisation, as `devig3`). Full time closes the market (midpoint
- * 404) so the leg goes unpriced, as NFL after final.
- * None needs a key. Pregame, when no live sample is fresh, the caller falls back to
- * the registry `priorYes`; in play a missing sample leaves the leg `unpriced-leg`.
+ *   1. Mainnet HIP-4 book midpoint (read-only info API, D41/D43), matched by both team names
+ *      + UTC kickoff date; a book wider than 3c is skipped. Unset `MAINNET_INFO_URL` skips it.
+ *   2. Polymarket moneyline midpoint (YES token = away team = `sideYes`).
+ *   3. ESPN `situation.lastPlay.probability` (in play only).
+ * Soccer 3-way members use Polymarket only; all three mids are normalised to sum to 1.
+ * Pregame with no fresh sample the caller falls back to the registry `priorYes`; in play a
+ * missing sample leaves the leg `unpriced-leg`.
  *
- * Suspension: a jump of more than `jumpWad` between consecutive samples refuses the
- * leg for `suspendMs` — the sportsbook "market suspended after a score" rule. */
+ * Suspension: a jump of more than `jumpWad` between consecutive samples refuses the leg for
+ * `suspendMs` (sportsbook "suspended after a score" rule). */
 
 export interface LiveSample {
   yesWad: bigint;
@@ -58,12 +48,12 @@ export interface LivePriorOpts {
   mainnetInfoUrl?: string;
 }
 
-// Polymarket spells a few teams differently from ESPN.
 const PM_RETRY_MS = 10 * 60_000;
 // A listing / search / outcomeMeta fetch that throws is retried this soon, not every tick.
 const FAIL_RETRY_MS = 60_000;
 // A mid across a wider book than this is nobody's price (D41 sample: NFL spreads 0.00001–0.024).
 const MAINNET_MAX_SPREAD = 0.03;
+// Polymarket spells a few teams differently from ESPN.
 const PM_ALIAS: Record<string, string> = { wsh: "was", lar: "la" };
 
 export const toWad = (p: number): bigint => BigInt(Math.round(p * 1e6)) * 10n ** 12n;
