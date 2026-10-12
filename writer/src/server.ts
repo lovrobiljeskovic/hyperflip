@@ -221,7 +221,8 @@ async function reserveAndSign(
   };
   try {
     return { quote, sig: await deps.sign(quote) };
-  } catch {
+  } catch (err) {
+    console.error(JSON.stringify({ at: new Date().toISOString(), event: "sign-failed", error: String((err as Error).message).slice(0, 300) }));
     exposure.release(quoteId);
     reject(metrics, "sign-failed");
     return { status: 503, json: { error: "sign-failed" } };
@@ -285,8 +286,9 @@ export async function handleQuote(
   const signed = await reserveAndSign(deps, v, p, admission.account.userId);
   if ("status" in signed) return signed;
   const { quote, sig } = signed;
+  const record = toQuoteRecord(deps, p, quote, sig);
   try {
-    await deps.recordQuote(toQuoteRecord(deps, p, quote, sig));
+    await deps.recordQuote(record);
   } catch (err) {
     console.error(new Date().toISOString(), "quote journal append failed", (err as Error).message);
     exposure.release(quote.quoteId);
