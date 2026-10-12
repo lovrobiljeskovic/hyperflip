@@ -40,28 +40,15 @@ import {
 const STATUS_PENDING = 0;
 /** How long to wait for a submitted attest()/settle() tx to mine before treating it as failed. */
 const RECEIPT_TIMEOUT_MS = 60_000;
-/** Ambient balance-sample history kept per vault, in ticks — comfortably longer than
- * watchContractEvent's ~4s default poll interval, so a sample provably pre-dating a just-detected
- * OpQueued block is almost always already in hand. See sampleBefore. */
+/** Ambient samples kept per vault, in ticks: longer than the ~4s event poll so a pre-op sample is usually in hand. */
 const HISTORY_LIMIT = 20;
-/** The provenance check compares a sample's `readAt` (keeper wall clock) against an OpQueued
- * block's chain timestamp. If the keeper's clock runs behind chain time, `readAt` under-reports
- * how late a sample actually was taken, which could make a post-execution sample look "provably
- * pre-op". Subtracting this margin from the cutoff before comparing assumes the keeper clock is
- * never behind by more than this much. */
+/** Keeper clock behind chain time makes a post-op sample look pre-op; assumes skew ≤ this. */
 const CLOCK_SKEW_MARGIN_MS = 2_000;
-/** How far past a market's registry expiry a vault may sit unsettled before the keeper alerts.
- * Core needs some time to move a market from active to settled, so this is deliberately loose —
- * it is a "nobody is settling this" tripwire, not a deadline. It exists because a keeper that is
- * dead, misconfigured, or watching the wrong vault list looks exactly like a healthy one from the
- * outside; that silence is what let the 8/19 vaults expire, prune, and strand unnoticed. */
+/** Unsettled this long past registry expiry raises an alert: a loose tripwire, not a deadline. */
 const SETTLEMENT_STALE_AFTER_MS = 15 * 60_000;
-/** A qualifying sample must also be no older than this relative to the (skew-adjusted) cutoff, so
- * a stalled sampler can't serve an arbitrarily old balance as a confident pre-op baseline; falls
- * through to the unconfident/fallback path instead. */
+/** A stalled sampler must not serve an old balance as a confident baseline. */
 const MAX_SAMPLE_AGE_MS = 60_000;
-/** The Elysium settlement path (src/SettlementRelay.sol, src/OutcomeLeg.sol): three calls, so the
- * ABIs live here rather than in the generated set (see scripts/abis.mjs). */
+/** Elysium settlement path (src/SettlementRelay.sol, src/OutcomeLeg.sol): three calls, hand-written, not generated. */
 const settlementRelayAbi = parseAbi([
   "function relay(address vault, address leg, uint256 maxSubmissionCost, uint256 gasLimit, uint256 maxFeePerGas) payable returns (uint256)",
 ]);
@@ -81,24 +68,15 @@ interface PendingOp {
   weiAmount: bigint;
   baseline: bigint | null;
   firstSeenAt: number;
-  /** true only when `baseline` is PROVABLY pre-execution: a rolling ambient sample read strictly
-   * before the OpQueued block's own timestamp (Core cannot execute an action before the block
-   * containing it exists — see resolveLiveBaseline/sampleBefore). false whenever that can't be
-   * established — a rebuilt op after restart, or a live op with no qualifying ambient sample yet
-   * (e.g. right after startup) falls back to a best-effort read that is NOT provably pre-op. */
+  /** true only when `baseline` was sampled before the OpQueued block, so it is provably pre-execution. */
   confidentBaseline: boolean;
   /** Suppresses repeat alerts once a low-confidence op has already been flagged as held. */
   holdAlerted: boolean;
 }
 
-
 export async function runKeeper(config: KeeperConfig): Promise<void> {
   const account = privateKeyToAccount(config.keeperPrivateKey);
-  // TESTNET_RPC takes a comma-separated list; viem's fallback tries them in order. The primary
-  // endpoint is a free public service with no SLA, and an unusable RPC is exactly what stranded
-  // the 8/19 vaults, so a second one costs nothing to keep behind it. Note the whole list must
-  // serve the 0x814 and 0x801 precompiles (0x801 with outcome-encoded asset ids is the
-  // balance-verification path) — see keeper/rpc-check.ts.
+  // Every URL must serve 0x814 and 0x801 — see rpc-check.ts.
   const urls = rpcUrls(config.rpcUrl);
   const chain = defineChain({
     id: config.coreChainId,
@@ -106,9 +84,6 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     nativeCurrency: { name: "HYPE", symbol: "HYPE", decimals: 18 },
     rpcUrls: { default: { http: urls } },
   });
-  // viem's fallback() forces retryCount 0 on each inner http() and retries the whole
-  // chain itself (default 3 tries, 150ms exponential), so per-URL retry options were
-  // dead config: a 429 on one URL falls through to the next, then the set is retried.
   const transport = fallback(urls.map((u) => http(u)));
   const publicClient = createPublicClient({ chain, transport });
   // With the ParlayVault on Elysium, the manifest is verified against the Elysium RPC and this
@@ -122,18 +97,12 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     await verifyDeploymentRpc(elysiumClient!, config);
   }
   const walletClient = createWalletClient({ account, chain, transport });
-  // attest() (balanceLoop) and settle() (settlementLoop) both send from `account` with no
-  // explicit nonce; serializing the send through this queue is what stops the two loops racing
-  // viem's nonce derivation. See createSerializer for why only the send is wrapped, not the
-  // receipt wait.
+  // Both loops send from one account with no explicit nonce; serialize the send, not the receipt wait.
   const sendTx = createSerializer();
 
   const vaultInfo = new Map<Address, VaultInfo>();
   const pendingOps = new Map<Address, PendingOp>();
-  // Settlement fractions observed pre-prune. Persisted, because Core prunes within ~10 minutes
-  // and the pruned relay path can only replay a fraction this keeper saw at status 2 — a restart
-  // inside that window used to destroy the only number that could still settle the vault. Keys
-  // are lowercased vault addresses (see encodeFractionCache).
+  // Persisted: Core prunes within ~10 min and the pruned path can only replay a fraction seen at status 2.
   const lastKnownFraction = loadFractionCache(config.settlementCachePath);
   if (lastKnownFraction.size > 0) log("loaded settlement cache", lastKnownFraction.size, "entries");
 
@@ -196,10 +165,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     log("tracking op", vault, opId.toString(), opType === 0 ? "Split" : "Merge", "confident:", confidentBaseline);
   }
 
-  /** Resolves a baseline for a live-detected op from the rolling ambient sample history (remedy
-   * for the timing race: a synchronous read at detection time can already be post-execution,
-   * since Core may execute before the watcher even notices the log). Falls back to a best-effort
-   * immediate read — explicitly marked NOT confident — only when no provable sample exists yet. */
+  /** A read at detection time can already be post-execution, so only a pre-block sample is confident. */
   async function resolveLiveBaseline(vault: Address, blockNumber: bigint): Promise<{ baseline: bigint | null; confident: boolean }> {
     try {
       const block = await publicClient.getBlock({ blockNumber });
@@ -230,9 +196,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     track(vault, opId, opType, weiAmount, info, null, false); // rebuilt: no provable pre-op baseline exists
   }
 
-  // Stateless rebuild: the vault allows at most one open op at a time (_requireIdle), so its own
-  // pendingDeposit/pendingRedeem state on-chain IS the pending-op set on restart — no OpQueued
-  // log replay needed. (See balanceLoop for how a rebuilt op's uncertain baseline is handled.)
+  /** _requireIdle allows one open op per vault, so on-chain pendingDeposit/pendingRedeem is the pending set on restart. */
   async function seedPendingOps(vault: Address): Promise<void> {
     const info = vaultInfo.get(vault)!;
     const [depUser, depAmount, depOpId] = await readVault<[Address, bigint, bigint, bigint]>(vault, "pendingDeposit");
@@ -271,9 +235,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     });
   }
 
-  /** Submits attest(), waits for it to mine, and reports whether it actually landed. Returning
-   * false (rather than swallowing every error) lets balanceLoop keep retrying instead of
-   * abandoning the op — a transient RPC/nonce/gas error must not silently drop tracking. */
+  /** Reports whether attest() landed; false keeps the op tracked so a transient error cannot drop it. */
   async function attest(vault: Address, opId: bigint, executed: boolean): Promise<boolean> {
     const info = vaultInfo.get(vault)!;
     const key = opKey(vault, opId);
@@ -298,8 +260,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     } catch (err) {
       const msg = (err as Error).message;
       if (msg.includes("ALREADY_ATTESTED")) {
-        // A verdict is already recorded on-chain (this keeper's own earlier attempt, or a race)
-        // — nothing left for local retry to do, whatever that verdict was.
+        // A verdict is already on-chain, whatever it was; local retry has nothing left to do.
         alert("already attested (prior attempt or race) — dropping local tracking", vault, opId.toString());
         return true;
       }
@@ -308,19 +269,13 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     }
   }
 
-  // Balance-verification loop. Also doubles as the ambient sampler: every tick it reads and
-  // records each vault's yes-coin balance regardless of whether an op is pending, so
-  // resolveLiveBaseline almost always has a provably pre-execution sample in hand the moment an
-  // OpQueued log is noticed. Only ops with confidentBaseline may reach attest(executed=false) on
-  // timeout — see the failed-attestation-rule comment below; everything else times out to "hold".
+  // Balance-verification loop; doubles as the ambient sampler so a pre-op sample exists before OpQueued is noticed.
   // ponytail: a held op (no confident baseline ever established, e.g. a rebuilt op) stays pending
   // forever if it truly dropped on Core — recovery is manual/owner-driven (setVerifier), same as
   // any other case this design defers to the owner rather than trusting elapsed time.
   // Consecutive failed balance-read samples per vault — throttles the alert, nothing else.
   const sampleFailures = new Map<string, number>();
-  // Vaults settlementLoop has seen settled on-chain. split/merge revert with SETTLED there, so no
-  // op can ever be pending, and 0x801 throws for a pruned outcome coin — sampling a settled vault
-  // is one guaranteed "balance sample failed" alert per minute per vault, forever.
+  // Vaults seen settled: no op can be pending and 0x801 throws on the pruned coin, so they are not sampled.
   const settledVaults = new Set<Address>();
 
   async function balanceLoop(): Promise<void> {
@@ -384,13 +339,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
           continue;
         }
         if (verdict === "attest-false") {
-          // Failed-attestation rule: attest executed=false only on positive evidence of a
-          // dropped op if such evidence exists. Core gives none — a rejected split/merge is
-          // silent (docs/spike-findings.md step 5: oversized send rejected with no error, no event, no
-          // balance change). So a generous no-delta timeout is KEEPER-SIDE POLICY, not something
-          // the chain trusts: it only decides which verdict this keeper attests, never proves
-          // anything on its own. If the keeper is wrong here the owner can always swap it out via
-          // OutcomeVault.setVerifier — that recovery path, not this timeout, is the trust anchor.
+          // Keeper-side policy: Core gives no signal for a dropped op; the owner's setVerifier is the trust anchor, not this timeout.
           alert("balance timeout with no delta, attesting executed=false", vault, op.opId.toString());
         }
         if (await attest(vault, op.opId, verdict === "attest-true")) pendingOps.delete(vault);
@@ -400,8 +349,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     }
   }
 
-  /** Submits settle() and waits for it to mine before returning, so settlementLoop's next tick
-   * for this vault can't fire a duplicate while the first is still in flight. */
+  /** Waits for the receipt so the next tick cannot send a duplicate settle() while one is in flight. */
   async function settle(vault: Address, fractionWad: bigint): Promise<void> {
     try {
       const hash = await sendTx(() =>
@@ -427,11 +375,9 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     }
   }
 
-  // Elysium legs: once the 998 vault holds its fraction, anyone can pay the retryable that carries
-  // it up; this keeper is the one that does. relay() reads the fraction on-chain, so a wrong send
-  // costs fees only, and the leg rejects a second delivery — hence the hold window, not a lock.
   const relaySentAt = new Map<Address, number>();
   const relayedLegs = new Set<Address>();
+  /** relay() reads the fraction on-chain and the leg rejects a second delivery, so a stray send costs fees only. */
   async function relayIfNeeded(vault: Address): Promise<void> {
     const leg = config.legs.get(vault.toLowerCase());
     if (!leg || !elysiumClient || !config.settlementRelay || relayedLegs.has(leg)) return;
@@ -442,9 +388,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
       return;
     }
     if (!shouldRelay(legSettled, relaySentAt.get(leg), Date.now())) return;
-    // 998 gas price is basefee plus a tip, so it is at or above the basefee the Inbox will
-    // charge against; quoting the Inbox view with basefee 0 returned 0 and reverted every relay
-    // (2026-09-25, Gotchas).
+    // 998 gas price (basefee + tip) covers the basefee the Inbox charges; a basefee-0 quote reverts every relay.
     const [l1GasPrice, l2GasPrice] = await Promise.all([publicClient.getGasPrice(), elysiumClient.getGasPrice()]);
     const fees = relayFees(l1GasPrice, l2GasPrice);
     relaySentAt.set(leg, Date.now());
@@ -468,10 +412,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     log("relay confirmed", vault, leg, hash);
   }
 
-  // Settlement watcher: 0x814 status 2 (settled) is trustlessly relayable by anyone, and settle()
-  // ignores our fractionWad there. Status 3 (pruned) is the keeper-relay path — Core prunes fast
-  // (docs/spike-findings.md: 2->3 observed within ~10 minutes), so this crank must fire promptly on status 2,
-  // and cache the fraction in case the tx lands after pruning flips status to 3.
+  // Status 2 is relayable by anyone and settle() ignores our fraction; status 3 needs the cached fraction — see src/CoreConstants.sol.
   async function settlementLoop(): Promise<void> {
     for (const vault of config.vaultAddresses) {
       const info = vaultInfo.get(vault)!;
@@ -483,9 +424,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
           await relayIfNeeded(vault);
           continue;
         }
-        // Staleness tripwire. Fires regardless of WHY nothing settled — dead keeper, wrong vault
-        // list, RPC down, Core never settling — which is the point: the failure that stranded the
-        // 8/19 vaults was silence, and every cause of silence looks identical from outside.
+        // Staleness tripwire: fires on silence from any cause.
         const expiryMs = config.marketExpiries.get(vault.toLowerCase());
         if (expiryMs !== undefined && Date.now() > expiryMs + SETTLEMENT_STALE_AFTER_MS && !staleAlerted.has(vault)) {
           alert(
@@ -504,8 +443,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
             continue;
           }
           const fractionWad = fractionWadFromSettledValue(settledValue);
-          // Persist BEFORE sending: if settle() fails or this process dies mid-flight, the
-          // fraction has to outlive the attempt or the prune strands the vault for good.
+          // Persist before sending: a crash mid-flight must not lose the only fraction that can still settle.
           rememberFraction(vault, fractionWad);
           log("settling (settled, pre-prune)", vault, fractionWad.toString());
           await settle(vault, fractionWad);

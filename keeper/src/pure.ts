@@ -1,9 +1,9 @@
 import { encodeAbiParameters, isAddress, keccak256, type Address, type Hex } from "viem";
 
 /** CoreConstants.OUTCOME_WEI_PER_SHARE — outcome wei is 5-decimal. */
-export const OUTCOME_WEI_PER_SHARE = 100_000n;
+const OUTCOME_WEI_PER_SHARE = 100_000n;
 /** CoreConstants.SETTLED_VALUE_ONE — settledValue scale (1e8 = fraction 1.0). */
-export const SETTLED_VALUE_ONE = 100_000_000n;
+const SETTLED_VALUE_ONE = 100_000_000n;
 export const WAD = 1_000_000_000_000_000_000n;
 
 /** opKey = keccak256(abi.encode(vaultAddress, opId)) — KeeperVerifier.sol /
@@ -38,11 +38,7 @@ export function deltaMatches(baseline: bigint, current: bigint, opType: OpType, 
 
 export type BalanceVerdict = "attest-true" | "attest-false" | "hold" | "wait";
 
-/** Pure decision for one balanceLoop tick. CRITICAL invariant: "attest-false" is only ever
- * returned when `confidentBaseline` is true — a low-confidence baseline (a rebuilt op whose
- * pre-execution status is unknown, see keeper.ts track()) is not positive evidence of a drop, so
- * a timeout there can only "hold" (keep waiting, alert once) rather than guess. See keeper.ts
- * balanceLoop for the failed-attestation-rule rationale behind "attest-false" itself. */
+/** CRITICAL: "attest-false" only with a confident baseline; an unconfident timeout can only "hold". */
 export function resolveBalanceCheck(
   baseline: bigint,
   current: bigint,
@@ -62,21 +58,9 @@ export interface BalanceSample {
   balance: bigint;
 }
 
-/** Newest sample read at or before `beforeMs` (a block timestamp in ms), within `maxAgeMs` of it.
- * Core cannot have executed an action before the block containing it exists, so a sample whose
- * read time predates that block's own timestamp is provably pre-execution — independent of any
- * assumption about Core's actual processing latency. This is the crux of the live-baseline fix in
- * keeper.ts (resolveLiveBaseline): picking the wrong sample here silently reintroduces the race it
- * fixes.
- *
- * `marginMs` (default 0) is subtracted from `beforeMs` before comparing: `readAt` is the keeper's
- * own wall clock (Date.now()) while `beforeMs` derives from a chain block timestamp, and a keeper
- * clock running behind chain time would under-report `readAt`, making a post-execution sample look
- * falsely pre-op. The margin assumes the keeper clock cannot be behind by more than that much.
- *
- * `maxAgeMs` (default Infinity) additionally requires `readAt >= cutoff - maxAgeMs`: without it a
- * stalled sampler's arbitrarily old sample could still "qualify" as pre-op and serve as a baseline
- * nobody actually vouches for as current. */
+/** Newest sample read at or before `beforeMs` (a block timestamp): Core cannot execute an action before
+ * its block exists, so such a sample is provably pre-op. `marginMs` absorbs keeper clock running behind
+ * chain time; `maxAgeMs` stops a stalled sampler's old sample from qualifying. */
 export function newestSampleBefore(
   samples: readonly BalanceSample[],
   beforeMs: number,
@@ -97,14 +81,7 @@ export function fractionWadFromSettledValue(settledValue: bigint): bigint {
   return (settledValue * WAD) / SETTLED_VALUE_ONE;
 }
 
-/** Serialization for the settlement-fraction cache (see keeper.ts settlementLoop).
- *
- * Core prunes a settled outcome within ~10 minutes, and the pruned relay path can only replay a
- * fraction this keeper observed while status was still 2. Holding that only in memory means any
- * restart inside the window — a crash, a redeploy, a supervisor bounce — destroys the one number
- * that can still settle the vault, and recovery drops to manual. That is exactly what stranded
- * the 8/19 vaults on Aug 20. JSON keeps bigints as strings; vault keys are lowercased so a
- * checksum-case config change cannot orphan an entry. */
+/** JSON with bigint strings; vault keys lowercased so checksum-case config churn cannot orphan an entry. */
 export function encodeFractionCache(cache: ReadonlyMap<string, bigint>): string {
   return JSON.stringify(Object.fromEntries([...cache].map(([v, f]) => [v.toLowerCase(), f.toString()])));
 }
@@ -125,14 +102,8 @@ export function decodeFractionCache(json: string): Map<string, bigint> {
   } catch { throw new Error("Invalid settlement cache; preserve and repair it before restarting"); }
 }
 
-/** Serializes async calls through a promise chain: each call waits for the previous one to
- * settle (success or failure) before starting. keeper.ts uses one shared instance to wrap every
- * walletClient.writeContract call — attest() (balanceLoop) and settle() (settlementLoop) send
- * from the same account with no explicit nonce, so viem derives the nonce at send time from the
- * account's pending tx count; two concurrent sends would race that derivation and collide on the
- * same nonce. Only wrap the send itself (through the point a hash comes back), not any
- * subsequent receipt wait — the nonce is consumed once the node accepts the tx into its pool, and
- * holding the queue through a ~60s receipt wait would stall the other loop for no reason. */
+/** Runs async calls one at a time. Wrap only the send: viem derives the nonce at send time, so concurrent
+ * sends from one account collide, but holding the queue through a receipt wait would stall the other loop. */
 export function createSerializer(): <T>(fn: () => Promise<T>) => Promise<T> {
   let tail: Promise<unknown> = Promise.resolve();
   return function sendTx<T>(fn: () => Promise<T>): Promise<T> {
@@ -145,16 +116,7 @@ export function createSerializer(): <T>(fn: () => Promise<T>) => Promise<T> {
   };
 }
 
-/** Markets out of registry/markets.json (the file the writer serves at GET /markets).
- *
- * The keeper and the writer used to keep separate market lists — VAULT_ADDRESSES env here,
- * MARKETS_FILE there — agreeing only by hand. Adding a vault to the registry and forgetting the
- * env made the writer quote a market the keeper would never settle, which surfaces only at
- * expiry, as a stranded vault. One source of truth removes the failure mode.
- *
- * `expiryMs` is optional, matching the writer's own parseMarkets: a market without it simply
- * gets no staleness check. Everything else throws, because a keeper booted against a bad
- * registry must fail loudly rather than silently watch a shorter list than the writer quotes. */
+/** The writer's registry is the keeper's vault list — one source of truth; malformed input throws. */
 export function parseRegistryMarkets(json: string): { vault: Address; leg?: Address; expiryMs?: number }[] {
   const parsed = JSON.parse(json) as { markets?: { vault?: string; sourceVault?: unknown; expiryMs?: unknown }[] };
   if (!Array.isArray(parsed.markets)) throw new Error("registry has no markets array");
