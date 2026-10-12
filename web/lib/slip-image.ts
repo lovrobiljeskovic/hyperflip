@@ -5,7 +5,7 @@ type SlipImageInput = { legs: Pick<BuilderLeg, "isYes" | "title" | "label" | "gr
 
 const W = 1080;
 const PAD = 72;
-const ROW = 92;
+const ROW = 112;
 const SCALE = 2;
 const C = { ink: "#0d0f0c", panel: "#151912", line: "#30362b", fg: "#f1f4eb", dim: "#9ca592", accent: "#c8f36a", yes: "#44d17a", no: "#ff5d6c" };
 
@@ -76,27 +76,6 @@ export async function renderSlipPng(slip: SlipImageInput): Promise<Blob> {
   ctx.fillStyle = C.dim;
   ctx.fillText("All legs must hit.", PAD, y);
 
-  // Stamp, rotated, top right.
-  ctx.save();
-  ctx.translate(W - PAD - 120, card.y + 190);
-  ctx.rotate((-9 * Math.PI) / 180);
-  ctx.font = `500 30px ${f.mono}`;
-  ctx.letterSpacing = "7px";
-  const sw = ctx.measureText("MINTED").width + 44;
-  ctx.beginPath();
-  ctx.roundRect(-sw / 2, -32, sw, 64, 10);
-  ctx.lineWidth = 5;
-  ctx.strokeStyle = C.accent;
-  ctx.stroke();
-  ctx.fillStyle = C.accent;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText("MINTED", 3, 2);
-  ctx.restore();
-  ctx.letterSpacing = "0px";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "alphabetic";
-
   // Legs.
   y += 52;
   for (const leg of slip.legs) {
@@ -107,10 +86,11 @@ export async function renderSlipPng(slip: SlipImageInput): Promise<Blob> {
     const label = leg.label ?? (leg.isYes ? "YES" : "NO");
     ctx.font = `500 24px ${f.mono}`;
     ctx.fillStyle = leg.isYes ? C.yes : C.no;
-    ctx.fillText(ellipsis(ctx, leg.group ? label : label.toUpperCase(), 150), PAD, y + ROW / 2 + 9);
+    // Pick over match name, each on its own line so neither is cut.
+    ctx.fillText(leg.group ? label : label.toUpperCase(), PAD, y + 44);
     ctx.font = `400 28px ${f.sans}`;
-    ctx.fillStyle = C.fg;
-    ctx.fillText(ellipsis(ctx, leg.title, card.w - PAD * 2 - 180), PAD + 180, y + ROW / 2 + 10);
+    ctx.fillStyle = C.dim;
+    ctx.fillText(ellipsis(ctx, leg.title, card.w - PAD * 2), PAD, y + 84);
     y += ROW;
   }
   ctx.fillStyle = C.line;

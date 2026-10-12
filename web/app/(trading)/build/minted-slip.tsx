@@ -67,17 +67,16 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
           <DialogTitle className="display mt-6 text-[34px] font-normal leading-none [font-variation-settings:'wght'_700] tracking-[-0.03em]">
             {legs.length} leg combo
           </DialogTitle>
-          <DialogDescription className="mono mt-2 text-[11px] text-dim">{slip.id ? `Ticket #${slip.id} · ` : ""}settles after the last leg · payout escrowed on-chain</DialogDescription>
-          <span aria-hidden className="minted-stamp mono">Minted</span>
+          <DialogDescription className="mono mt-2 text-[11px] text-dim">All legs must hit.</DialogDescription>
         </div>
 
         <ul className="mt-5 flex flex-col gap-px bg-line">
           {legs.map((leg) => (
-            <li key={leg.vault} className="flex items-center gap-3 bg-ink px-6 py-3">
-              <span className={`mono max-w-32 shrink-0 truncate text-[11px] ${leg.group ? "" : "uppercase"} ${leg.isYes ? "text-yes" : "text-no"}`}>
+            <li key={leg.vault} className="flex flex-col gap-0.5 bg-ink px-6 py-3">
+              <span className={`mono text-[11px] ${leg.group ? "" : "uppercase"} ${leg.isYes ? "text-yes" : "text-no"}`}>
                 {leg.label ?? (leg.isYes ? "YES" : "NO")}
               </span>
-              <span className="min-w-0 flex-1 truncate">{leg.title}</span>
+              <span className="text-dim">{leg.title}</span>
             </li>
           ))}
         </ul>
@@ -114,7 +113,6 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
             {copied ? "Copied" : "Copy image"}
           </Button>
           {imageError && <p className="mono mt-2 text-center text-[11px] text-no">Could not render the image in this browser.</p>}
-          <Button variant="ghost" size="sm" onClick={onClose} className="mono mt-2 w-full text-[11px] text-dim">Done</Button>
         </div>
       </div>
       </DialogContent>
