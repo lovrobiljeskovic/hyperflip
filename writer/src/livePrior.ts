@@ -41,9 +41,6 @@ export interface LivePriorOpts {
   jumpWad: bigint;
   suspendMs: number;
   log?: (msg: Record<string, unknown>) => void;
-  gammaUrl?: string;
-  clobUrl?: string;
-  espnUrl?: string;
   /** Mainnet info API; unset disables the mainnet source. */
   mainnetInfoUrl?: string;
 }
@@ -153,15 +150,20 @@ export class LivePrior {
   private states = new Map<string, State>(); // by lowercase vault
   private byCoin = new Map<string, { vault: string; isYes: boolean }>();
   private markets: MarketInfo[] = [];
-  private gamma: string;
-  private clob: string;
-  private espn: string;
+  private registry = new Map<string, { wad: bigint; startMs?: number }>(); // by coin
+  private yesCoin = new Map<string, string>(); // lowercase vault -> coinYes, every market
+  private gamma = "https://gamma-api.polymarket.com";
+  private clob = "https://clob.polymarket.com";
+  private espn = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard";
 
   constructor(private opts: LivePriorOpts) {
-    this.gamma = opts.gammaUrl ?? "https://gamma-api.polymarket.com";
-    this.clob = opts.clobUrl ?? "https://clob.polymarket.com";
-    this.espn = opts.espnUrl ?? "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard";
     for (const m of opts.markets) {
+      this.yesCoin.set(m.vault.toLowerCase(), m.coinYes);
+      if (m.priorYes !== undefined) {
+        const yes = toWad(m.priorYes);
+        this.registry.set(m.coinYes, { wad: yes, startMs: m.startMs });
+        this.registry.set(m.coinNo, { wad: WAD - yes, startMs: m.startMs });
+      }
       // ponytail: NFL game winners (all three feeds) and soccer 3-way question members
       // (Polymarket only). Other question members (tournament winners) are not games.
       const nfl = m.question === undefined && !!m.sideYes && !!m.sideNo && m.sport?.toLowerCase() === "american football";
@@ -174,23 +176,28 @@ export class LivePrior {
     }
   }
 
-  /** Fresh, unsuspended live P(coin) or undefined. */
+  /** Fresh, unsuspended live P(coin); else the registry prior, pregame only. In play with no
+   * fresh sample (or final) the leg is unpriced, and /markets says so, or the app keeps
+   * showing a settled game at its pregame line. */
   prior(coin: string): bigint | undefined {
     const ref = this.byCoin.get(coin);
-    if (!ref) return undefined;
-    const s = this.states.get(ref.vault)!;
-    const now = this.opts.now();
-    if (!s.sample || s.final || now < s.suspendedUntil || now - s.sample.atMs > this.opts.staleMs) return undefined;
-    return ref.isYes ? s.sample.yesWad : WAD - s.sample.yesWad;
+    if (ref) {
+      const s = this.states.get(ref.vault)!;
+      const now = this.opts.now();
+      if (s.sample && !s.final && now >= s.suspendedUntil && now - s.sample.atMs <= this.opts.staleMs) {
+        return ref.isYes ? s.sample.yesWad : WAD - s.sample.yesWad;
+      }
+    }
+    const r = this.registry.get(coin);
+    return r && (r.startMs === undefined || this.opts.now() < r.startMs) ? r.wad : undefined;
   }
 
-  /** P(YES) as a number for the /markets overlay, or undefined. */
-  priorYes(vault: string): number | undefined {
-    const s = this.states.get(vault.toLowerCase());
-    const m = this.markets.find((x) => x.vault.toLowerCase() === vault.toLowerCase());
-    if (!s || !m) return undefined;
-    const wad = this.prior(m.coinYes);
-    return wad === undefined ? undefined : Number(wad / 10n ** 12n) / 1e6;
+  /** P(YES) as a number for the /markets overlay; null = no price, undefined = unknown vault. */
+  priorYes(vault: string): number | null | undefined {
+    const coin = this.yesCoin.get(vault.toLowerCase());
+    if (coin === undefined) return undefined;
+    const wad = this.prior(coin);
+    return wad === undefined ? null : Number(wad / 10n ** 12n) / 1e6;
   }
 
   /** /health view: one row per live-tracked market. */

@@ -4,7 +4,7 @@ import { QuoteJournal } from "./journal.js";
 import { createPublicClient, createWalletClient, erc20Abi, fallback, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { parlayVaultAbi } from "./abi.js";
-import { loadConfig, syncedPerCodeReservedCap } from "./config.js";
+import { defaultPerCodeReservedCap, loadConfig, type WriterConfig } from "./config.js";
 import { ExposureBook } from "./exposure.js";
 import { fetchBestAskWad } from "./infoApi.js";
 import { buildPriceFreshness, makeLegPriceFetcher, readSpotPxWad } from "./spotPx.js";
@@ -21,15 +21,15 @@ import { privyAuthenticator } from "./auth.js";
 const RECEIPT_TIMEOUT_MS = 60_000;
 
 async function main(): Promise<void> {
-  const cfg = loadConfig();
-  const journal = new QuoteJournal(cfg.quoteJournalFile);
-  const rpcUrls = cfg.rpcUrl.split(",").map((u) => u.trim()).filter(Boolean);
+  const loaded = loadConfig();
+  const journal = new QuoteJournal(loaded.quoteJournalFile);
+  const rpcUrls = loaded.rpcUrl.split(",").map((u) => u.trim()).filter(Boolean);
   const transport = fallback(rpcUrls.map((u) => http(u)));
   const publicClient = createPublicClient({ transport });
-  await verifyDeploymentRpc(publicClient, cfg);
-  const chainId = cfg.chainId;
+  await verifyDeploymentRpc(publicClient, loaded);
+  const chainId = loaded.chainId;
   const usdcAddress = (await publicClient.readContract({
-    address: cfg.parlayVault,
+    address: loaded.parlayVault,
     abi: parlayVaultAbi,
     functionName: "usdc",
   })) as `0x${string}`;
@@ -39,28 +39,26 @@ async function main(): Promise<void> {
 
   const chainMinPremiumBps = BigInt(
     (await publicClient.readContract({
-      address: cfg.parlayVault,
+      address: loaded.parlayVault,
       abi: parlayVaultAbi,
       functionName: "minPremiumBps",
     })) as number,
   );
-  if (chainMinPremiumBps !== cfg.minPremiumBps) {
+  if (chainMinPremiumBps !== loaded.minPremiumBps) {
     console.log(
       JSON.stringify({
         at: new Date().toISOString(),
         event: "minpremiumbps-env-mismatch",
-        env: cfg.minPremiumBps.toString(),
+        env: loaded.minPremiumBps.toString(),
         chain: chainMinPremiumBps.toString(),
       }),
     );
   }
-  cfg.perCodeReservedCap = syncedPerCodeReservedCap(
-    !!process.env.PER_CODE_RESERVED_CAP,
-    cfg.perCodeReservedCap,
-    cfg.maxStake,
-    chainMinPremiumBps,
-  );
-  cfg.minPremiumBps = chainMinPremiumBps;
+  const cfg: WriterConfig = {
+    ...loaded,
+    perCodeReservedCap: loaded.perCodeReservedCap ?? defaultPerCodeReservedCap(loaded.maxStake, chainMinPremiumBps),
+    minPremiumBps: chainMinPremiumBps,
+  };
 
   const pokerAccount = privateKeyToAccount(cfg.pokerKey);
   const walletClient = createWalletClient({ account: pokerAccount, transport });
@@ -81,26 +79,10 @@ async function main(): Promise<void> {
     mainnetInfoUrl: cfg.mainnetInfoUrl,
     log: (msg) => console.log(JSON.stringify({ at: new Date().toISOString(), ...msg })),
   });
-  const priorByCoin = new Map<string, { wad: bigint; startMs?: number }>();
-  for (const m of cfg.markets.values()) {
-    if (m.priorYes === undefined) continue;
-    const yesWad = BigInt(Math.round(m.priorYes * 1e6)) * 10n ** 12n;
-    priorByCoin.set(m.coinYes, { wad: yesWad, startMs: m.startMs });
-    priorByCoin.set(m.coinNo, { wad: WAD - yesWad, startMs: m.startMs });
-  }
-  // Live feed first; the registry prior only pregame. In play with no fresh sample
-  // (or final) the leg is unpriced - and /markets says so, or the app keeps showing
-  // a settled game at its pregame line.
-  const prior = (coin: string): bigint | undefined => {
-    const live = livePrior.prior(coin);
-    if (live !== undefined) return live;
-    const p = priorByCoin.get(coin);
-    return p && (p.startMs === undefined || Date.now() < p.startMs) ? p.wad : undefined;
-  };
   const legPriceFetcher = makeLegPriceFetcher({
     fetchBook: (coin) => fetchBestAskWad(cfg.infoApiUrl, coin, cfg.minBookDepthWad),
     readSpotPx: (coin) => readSpotPxWad(publicClient, BigInt(coin.slice(1))),
-    prior,
+    prior: (coin) => livePrior.prior(coin),
     staleMs: cfg.spotPxStaleMs,
     now: () => Date.now(),
     onBookError: (coin, err) =>
@@ -149,12 +131,7 @@ async function main(): Promise<void> {
     authenticate: cfg.privyAppId && cfg.privyAppSecret ? privyAuthenticator(cfg.privyAppId, cfg.privyAppSecret) : undefined,
     quoteLimiter: new RateLimiter(300, 60 * 60 * 1000),
     parlaysOf: (taker) => poker.parlaysOf(taker),
-    livePriorYes: (vault) => {
-      const m = cfg.markets.get(vault.toLowerCase());
-      if (!m) return undefined;
-      const wad = prior(m.coinYes);
-      return wad === undefined ? null : Number(wad / 10n ** 12n) / 1e6;
-    },
+    livePriorYes: (vault) => livePrior.priorYes(vault),
   };
   if (!cfg.resendApiKey) {
     console.warn(JSON.stringify({ event: "admission-email-disabled", reason: "RESEND_API_KEY unset" }));

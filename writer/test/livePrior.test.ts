@@ -374,3 +374,14 @@ test("pmQuestionToken: a label inside the opponent's Polymarket name is ambiguou
   assert.equal(pmQuestionToken([ev], { ...row, title: "Barcelona" })?.token, `${DERBY}-away`);
   assert.equal(pmQuestionToken([ev], { ...row, title: "Espanyol" })?.token, `${DERBY}-home`);
 });
+
+test("no live sample: registry prior prices both coins pregame only; priorYes says null in play, undefined for an unknown vault", () => {
+  const h = harness({});
+  assert.equal(h.live.prior(MARKET.coinYes), undefined, "in play, no sample");
+  assert.equal(h.live.priorYes(V), null);
+  h.advance(-120_000); // before kickoff
+  assert.equal(h.live.prior(MARKET.coinYes), toWad(0.5635));
+  assert.equal(h.live.prior(MARKET.coinNo), WAD - toWad(0.5635));
+  assert.equal(h.live.priorYes(V), 0.5635);
+  assert.equal(h.live.priorYes("0x3333333333333333333333333333333333333333"), undefined);
+});

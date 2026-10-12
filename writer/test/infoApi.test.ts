@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bestAskWad, fetchBestAskWad } from "../src/infoApi.js";
+import { bestAsk, fetchBestAskWad } from "../src/infoApi.js";
 import { parseDecimalToUnits } from "../src/pure.js";
 
 const DEPTH_10 = parseDecimalToUnits("10", 18);
@@ -26,12 +26,12 @@ test("bestAskWad takes first ask level px as WAD when it alone covers minDepthWa
       [{ px: "0.65", sz: "50", n: 1 }],
     ],
   };
-  assert.equal(bestAskWad(book, DEPTH_10), 650_000_000_000_000_000n);
+  assert.equal(bestAsk(book, DEPTH_10)?.priceWad ?? null, 650_000_000_000_000_000n);
 });
 
 test("bestAskWad returns null on empty ask side", () => {
-  assert.equal(bestAskWad({ levels: [[{ px: "0.6", sz: "1", n: 1 }], []] }, DEPTH_10), null);
-  assert.equal(bestAskWad({}, DEPTH_10), null);
+  assert.equal(bestAsk({ levels: [[{ px: "0.6", sz: "1", n: 1 }], []] }, DEPTH_10)?.priceWad ?? null, null);
+  assert.equal(bestAsk({}, DEPTH_10)?.priceWad ?? null, null);
 });
 
 test("bestAskWad ignores a spoofed 1-lot top and volume-weights across the depth-covering level", () => {
@@ -48,7 +48,7 @@ test("bestAskWad ignores a spoofed 1-lot top and volume-weights across the depth
   };
   // vwap = (0.50*1 + 0.70*99) / 100 = 69.8 / 100 = 0.698, which is worse (higher)
   // than the spoofed best ask of 0.50, so that's the price used.
-  assert.equal(bestAskWad(book, DEPTH_10), 698_000_000_000_000_000n);
+  assert.equal(bestAsk(book, DEPTH_10)?.priceWad ?? null, 698_000_000_000_000_000n);
 });
 
 test("price metadata: a depth-covering book preserves cumulative depth, VWAP, source, and observation time", async (t) => {
@@ -78,10 +78,10 @@ test("bestAskWad returns null when the book never reaches minDepthWad — too th
       ],
     ],
   };
-  assert.equal(bestAskWad(book, DEPTH_50), null);
+  assert.equal(bestAsk(book, DEPTH_50)?.priceWad ?? null, null);
 });
 
 test("bestAskWad: minDepthWad 0 restores plain best-ask behavior", () => {
   const book = { levels: [[], [{ px: "0.65", sz: "1", n: 1 }]] };
-  assert.equal(bestAskWad(book, 0n), 650_000_000_000_000_000n);
+  assert.equal(bestAsk(book, 0n)?.priceWad ?? null, 650_000_000_000_000_000n);
 });

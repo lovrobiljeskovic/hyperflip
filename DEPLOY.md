@@ -44,7 +44,6 @@ Use the root `.env.example` for configuration. Set `CORS_ORIGINS` to the fronten
 origins, including `https://hyperflip.xyz` and `https://app.hyperflip.xyz` for the
 split deployment. The writer reads its registry from `MARKETS_FILE` and its
 deployment identity from `registry/deployment.testnet.json`.
-`PRICING_MODE` can be unset or `independent`; other values fail startup.
 
 The signer, bankroll, and keeper must match the deployed contracts. Run services
 as an unprivileged user with a mode-0600 `.env`. Keep the deployer key out of the

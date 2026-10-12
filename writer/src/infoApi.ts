@@ -19,11 +19,7 @@ interface L2Level {
  * minDepthWad (a lone 1-lot must not price a big parlay); never below best ask; too thin
  * -> null, which also denies a spoofed 1-lot the "confirmed live" freshness stamp
  * (spotPx.ts). minDepthWad = 0 prices off the first level alone. */
-export function bestAskWad(book: unknown, minDepthWad: bigint): bigint | null {
-  return bestAsk(book, minDepthWad)?.priceWad ?? null;
-}
-
-function bestAsk(book: unknown, minDepthWad: bigint): Pick<LegPriceObservation, "priceWad" | "depthWad" | "vwapWad"> | null {
+export function bestAsk(book: unknown, minDepthWad: bigint): Pick<LegPriceObservation, "priceWad" | "depthWad" | "vwapWad"> | null {
   const levels = (book as { levels?: L2Level[][] })?.levels;
   const asks = levels?.[1];
   if (!asks || asks.length === 0) return null;
@@ -43,7 +39,7 @@ function bestAsk(book: unknown, minDepthWad: bigint): Pick<LegPriceObservation, 
   return null; // depth never covered — too thin to trust, same signal as an empty book
 }
 
-/** POST {type:"l2Book", coin}: depth-covering ask as WAD (see bestAskWad), or null on an
+/** POST {type:"l2Book", coin}: depth-covering ask as WAD (see bestAsk), or null on an
  * empty/too-thin book. Timeout: a stalled fetch must fail the quote, not hang it. */
 export async function fetchBestAskWad(
   infoApiUrl: string,

@@ -17,7 +17,7 @@ export interface ParlayQuote {
 
 /** Must match ParlayVault QUOTE_TYPEHASH / LEG_TYPEHASH exactly — verified by the
  * forge parity vector in writer/test/quotes.test.ts. */
-export const quoteTypes = {
+const quoteTypes = {
   Quote: [
     { name: "taker", type: "address" },
     { name: "legs", type: "Leg[]" },
@@ -32,7 +32,7 @@ export const quoteTypes = {
   ],
 } as const;
 
-export function quoteDomain(chainId: number, verifyingContract: Address) {
+function quoteDomain(chainId: number, verifyingContract: Address) {
   return { name: "ParlayVault", version: "1", chainId, verifyingContract } as const;
 }
 

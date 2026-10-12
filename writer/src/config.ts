@@ -11,9 +11,6 @@ import { googleSheetsConfig, type GoogleSheetsConfig } from "./googleSheets.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 loadDotenv({ path: path.resolve(here, "../../.env") });
 
-export { laneRows, parseMarkets } from "./markets.js";
-export type { MarketInfo } from "./markets.js";
-
 export interface WriterConfig extends Deployment {
   rpcUrl: string;
   writerAddress: Address;
@@ -82,31 +79,15 @@ function requireAddress(name: string): Address {
   return v;
 }
 
-export const DEFAULT_CORS_ORIGINS =
-  "https://hyperflip.xyz,https://www.hyperflip.xyz,https://app.hyperflip.xyz,https://elysium.hyperflip.xyz,https://overround.xyz,https://overround-wine.vercel.app";
-
-export function parseCorsOrigins(raw: string): string[] {
-  return raw.split(",").map((s) => s.trim()).filter(Boolean);
-}
-
 export function defaultPerCodeReservedCap(maxStake: bigint, minPremiumBps: bigint): bigint {
   // Allow three maximum-risk quotes while the mint watcher catches up.
   return maxStake * (BPS / minPremiumBps - 1n) * 3n;
 }
 
-export function syncedPerCodeReservedCap(
-  envWasSet: boolean,
-  current: bigint,
-  maxStake: bigint,
-  chainMinPremiumBps: bigint,
-): bigint {
-  return envWasSet ? current : defaultPerCodeReservedCap(maxStake, chainMinPremiumBps);
-}
+/** `perCodeReservedCap` stays unset when its env is, until index.ts derives the default off the chain minPremiumBps. */
+export type LoadedConfig = Omit<WriterConfig, "perCodeReservedCap"> & { perCodeReservedCap?: bigint };
 
-export function loadConfig(): WriterConfig {
-  if (process.env.PRICING_MODE && process.env.PRICING_MODE !== "independent") {
-    throw new Error("PRICING_MODE must be independent or unset for sports pricing");
-  }
+export function loadConfig(): LoadedConfig {
   const deployment = loadDeployment();
   const raw = JSON.parse(readFileSync(path.resolve(here, "../..", requireEnv("MARKETS_FILE")), "utf8"));
   const lane = (rows: unknown) => Array.isArray(rows) ? laneRows(rows, deployment.chainId, deployment.coreChainId) : rows;
@@ -143,9 +124,7 @@ export function loadConfig(): WriterConfig {
     maxStake,
     perMarketCap: BigInt(requireEnv("PER_MARKET_CAP")),
     perClusterCap: BigInt(requireEnv("PER_CLUSTER_CAP")),
-    perCodeReservedCap: process.env.PER_CODE_RESERVED_CAP
-      ? BigInt(process.env.PER_CODE_RESERVED_CAP)
-      : defaultPerCodeReservedCap(maxStake, minPremiumBps),
+    perCodeReservedCap: process.env.PER_CODE_RESERVED_CAP ? BigInt(process.env.PER_CODE_RESERVED_CAP) : undefined,
     legEdgeBps: BigInt(process.env.LEG_EDGE_BPS ?? 0),
     quoteTtlMs: Number(process.env.QUOTE_TTL_MS ?? 10_000),
     spotPxStaleMs,
@@ -168,6 +147,8 @@ export function loadConfig(): WriterConfig {
     waitlistFile: path.resolve(here, "../..", process.env.WAITLIST_FILE ?? "writer/waitlist.json"),
     parlayIndexFile: path.resolve(here, "../..", process.env.PARLAY_INDEX_FILE ?? "writer/parlays.json"),
     parlayIndexFromBlock: process.env.PARLAY_INDEX_FROM_BLOCK ? BigInt(process.env.PARLAY_INDEX_FROM_BLOCK) : undefined,
-    corsOrigins: parseCorsOrigins(process.env.CORS_ORIGINS ?? DEFAULT_CORS_ORIGINS),
+    corsOrigins: (process.env.CORS_ORIGINS ??
+      "https://hyperflip.xyz,https://www.hyperflip.xyz,https://app.hyperflip.xyz,https://elysium.hyperflip.xyz,https://overround.xyz,https://overround-wine.vercel.app")
+      .split(",").map((o) => o.trim()).filter(Boolean),
   };
 }

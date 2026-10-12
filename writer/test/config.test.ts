@@ -3,33 +3,17 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseMarkets, laneRows, parseCorsOrigins, defaultPerCodeReservedCap, syncedPerCodeReservedCap, loadConfig } from "../src/config.js";
+import { defaultPerCodeReservedCap, loadConfig } from "../src/config.js";
+import { laneRows, parseMarkets } from "../src/markets.js";
 
 const VAULT = "0x1111111111111111111111111111111111111111";
 const MARKET = { vault: VAULT, coinYes: "#1", coinNo: "#2", underlying: "q844", cluster: "WC2026", title: "Draw", category: "sports", question: 844, startMs: 1, expiryMs: 2, sideYes: "Draw", sideNo: "No draw", group: "q844", groupTitle: "Saudi Arabia vs Uruguay" };
-
-test("parseCorsOrigins trims and drops empties", () => {
-  assert.deepEqual(parseCorsOrigins(" https://overround.xyz, https://overround-wine.vercel.app,, "), [
-    "https://overround.xyz",
-    "https://overround-wine.vercel.app",
-  ]);
-});
 
 test("defaultPerCodeReservedCap tracks minPremiumBps, not a fixed multiple of maxStake", () => {
   assert.equal(defaultPerCodeReservedCap(1_000_000n, 100n), 1_000_000n * 297n);
   assert.equal(defaultPerCodeReservedCap(1_000_000n, 200n), 1_000_000n * 147n);
   assert.equal(defaultPerCodeReservedCap(1_000_000n, 50n), 1_000_000n * 597n);
 });
-
-test("syncedPerCodeReservedCap recomputes the default off the chain value, but never touches an explicit override", () => {
-  assert.equal(
-    syncedPerCodeReservedCap(false, 1_000_000n * 297n, 1_000_000n, 200n),
-    defaultPerCodeReservedCap(1_000_000n, 200n),
-  );
-  const explicit = 42n;
-  assert.equal(syncedPerCodeReservedCap(true, explicit, 1_000_000n, 200n), explicit);
-});
-
 
 test("parseMarkets accepts sports metadata and rejects malformed active markets", () => {
   for (const raw of [[MARKET], { markets: [MARKET] }]) {
@@ -73,7 +57,7 @@ test("writer boots with only sports configuration and filters historical public 
   const legacy = { ...MARKET, category: "other", title: "Legacy market" };
   const values = {
     DEPLOYMENT_FILE: join(root, "deployment.json"), EVM_CHAIN_ID: "998", POKER_INTERVAL_MS: "15000",
-    PRICING_MODE: "", MARKETS_FILE: marketsFile, PARLAY_VAULT_ADDRESS: VAULT, PARLAY_DEPLOY_BLOCK: "1",
+    CORS_ORIGINS: " https://a.test, https://b.test,, ", PER_CODE_RESERVED_CAP: "", MARKETS_FILE: marketsFile, PARLAY_VAULT_ADDRESS: VAULT, PARLAY_DEPLOY_BLOCK: "1",
     MAX_STAKE: "1000000", PER_MARKET_CAP: "1000000", PER_CLUSTER_CAP: "1000000", INVITE_CODES: "test",
     WRITER_ADDRESS: "0x2222222222222222222222222222222222222222",
     QUOTE_SIGNER_PRIVATE_KEY: `0x${"11".repeat(32)}`, POKER_PRIVATE_KEY: `0x${"22".repeat(32)}`, TESTNET_RPC: "http://localhost:1",
@@ -89,6 +73,8 @@ test("writer boots with only sports configuration and filters historical public 
     assert.equal("inviteCodes" in config, false);
     assert.equal(config.rpcUrl, values.TESTNET_RPC);
     assert.equal(config.deployBlock, 1n);
+    assert.deepEqual(config.corsOrigins, ["https://a.test", "https://b.test"]);
+    assert.equal(config.perCodeReservedCap, undefined);
     assert.equal(config.markets.get(VAULT)?.question, 844);
     assert.equal(config.quoteJournalFile, values.QUOTE_JOURNAL_FILE);
     assert.deepEqual(JSON.parse(config.registryJson).archived, [MARKET]);
@@ -100,11 +86,6 @@ test("writer boots with only sports configuration and filters historical public 
     assert.equal(lane998.markets.has(leg), false);
     assert.deepEqual(JSON.parse(lane998.registryJson).markets, [MARKET]);
     writeFileSync(marketsFile, JSON.stringify({ network: "testnet", markets: [MARKET], archived: [MARKET, legacy] }));
-    process.env.PRICING_MODE = "independent";
-    assert.equal(loadConfig().markets.size, 1);
-    process.env.PRICING_MODE = "unsupported";
-    assert.throws(() => loadConfig(), /PRICING_MODE/);
-    process.env.PRICING_MODE = "";
     process.env.SPOT_PX_STALE_MS = "not-a-number";
     assert.throws(() => loadConfig(), /SPOT_PX_STALE_MS/);
     process.env.SPOT_PX_STALE_MS = "0";

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { decodeAbiParameters, encodeAbiParameters } from "viem";
 import { buildPriceFreshness, isSpotPxStale, makeLegPriceFetcher, readSpotPxWad, SPOT_PX_PRECOMPILE } from "../src/spotPx.js";
-import { bestAskWad } from "../src/infoApi.js";
+import { bestAsk } from "../src/infoApi.js";
 import { parseDecimalToUnits } from "../src/pure.js";
 
 const bookPrice = (priceWad: bigint) => ({ priceWad, source: "l2Book" as const, observedAtMs: 0, depthWad: 1n, vwapWad: priceWad, freshnessMs: null });
@@ -142,7 +142,7 @@ test("buildPriceFreshness: /health per-coin age — fresh coin is a number, unco
   assert.deepEqual(freshness, { "+1": 0, "+2": null });
 });
 
-// mainnet-hardening P0-3: bestAskWad (infoApi.ts) now returns null for a book
+// mainnet-hardening P0-3: bestAsk (infoApi.ts) now returns null for a book
 // too thin to cover MIN_BOOK_DEPTH — the same "no usable ask" signal an empty
 // book gives. These wire that straight into makeLegPriceFetcher to check the
 // interaction P0-1 depends on: a too-thin ask must not stamp freshness, or a
@@ -153,7 +153,7 @@ test("makeLegPriceFetcher: a too-thin book falls back to spotPx and does not sta
   const thinBook = { levels: [[], [{ px: "0.05", sz: "1", n: 1 }]] }; // 1-lot spoof, short of depth
   const fetcher = makeLegPriceFetcher({
     fetchBook: async () => {
-      const priceWad = bestAskWad(thinBook, minDepthWad);
+      const priceWad = bestAsk(thinBook, minDepthWad)?.priceWad ?? null;
       return priceWad === null ? null : bookPrice(priceWad);
     },
     readSpotPx: async () => 999n,
@@ -173,7 +173,7 @@ test("makeLegPriceFetcher: a depth-covering ask stamps freshness; a later too-th
   let book = fatBook;
   const fetcher = makeLegPriceFetcher({
     fetchBook: async () => {
-      const priceWad = bestAskWad(book, minDepthWad);
+      const priceWad = bestAsk(book, minDepthWad)?.priceWad ?? null;
       return priceWad === null ? null : bookPrice(priceWad);
     },
     readSpotPx: async () => 999n,
