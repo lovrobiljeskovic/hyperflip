@@ -53,7 +53,7 @@ export interface WriterConfig extends Deployment {
   /** Admit every authenticated account; the waitlist stays intact for a later gated season. */
   openAccess: boolean;
   googleSheets?: GoogleSheetsConfig;
-  parlayIndexFile?: string;
+  parlayIndexFile: string;
   parlayIndexFromBlock?: bigint;
   corsOrigins: string[];
 }

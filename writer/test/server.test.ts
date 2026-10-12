@@ -30,7 +30,7 @@ function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
     minBookDepthWad: 0n,
     lockoutMs: 600_000, inPlayCapBps: 5000n, livePriorPollMs: 0, livePriorStaleMs: 60_000, livePriorJumpWad: WAD / 10n, livePriorSuspendMs: 30_000,
     pokerIntervalMs: 15_000, deployBlock: 0n,
-    waitlistFile: "/dev/null",
+    waitlistFile: "/dev/null", parlayIndexFile: "/dev/null",
     corsOrigins: ["https://overround.xyz"],
     markets: new Map([
       [V1.toLowerCase(), { vault: V1, coinYes: "+10", coinNo: "+11", underlying: "game-1", cluster: "sports", title: "Twins vs Orioles", category: "sports" }],

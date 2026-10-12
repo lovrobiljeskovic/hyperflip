@@ -9,7 +9,7 @@ import { ExposureBook } from "./exposure.js";
 import { fetchBestAskWad } from "./infoApi.js";
 import { buildPriceFreshness, makeLegPriceFetcher, readSpotPxWad } from "./spotPx.js";
 import { defaultFetchJson, LivePrior } from "./livePrior.js";
-import { Poker } from "./poker.js";
+import { Poker, chainFetchers } from "./poker.js";
 import { bankrollRoom, isStalled, lowBankrollAlerter, parseDecimalToUnits, stallThresholdMs, WAD } from "./pure.js";
 import { signQuote, type ParlayQuote, type QuoteLeg } from "./quotes.js";
 import { newMetrics, startServer, type QuoteDeps } from "./server.js";
@@ -137,9 +137,9 @@ async function main(): Promise<void> {
     console.warn(JSON.stringify({ event: "admission-email-disabled", reason: "RESEND_API_KEY unset" }));
   }
 
+  const pokerLog = (msg: object) => console.log(JSON.stringify({ at: new Date().toISOString(), ...msg }));
   const poker = new Poker({
-    publicClient,
-    parlayVault: cfg.parlayVault,
+    ...chainFetchers(publicClient, cfg.parlayVault, pokerLog),
     exposure,
     metrics,
     fromBlock: cfg.deployBlock,
@@ -155,7 +155,7 @@ async function main(): Promise<void> {
       });
       await publicClient.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
     },
-    log: (msg) => console.log(JSON.stringify({ at: new Date().toISOString(), ...msg })),
+    log: pokerLog,
   });
   startServer(deps, cfg.port, () => {
     const now = Date.now();

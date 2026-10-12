@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { Address } from "viem";
-import { Poker, type PokerDeps } from "../src/poker.js";
+import type { Address, PublicClient } from "viem";
+import { Poker, chainFetchers, type PokerDeps } from "../src/poker.js";
 import { ExposureBook } from "../src/exposure.js";
 import { newMetrics } from "../src/server.js";
 import { WAD } from "../src/pure.js";
@@ -13,21 +13,32 @@ const V1 = "0x1111111111111111111111111111111111111111" as Address;
 const VAULT = "0x9999999999999999999999999999999999999999" as Address;
 const T = "0x3333333333333333333333333333333333333333" as Address;
 
+const unexpected = (name: string) => async (): Promise<never> => { throw new Error(`unexpected ${name}`); };
+function pokerDeps(overrides: Partial<PokerDeps>): PokerDeps {
+  return {
+    exposure: new ExposureBook(),
+    metrics: newMetrics(),
+    fromBlock: 0n,
+    indexFile: path.join(mkdtempSync(path.join(os.tmpdir(), "parlay-index-")), "parlays.json"),
+    resolve: async () => {},
+    log: () => {},
+    fetchEvents: unexpected("fetchEvents"),
+    fetchLegs: unexpected("fetchLegs"),
+    fetchLegStates: unexpected("fetchLegStates"),
+    fetchOpenParlays: unexpected("fetchOpenParlays"),
+    ...overrides,
+  };
+}
+
 test("tick: syncs mint event, resolves dead parlay, releases exposure on resolve event", async () => {
   const resolved: bigint[] = [];
   const exposure = new ExposureBook();
   // Fake chain: tick 1 delivers a mint of parlay #1 (one YES leg on V1, risk 3), leg settles lost;
   // tick 2 delivers its ParlayResolved event.
   let tickNo = 0;
-  const deps: PokerDeps = {
-    publicClient: null as unknown as PokerDeps["publicClient"], // unused: reads are injected below
-    parlayVault: VAULT,
+  const deps = pokerDeps({
     exposure,
-    metrics: newMetrics(),
-    fromBlock: 0n,
     resolve: async (id) => { resolved.push(id); },
-    log: () => {},
-    // injected reads (see PokerDeps below — these have fake-friendly defaults in prod wiring)
     fetchEvents: async () => {
       tickNo++;
       if (tickNo === 1) {
@@ -40,7 +51,7 @@ test("tick: syncs mint event, resolves dead parlay, releases exposure on resolve
     },
     fetchLegs: async () => [{ vault: V1, isYes: true }],
     fetchLegStates: async () => new Map([[V1.toLowerCase(), { settled: true, fractionWad: 0n }]]),
-  };
+  });
   const poker = new Poker(deps);
 
   await poker.tick();
@@ -55,18 +66,12 @@ test("tick: syncs mint event, resolves dead parlay, releases exposure on resolve
 
 test("tick: won/unsettled parlays are not poked", async () => {
   const resolved: bigint[] = [];
-  const deps: PokerDeps = {
-    publicClient: null as unknown as PokerDeps["publicClient"],
-    parlayVault: VAULT,
-    exposure: new ExposureBook(),
-    metrics: newMetrics(),
-    fromBlock: 0n,
+  const deps = pokerDeps({
     resolve: async (id) => { resolved.push(id); },
-    log: () => {},
     fetchEvents: async () => ({ minted: [{ id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n, taker: T, block: 5n }], resolvedIds: [], toBlock: 10n }),
     fetchLegs: async () => [{ vault: V1, isYes: true }],
     fetchLegStates: async () => new Map([[V1.toLowerCase(), { settled: true, fractionWad: WAD }]]),
-  };
+  });
   const poker = new Poker(deps);
   await poker.tick();
   assert.deepEqual(resolved, []);
@@ -75,17 +80,11 @@ test("tick: won/unsettled parlays are not poked", async () => {
 test("tick: a failing resolve() does not abort poking the rest of the batch", async () => {
   const V2 = "0x2222222222222222222222222222222222222222" as Address;
   const attempted: bigint[] = [];
-  const deps: PokerDeps = {
-    publicClient: null as unknown as PokerDeps["publicClient"],
-    parlayVault: VAULT,
-    exposure: new ExposureBook(),
-    metrics: newMetrics(),
-    fromBlock: 0n,
+  const deps = pokerDeps({
     resolve: async (id) => {
       attempted.push(id);
       if (id === 1n) throw new Error("rpc hiccup");
     },
-    log: () => {},
     fetchEvents: async () => ({
       minted: [
         { id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n, taker: T, block: 5n },
@@ -100,7 +99,7 @@ test("tick: a failing resolve() does not abort poking the rest of the batch", as
         [V1.toLowerCase(), { settled: true, fractionWad: 0n }],
         [V2.toLowerCase(), { settled: true, fractionWad: 0n }],
       ]),
-  };
+  });
   const poker = new Poker(deps);
   await poker.tick();
   assert.deepEqual(attempted, [1n, 2n]); // both attempted despite id 1 throwing
@@ -113,21 +112,15 @@ test("tick: a resolve() that times out does not stop subsequent ticks from pokin
   // still attempt the poke again (the dead parlay stays open until ParlayResolved lands).
   const attempts: bigint[] = [];
   let shouldTimeout = true;
-  const deps: PokerDeps = {
-    publicClient: null as unknown as PokerDeps["publicClient"],
-    parlayVault: VAULT,
-    exposure: new ExposureBook(),
-    metrics: newMetrics(),
-    fromBlock: 0n,
+  const deps = pokerDeps({
     resolve: async (id) => {
       attempts.push(id);
       if (shouldTimeout) throw new Error("TimeoutError: waitForTransactionReceipt timed out");
     },
-    log: () => {},
     fetchEvents: async () => ({ minted: [{ id: 1n, quoteId: "0xq1", premium: 1n, maxPayout: 4n, taker: T, block: 5n }], resolvedIds: [], toBlock: 10n }),
     fetchLegs: async () => [{ vault: V1, isYes: true }],
     fetchLegStates: async () => new Map([[V1.toLowerCase(), { settled: true, fractionWad: 0n }]]),
-  };
+  });
   const poker = new Poker(deps);
 
   await poker.tick(); // resolve() times out
@@ -157,19 +150,13 @@ test("fetchEvents: a failed chunk keeps earlier chunks and resumes there next ti
       }
       return [];
     },
-  } as unknown as PokerDeps["publicClient"];
+  } as unknown as PublicClient;
 
-  const poker = new Poker({
-    publicClient,
-    parlayVault: VAULT,
-    exposure: new ExposureBook(),
-    metrics: newMetrics(),
-    fromBlock: 0n,
-    resolve: async () => {},
-    log: () => {},
+  const poker = new Poker(pokerDeps({
+    ...chainFetchers(publicClient, VAULT, () => {}),
     fetchLegs: async () => [{ vault: V1, isYes: true }],
     fetchLegStates: async () => new Map([[V1.toLowerCase(), { settled: false, fractionWad: 0n }]]),
-  });
+  }));
 
   await poker.tick();
   assert.equal(poker.openCount(), 1); // chunk 0's mint survived the chunk-2 failure
@@ -191,14 +178,9 @@ test("seed: rebuilds open (and caps) from on-chain state, then tick resumes at h
   const V2 = "0x2222222222222222222222222222222222222222" as Address;
   const exposure = new ExposureBook();
   const requestedFrom: bigint[] = [];
-  const deps: PokerDeps = {
-    publicClient: null as unknown as PokerDeps["publicClient"],
-    parlayVault: VAULT,
+  const deps = pokerDeps({
     exposure,
-    metrics: newMetrics(),
     fromBlock: 0n, // would rescan from genesis if seed() didn't override nextBlock
-    resolve: async () => {},
-    log: () => {},
     fetchOpenParlays: async () => ({
       open: [
         { id: 5n, legs: [{ vault: V1, isYes: true }], risk: 30n },
@@ -211,7 +193,7 @@ test("seed: rebuilds open (and caps) from on-chain state, then tick resumes at h
       return { minted: [], resolvedIds: [], toBlock: fromBlock };
     },
     fetchLegStates: async () => new Map(),
-  };
+  });
   const poker = new Poker(deps);
   await poker.seed();
 
@@ -238,18 +220,13 @@ test("fetchOpenParlays default: reads nextId + parlay(id), keeps only Status.Ope
       if (functionName === "parlay") return parlays[(args![0] as bigint).toString()];
       throw new Error(`unexpected readContract call: ${functionName}`);
     },
-  } as unknown as PokerDeps["publicClient"];
+  } as unknown as PublicClient;
   const exposure = new ExposureBook();
 
-  const poker = new Poker({
-    publicClient,
-    parlayVault: VAULT,
+  const poker = new Poker(pokerDeps({
+    ...chainFetchers(publicClient, VAULT, () => {}),
     exposure,
-    metrics: newMetrics(),
-    fromBlock: 0n,
-    resolve: async () => {},
-    log: () => {},
-  });
+  }));
   await poker.seed();
 
   assert.equal(poker.openCount(), 2); // only ids 1 and 3 are Status.Open
@@ -260,16 +237,9 @@ test("index: persists taker refs, serves them newest first, and resumes from the
   const dir = mkdtempSync(path.join(os.tmpdir(), "parlay-index-"));
   const indexFile = path.join(dir, "parlays.json");
   const requestedFrom: bigint[] = [];
-  const deps = (): PokerDeps => ({
-    publicClient: null as unknown as PokerDeps["publicClient"],
-    parlayVault: VAULT,
-    exposure: new ExposureBook(),
-    metrics: newMetrics(),
-    fromBlock: 0n,
+  const deps = () => pokerDeps({
     indexFile,
     indexFromBlock: 100n,
-    resolve: async () => {},
-    log: () => {},
     fetchOpenParlays: async () => ({ open: [], headBlock: 500n }),
     fetchEvents: async (fromBlock) => {
       requestedFrom.push(fromBlock);

@@ -23,26 +23,25 @@ interface ParlayIndexFile {
   parlays: [string, string, string][];
 }
 
+type OpenParlays = { open: { id: bigint; legs: QuoteLeg[]; risk: bigint }[]; headBlock: bigint };
+
 export interface PokerDeps {
-  publicClient: PublicClient;
-  parlayVault: Address;
   exposure: ExposureBook;
   metrics: Metrics;
   fromBlock: bigint;
-  /** Persists the taker index (served by GET /parlays). Unset: in-memory only. */
-  indexFile?: string;
+  /** Persists the taker index (served by GET /parlays). */
+  indexFile: string;
   /** First block the taker index covers when `indexFile` doesn't exist yet.
    * Unset: index from the head seen at startup. */
   indexFromBlock?: bigint;
   /** Sends resolveParlay(id) from the poker key. */
   resolve(id: bigint): Promise<void>;
   log(msg: object): void;
-  /** Overridable for tests; defaults defined below read the chain. */
-  fetchEvents?(fromBlock: bigint): Promise<{ minted: MintedEvent[]; resolvedIds: bigint[]; toBlock: bigint }>;
-  fetchLegs?(id: bigint): Promise<QuoteLeg[]>;
-  fetchLegStates?(vaults: Address[]): Promise<Map<string, LegState>>;
+  fetchEvents(fromBlock: bigint): Promise<{ minted: MintedEvent[]; resolvedIds: bigint[]; toBlock: bigint }>;
+  fetchLegs(id: bigint): Promise<QuoteLeg[]>;
+  fetchLegStates(vaults: Address[]): Promise<Map<string, LegState>>;
   /** Every currently-open parlay from chain state, plus the head block it was read at. */
-  fetchOpenParlays?(): Promise<{ open: { id: bigint; legs: QuoteLeg[]; risk: bigint }[]; headBlock: bigint }>;
+  fetchOpenParlays(): Promise<OpenParlays>;
 }
 
 const MINTED = parseAbiItem(
@@ -64,7 +63,6 @@ export class Poker {
   constructor(private deps: PokerDeps) {
     this.nextBlock = deps.fromBlock;
     this.indexFrom = deps.indexFromBlock;
-    if (!deps.indexFile) return;
     const json = readOptionalFile(deps.indexFile);
     if (json === undefined) return;
     try {
@@ -87,7 +85,6 @@ export class Poker {
   }
 
   private saveIndex(scannedTo: bigint): void {
-    if (!this.deps.indexFile) return;
     const file: ParlayIndexFile = {
       scannedTo: scannedTo.toString(),
       parlays: [...this.index].map(([id, p]) => [id.toString(), p.taker, p.block.toString()]),
@@ -96,46 +93,10 @@ export class Poker {
     catch (err) { this.deps.log({ event: "parlay-index-write-failed", err: String(err) }); }
   }
 
-  private async fetchOpenParlays(): Promise<{ open: { id: bigint; legs: QuoteLeg[]; risk: bigint }[]; headBlock: bigint }> {
-    if (this.deps.fetchOpenParlays) return this.deps.fetchOpenParlays();
-    const { publicClient, parlayVault } = this.deps;
-    // Snapshot head before reading nextId; resuming the log scan at headBlock+1 then cannot miss a mint.
-    const headBlock = await publicClient.getBlockNumber();
-    const nextId = (await publicClient.readContract({
-      address: parlayVault,
-      abi: parlayVaultAbi,
-      functionName: "nextId",
-    })) as bigint;
-    const open: { id: bigint; legs: QuoteLeg[]; risk: bigint }[] = [];
-    // ids run 1..nextId and are never reused; unresolved parlays can sit Open forever, so batch the reads.
-    // ponytail: bounded-concurrency batching, not real batching (no Multicall3 on
-    // testnet) — still one round-trip per 50 ids. Fine at beta scale; if nextId ever
-    // reaches the tens of thousands, aggregate via Multicall3 instead.
-    for (const r of blockRanges(1n, nextId, 50n)) {
-      const ids: bigint[] = [];
-      for (let id = r.from; id <= r.to; id++) ids.push(id);
-      const parlays = await Promise.all(
-        ids.map(
-          (id) =>
-            publicClient.readContract({
-              address: parlayVault,
-              abi: parlayVaultAbi,
-              functionName: "parlay",
-              args: [id],
-            }) as Promise<{ legs: QuoteLeg[]; premium: bigint; maxPayout: bigint; status: number }>,
-        ),
-      );
-      parlays.forEach((p, i) => {
-        if (p.status === 0) open.push({ id: ids[i], legs: p.legs, risk: p.maxPayout - p.premium });
-      });
-    }
-    return { open, headBlock };
-  }
-
   /** Rebuilds `open` from chain state and fast-forwards the log scan; await before the first tick(). */
   async seed(): Promise<void> {
     const { exposure } = this.deps;
-    const { open, headBlock } = await this.fetchOpenParlays();
+    const { open, headBlock } = await this.deps.fetchOpenParlays();
     for (const p of open) {
       this.open.set(p.id, p.legs);
       exposure.onMinted(`seed-${p.id}`, p.id.toString(), p.risk, p.legs.map((l) => l.vault));
@@ -145,65 +106,13 @@ export class Poker {
     this.nextBlock = resume < headBlock + 1n ? resume : headBlock + 1n;
   }
 
-  private async fetchEvents(fromBlock: bigint) {
-    if (this.deps.fetchEvents) return this.deps.fetchEvents(fromBlock);
-    const { publicClient, parlayVault } = this.deps;
-    const toBlock = await publicClient.getBlockNumber();
-    if (toBlock < fromBlock) return { minted: [], resolvedIds: [], toBlock: fromBlock - 1n };
-    const minted: MintedEvent[] = [];
-    const resolvedIds: bigint[] = [];
-    // Keep ranges small enough for public dRPC. Retain completed chunks so a
-    // failed request resumes there next tick without losing exposure updates.
-    let scanned = fromBlock - 1n;
-    for (const r of blockRanges(fromBlock, toBlock, 100n)) {
-      try {
-        const [mintLogs, resolveLogs] = await Promise.all([
-          publicClient.getLogs({ address: parlayVault, event: MINTED, fromBlock: r.from, toBlock: r.to }),
-          publicClient.getLogs({ address: parlayVault, event: RESOLVED, fromBlock: r.from, toBlock: r.to }),
-        ]);
-        minted.push(
-          ...mintLogs.map((l) => ({
-            id: l.args.id!,
-            quoteId: l.args.quoteId!,
-            premium: l.args.premium!,
-            maxPayout: l.args.maxPayout!,
-            taker: l.args.taker!,
-            block: l.blockNumber,
-          })),
-        );
-        resolvedIds.push(...resolveLogs.map((l) => l.args.id!));
-        scanned = r.to;
-      } catch (err) {
-        this.deps.log({
-          event: "scan-truncated",
-          scannedTo: scanned.toString(),
-          target: toBlock.toString(),
-          err: String(err),
-        });
-        break;
-      }
-    }
-    return { minted, resolvedIds, toBlock: scanned };
-  }
-
-  private async fetchLegs(id: bigint): Promise<QuoteLeg[]> {
-    if (this.deps.fetchLegs) return this.deps.fetchLegs(id);
-    const p = (await this.deps.publicClient.readContract({
-      address: this.deps.parlayVault,
-      abi: parlayVaultAbi,
-      functionName: "parlay",
-      args: [id],
-    })) as { legs: QuoteLeg[] };
-    return p.legs;
-  }
-
   async tick(): Promise<void> {
     const { exposure, metrics, log } = this.deps;
-    const events = await this.fetchEvents(this.nextBlock);
+    const events = await this.deps.fetchEvents(this.nextBlock);
 
     for (const m of events.minted) {
       this.index.set(m.id, { taker: m.taker, block: m.block });
-      const legs = await this.fetchLegs(m.id);
+      const legs = await this.deps.fetchLegs(m.id);
       this.open.set(m.id, legs);
       exposure.onMinted(m.quoteId, m.id.toString(), m.maxPayout - m.premium, legs.map((l) => l.vault));
       metrics.minted++;
@@ -219,9 +128,7 @@ export class Poker {
 
     if (this.open.size === 0) return;
     const vaults = [...new Set([...this.open.values()].flat().map((l) => l.vault))];
-    const states = this.deps.fetchLegStates
-      ? await this.deps.fetchLegStates(vaults)
-      : await readLegStates(this.deps.publicClient, vaults);
+    const states = await this.deps.fetchLegStates(vaults);
     for (const [id, legs] of this.open) {
       const dead = parlayIsDead(legs, states);
       if (dead || parlayIsVoid(legs, states)) {
@@ -235,4 +142,94 @@ export class Poker {
       }
     }
   }
+}
+
+/** Chain-backed reads for PokerDeps. */
+export function chainFetchers(publicClient: PublicClient, parlayVault: Address, log: (msg: object) => void) {
+  return {
+    async fetchOpenParlays(): Promise<OpenParlays> {
+      // Snapshot head before reading nextId; resuming the log scan at headBlock+1 then cannot miss a mint.
+      const headBlock = await publicClient.getBlockNumber();
+      const nextId = (await publicClient.readContract({
+        address: parlayVault,
+        abi: parlayVaultAbi,
+        functionName: "nextId",
+      })) as bigint;
+      const open: { id: bigint; legs: QuoteLeg[]; risk: bigint }[] = [];
+      // ids run 1..nextId and are never reused; unresolved parlays can sit Open forever, so batch the reads.
+      // ponytail: bounded-concurrency batching, not real batching (no Multicall3 on
+      // testnet) — still one round-trip per 50 ids. Fine at beta scale; if nextId ever
+      // reaches the tens of thousands, aggregate via Multicall3 instead.
+      for (const r of blockRanges(1n, nextId, 50n)) {
+        const ids: bigint[] = [];
+        for (let id = r.from; id <= r.to; id++) ids.push(id);
+        const parlays = await Promise.all(
+          ids.map(
+            (id) =>
+              publicClient.readContract({
+                address: parlayVault,
+                abi: parlayVaultAbi,
+                functionName: "parlay",
+                args: [id],
+              }) as Promise<{ legs: QuoteLeg[]; premium: bigint; maxPayout: bigint; status: number }>,
+          ),
+        );
+        parlays.forEach((p, i) => {
+          if (p.status === 0) open.push({ id: ids[i], legs: p.legs, risk: p.maxPayout - p.premium });
+        });
+      }
+      return { open, headBlock };
+    },
+
+    async fetchEvents(fromBlock: bigint) {
+      const toBlock = await publicClient.getBlockNumber();
+      if (toBlock < fromBlock) return { minted: [], resolvedIds: [], toBlock: fromBlock - 1n };
+      const minted: MintedEvent[] = [];
+      const resolvedIds: bigint[] = [];
+      // Keep ranges small enough for public dRPC. Retain completed chunks so a
+      // failed request resumes there next tick without losing exposure updates.
+      let scanned = fromBlock - 1n;
+      for (const r of blockRanges(fromBlock, toBlock, 100n)) {
+        try {
+          const [mintLogs, resolveLogs] = await Promise.all([
+            publicClient.getLogs({ address: parlayVault, event: MINTED, fromBlock: r.from, toBlock: r.to }),
+            publicClient.getLogs({ address: parlayVault, event: RESOLVED, fromBlock: r.from, toBlock: r.to }),
+          ]);
+          minted.push(
+            ...mintLogs.map((l) => ({
+              id: l.args.id!,
+              quoteId: l.args.quoteId!,
+              premium: l.args.premium!,
+              maxPayout: l.args.maxPayout!,
+              taker: l.args.taker!,
+              block: l.blockNumber,
+            })),
+          );
+          resolvedIds.push(...resolveLogs.map((l) => l.args.id!));
+          scanned = r.to;
+        } catch (err) {
+          log({
+            event: "scan-truncated",
+            scannedTo: scanned.toString(),
+            target: toBlock.toString(),
+            err: String(err),
+          });
+          break;
+        }
+      }
+      return { minted, resolvedIds, toBlock: scanned };
+    },
+
+    async fetchLegs(id: bigint): Promise<QuoteLeg[]> {
+      const p = (await publicClient.readContract({
+        address: parlayVault,
+        abi: parlayVaultAbi,
+        functionName: "parlay",
+        args: [id],
+      })) as { legs: QuoteLeg[] };
+      return p.legs;
+    },
+
+    fetchLegStates: (vaults: Address[]) => readLegStates(publicClient, vaults),
+  };
 }
