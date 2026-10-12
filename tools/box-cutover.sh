@@ -22,7 +22,7 @@ cp -r $S/writer/src/. /opt/hype/writer/src/
 cp -r $S/writer/abi/. /opt/hype/writer/abi/
 cp -r $S/keeper/src/. /opt/hype/keeper/src/
 cp -r $S/keeper/abi/. /opt/hype/keeper/abi/
-mkdir -p /opt/hype/services && cp $S/services/files.mts /opt/hype/services/files.mts
+mkdir -p /opt/hype/services && cp -r $S/services/. /opt/hype/services/
 cp $S/registry/deployment.mts $S/registry/deployment.testnet.json /opt/hype/registry/
 cp $S/registry/markets.json /opt/hype/registry/markets.json          # cp writes through a symlink, rsync would replace it
 echo "== rotation checkout"

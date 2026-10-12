@@ -1,4 +1,5 @@
 import { verifyDeploymentRpc } from "../../registry/deployment.mjs";
+import { rpcUrls } from "../../services/env.mjs";
 import {
   createPublicClient,
   createWalletClient,
@@ -99,22 +100,22 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   // the 8/19 vaults, so a second one costs nothing to keep behind it. Note the whole list must
   // serve the 0x814 and 0x801 precompiles (0x801 with outcome-encoded asset ids is the
   // balance-verification path) — see keeper/rpc-check.mjs.
-  const rpcUrls = config.rpcUrl.split(",").map((u) => u.trim()).filter(Boolean);
+  const urls = rpcUrls(config.rpcUrl);
   const chain = defineChain({
     id: config.coreChainId,
     name: "HyperEVM Testnet",
     nativeCurrency: { name: "HYPE", symbol: "HYPE", decimals: 18 },
-    rpcUrls: { default: { http: rpcUrls } },
+    rpcUrls: { default: { http: urls } },
   });
   // viem's fallback() forces retryCount 0 on each inner http() and retries the whole
   // chain itself (default 3 tries, 150ms exponential), so per-URL retry options were
   // dead config: a 429 on one URL falls through to the next, then the set is retried.
-  const transport = fallback(rpcUrls.map((u) => http(u)));
+  const transport = fallback(urls.map((u) => http(u)));
   const publicClient = createPublicClient({ chain, transport });
   // With the ParlayVault on Elysium, the manifest is verified against the Elysium RPC and this
   // client only has to be the Core chain; settle() never touches the ParlayVault.
   const elysiumClient = config.elysiumRpcUrl
-    ? createPublicClient({ transport: fallback(config.elysiumRpcUrl.split(",").map((u) => u.trim()).filter(Boolean).map((u) => http(u))) })
+    ? createPublicClient({ transport: fallback(rpcUrls(config.elysiumRpcUrl).map((u) => http(u))) })
     : undefined;
   if (config.chainId === config.coreChainId) await verifyDeploymentRpc(publicClient, config);
   else {

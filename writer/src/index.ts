@@ -1,4 +1,5 @@
 import { verifyDeploymentRpc } from "../../registry/deployment.mjs";
+import { rpcUrls } from "../../services/env.mjs";
 import crypto from "node:crypto";
 import { QuoteJournal } from "./journal.js";
 import { createPublicClient, createWalletClient, fallback, http, type Hex, type PublicClient, type Transport } from "viem";
@@ -24,8 +25,7 @@ const RECEIPT_TIMEOUT_MS = 60_000;
 async function main(): Promise<void> {
   const loaded = loadConfig();
   const journal = new QuoteJournal(loaded.quoteJournalFile);
-  const rpcUrls = loaded.rpcUrl.split(",").map((u) => u.trim()).filter(Boolean);
-  const transport = fallback(rpcUrls.map((u) => http(u)));
+  const transport = fallback(rpcUrls(loaded.rpcUrl).map((u) => http(u)));
   const publicClient = createPublicClient({ transport });
   await verifyDeploymentRpc(publicClient, loaded);
   const chainId = loaded.chainId;

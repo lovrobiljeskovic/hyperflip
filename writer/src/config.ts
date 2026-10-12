@@ -1,15 +1,13 @@
 import { loadDeployment, type Deployment } from "../../registry/deployment.mjs";
 import { config as loadDotenv } from "dotenv";
 import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { isAddress, parseUnits, type Address } from "viem";
+import { requireEnv, requireKey, rootPath } from "../../services/env.mjs";
 import { laneRows, parseMarkets, type MarketInfo } from "./markets.js";
 import { BPS } from "./units.js";
 import { googleSheetsConfig, type GoogleSheetsConfig } from "./googleSheets.js";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-loadDotenv({ path: path.resolve(here, "../../.env") });
+loadDotenv({ path: rootPath(".env") });
 
 export interface WriterConfig extends Deployment {
   rpcUrl: string;
@@ -59,20 +57,6 @@ export interface WriterConfig extends Deployment {
 }
 
 
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`missing required env var ${name}`);
-  return v;
-}
-
-function requireKey(name: string): `0x${string}` {
-  const v = requireEnv(name);
-  if (!/^0x[0-9a-fA-F]{64}$/.test(v)) {
-    throw new Error(`${name} must be a 0x-prefixed 32-byte hex string`);
-  }
-  return v as `0x${string}`;
-}
-
 function requireAddress(name: string): Address {
   const v = requireEnv(name);
   if (!isAddress(v)) throw new Error(`${name} is not a valid address`);
@@ -89,7 +73,7 @@ export type LoadedConfig = Omit<WriterConfig, "perCodeReservedCap"> & { perCodeR
 
 export function loadConfig(): LoadedConfig {
   const deployment = loadDeployment();
-  const raw = JSON.parse(readFileSync(path.resolve(here, "../..", requireEnv("MARKETS_FILE")), "utf8"));
+  const raw = JSON.parse(readFileSync(rootPath(requireEnv("MARKETS_FILE")), "utf8"));
   const lane = (rows: unknown) => Array.isArray(rows) ? laneRows(rows, deployment.chainId, deployment.coreChainId) : rows;
   const registry = Array.isArray(raw) ? lane(raw) : { ...raw, markets: lane(raw.markets), archived: lane(raw.archived ?? []) };
   const markets = parseMarkets(JSON.stringify(registry));
@@ -112,7 +96,7 @@ export function loadConfig(): LoadedConfig {
     markets,
     registryJson,
     infoApiUrl: process.env.INFO_API_URL ?? "https://api.hyperliquid-testnet.xyz/info",
-    quoteJournalFile: path.resolve(here, "../..", process.env.QUOTE_JOURNAL_FILE ?? "writer/quotes.jsonl"),
+    quoteJournalFile: rootPath(process.env.QUOTE_JOURNAL_FILE ?? "writer/quotes.jsonl"),
     rpcUrl: process.env.WRITER_RPC || requireEnv("TESTNET_RPC"),
     writerAddress: requireAddress("WRITER_ADDRESS"),
     quoteSignerKey: requireKey("QUOTE_SIGNER_PRIVATE_KEY"),
@@ -144,8 +128,8 @@ export function loadConfig(): LoadedConfig {
     openAccess: process.env.OPEN_ACCESS === "1",
     googleSheets: googleSheetsConfig(process.env),
     resendApiKey: process.env.RESEND_API_KEY,
-    waitlistFile: path.resolve(here, "../..", process.env.WAITLIST_FILE ?? "writer/waitlist.json"),
-    parlayIndexFile: path.resolve(here, "../..", process.env.PARLAY_INDEX_FILE ?? "writer/parlays.json"),
+    waitlistFile: rootPath(process.env.WAITLIST_FILE ?? "writer/waitlist.json"),
+    parlayIndexFile: rootPath(process.env.PARLAY_INDEX_FILE ?? "writer/parlays.json"),
     parlayIndexFromBlock: process.env.PARLAY_INDEX_FROM_BLOCK ? BigInt(process.env.PARLAY_INDEX_FROM_BLOCK) : undefined,
     corsOrigins: (process.env.CORS_ORIGINS ??
       "https://hyperflip.xyz,https://www.hyperflip.xyz,https://app.hyperflip.xyz,https://elysium.hyperflip.xyz,https://overround.xyz,https://overround-wine.vercel.app")

@@ -11,7 +11,7 @@ const loader = join(root, "writer/node_modules/tsx/dist/loader.mjs");
 try {
   for (const service of ["keeper", "writer"]) {
     const archive = join(temporary, `${service}.tar.gz`);
-    execFileSync("tar", ["-czf", archive, "-C", root, ...["package.json", "package-lock.json", "tsconfig.json", "src", "abi"].map(path => `${service}/${path}`), "registry/deployment.mts", "registry/deployment.testnet.json", "services/files.mts"]);
+    execFileSync("tar", ["-czf", archive, "-C", root, ...["package.json", "package-lock.json", "tsconfig.json", "src", "abi"].map(path => `${service}/${path}`), "registry/deployment.mts", "registry/deployment.testnet.json", "services"]);
     const destination = join(temporary, service);
     execFileSync("tar", ["-xzf", archive, "-C", temporary]);
     assert(!existsSync(join(destination, "out")));

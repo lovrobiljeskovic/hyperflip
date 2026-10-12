@@ -19,7 +19,7 @@ installation root; adjust paths for your host.
   registry/markets.json
   registry/deployment.testnet.json
   registry/deployment.mts
-  services/files.mts
+  services/            # shared dependency-free modules
 ```
 
 Both services resolve configuration from this layout and load their packaged
@@ -32,7 +32,7 @@ compiler or the Foundry artifact tree. The separate rotation checkout still does
 Package each service from the repository root with the existing lockfile included:
 
 ```bash
-tar -czf /tmp/writer.tar.gz writer/package.json writer/package-lock.json writer/tsconfig.json writer/src writer/abi registry/deployment.mts registry/deployment.testnet.json services/files.mts
+tar -czf /tmp/writer.tar.gz writer/package.json writer/package-lock.json writer/tsconfig.json writer/src writer/abi registry/deployment.mts registry/deployment.testnet.json services
 ```
 
 Replace `writer` with `keeper` for the keeper package. These explicit paths exclude private
