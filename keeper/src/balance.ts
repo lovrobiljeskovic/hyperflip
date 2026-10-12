@@ -22,8 +22,8 @@ const MAX_SAMPLE_AGE_MS = 60_000;
 
 export function createBalanceLoop(state: KeeperState) {
   const { config, chain, account, publicClient, walletClient, sendTx, vaultInfo, settledVaults, readVault } = state;
-  // Consecutive failed balance-read samples per vault — throttles the alert, nothing else.
   const pendingOps = new Map<Address, PendingOp>();
+  // Consecutive failed balance-read samples per vault — throttles the alert, nothing else.
   const sampleFailures = new Map<string, number>();
   const balanceHistory = new Map<Address, BalanceSample[]>(); // ambient yes-coin samples, per vault
 

@@ -75,7 +75,7 @@ Verify against the code before relying on any single line number.
   only (`services/precompiles.mts`).
 - **Outcome asset id encoding:** `100_000_000 + 10×outcome + side` (side: 0 = yes,
   1 = no). Used by both 0x801 and 0x808 since the 2026-08 testnet update
-  (`keeper/src/pure.ts:29`).
+  (`services/precompiles.mts`).
 - **allMids carries no outcome coins** (verified 2026-08-25) — it can never price a
   leg, which is why the writer falls through to spotPx, not allMids
   (`writer/src/infoApi.ts` header).
@@ -84,7 +84,7 @@ Verify against the code before relying on any single line number.
 - **Core prunes a settled outcome within ~10 minutes** (2→3 observed). The keeper
   must fire settle() promptly on status 2 and cache the fraction, because after
   pruning the only way to settle is to relay a fraction observed pre-prune
-  (`keeper/src/keeper.ts:397-447`). The settlement-fraction cache
+  (`keeper/src/settlement.ts`). The settlement-fraction cache
   (`SETTLEMENT_CACHE_PATH`) must survive restarts — on a container, mount it.
 
 ## Keeper attestation trust model
@@ -92,12 +92,12 @@ Verify against the code before relying on any single line number.
 - **`attest(executed=false)` is only ever returned when `confidentBaseline` is
   true** — a provably pre-op ambient sample existed. A rebuilt/low-confidence op
   times out to **`hold`** (wait + alert once), never guesses a drop
-  (`keeper/src/pure.ts:49-66`, `keeper.ts:344-364`).
+  (`keeper/src/pure.ts:49-66`, `balance.ts`).
 - A confident baseline requires an ambient balance sample read **strictly before**
   the OpQueued block's own timestamp — Core cannot execute before that block exists.
   `CLOCK_SKEW_MARGIN_MS = 2000` assumes the keeper clock is never behind chain time
   by more than that; `MAX_SAMPLE_AGE_MS = 60000` stops a stalled sampler serving an
-  ancient sample as "current" (`keeper.ts:31-50`, `pure.ts:88-101`).
+  ancient sample as "current" (`balance.ts`, `pure.ts:88-101`).
 - A rejected split/merge on Core is **silent** — no error, no event, no balance
   change (docs/spike-findings.md step 5). So the no-delta timeout is **keeper-side policy**,
   not chain-trusted. The real recovery anchor is `OutcomeVault.setVerifier` (owner
@@ -117,7 +117,7 @@ Verify against the code before relying on any single line number.
   (`keeper/src/config.ts:57-66`).
 - **The keeper already has the watchdog pattern the writer needs.** Stall threshold
   = `vaults × RECEIPT_TIMEOUT_MS + 120_000`; a stamp older than that ⇒
-  `process.exit(1)` for systemd `Restart=always` (`keeper/src/keeper.ts:462-485`).
+  `process.exit(1)` for systemd `Restart=always` (`keeper/src/keeper.ts`).
   Lift this into the writer for P0-2.
 - **Testnet RPC constraints (assume similar shape on any HL RPC):** `getLogs`
   capped at 1000 blocks/query — scans must chunk (`writer/src/pure.ts:blockRanges`,

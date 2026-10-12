@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -24,6 +24,8 @@ try {
       for (const abi of Object.values(abis)) assert(Array.isArray(abi) && abi.length > 0);
       const { loadDeployment } = await import(${JSON.stringify(pathToFileURL(join(temporary, "registry/deployment.mts")).href)});
       assert([998, 99801].includes(loadDeployment({}).chainId));
+      const modules = ${JSON.stringify(readdirSync(join(temporary, "services")).filter(name => name.endsWith(".mts")).map(name => pathToFileURL(join(temporary, "services", name)).href))};
+      for (const href of modules) await import(href);
       const files = await import(${JSON.stringify(pathToFileURL(join(temporary, "services/files.mts")).href)});
       assert.equal(typeof files.replaceFile, "function");
     `], { env: { ...process.env, PATH: dirname(process.execPath) }, stdio: "pipe" });

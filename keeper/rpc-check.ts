@@ -25,7 +25,9 @@ const BURST = 20; // one tick of a modest catch-up scan
 // A live outcome asset id, derived from the registry (nightly rotation would stale a hardcoded
 // one): coinYes "#137340" -> 100000000 + 137340.
 const registry = JSON.parse(readFileSync(new URL("../registry/markets.json", import.meta.url), "utf8"));
-const OUTCOME_ASSET_ID = encodedAssetId(BigInt(registry.markets[0].coinYes.slice(1)));
+// Prefer an unexpired market: a pruned coin makes 0x801 throw, failing the probe for the wrong reason.
+const liveMarket = registry.markets.find((m: { expiryMs?: number }) => m.expiryMs === undefined || m.expiryMs > Date.now()) ?? registry.markets[0];
+const OUTCOME_ASSET_ID = encodedAssetId(BigInt(liveMarket.coinYes.slice(1)));
 
 const urls = process.argv.slice(2);
 if (urls.length === 0) {

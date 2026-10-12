@@ -19,8 +19,8 @@ export async function readLegStates(
   const states = await Promise.all(
     vaults.map(async (v) => {
       const [settled, fractionWad] = await Promise.all([
-        client.readContract({ address: v, abi: outcomeVaultAbi, functionName: "settled" }) as Promise<boolean>,
-        client.readContract({ address: v, abi: outcomeVaultAbi, functionName: "settleFractionWad" }) as Promise<bigint>,
+        client.readContract({ address: v, abi: outcomeVaultAbi, functionName: "settled" }),
+        client.readContract({ address: v, abi: outcomeVaultAbi, functionName: "settleFractionWad" }),
       ]);
       return [v.toLowerCase(), { settled, fractionWad }] as const;
     }),
