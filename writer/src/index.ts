@@ -1,24 +1,26 @@
 import { verifyDeploymentRpc } from "../../registry/deployment.mjs";
 import crypto from "node:crypto";
 import { QuoteJournal } from "./journal.js";
-import { createPublicClient, createWalletClient, erc20Abi, fallback, http, parseUnits, type Hex } from "viem";
+import { createPublicClient, createWalletClient, fallback, http, type Hex, type PublicClient, type Transport } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { parlayVaultAbi } from "./abi.js";
+import { bankrollReader } from "./bankroll.js";
 import { defaultPerCodeReservedCap, loadConfig, type WriterConfig } from "./config.js";
 import { ExposureBook } from "./exposure.js";
-import { fetchBestAskWad } from "./infoApi.js";
-import { buildPriceFreshness, makeLegPriceFetcher, readSpotPxWad } from "./spotPx.js";
-import { defaultFetchJson, LivePrior } from "./livePrior.js";
+import { buildPriceFreshness } from "./spotPx.js";
+import { LivePrior } from "./livePrior.js";
 import { Poker, chainFetchers, isStalled, stallThresholdMs } from "./poker.js";
-import { bankrollRoom, lowBankrollAlerter } from "./bankroll.js";
-import { signQuote, type ParlayQuote, type QuoteLeg } from "./quotes.js";
-import { newMetrics, startServer, type QuoteDeps } from "./server.js";
+import { priceFeed } from "./priceFeed.js";
+import { signQuote, type ParlayQuote } from "./quotes.js";
+import { newMetrics, startServer, type Metrics, type QuoteDeps } from "./server.js";
 import { readLegStates } from "./settlement.js";
 import { RateLimiter, sendInviteEmail, Waitlist } from "./waitlist.js";
 import { GoogleSheetsWaitlist } from "./googleSheets.js";
 import { privyAuthenticator } from "./auth.js";
 
 const RECEIPT_TIMEOUT_MS = 60_000;
+
+const logJson = (msg: object) => console.log(JSON.stringify({ at: new Date().toISOString(), ...msg }));
 
 async function main(): Promise<void> {
   const loaded = loadConfig();
@@ -28,66 +30,14 @@ async function main(): Promise<void> {
   const publicClient = createPublicClient({ transport });
   await verifyDeploymentRpc(publicClient, loaded);
   const chainId = loaded.chainId;
-  const usdcAddress = (await publicClient.readContract({
-    address: loaded.parlayVault,
-    abi: parlayVaultAbi,
-    functionName: "usdc",
-  })) as `0x${string}`;
-  const lowBankroll = parseUnits(process.env.LOW_BANKROLL ?? "100", 6);
-  const shouldAlertLowBankroll = lowBankrollAlerter(lowBankroll);
-  let lastBankroll: bigint | null = null;
-
-  const chainMinPremiumBps = BigInt(
-    (await publicClient.readContract({
-      address: loaded.parlayVault,
-      abi: parlayVaultAbi,
-      functionName: "minPremiumBps",
-    })) as number,
-  );
-  if (chainMinPremiumBps !== loaded.minPremiumBps) {
-    console.log(
-      JSON.stringify({
-        at: new Date().toISOString(),
-        event: "minpremiumbps-env-mismatch",
-        env: loaded.minPremiumBps.toString(),
-        chain: chainMinPremiumBps.toString(),
-      }),
-    );
-  }
-  const cfg: WriterConfig = {
-    ...loaded,
-    perCodeReservedCap: loaded.perCodeReservedCap ?? defaultPerCodeReservedCap(loaded.maxStake, chainMinPremiumBps),
-    minPremiumBps: chainMinPremiumBps,
-  };
-
-  const pokerAccount = privateKeyToAccount(cfg.pokerKey);
-  const walletClient = createWalletClient({ account: pokerAccount, transport });
+  const bankroll = await bankrollReader(publicClient, loaded);
+  const cfg = await withChainMinPremium(publicClient, loaded);
 
   // Hold expired reservations for two polls so a late mint remains counted.
   const exposure = new ExposureBook((v) => cfg.markets.get(v)?.cluster, cfg.pokerIntervalMs * 2);
   const metrics = newMetrics();
   let lastQuoteJournalAppendMs: number | null = null;
-  // Live feed first (Polymarket mid, then mainnet book mid, then ESPN win probability); the registry prior is
-  // the pre-kickoff fallback only, since in play it is stale by construction.
-  const livePrior = new LivePrior({
-    markets: cfg.markets.values(),
-    fetchJson: defaultFetchJson,
-    now: () => Date.now(),
-    staleMs: cfg.livePriorStaleMs,
-    jumpWad: cfg.livePriorJumpWad,
-    suspendMs: cfg.livePriorSuspendMs,
-    mainnetInfoUrl: cfg.mainnetInfoUrl,
-    log: (msg) => console.log(JSON.stringify({ at: new Date().toISOString(), ...msg })),
-  });
-  const legPriceFetcher = makeLegPriceFetcher({
-    fetchBook: (coin) => fetchBestAskWad(cfg.infoApiUrl, coin, cfg.minBookDepthWad),
-    readSpotPx: (coin) => readSpotPxWad(publicClient, BigInt(coin.slice(1))),
-    prior: (coin) => livePrior.prior(coin),
-    staleMs: cfg.spotPxStaleMs,
-    now: () => Date.now(),
-    onBookError: (coin, err) =>
-      console.warn(JSON.stringify({ event: "book-fetch-failed", coin, error: (err as Error).message.slice(0, 200) })),
-  });
+  const feed = priceFeed(cfg, publicClient);
 
   let seeded = false;
   const deps: QuoteDeps = {
@@ -97,25 +47,12 @@ async function main(): Promise<void> {
     metrics,
     now: () => Date.now(),
     randomId: () => `0x${crypto.randomBytes(32).toString("hex")}` as Hex,
-    fetchLegPrice: async (leg: QuoteLeg) => {
-      const market = cfg.markets.get(leg.vault.toLowerCase())!; // validated upstream
-      const coin = leg.isYes ? market.coinYes : market.coinNo;
-      return legPriceFetcher.fetch(coin);
-    },
+    fetchLegPrice: feed.fetchLegPrice,
     recordQuote: async (decision) => {
       journal.append(decision);
       lastQuoteJournalAppendMs = Date.now();
     },
-    readAllowance: async () => {
-      const [allowance, balance] = await Promise.all([
-        publicClient.readContract({ address: usdcAddress, abi: erc20Abi, functionName: "allowance", args: [cfg.writerAddress, cfg.parlayVault] }),
-        publicClient.readContract({ address: usdcAddress, abi: erc20Abi, functionName: "balanceOf", args: [cfg.writerAddress] }),
-      ]);
-      lastBankroll = bankrollRoom(allowance, balance);
-      if (shouldAlertLowBankroll(lastBankroll))
-        console.error(new Date().toISOString(), "ALERT", JSON.stringify({ event: "low-bankroll", bankroll: lastBankroll.toString(), allowance: allowance.toString(), balance: balance.toString(), threshold: lowBankroll.toString() }));
-      return lastBankroll;
-    },
+    readAllowance: bankroll.readAllowance,
     readSettled: async (vaults) => {
       const states = await readLegStates(publicClient, vaults);
       return new Set([...states].filter(([, s]) => s.settled).map(([v]) => v));
@@ -131,15 +68,72 @@ async function main(): Promise<void> {
     authenticate: cfg.privyAppId && cfg.privyAppSecret ? privyAuthenticator(cfg.privyAppId, cfg.privyAppSecret) : undefined,
     quoteLimiter: new RateLimiter(300, 60 * 60 * 1000),
     parlaysOf: (taker) => poker.parlaysOf(taker),
-    livePriorYes: (vault) => livePrior.priorYes(vault),
+    livePriorYes: feed.livePriorYes,
   };
   if (!cfg.resendApiKey) {
     console.warn(JSON.stringify({ event: "admission-email-disabled", reason: "RESEND_API_KEY unset" }));
   }
 
-  const pokerLog = (msg: object) => console.log(JSON.stringify({ at: new Date().toISOString(), ...msg }));
-  const poker = new Poker({
-    ...chainFetchers(publicClient, cfg.parlayVault, pokerLog),
+  const poker = makePoker(cfg, publicClient, transport, exposure, metrics);
+  startServer(deps, cfg.port, () => {
+    const now = Date.now();
+    // Per-market exposure is deliberately not published: /health is public, and the
+    // book is a cap map an attacker would otherwise get for free. Read it from the
+    // quote-rejected log lines instead.
+    const priceFreshnessMs = buildPriceFreshness(cfg.markets.values(), (coin) => feed.legPrices.ageMs(coin));
+    return {
+      ok: true,
+      quoteJournalLastAppendMs: lastQuoteJournalAppendMs,
+      seeded,
+      openParlays: poker.openCount(),
+      priceFreshnessMs,
+      livePrior: feed.livePrior.status(),
+      perMarketCap: cfg.perMarketCap.toString(),
+      reservedGlobal: exposure.reservedGlobal(now).toString(),
+      bankroll: bankroll.bankroll()?.toString() ?? null,
+    };
+  });
+  logJson({ event: "writer-listening", port: cfg.port });
+
+  if (cfg.googleSheets) startSheetsSync(cfg.googleSheets, deps);
+
+  // Quotes stay disabled until existing on-chain exposure is loaded.
+  await poker.seed();
+  seeded = true;
+  // Prime /limits.bankroll so the app shows it before the first quote.
+  await deps.readAllowance().catch((err) => console.error(new Date().toISOString(), "boot readAllowance failed", err));
+
+  if (cfg.livePriorPollMs > 0) startLivePriorLoop(feed.livePrior, cfg.livePriorPollMs);
+  // ponytail: disabling polling weakens exposure caps; keep it enabled for a funded writer.
+  if (cfg.pokerIntervalMs > 0) startPokerLoop(poker, cfg.pokerIntervalMs);
+  else logJson({ event: "poker-disabled" });
+
+  logJson({ event: "writer-started", port: cfg.port, chainId });
+}
+
+/** The chain's minPremiumBps wins over env; the per-code reserved cap defaults off it. */
+async function withChainMinPremium(publicClient: Pick<PublicClient, "readContract">, loaded: ReturnType<typeof loadConfig>): Promise<WriterConfig> {
+  const chainMinPremiumBps = BigInt(
+    (await publicClient.readContract({
+      address: loaded.parlayVault,
+      abi: parlayVaultAbi,
+      functionName: "minPremiumBps",
+    })) as number,
+  );
+  if (chainMinPremiumBps !== loaded.minPremiumBps) {
+    logJson({ event: "minpremiumbps-env-mismatch", env: loaded.minPremiumBps.toString(), chain: chainMinPremiumBps.toString() });
+  }
+  return {
+    ...loaded,
+    perCodeReservedCap: loaded.perCodeReservedCap ?? defaultPerCodeReservedCap(loaded.maxStake, chainMinPremiumBps),
+    minPremiumBps: chainMinPremiumBps,
+  };
+}
+
+function makePoker(cfg: WriterConfig, publicClient: PublicClient, transport: Transport, exposure: ExposureBook, metrics: Metrics): Poker {
+  const walletClient = createWalletClient({ account: privateKeyToAccount(cfg.pokerKey), transport });
+  return new Poker({
+    ...chainFetchers(publicClient, cfg.parlayVault, logJson),
     exposure,
     metrics,
     fromBlock: cfg.deployBlock,
@@ -155,97 +149,67 @@ async function main(): Promise<void> {
       });
       await publicClient.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
     },
-    log: pokerLog,
+    log: logJson,
   });
-  startServer(deps, cfg.port, () => {
-    const now = Date.now();
-    // Per-market exposure is deliberately not published: /health is public, and the
-    // book is a cap map an attacker would otherwise get for free. Read it from the
-    // quote-rejected log lines instead.
-    const priceFreshnessMs = buildPriceFreshness(cfg.markets.values(), (coin) => legPriceFetcher.ageMs(coin));
-    return {
-      ok: true,
-      quoteJournalLastAppendMs: lastQuoteJournalAppendMs,
-      seeded,
-      openParlays: poker.openCount(),
-      priceFreshnessMs,
-      livePrior: livePrior.status(),
-      perMarketCap: cfg.perMarketCap.toString(),
-      reservedGlobal: exposure.reservedGlobal(now).toString(),
-      bankroll: lastBankroll?.toString() ?? null,
-    };
-  });
-  console.log(JSON.stringify({ at: new Date().toISOString(), event: "writer-listening", port: cfg.port }));
+}
 
-  if (cfg.googleSheets) {
-    const sheets = new GoogleSheetsWaitlist(cfg.googleSheets, deps.waitlist);
-    deps.syncWaitlist = () => sheets.sync();
-    const sync = async () => {
-      try {
-        await sheets.sync();
-      } catch (error) {
-        console.error(JSON.stringify({ event: "google-sheets-sync-failed", reason: (error as Error).message }));
-      } finally {
-        // Only retry unsent signups; idle ticks make no Google requests.
-        setTimeout(sync, 60_000).unref();
-      }
-    };
-    void sync();
-  }
+function startSheetsSync(sheetsCfg: NonNullable<WriterConfig["googleSheets"]>, deps: QuoteDeps): void {
+  const sheets = new GoogleSheetsWaitlist(sheetsCfg, deps.waitlist);
+  deps.syncWaitlist = () => sheets.sync();
+  const sync = async () => {
+    try {
+      await sheets.sync();
+    } catch (error) {
+      console.error(JSON.stringify({ event: "google-sheets-sync-failed", reason: (error as Error).message }));
+    } finally {
+      // Only retry unsent signups; idle ticks make no Google requests.
+      setTimeout(sync, 60_000).unref();
+    }
+  };
+  void sync();
+}
 
-  // Quotes stay disabled until existing on-chain exposure is loaded.
-  await poker.seed();
-  seeded = true;
-  // Prime /limits.bankroll so the app shows it before the first quote.
-  await deps.readAllowance().catch((err) => console.error(new Date().toISOString(), "boot readAllowance failed", err));
+function startLivePriorLoop(livePrior: LivePrior, pollMs: number): void {
+  const liveTick = async () => {
+    try {
+      await livePrior.tick();
+    } catch (err) {
+      console.error(new Date().toISOString(), "live prior tick failed", err);
+    } finally {
+      setTimeout(liveTick, pollMs);
+    }
+  };
+  void liveTick();
+}
 
-  if (cfg.livePriorPollMs > 0) {
-    const liveTick = async () => {
-      try {
-        await livePrior.tick();
-      } catch (err) {
-        console.error(new Date().toISOString(), "live prior tick failed", err);
-      } finally {
-        setTimeout(liveTick, cfg.livePriorPollMs);
-      }
-    };
-    void liveTick();
-  }
+function startPokerLoop(poker: Poker, intervalMs: number): void {
+  let lastTickAt = Date.now();
+  const tick = async () => {
+    try {
+      await poker.tick();
+    } catch (err) {
+      console.error(new Date().toISOString(), "poker tick failed", err);
+    } finally {
+      lastTickAt = Date.now();
+      setTimeout(tick, intervalMs);
+    }
+  };
+  void tick();
 
-  // ponytail: disabling polling weakens exposure caps; keep it enabled for a funded writer.
-  if (cfg.pokerIntervalMs > 0) {
-    let lastTickAt = Date.now();
-    const tick = async () => {
-      try {
-        await poker.tick();
-      } catch (err) {
-        console.error(new Date().toISOString(), "poker tick failed", err);
-      } finally {
-        lastTickAt = Date.now();
-        setTimeout(tick, cfg.pokerIntervalMs);
-      }
-    };
-    void tick();
-
-    setInterval(() => {
-      const threshold = stallThresholdMs(poker.openCount(), RECEIPT_TIMEOUT_MS, cfg.pokerIntervalMs);
-      if (isStalled(lastTickAt, Date.now(), threshold)) {
-        console.error(
-          JSON.stringify({
-            at: new Date().toISOString(),
-            event: "poker-watchdog-stalled",
-            staleMs: Date.now() - lastTickAt,
-            thresholdMs: threshold,
-          }),
-        );
-        process.exit(1);
-      }
-    }, 10_000);
-  } else {
-    console.log(JSON.stringify({ at: new Date().toISOString(), event: "poker-disabled" }));
-  }
-
-  console.log(JSON.stringify({ at: new Date().toISOString(), event: "writer-started", port: cfg.port, chainId }));
+  setInterval(() => {
+    const threshold = stallThresholdMs(poker.openCount(), RECEIPT_TIMEOUT_MS, intervalMs);
+    if (isStalled(lastTickAt, Date.now(), threshold)) {
+      console.error(
+        JSON.stringify({
+          at: new Date().toISOString(),
+          event: "poker-watchdog-stalled",
+          staleMs: Date.now() - lastTickAt,
+          thresholdMs: threshold,
+        }),
+      );
+      process.exit(1);
+    }
+  }, 10_000);
 }
 
 main().catch((err) => {
