@@ -255,7 +255,3 @@ export function stallThresholdMs(
 ): number {
   return openCount * receiptTimeoutMs + tickIntervalMs + marginMs;
 }
-
-export function isStalled(lastTickAt: number, now: number, thresholdMs: number): boolean {
-  return now - lastTickAt > thresholdMs;
-}

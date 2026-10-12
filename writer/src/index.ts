@@ -10,8 +10,9 @@ import { defaultPerCodeReservedCap, loadConfig, type LoadedConfig, type WriterCo
 import { ExposureBook } from "./exposure.js";
 import { buildPriceFreshness } from "./spotPx.js";
 import { LivePrior } from "./livePrior.js";
-import { logJson } from "./log.js";
-import { Poker, chainFetchers, isStalled, stallThresholdMs } from "./poker.js";
+import { logJson } from "../../services/log.mjs";
+import { every, watchdog } from "../../services/loop.mjs";
+import { Poker, chainFetchers, stallThresholdMs } from "./poker.js";
 import { priceFeed } from "./priceFeed.js";
 import { quoteSigner } from "./quotes.js";
 import { newMetrics, startServer, type Metrics, type QuoteDeps } from "./server.js";
@@ -152,21 +153,6 @@ function makePoker(cfg: WriterConfig, publicClient: PublicClient, transport: Tra
   });
 }
 
-/** Self-rescheduling loop: the next run is scheduled whether or not this one threw. */
-function every(ms: number, fn: () => Promise<unknown>, onError: (err: unknown) => void, unref = false): void {
-  const run = async () => {
-    try {
-      await fn();
-    } catch (err) {
-      onError(err);
-    } finally {
-      const t = setTimeout(run, ms);
-      if (unref) t.unref();
-    }
-  };
-  void run();
-}
-
 function startSheetsSync(sheetsCfg: NonNullable<WriterConfig["googleSheets"]>, deps: QuoteDeps): void {
   const sheets = new GoogleSheetsWaitlist(sheetsCfg, deps.waitlist);
   deps.syncWaitlist = () => sheets.sync();
@@ -181,20 +167,18 @@ function startLivePriorLoop(livePrior: LivePrior, pollMs: number): void {
 }
 
 function startPokerLoop(poker: Poker, intervalMs: number): void {
-  let lastTickAt = Date.now();
+  const stamps = { poker: Date.now() };
   every(
     intervalMs,
-    () => poker.tick().finally(() => { lastTickAt = Date.now(); }),
+    () => poker.tick().finally(() => { stamps.poker = Date.now(); }),
     (err) => console.error(new Date().toISOString(), "poker tick failed", err),
   );
-
-  setInterval(() => {
-    const threshold = stallThresholdMs(poker.openCount(), RECEIPT_TIMEOUT_MS, intervalMs);
-    if (isStalled(lastTickAt, Date.now(), threshold)) {
-      console.error(JSON.stringify({ at: new Date().toISOString(), event: "poker-watchdog-stalled", staleMs: Date.now() - lastTickAt, thresholdMs: threshold }));
-      process.exit(1);
-    }
-  }, 10_000);
+  watchdog(
+    stamps,
+    () => stallThresholdMs(poker.openCount(), RECEIPT_TIMEOUT_MS, intervalMs),
+    (_, staleMs, thresholdMs) =>
+      console.error(JSON.stringify({ at: new Date().toISOString(), event: "poker-watchdog-stalled", staleMs, thresholdMs })),
+  );
 }
 
 main().catch((err) => {

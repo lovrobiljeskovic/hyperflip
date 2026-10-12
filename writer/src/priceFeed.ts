@@ -3,7 +3,7 @@ import { readSpotPxWad } from "../../services/precompiles.mjs";
 import type { WriterConfig } from "./config.js";
 import { fetchBestAskWad } from "./infoApi.js";
 import { defaultFetchJson, LivePrior } from "./livePrior.js";
-import { logJson } from "./log.js";
+import { logJson } from "../../services/log.mjs";
 import type { QuoteLeg } from "./quotes.js";
 import { makeLegPriceFetcher } from "./spotPx.js";
 

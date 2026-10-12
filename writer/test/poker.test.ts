@@ -1,7 +1,7 @@
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import type { Address, PublicClient } from "viem";
-import { Poker, blockRanges, chainFetchers, isStalled, stallThresholdMs, type PokerDeps } from "../src/poker.js";
+import { Poker, blockRanges, chainFetchers, stallThresholdMs, type PokerDeps } from "../src/poker.js";
 import { ExposureBook } from "../src/exposure.js";
 import { newMetrics } from "../src/server.js";
 import { WAD } from "../src/units.js";
@@ -307,11 +307,3 @@ test("stallThresholdMs: scales with open count and tick interval, plus fixed mar
   assert.equal(stallThresholdMs(3, 60_000, 15_000), 3 * 60_000 + 15_000 + 120_000);
   assert.equal(stallThresholdMs(0, 60_000, 15_000, 5_000), 15_000 + 5_000);
 });
-
-test("isStalled: false within threshold, true once elapsed exceeds it", () => {
-  const lastTickAt = 1_000_000;
-  assert.equal(isStalled(lastTickAt, lastTickAt + 120_000, 120_000), false); // exactly at bound: not yet stalled
-  assert.equal(isStalled(lastTickAt, lastTickAt + 120_001, 120_000), true);
-  assert.equal(isStalled(lastTickAt, lastTickAt, 120_000), false); // no time elapsed
-});
-

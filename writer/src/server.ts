@@ -5,7 +5,7 @@ import type { WriterConfig } from "./config.js";
 import { ExposureBook } from "./exposure.js";
 import { dominatingLeg, edgeBreakdown, independentJointProbWad, priceParlay, totalEdgeBps } from "./pricing.js";
 import { BPS, WAD } from "./units.js";
-import { logError } from "./log.js";
+import { logError } from "../../services/log.mjs";
 import { quoteDigest, type ParlayQuote, type QuoteLeg, type QuoteRecord } from "./quotes.js";
 import type { LegPriceObservation } from "./infoApi.js";
 import { isValidEmail, validCohort, type RateLimiter, type Waitlist } from "./waitlist.js";
