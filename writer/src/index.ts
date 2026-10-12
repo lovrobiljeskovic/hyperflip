@@ -11,7 +11,7 @@ import { buildPriceFreshness } from "./spotPx.js";
 import { LivePrior } from "./livePrior.js";
 import { Poker, chainFetchers, isStalled, stallThresholdMs } from "./poker.js";
 import { priceFeed } from "./priceFeed.js";
-import { signQuote, type ParlayQuote } from "./quotes.js";
+import { quoteSigner } from "./quotes.js";
 import { newMetrics, startServer, type Metrics, type QuoteDeps } from "./server.js";
 import { readLegStates } from "./settlement.js";
 import { RateLimiter, sendInviteEmail, Waitlist } from "./waitlist.js";
@@ -57,7 +57,7 @@ async function main(): Promise<void> {
       const states = await readLegStates(publicClient, vaults);
       return new Set([...states].filter(([, s]) => s.settled).map(([v]) => v));
     },
-    sign: (q: ParlayQuote) => signQuote(cfg.quoteSignerKey, chainId, cfg.parlayVault, q),
+    sign: quoteSigner(cfg.quoteSignerKey, chainId, cfg.parlayVault),
     ready: () => seeded,
     waitlist: new Waitlist(cfg.waitlistFile),
     sendInvite: cfg.resendApiKey

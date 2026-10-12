@@ -45,19 +45,10 @@ export function quoteDigest(chainId: number, vault: Address, q: ParlayQuote): He
   });
 }
 
-export async function signQuote(
-  signerKey: `0x${string}`,
-  chainId: number,
-  vault: Address,
-  q: ParlayQuote,
-): Promise<Hex> {
+export function quoteSigner(signerKey: `0x${string}`, chainId: number, vault: Address): (q: ParlayQuote) => Promise<Hex> {
   const account = privateKeyToAccount(signerKey);
-  return account.signTypedData({
-    domain: quoteDomain(chainId, vault),
-    types: quoteTypes,
-    primaryType: "Quote",
-    message: q,
-  });
+  const domain = quoteDomain(chainId, vault);
+  return (q) => account.signTypedData({ domain, types: quoteTypes, primaryType: "Quote", message: q });
 }
 
 export interface QuoteRecord {
