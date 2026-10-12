@@ -1,45 +1,17 @@
-import { test, after } from "node:test";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { test } from "node:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import type { Address, Hex } from "viem";
-import { handleAccess, handleQuote as authenticatedQuote, marketsJson, sameGameLeg, validateQuoteRequest, newMetrics, startServer, type QuoteDeps } from "../src/server.js";
-import { ExposureBook } from "../src/exposure.js";
+import { handleAccess, handleQuote as authenticatedQuote, marketsJson, sameGameLeg, validateQuoteRequest, startServer, type QuoteDeps } from "../src/server.js";
 import { RateLimiter, Waitlist } from "../src/waitlist.js";
 import { WAD } from "../src/pure.js";
 import type { WriterConfig } from "../src/config.js";
 import { quoteDigest, type QuoteRecord } from "../src/quotes.js";
+import { testCfg as cfg, testDeps as deps, V1, V2, TAKER } from "./testDeps.js";
 
-const V1 = "0x1111111111111111111111111111111111111111" as Address;
-const V2 = "0x2222222222222222222222222222222222222222" as Address;
-const TAKER = "0x3333333333333333333333333333333333333333" as Address;
-
-function cfg(overrides: Partial<WriterConfig> = {}): WriterConfig {
-  return {
-    chainId: 998, chainName: "HyperEVM Testnet", coreChainId: 998, rpcUrl: "", parlayVault: V1, writerAddress: TAKER,
-    quoteSignerKey: `0x${"11".repeat(32)}` as `0x${string}`,
-    pokerKey: `0x${"22".repeat(32)}` as `0x${string}`,
-    infoApiUrl: "", quoteJournalFile: "/dev/null", port: 0, edgeBps: 0n, minPremiumBps: 100n, minLegs: 2,
-    maxStake: 10_000_000n, perMarketCap: 1_000_000_000n, perClusterCap: 1_000_000_000n,
-    perCodeReservedCap: 1_000_000_000n,
-    openAccess: false,
-    legEdgeBps: 0n, quoteTtlMs: 30_000,
-    spotPxStaleMs: 60_000,
-    minBookDepthWad: 0n,
-    lockoutMs: 600_000, inPlayCapBps: 5000n, livePriorPollMs: 0, livePriorStaleMs: 60_000, livePriorJumpWad: WAD / 10n, livePriorSuspendMs: 30_000,
-    pokerIntervalMs: 15_000, deployBlock: 0n,
-    waitlistFile: "/dev/null", parlayIndexFile: "/dev/null",
-    corsOrigins: ["https://overround.xyz"],
-    markets: new Map([
-      [V1.toLowerCase(), { vault: V1, coinYes: "+10", coinNo: "+11", underlying: "game-1", cluster: "sports", title: "Twins vs Orioles", category: "sports" }],
-      [V2.toLowerCase(), { vault: V2, coinYes: "+20", coinNo: "+21", expiryMs: 2_000_000, underlying: "game-2", cluster: "sports", title: "Arsenal vs Chelsea", category: "sports" }],
-    ]),
-    registryJson: "{}",
-    ...overrides,
-  };
-}
 
 function legOn(vault: Address, isYes: boolean): { vault: Address; isYes: boolean } {
   return { vault, isYes };
@@ -49,38 +21,7 @@ function body(overrides: { legs: { vault: Address; isYes: boolean }[] }): typeof
   return { ...goodBody, ...overrides };
 }
 
-const authDirectory = mkdtempSync(join(tmpdir(), "quote-auth-"));
-after(() => rmSync(authDirectory, { recursive: true, force: true }));
-let authFixture = 0;
 const handleQuote = (d: QuoteDeps, body: unknown, ip = "unknown", authorization = "Bearer test-token") => authenticatedQuote(d, body, ip, authorization);
-function deps(overrides: Partial<QuoteDeps> = {}): QuoteDeps {
-  const c = overrides.cfg ?? cfg();
-  const file = join(authDirectory, `${authFixture++}.json`);
-  writeFileSync(file, JSON.stringify([
-    { email: "a@b.co", code: "historical-code", ts: 0 },
-    { email: "other@b.co", code: "historical-code-2", ts: 0 },
-  ]));
-  return {
-    waitlist: new Waitlist(file),
-    authenticate: async token => token === "test-token" || token === "other-token" ? {
-      userId: token === "test-token" ? "did:privy:first" : "did:privy:second",
-      emails: [token === "test-token" ? "a@b.co" : "other@b.co"], wallets: [TAKER.toLowerCase(), V1.toLowerCase()],
-    } : null,
-    cfg: c,
-    exposure: new ExposureBook((v) => c.markets.get(v)?.cluster),
-    chainId: 31337,
-    fetchLegPrice: async () => ({ priceWad: WAD / 2n, source: "l2Book", observedAtMs: 1_000_000, depthWad: WAD, vwapWad: WAD / 2n, freshnessMs: null }),
-    recordQuote: async () => {},
-    readAllowance: async () => 1_000_000_000n,
-    readSettled: async () => new Set(),
-    sign: async () => "0xsig" as Hex,
-    now: () => 1_000_000,
-    randomId: () => `0x${"ab".repeat(32)}` as Hex,
-    metrics: newMetrics(),
-    ...overrides,
-  };
-}
-
 const goodBody = { taker: TAKER, legs: [{ vault: V1, isYes: true }, { vault: V2, isYes: false }], stake: "1000000" };
 
 test("happy path: returns signed quote, reserves exposure", async () => {

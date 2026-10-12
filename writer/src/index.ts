@@ -178,7 +178,7 @@ async function main(): Promise<void> {
   console.log(JSON.stringify({ at: new Date().toISOString(), event: "writer-listening", port: cfg.port }));
 
   if (cfg.googleSheets) {
-    const sheets = new GoogleSheetsWaitlist(cfg.googleSheets, deps.waitlist!);
+    const sheets = new GoogleSheetsWaitlist(cfg.googleSheets, deps.waitlist);
     deps.syncWaitlist = () => sheets.sync();
     const sync = async () => {
       try {

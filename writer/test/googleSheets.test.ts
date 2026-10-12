@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { googleSheetsConfig, GoogleSheetsWaitlist } from "../src/googleSheets.js";
-import { handleAccess, handleAdmission, handleWaitlist, type QuoteDeps } from "../src/server.js";
+import { handleAccess, handleAdmission, handleWaitlist } from "../src/server.js";
+import { testDeps } from "./testDeps.js";
 import { Waitlist } from "../src/waitlist.js";
 
 const config = { url: "https://script.google.com/macros/s/test-deployment/exec", secret: "test-only-secret-32-characters-long" };
@@ -43,7 +44,7 @@ test("site signup exports immediately without codes; outages and lost acknowledg
     };
     let bridge = new GoogleSheetsWaitlist(config, waitlist, fetcher);
     let immediate: Promise<void> | undefined;
-    const deps = { waitlist, syncWaitlist: () => immediate = bridge.sync(), now: Date.now } as QuoteDeps;
+    const deps = testDeps({ waitlist, syncWaitlist: () => immediate = bridge.sync(), now: Date.now });
     assert.equal((await handleWaitlist(deps, { email: "FIRST@example.com" }, "ip")).status, 200);
     await assert.rejects(immediate!, /remain queued/);
     assert.equal(calls, 1);
@@ -70,10 +71,10 @@ test("sheet edits admit only explicit emails, can grow cohorts, and retries pres
     for (const email of ["first@example.com", "second@example.com", "pending@example.com"]) waitlist.signup(email);
     const sent: string[] = [];
     let fail = true;
-    const deps = { now: Date.now, waitlist, authenticate: async (token: string) => ({ userId: `did:privy:${token}`, emails: [`${token}@example.com`], wallets: [] }), sendInvite: async (email: string) => {
+    const deps = testDeps({ now: Date.now, waitlist, authenticate: async (token: string) => ({ userId: `did:privy:${token}`, emails: [`${token}@example.com`], wallets: [] }), sendInvite: async (email: string) => {
       sent.push(email);
       if (fail) throw new Error("email unavailable");
-    } } as unknown as QuoteDeps;
+    } });
     for (const body of [{ cohort: "beta", count: 1 }, { cohort: "beta", count: 1, emails: ["unknown@example.com"] },
       { cohort: "beta", count: 2, emails: ["first@example.com", "first@example.com"] }]) {
       assert((await handleAdmission(deps, body)).status >= 400);
@@ -119,13 +120,13 @@ test("repeat signup restores deleted sheet rows without changing approval, codes
     waitlist = new Waitlist(file);
     const bridge = new GoogleSheetsWaitlist(config, waitlist, fetcher);
     let exported: Promise<void> | undefined;
-    const deps: Partial<QuoteDeps> = { waitlist, now: Date.now, syncWaitlist: () => exported = bridge.sync(),
+    const deps = testDeps({ waitlist, now: Date.now, syncWaitlist: () => exported = bridge.sync(),
       sendInvite: async (): Promise<void> => { assert.fail("repeat signup must not send an email"); },
-    };
+    });
     for (const email of emails) {
       const expected = sheet.get(email);
       sheet.delete(email);
-      assert.equal((await handleWaitlist(deps as QuoteDeps, { email: email.toUpperCase() }, "ip")).status, 200);
+      assert.equal((await handleWaitlist(deps, { email: email.toUpperCase() }, "ip")).status, 200);
       await exported;
       assert.deepEqual(sheet.get(email), expected);
       assert.equal(waitlist.size(), 2);

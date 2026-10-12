@@ -38,24 +38,21 @@ export interface QuoteDeps {
   randomId(): Hex;
   metrics: Metrics;
 
-  waitlist?: Waitlist;
+  waitlist: Waitlist;
   sendInvite?(email: string): Promise<void>;
   authenticate?(token: string): Promise<AuthenticatedAccount | null>;
-  signupLimiter?: RateLimiter;
+  signupLimiter: RateLimiter;
   syncWaitlist?(): Promise<void>;
-
-  badInviteLimiter?: RateLimiter;
-
-  quoteLimiter?: RateLimiter;
-
-  ready?: () => boolean;
+  badInviteLimiter: RateLimiter;
+  quoteLimiter: RateLimiter;
+  ready: () => boolean;
   /** P(YES) for a vault as the quote path would price it, overlaid on /markets so the
    * app shows what we quote: a number replaces the registry prior, `null` strips it
    * (in play with no fresh feed, or final - the leg is unquotable, so the app drops
    * the row), `undefined` leaves the row as written. */
-  livePriorYes?(vault: Address): number | null | undefined;
+  livePriorYes(vault: Address): number | null | undefined;
   /** Mint refs for a taker, from the poker's index (GET /parlays?taker=). */
-  parlaysOf?(taker: Address): { id: bigint; block: bigint }[];
+  parlaysOf(taker: Address): { id: bigint; block: bigint }[];
 }
 
 type Validated =
@@ -124,11 +121,11 @@ export async function handleQuote(
   authorization?: string,
 ): Promise<{ status: number; json: unknown }> {
   const { cfg, exposure, metrics } = deps;
-  if (deps.ready && !deps.ready()) {
+  if (!deps.ready()) {
     reject(metrics, "warming-up");
     return { status: 503, json: { error: "warming-up" } };
   }
-  if (deps.quoteLimiter && !deps.quoteLimiter.allow(ip)) {
+  if (!deps.quoteLimiter.allow(ip)) {
     reject(metrics, "rate-limited");
     return { status: 429, json: { error: "rate-limited" } };
   }
@@ -289,12 +286,11 @@ export async function handleWaitlist(
   ip: string,
 ): Promise<{ status: number; json: unknown }> {
   const { waitlist, signupLimiter } = deps;
-  if (!waitlist) return { status: 503, json: { error: "waitlist-unavailable" } };
   const raw = (body as { email?: unknown })?.email;
   if (typeof raw !== "string" || !isValidEmail(raw.trim())) {
     return { status: 400, json: { error: "bad-email" } };
   }
-  if (signupLimiter && !signupLimiter.allow(ip)) return { status: 429, json: { error: "rate-limited" } };
+  if (!signupLimiter.allow(ip)) return { status: 429, json: { error: "rate-limited" } };
   const email = raw.trim().toLowerCase();
   const { isNew } = waitlist.signup(email);
   // The signup is already durable. A Google outage must not lose it or grant access.
@@ -310,18 +306,18 @@ export async function handleWaitlist(
 async function authenticateAdmission(deps: QuoteDeps, authorization: string | undefined, ip: string): Promise<{ account: AuthenticatedAccount } | { status: number; json: { error: string } }> {
   const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : "";
   let account: AuthenticatedAccount | null = null;
-  if (!deps.authenticate || !deps.waitlist) return { status: 503, json: { error: "access-unavailable" } };
+  if (!deps.authenticate) return { status: 503, json: { error: "access-unavailable" } };
   if (token && token.length <= 8192) {
     try { account = await deps.authenticate(token); }
     catch { return { status: 503, json: { error: "access-unavailable" } }; }
   }
   if (!account) {
-    if (deps.badInviteLimiter && !deps.badInviteLimiter.allow(ip)) {
+    if (!deps.badInviteLimiter.allow(ip)) {
       return { status: 429, json: { error: "rate-limited" } };
     }
     return { status: 401, json: { error: "unauthenticated" } };
   }
-  if (!deps.cfg?.openAccess && !deps.waitlist.claim(account.userId, account.emails)) return { status: 403, json: { error: "not-admitted" } };
+  if (!deps.cfg.openAccess && !deps.waitlist.claim(account.userId, account.emails)) return { status: 403, json: { error: "not-admitted" } };
   return { account };
 }
 
@@ -332,7 +328,7 @@ export async function handleAccess(deps: QuoteDeps, authorization: string | unde
 }
 
 export async function handleAdmission(deps: QuoteDeps, body: unknown) {
-  if (!deps.waitlist || !deps.sendInvite) return { status: 503, json: { error: "admission-unavailable" } };
+  if (!deps.sendInvite) return { status: 503, json: { error: "admission-unavailable" } };
   const b = body as { cohort?: unknown; count?: unknown; emails?: unknown } | null;
   if (!validCohort(b?.cohort) || typeof b?.count !== "number" || !Number.isSafeInteger(b.count) || b.count < 1 || b.count > 100) {
     return { status: 400, json: { error: "bad-cohort" } };
@@ -369,13 +365,12 @@ function lockedCors(req: http.IncomingMessage, allowlist: string[]): Record<stri
 
 /** Registry JSON with live priors overlaid on `priorYes`, so the board mirrors the quote. */
 export function marketsJson(deps: Pick<QuoteDeps, "cfg" | "livePriorYes">): string {
-  if (!deps.livePriorYes) return deps.cfg.registryJson;
   const registry = JSON.parse(deps.cfg.registryJson);
   const list: Record<string, unknown>[] | undefined = Array.isArray(registry) ? registry : registry?.markets;
   if (!Array.isArray(list)) return deps.cfg.registryJson;
   let changed = false;
   const markets = list.map((m) => {
-    const live = typeof m.vault === "string" ? deps.livePriorYes!(m.vault as Address) : undefined;
+    const live = typeof m.vault === "string" ? deps.livePriorYes(m.vault as Address) : undefined;
     if (live === undefined || (live === null && m.priorYes === undefined)) return m;
     changed = true;
     if (live === null) {
@@ -422,7 +417,7 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
     }
     if (req.method === "GET" && req.url === "/health") return send(200, health());
     if (req.method === "GET" && req.url === "/metrics") return send(200, deps.metrics);
-    if (req.method === "GET" && req.url?.startsWith("/parlays?") && deps.parlaysOf) {
+    if (req.method === "GET" && req.url?.startsWith("/parlays?")) {
       const taker = new URL(req.url, "http://writer").searchParams.get("taker");
       if (!taker || !isAddress(taker)) return send(400, { error: "taker must be an address" });
       return send(200, deps.parlaysOf(taker).map((p) => ({ id: p.id.toString(), block: p.block.toString() })));

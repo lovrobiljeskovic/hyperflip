@@ -3,7 +3,8 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { handleAccess, handleAdmission, handleWaitlist, type QuoteDeps } from "../src/server.js";
+import { handleAccess, handleAdmission, handleWaitlist } from "../src/server.js";
+import { testDeps } from "./testDeps.js";
 import { isValidEmail, RateLimiter, Waitlist } from "../src/waitlist.js";
 
 const file = () => path.join(mkdtempSync(path.join(tmpdir(), "wl-")), "waitlist.json");
@@ -82,14 +83,9 @@ test("rate limiter slides its window", () => {
   assert.ok(rl.allow("ip"));
 });
 
-function waitlistDeps(over: Partial<QuoteDeps>): QuoteDeps {
-  // handleWaitlist touches only these fields; the quote-path deps stay unused.
-  return { now: () => 0, ...over } as QuoteDeps;
-}
-
 test("handleWaitlist never sends or returns an invite, even for admitted emails", async () => {
   const wl = new Waitlist(file());
-  const deps = waitlistDeps({ waitlist: wl, sendInvite: async () => { assert.fail("signup must not send email"); } });
+  const deps = testDeps({ waitlist: wl, sendInvite: async () => { assert.fail("signup must not send email"); } });
   const expected = { status: 200, json: { ok: true } };
   assert.deepEqual(await handleWaitlist(deps, { email: "a@b.co" }, "ip"), expected);
   await wl.admit("beta", 1, async () => {}, ["a@b.co"]);
@@ -102,7 +98,7 @@ test("handleWaitlist never sends or returns an invite, even for admitted emails"
 test("admission validates input and requires email configuration before changing access", async () => {
   const wl = new Waitlist(file());
   wl.signup("a@b.co");
-  const deps = waitlistDeps({ waitlist: wl });
+  const deps = testDeps({ waitlist: wl });
   assert.equal((await handleAdmission(deps, { cohort: "beta", count: 1 })).status, 503);
   assert.equal(wl.review().filter(e => !e.admitted).length, 1);
   deps.sendInvite = async () => {};
@@ -118,24 +114,22 @@ test("admission validates input and requires email configuration before changing
   assert.equal((await handleAdmission(deps, { cohort: "beta", count: 1, emails: ["a@b.co"] })).status, 200);
 });
 
-test("handleWaitlist: bad email, rate limit, unavailable", async () => {
+test("handleWaitlist: bad email, rate limit", async () => {
   const wl = new Waitlist(file());
   const limiter = new RateLimiter(1, 1000, () => 0);
-  const deps = waitlistDeps({ waitlist: wl, sendInvite: async () => {}, signupLimiter: limiter });
+  const deps = testDeps({ waitlist: wl, sendInvite: async () => {}, signupLimiter: limiter });
 
   assert.equal((await handleWaitlist(deps, { email: "nope" }, "ip")).status, 400);
   assert.equal((await handleWaitlist(deps, {}, "ip")).status, 400);
   assert.equal((await handleWaitlist(deps, { email: "a@b.co" }, "ip")).status, 200);
   assert.equal((await handleWaitlist(deps, { email: "c@d.co" }, "ip")).status, 429);
-
-  assert.equal((await handleWaitlist(waitlistDeps({}), { email: "a@b.co" }, "ip")).status, 503);
 });
 
 
 test("selected admission admits only reviewed users and rejects stale or altered selections", async () => {
   const wl = new Waitlist(file());
   for (const email of ["old@b.co", "selected@b.co", "last@b.co"]) wl.signup(email);
-  const deps = waitlistDeps({ waitlist: wl, sendInvite: async email => { assert.equal(email, "selected@b.co"); } });
+  const deps = testDeps({ waitlist: wl, sendInvite: async email => { assert.equal(email, "selected@b.co"); } });
   for (const emails of [null, "selected@b.co", ["unknown@b.co"], ["SELECTED@b.co"], ["selected@b.co", "selected@b.co"]]) {
     const r = await handleAdmission(deps, { cohort: "chosen", count: Array.isArray(emails) ? emails.length : 1, emails });
     assert.ok(r.status === 400 || r.status === 409);
@@ -155,7 +149,7 @@ test("access requires verified approved email, binds once, and survives reload a
   waitlist.signup("pending@example.com");
   let userId = "did:privy:first";
   let emails = ["pending@example.com"];
-  const deps = waitlistDeps({ waitlist, authenticate: async token => token === "verified-token" ? { userId, emails, wallets: [] } : null,
+  const deps = testDeps({ waitlist, authenticate: async token => token === "verified-token" ? { userId, emails, wallets: [] } : null,
     badInviteLimiter: new RateLimiter(2, 1000, () => 0) });
   for (const token of ["environment-only", "old-invite-code"]) assert.equal((await handleAccess(deps, `Bearer ${token}`, "ip")).status, 401);
   assert.equal((await handleAccess(deps, undefined, "ip")).status, 429);
@@ -174,5 +168,5 @@ test("access requires verified approved email, binds once, and survives reload a
   assert(deps.waitlist.review().every(e => !("privyUserId" in e)));
   deps.authenticate = async () => { throw new Error("provider unavailable"); };
   assert.equal((await handleAccess(deps, "Bearer verified-token", "ip")).status, 503);
-  assert.equal((await handleAccess(waitlistDeps({}), "Bearer verified-token", "ip")).status, 503);
+  assert.equal((await handleAccess(testDeps({ authenticate: undefined }), "Bearer verified-token", "ip")).status, 503);
 });
