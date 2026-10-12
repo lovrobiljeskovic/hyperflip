@@ -281,7 +281,7 @@ accounts, a linked external wallet, a different unlinked wallet, and logout.
 
 `TESTNET_RPC` accepts a comma-separated fallback list. Every keeper endpoint must
 serve fresh Core state for balance verification and settlement. Before changing
-that list, run `node keeper/rpc-check.mjs <url> [<url> ...]` against each candidate.
+that list, run `cd keeper && npx tsx rpc-check.ts <url> [<url> ...]` against each candidate.
 `WRITER_RPC` may use a separate list for event scans and quote reads.
 
 Use separate systemd units so a writer restart does not stop settlement. A keeper

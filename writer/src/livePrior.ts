@@ -1,3 +1,4 @@
+import { outcomeCoin } from "../../services/precompiles.mjs";
 import type { MarketInfo } from "./markets.js";
 import { fromWad, toWad, WAD } from "./units.js";
 
@@ -83,7 +84,8 @@ const metaField = (desc: string | undefined, key: string) => new RegExp(`(?:^|\\
 
 /** Mainnet HIP-4 YES coin for a game: a `sportsContestWinner` outcome naming both teams from
  * our title on the same UTC kickoff day. Deployers order participants differently, so the
- * YES coin (`#<id*10>` = participant A, `+1` = B) follows whichever is our away team. */
+ * YES coin (participant A = yes side, B = no side) follows whichever is our away team.
+ * Coin encoding: services/precompiles.mts. */
 export function mainnetYesCoin(outcomes: { outcome: number; name?: string; description?: string }[], m: Pick<MarketInfo, "title" | "startMs">): string | null {
   const [away, home] = m.title.split(" vs ").map((t) => t.trim().toLowerCase());
   if (!away || !home || m.startMs === undefined) return null;
@@ -93,8 +95,8 @@ export function mainnetYesCoin(outcomes: { outcome: number; name?: string; descr
     if (metaField(o.description, "scheduledStart")?.slice(0, 8) !== day) continue;
     const a = metaField(o.description, "participantA");
     const b = metaField(o.description, "participantB");
-    if (a === away && b === home) return `#${o.outcome * 10}`;
-    if (a === home && b === away) return `#${o.outcome * 10 + 1}`;
+    if (a === away && b === home) return outcomeCoin(o.outcome, true);
+    if (a === home && b === away) return outcomeCoin(o.outcome, false);
   }
   return null;
 }

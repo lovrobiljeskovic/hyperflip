@@ -1,6 +1,14 @@
 import { verifyDeploymentRpc } from "../../registry/deployment.mjs";
 import { rpcUrls } from "../../services/env.mjs";
 import {
+  encodedOutcomeAssetId,
+  OUTCOME_ACTIVE,
+  OUTCOME_PRUNED,
+  OUTCOME_SETTLED,
+  readOutcomeStatus,
+  readSpotBalanceWei,
+} from "../../services/precompiles.mjs";
+import {
   createPublicClient,
   createWalletClient,
   defineChain,
@@ -13,11 +21,9 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { keeperVerifierAbi, outcomeVaultAbi } from "./abi.js";
 import type { KeeperConfig } from "./config.js";
-import { OUTCOME_ACTIVE, OUTCOME_PRUNED, OUTCOME_SETTLED, readOutcomeStatus, readSpotBalanceWei } from "./core814.js";
 import { loadFractionCache, saveFraction } from "./cache.js";
 import {
   createSerializer,
-  encodedOutcomeAssetId,
   evmToOutcomeWei,
   fractionWadFromSettledValue,
   newestSampleBefore,
@@ -99,7 +105,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   // endpoint is a free public service with no SLA, and an unusable RPC is exactly what stranded
   // the 8/19 vaults, so a second one costs nothing to keep behind it. Note the whole list must
   // serve the 0x814 and 0x801 precompiles (0x801 with outcome-encoded asset ids is the
-  // balance-verification path) — see keeper/rpc-check.mjs.
+  // balance-verification path) — see keeper/rpc-check.ts.
   const urls = rpcUrls(config.rpcUrl);
   const chain = defineChain({
     id: config.coreChainId,

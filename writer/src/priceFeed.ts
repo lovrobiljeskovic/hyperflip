@@ -1,10 +1,11 @@
 import type { PublicClient } from "viem";
+import { readSpotPxWad } from "../../services/precompiles.mjs";
 import type { WriterConfig } from "./config.js";
 import { fetchBestAskWad } from "./infoApi.js";
 import { defaultFetchJson, LivePrior } from "./livePrior.js";
 import { logJson } from "./log.js";
 import type { QuoteLeg } from "./quotes.js";
-import { makeLegPriceFetcher, readSpotPxWad } from "./spotPx.js";
+import { makeLegPriceFetcher } from "./spotPx.js";
 
 /** Live prior + leg-price fetcher wired from config; source order lives in the livePrior.ts header. */
 export function priceFeed(cfg: WriterConfig, publicClient: Pick<PublicClient, "call">) {

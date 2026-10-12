@@ -23,14 +23,6 @@ export function evmToOutcomeWei(amountEvm: bigint, evmUnitsPerShare: bigint): bi
   return w;
 }
 
-/** Encoded outcome asset id accepted by the 0x801 spot-balance and 0x808 spot-px precompiles
- * (2026-08 testnet update): 100000000 + 10*outcome + side (0 = yes, 1 = no). Official
- * L1Read.sol. */
-export const OUTCOME_ASSET_BASE = 100_000_000n;
-export function encodedOutcomeAssetId(outcome: number, yes: boolean): bigint {
-  return OUTCOME_ASSET_BASE + 10n * BigInt(outcome) + (yes ? 0n : 1n);
-}
-
 /** OutcomeVault.OpType: Split = 0, Merge = 1. */
 export type OpType = 0 | 1;
 

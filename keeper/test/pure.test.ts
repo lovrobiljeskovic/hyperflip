@@ -5,7 +5,6 @@ import {
   decodeFractionCache,
   deltaMatches,
   encodeFractionCache,
-  encodedOutcomeAssetId,
   evmToOutcomeWei,
   expectedDelta,
   fractionWadFromSettledValue,
@@ -237,11 +236,4 @@ test("createSerializer: a failed send does not wedge the queue for the next one"
   await assert.rejects(() => sendTx(() => Promise.reject(new Error("nonce too low"))), /nonce too low/);
   const result = await sendTx(() => Promise.resolve("ok"));
   assert.equal(result, "ok");
-});
-
-test("encodedOutcomeAssetId matches L1Read.sol: 100000000 + 10*outcome + side", () => {
-  // outcome 13734 = live NVDA market, coinYes "#137340" -> asset id 100137340 (testnet-verified)
-  assert.equal(encodedOutcomeAssetId(13734, true), 100_137_340n);
-  assert.equal(encodedOutcomeAssetId(13734, false), 100_137_341n);
-  assert.equal(encodedOutcomeAssetId(0, true), 100_000_000n);
 });
