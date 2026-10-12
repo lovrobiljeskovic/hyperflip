@@ -6,15 +6,10 @@ import {console} from "forge-std/console.sol";
 import {OutcomeLeg} from "../src/OutcomeLeg.sol";
 import {ParlayVault} from "../src/ParlayVault.sol";
 
-/// Deploys one OutcomeLeg on Elysium mirroring a HyperEVM OutcomeVault, and
-/// lists it on the Elysium ParlayVault when PARLAY_VAULT_ADDRESS is set (the
-/// broadcaster must then be that vault's owner or legRegistrar).
+/// Deploys one OutcomeLeg on Elysium mirroring a 998 OutcomeVault and, when
+/// PARLAY_VAULT_ADDRESS is set, lists it (broadcaster = owner or legRegistrar).
 ///
-/// Required env: SOURCE_VAULT (998 OutcomeVault), RELAY_ADDRESS (998
-/// SettlementRelay). Optional: PARLAY_VAULT_ADDRESS.
-///
-/// Run: `forge script script/DeployLeg.s.sol --rpc-url elysium_testnet` for a
-/// dry run; add `--private-key $PRIVATE_KEY --broadcast` to deploy.
+/// Required env: SOURCE_VAULT, RELAY_ADDRESS. Optional: PARLAY_VAULT_ADDRESS, PRIVATE_KEY.
 contract DeployLeg is Script {
     function run() external returns (OutcomeLeg leg) {
         address sourceVault = vm.envAddress("SOURCE_VAULT");

@@ -6,12 +6,10 @@ import {console} from "forge-std/console.sol";
 import {OutcomeLeg} from "../src/OutcomeLeg.sol";
 import {ParlayVault} from "../src/ParlayVault.sol";
 
-/// Bulk cutover: one OutcomeLeg per HyperEVM vault in SOURCE_VAULTS (comma
-/// separated), each listed on the Elysium ParlayVault in the same broadcast.
-/// The broadcaster must be the vault's owner or legRegistrar.
+/// One OutcomeLeg per vault in SOURCE_VAULTS (comma separated), each listed on
+/// the Elysium ParlayVault. Driven by `tools/mirror-legs.mjs`.
 ///
 /// Required env: SOURCE_VAULTS, RELAY_ADDRESS, PARLAY_VAULT_ADDRESS.
-/// Driven by `tools/mirror-legs.mjs`, which rewrites the registry afterwards.
 contract MirrorLegs is Script {
     function run() external {
         address[] memory sources = vm.envAddress("SOURCE_VAULTS", ",");

@@ -8,38 +8,23 @@ import {IExecutionVerifier} from "../src/IExecutionVerifier.sol";
 import {KeeperVerifier} from "../src/KeeperVerifier.sol";
 import {OutcomeVault} from "../src/OutcomeVault.sol";
 
-/// Per-market deploy. No factory (plan text: "one deploy script per market
-/// ... factory only when market count makes scripts painful"). Deploys one
-/// OutcomeVault, which deploys its own oYES/oNO pair (vault-gated mint/burn
-/// is wired automatically — OutcomeToken sets `vault = msg.sender` in its own
-/// constructor). Reuses a shared KeeperVerifier when VERIFIER_ADDRESS is set,
-/// else deploys a fresh one owned by the broadcaster.
+/// Deploys one OutcomeVault (plus its oYES/oNO pair), reusing the verifier at
+/// VERIFIER_ADDRESS or deploying a fresh KeeperVerifier. Needs --rpc-url even
+/// for a dry run: the constructor checks live code at CORE_DEPOSIT_WALLET.
 ///
 /// Required env: QUOTE_TOKEN_ADDRESS, CORE_SYSTEM_ADDRESS, QUESTION_ID,
 /// OUTCOME_ID, KEEPER_ADDRESS, MARKET_SYMBOL.
-/// Optional env: QUOTE_TOKEN_CORE_INDEX (default 0 — confirmed USDC index,
-/// docs/spike-findings.md), QUOTE_DECIMALS (default 6 — real USDC), VERIFIER_ADDRESS
-/// (reuse an already-deployed shared verifier instead of deploying a fresh
-/// one), MIN_DELAY_SECONDS (applied only to a freshly deployed verifier;
-/// KeeperVerifier's own default is 10 minutes), OWNER_ADDRESS (vault owner
-/// after deploy — the cold key; unset leaves the broadcaster as owner).
-///
-/// Run: `forge script script/Deploy.s.sol --rpc-url $TESTNET_RPC --sig
-/// "run()"` for a dry run (needs --rpc-url: the constructor checks live code
-/// at CoreConstants.CORE_DEPOSIT_WALLET, which only exists on-chain); add
-/// `--broadcast` with `PRIVATE_KEY` in the environment to actually deploy.
-/// The key is read from env, never passed as `--private-key`: process
-/// arguments are world-readable on the box (`ps`, /proc), environment is not.
-/// `--private-key` still works when PRIVATE_KEY is unset.
+/// Optional env: QUOTE_TOKEN_CORE_INDEX (0), QUOTE_DECIMALS (6), VERIFIER_ADDRESS,
+/// MIN_DELAY_SECONDS (fresh verifier only), OWNER_ADDRESS (hand-off after deploy),
+/// PRIVATE_KEY (env rather than --private-key: process args are world-readable on the box).
 contract Deploy is Script {
-    /// Own function so run() keeps its stack: one more local there is "stack too deep".
+    /// Split out of run() to stay under "stack too deep".
     function _startBroadcast() internal {
         uint256 deployerKey = vm.envOr("PRIVATE_KEY", uint256(0));
         if (deployerKey != 0) vm.startBroadcast(deployerKey);
         else vm.startBroadcast();
     }
 
-    /// Same stack reason: reads OWNER_ADDRESS here, not in run().
     function _handOff(OutcomeVault vault) internal {
         address owner = vm.envOr("OWNER_ADDRESS", address(0));
         if (owner != address(0)) vault.setOwner(owner);

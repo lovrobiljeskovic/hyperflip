@@ -6,32 +6,17 @@ import {console} from "forge-std/console.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {ParlayVault} from "../src/ParlayVault.sol";
 
-/// Deploys one ParlayVault. Broadcaster becomes owner.
+/// Deploys one ParlayVault. Broadcaster becomes owner unless OWNER_ADDRESS is set.
 ///
-/// Required env: QUOTE_TOKEN_ADDRESS (USDC), WRITER_ADDRESS (house bankroll
-/// wallet), QUOTE_SIGNER_ADDRESS, MIN_PREMIUM_BPS.
-/// Optional env: LEG_REGISTRAR_ADDRESS (online key that lists new legs),
-/// OWNER_ADDRESS (cold key; ownership is handed over in the same broadcast).
-///
-/// MIN_PREMIUM_BPS for the testnet beta: 100 (1%). Caps any single parlay at
-/// 100x premium; long parlays (~5 legs at ~2x each = ~32x) still fit. The
-/// floor is a signer-bug backstop, not pricing — the writer service quotes
-/// well above it. The constructor does not range-check this value (only the
-/// setter does), so the script enforces < 10_000 itself.
-///
-/// After deploy the vault is inert until the writer wallet approves USDC to
-/// it — that allowance is the exposure cap and pause switch. Keep it small on
-/// testnet (e.g. 10 USDC).
-///
-/// Run: `forge script script/DeployParlay.s.sol --rpc-url $TESTNET_RPC` for a
-/// dry run; add `--private-key $PRIVATE_KEY --broadcast` to deploy.
+/// Required env: QUOTE_TOKEN_ADDRESS, WRITER_ADDRESS, QUOTE_SIGNER_ADDRESS,
+/// MIN_PREMIUM_BPS. Optional env: LEG_REGISTRAR_ADDRESS, OWNER_ADDRESS.
 contract DeployParlay is Script {
     function run() external returns (ParlayVault vault) {
         IERC20 usdc = IERC20(vm.envAddress("QUOTE_TOKEN_ADDRESS"));
         address writer = vm.envAddress("WRITER_ADDRESS");
         address quoteSigner = vm.envAddress("QUOTE_SIGNER_ADDRESS");
         uint256 minPremiumBps = vm.envUint("MIN_PREMIUM_BPS");
-        require(minPremiumBps < 10_000, "BAD_BPS");
+        require(minPremiumBps < 10_000, "BAD_BPS"); // constructor does not range-check
 
         vm.startBroadcast();
         vault = new ParlayVault(usdc, writer, quoteSigner, uint16(minPremiumBps));
