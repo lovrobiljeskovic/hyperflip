@@ -2,9 +2,11 @@
 
 Users enter only their email on the site. The writer saves it durably and
 immediately exports it to a private Google Sheet. You approve rows in Sheets;
-an installed edit trigger calls the writer, which generates and emails codes.
-Users enter their code on the app and connect any wallet through Privy.
-There is no approval page in the app and no Google login for waitlist users.
+an installed edit trigger calls the writer, which marks the row admitted and
+emails the user. Users verify that email through Privy at `/access` and
+connect any wallet. There is no approval page in the app and no Google login
+for waitlist users. The sheet's columns stay the same; `Invite sent at`
+records the approval email delivery.
 
 ## One-time setup in your Google account
 
@@ -39,7 +41,7 @@ There is no approval page in the app and no Google login for waitlist users.
 
    Use the deployed `/exec` URL, not `/dev`. Restart the writer. It exports existing
    signups too, preserving their original signup dates and any existing admissions.
-   Preserve `WAITLIST_FILE`; it remains the durable queue and code store.
+   Preserve `WAITLIST_FILE`; it remains the durable queue.
 7. Reload the sheet to see the **Waitlist** menu. For later script changes, update
    the existing web-app deployment to a new version so its URL stays stable.
 
@@ -56,11 +58,11 @@ instantaneous or guaranteed. **Invite sent at** means the email provider accepte
 the message, not that it reached the inbox.
 
 If **Error** is populated, fix the configuration/error and choose **Waitlist →
-Send / retry approved invitations**. Retries reuse the original code and skip
-emails the writer already recorded as sent. Each execution processes up to 100
+Send / retry approved invitations**. Retries skip emails the writer already
+recorded as sent. Each execution processes up to 100
 approved rows, stopping after roughly three minutes before Google's runtime limit;
 use the menu again for any remaining rows. A busy trigger can also require a retry.
-Unchecking a box after admission does not revoke an issued code.
+Unchecking a box after admission does not revoke an admission.
 
 Keep Email, signup date, Status, Invite sent at, and Error as integration-owned
 columns. Don't rename/reorder columns, duplicate/delete signup rows, or edit
@@ -69,24 +71,20 @@ group/filter by Cohort for counts. Counts represent email signups, not verified
 people or active traders.
 
 Signup export failures leave the signup saved locally and retry once per minute.
-Idle retries make no external requests. Google never receives invite codes.
+Idle retries make no external requests.
 Submitting an existing email again restores a deleted sheet row, preserving the
 original signup date, approval and account binding without sending another email.
-Approved users verify their waitlist email through Privy at `/access`, then link
-their existing wallet. No invite code is generated or needed. The sheet workflow
-and columns stay the same; `Invite sent at` records the approval email delivery.
 The private approval endpoint is `POST /integrations/google-sheets/admit`, with
 the approval token as a Bearer credential and `{cohort,count,emails}` as JSON.
-The app checks codes against the writer, so Google outages don't unlock the app
-or invalidate existing admissions. Script-created rows don't fire the edit trigger.
+Google outages don't unlock the app or invalidate existing admissions. Script-created rows don't fire the edit trigger.
 
 ## Verify before launching
 
 Use a test sheet and your own test email with a preview writer. Submit through
-the site and confirm a Pending row with an unchecked box and no email/code.
+the site and confirm a Pending row with an unchecked box and no email.
 Set a cohort, check Approved, and confirm one admission email and its timestamp.
-Enter that code at `/access`, then connect a wallet. Try an invalid code and confirm
-the app stays gated. Run the sheet's retry action and confirm no new code/email.
+Verify that email at `/access`, then connect a wallet. Run the sheet's retry
+action and confirm no second email.
 
 Local checks use fake Google services and email delivery; a successful local test
 does not verify your Google deployment, trigger authorization, or real email sender.

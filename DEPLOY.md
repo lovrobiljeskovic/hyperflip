@@ -305,8 +305,7 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-The writer unit uses `/opt/hype/writer`. Local supervision is available through
-`bash tools/supervise.sh keeper` and `bash tools/supervise.sh writer`.
+The writer unit uses `/opt/hype/writer`.
 
 Place a TLS proxy in front of writer port 8787 and keep that port closed to the
 public network. Example Caddy configuration, with your writer domain:
