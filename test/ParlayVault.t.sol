@@ -6,7 +6,7 @@ import {BaseTest} from "./BaseTest.sol";
 import {OutcomeVault} from "../src/OutcomeVault.sol";
 import {ParlayVault} from "../src/ParlayVault.sol";
 
-contract ParlayVaultTest is BaseTest {
+abstract contract ParlayVaultTest is BaseTest {
     ParlayVault internal plv;
     OutcomeVault internal vaultB;
     address internal house;
@@ -43,15 +43,6 @@ contract ParlayVaultTest is BaseTest {
         v.settle(fractionWad);
     }
 
-    /// Compile-time anchor for resolveParlay's reentrancy argument: the leg
-    /// reads must be STATICCALLs. If OutcomeVault.settled/settleFractionWad
-    /// ever stop being view getters, this helper stops compiling and the
-    /// resolveParlay loop must be restructured (status write before external
-    /// calls) before the change lands.
-    function _legReadsAreView(OutcomeVault v) internal view returns (bool, uint256) {
-        return (v.settled(), v.settleFractionWad());
-    }
-
     /// Default slip: 2 legs (YES on vault, NO on vaultB), 10 → 100.
     function makeQuote() internal view returns (ParlayVault.Quote memory q) {
         ParlayVault.Leg[] memory legs = new ParlayVault.Leg[](2);
@@ -72,7 +63,28 @@ contract ParlayVaultTest is BaseTest {
         return abi.encodePacked(r, s, v);
     }
 
-    // --- config ---
+    function mintDefault() internal returns (uint256 id) {
+        ParlayVault.Quote memory q = makeQuote();
+        bytes memory sig = signQuote(q);
+        vm.prank(user);
+        id = plv.mint(q, sig);
+    }
+
+    function winLegs() internal {
+        settleLeg(vault, 1e18); // YES hit
+        settleLeg(vaultB, 0); // NO hit
+    }
+}
+
+contract ParlayVaultUnitTest is ParlayVaultTest {
+    /// Compile-time anchor for resolveParlay's reentrancy argument: the leg
+    /// reads must be STATICCALLs. If OutcomeVault.settled/settleFractionWad
+    /// ever stop being view getters, this helper stops compiling and the
+    /// resolveParlay loop must be restructured (status write before external
+    /// calls) before the change lands.
+    function _legReadsAreView(OutcomeVault v) internal view returns (bool, uint256) {
+        return (v.settled(), v.settleFractionWad());
+    }
 
     function test_configInitial() public view {
         assertEq(plv.owner(), address(this));
@@ -159,15 +171,6 @@ contract ParlayVaultTest is BaseTest {
         q = makeQuote();
         q.legs[0].isYes = false;
         assertTrue(plv.quoteDigest(q) != d1);
-    }
-
-    // --- mint ---
-
-    function mintDefault() internal returns (uint256 id) {
-        ParlayVault.Quote memory q = makeQuote();
-        bytes memory sig = signQuote(q);
-        vm.prank(user);
-        id = plv.mint(q, sig);
     }
 
     function test_mintHappyPath() public {
@@ -315,8 +318,6 @@ contract ParlayVaultTest is BaseTest {
         plv.mint(q, sig);
     }
 
-    // --- resolveParlay: Dead ---
-
     function test_resolveDeadYesLegLost() public {
         uint256 id = mintDefault();
         settleLeg(vault, 0); // YES leg lost
@@ -375,8 +376,6 @@ contract ParlayVaultTest is BaseTest {
         plv.resolveParlay(999);
     }
 
-    // --- resolveParlay: Void ---
-
     function test_resolveVoidFractionalLeg() public {
         uint256 id = mintDefault();
         settleLeg(vault, 1e18); // YES leg hit
@@ -420,13 +419,6 @@ contract ParlayVaultTest is BaseTest {
         settleLeg(vaultB, 0.5e18);
         plv.resolveParlay(id);
         assertEq(quote.balanceOf(other), PREMIUM);
-    }
-
-    // --- Won + claim ---
-
-    function winLegs() internal {
-        settleLeg(vault, 1e18); // YES hit
-        settleLeg(vaultB, 0); // NO hit
     }
 
     function test_resolveWonHoldsFunds() public {
