@@ -4,7 +4,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { loadFractionCache, saveFraction } from "../src/cache.js";
+import { loadFractionCache, saveFraction } from "../src/settlement.js";
 
 const vault = `0x${"a".repeat(40)}`;
 
