@@ -4,8 +4,11 @@
 #   elysium  = project `overround-elysium` (elysium.hyperflip.xyz, 99801, legacy positions)
 # Both deploy from web/; the script links web/.vercel to the lane's project for the run and relinks to `overround`.
 # Secrets are never written here: `overround` keeps POSITIONS_SUBGRAPH_URL, POSITIONS_RPC_URL and
-# NEXT_PUBLIC_PRIVY_APP_ID from before the cutover; `overround-elysium` gets ELYSIUM_RPC and
-# NEXT_PUBLIC_PRIVY_APP_ID piped in once (see DEPLOY.md "Two lanes").
+# NEXT_PUBLIC_PRIVY_APP_ID from before the cutover; `overround-elysium` gets NEXT_PUBLIC_PRIVY_APP_ID
+# piped in once (see DEPLOY.md "Two lanes"). Both lanes carry APP_RPC, the server-only comma-separated
+# upstream list behind /api/rpc (keyed URLs first, public fallbacks after), set by hand:
+#   vercel env add APP_RPC production --value '<keyed>,<public>,<public>' --scope lovrobiljeskovics-projects
+# The lane must have it before this script deploys; the 998 list must hold 998 endpoints only.
 set -uo pipefail
 cd "$(dirname "$0")/../web"
 SCOPE=lovrobiljeskovics-projects
@@ -38,7 +41,7 @@ if [ "$LANE" = hyperevm ]; then
   set_var NEXT_PUBLIC_RPC_URL https://rpcs.chain.link/hyperevm/testnet
   set_var NEXT_PUBLIC_POSITIONS_SOURCE subgraph
   set_var NEXT_PUBLIC_ALT_LANE_URL https://elysium.hyperflip.xyz
-  # 998 reads must never proxy to Elysium; the bridge step does not exist on 998.
+  # The bridge step does not exist on 998. ELYSIUM_RPC is the pre-2026-10-17 name of APP_RPC.
   rm_var ELYSIUM_RPC
   rm_var NEXT_PUBLIC_CORE_RPC_URL
 else
@@ -50,7 +53,10 @@ else
   set_var NEXT_PUBLIC_ALT_LANE_URL https://app.hyperflip.xyz
 fi
 echo "== production env"
-vercel env ls production --scope $SCOPE 2>&1 | grep -v "^Vercel CLI"
+linked
+ENV=$(vercel env ls production --scope $SCOPE 2>&1 | grep -v "^Vercel CLI")
+echo "$ENV"
+echo "$ENV" | grep -q "APP_RPC" || { echo "$PROJECT has no APP_RPC; add the lane's upstream list first (see header)"; exit 1; }
 echo "== deploy"
 linked
 vercel --prod --yes --scope $SCOPE

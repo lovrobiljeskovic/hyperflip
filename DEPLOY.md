@@ -154,7 +154,9 @@ Web: one Vercel project per chain, same repo, configured and deployed by `tools/
 (default `https://app.hyperflip.xyz`), `NEXT_PUBLIC_WRITER_URL` to its writer host, and
 `NEXT_PUBLIC_ALT_LANE_URL` to the sibling app for the header link. The 998 project runs
 `NEXT_PUBLIC_POSITIONS_SOURCE=subgraph` against the Goldsky subgraph (998 only); the Elysium project
-keeps `legacy`, `ELYSIUM_RPC` and `NEXT_PUBLIC_CORE_RPC_URL`. `web/public/position-markets.json` is
+keeps `legacy` and `NEXT_PUBLIC_CORE_RPC_URL`. Both projects set `APP_RPC` by hand: the server-only,
+comma-separated upstream list behind `/api/rpc`, tried in order (keyed first, public fallbacks after;
+renamed from `ELYSIUM_RPC` on 2026-10-17 when the 998 lane lost its single Chainlink upstream). `web/public/position-markets.json` is
 keyed by the 998 vault for the same reason.
 
 ## Persistent state

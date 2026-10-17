@@ -97,9 +97,9 @@ export function useDisconnectAction(): () => void {
 
 /** USDC token address + the connected wallet's balance, read through the vault
  * so the token never has to be configured twice. */
-export function useUsdc(): { address?: `0x${string}`; balance?: bigint } {
+export function useUsdc(): { address?: `0x${string}`; balance?: bigint; error: boolean } {
   const { address: account } = useAccount();
-  const { data: token } = useReadContract({
+  const { data: token, isError: error } = useReadContract({
     address: PARLAY_VAULT,
     abi: parlayVaultAbi,
     functionName: "usdc",
@@ -113,5 +113,5 @@ export function useUsdc(): { address?: `0x${string}`; balance?: bigint } {
     args: account ? [account] : undefined,
     query: { enabled: !!token && !!account, refetchInterval: 15_000 },
   });
-  return { address: token, balance };
+  return { address: token, balance, error };
 }

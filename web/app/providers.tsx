@@ -12,7 +12,12 @@ const chains = BRIDGED ? ([appChain, coreChain] as const) : ([appChain] as const
 // batch: Elysium has no Multicall3 but its RPC accepts JSON-RPC batches; one request per tick
 // instead of a burst of ~6 per position row. App-chain reads go through /api/rpc so the keyed
 // Elysium URL stays server-side: the public endpoint rejects ~7 calls per burst (-32017).
-const transports = { [appChain.id]: http("/api/rpc", { batch: true, retryCount: 6, retryDelay: 2_000 }), [coreChain.id]: http(undefined, { batch: true, retryCount: 6, retryDelay: 2_000 }) };
+// The core transport exists only when bridged: on 998 the two ids are equal and a second key
+// would overwrite the proxy with the public URL (2026-10-17: the 998 lane never used /api/rpc).
+const transports = {
+  [appChain.id]: http("/api/rpc", { batch: true, retryCount: 6, retryDelay: 2_000 }),
+  ...(BRIDGED ? { [coreChain.id]: http(undefined, { batch: true, retryCount: 6, retryDelay: 2_000 }) } : {}),
+};
 
 const wagmiConfig = createConfig({
   chains,

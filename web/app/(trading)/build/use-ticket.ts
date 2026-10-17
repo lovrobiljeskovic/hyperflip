@@ -64,7 +64,7 @@ export function useTicket(legs: BuilderLeg[]) {
   }, [session, revision]);
   useEffect(() => () => session.invalidate(), [session]);
   const { switchChain } = useSwitchChain();
-  const { address: usdcAddr, balance: usdcBalance } = useUsdc();
+  const { address: usdcAddr, balance: usdcBalance, error: usdcError } = useUsdc();
   // Check gas before opening the wallet.
   const { data: gas } = useBalance({
     address,
@@ -72,7 +72,7 @@ export function useTicket(legs: BuilderLeg[]) {
     query: { enabled: !!address, refetchInterval: 15_000 },
   });
   // Gates the mint button; refetched after approve confirms. mint re-reads it too.
-  const { data: allowance, refetch: refetchAllowance } = useReadContract({
+  const { data: allowance, isError: allowanceError, refetch: refetchAllowance } = useReadContract({
     address: usdcAddr,
     abi: erc20Abi,
     functionName: "allowance",
@@ -239,6 +239,10 @@ export function useTicket(legs: BuilderLeg[]) {
     if (gas !== undefined && gas.value === 0n)
       return { kind: "external", label: "Get HYPE for gas →", href: HL_DRIP, hint: DRIP_HINT };
     if (stakeBase === null) return { kind: "disabled", label: "Enter a stake to quote" };
+    // approve() needs the token address and mint needs a real allowance read; never offer
+    // "Approve" while either is unknown, or the click is a silent no-op.
+    if (!usdcAddr || allowance === undefined)
+      return { kind: "disabled", label: usdcError || allowanceError ? "RPC unavailable - try again later" : "Checking wallet…" };
     if (usdcBalance !== undefined && stakeBase > usdcBalance)
       return { kind: "disabled", label: `Insufficient USDC - ${formatUsdc(usdcBalance)} available` };
     if (mintState === "done") return { kind: "done", label: "Minted · view positions", href: "/positions" };
