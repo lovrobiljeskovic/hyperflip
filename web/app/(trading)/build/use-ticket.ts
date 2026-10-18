@@ -66,6 +66,8 @@ export function useTicket(legs: BuilderLeg[]) {
   const stakeBase = tryParseStake(stake);
   // Allow one immediate-expiry retry; clock skew must not loop requests.
   const clockSkewRetried = useRef(false);
+  // A superseded quote only clears `quoting` when no later runQuote has started; that one owns the flag.
+  const quoteSeq = useRef(0);
 
   const runQuote = useCallback(async () => {
     if (session.minting || session.revision !== revision || chainId !== appChain.id) return;
@@ -73,13 +75,17 @@ export function useTicket(legs: BuilderLeg[]) {
     const base = tryParseStake(stake);
     if (base === null) return;
 
+    const seq = ++quoteSeq.current;
     setQuoting(true);
     const response = await session.quote({
       taker: address,
       legs: legs.map((l) => ({ vault: l.vault, isYes: l.isYes })),
       stake: base.toString(),
     });
-    if (!response) return;
+    if (!response) {
+      if (seq === quoteSeq.current) setQuoting(false);
+      return;
+    }
     const res = response.result;
     setQuoting(false);
     setQuoteResult(res);
