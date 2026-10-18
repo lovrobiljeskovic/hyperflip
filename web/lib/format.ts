@@ -14,10 +14,6 @@ export function multiplier(premium: bigint, maxPayout: bigint): string {
   return `${(Number(maxPayout) / Number(premium)).toFixed(2)}x`;
 }
 
-export function impliedPct(mid: number): string {
-  return `${Math.round(mid * 100)}%`;
-}
-
 export function secondsLeft(deadlineSec: bigint, nowMs: number): number {
   return Math.floor(Math.max(0, Number(deadlineSec) * 1000 - nowMs) / 1000);
 }
@@ -44,7 +40,6 @@ export interface PriceBreakdown {
 export function edgeSteps(bd: PriceBreakdown): {
   afterEdge: number;
   afterLegs: number;
-  modelled: number;
 } {
   // Mirrors the writer: price = p + p(1-p) x edge, so the edge fades at both extremes.
   const p = 1 / bd.fairMultiplier;
@@ -52,7 +47,6 @@ export function edgeSteps(bd: PriceBreakdown): {
   return {
     afterEdge: at(bd.edgePct),
     afterLegs: at(bd.edgePct + bd.legPct),
-    modelled: at(bd.edgePct + bd.legPct),
   };
 }
 

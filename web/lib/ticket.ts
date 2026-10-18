@@ -36,10 +36,6 @@ export function standingAllowance(premium: bigint, maxStake: bigint | null): big
   return standing > premium ? standing : premium;
 }
 
-export async function revokeUsdc(args: Omit<Parameters<typeof approveUsdc>[0], "amount">): Promise<void> {
-  await approveUsdc({ ...args, amount: 0n });
-}
-
 export class TicketSession {
   private key = "";
   private request = 0;

@@ -95,7 +95,6 @@ export interface WriterQuote {
 interface QuoteBreakdown {
   legPricesWad: string[];
 
-  jointProbWad?: string;
   edgeBps: string;
   legBps?: string;
 }

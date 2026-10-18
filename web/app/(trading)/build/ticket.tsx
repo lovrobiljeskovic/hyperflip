@@ -88,8 +88,8 @@ const usdc2 = (x: number) => x.toLocaleString("en-US", { minimumFractionDigits: 
 const signedMult = (x: number) => `${x < 0 ? "\u2212" : "+"}${Math.abs(x).toFixed(2)}x`;
 
 function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown }) {
-  const { afterEdge, afterLegs, modelled } = edgeSteps(bd);
-  const capped = Math.abs(bd.actualMultiplier - modelled) / modelled > 0.005;
+  const { afterEdge, afterLegs } = edgeSteps(bd);
+  const capped = Math.abs(bd.actualMultiplier - afterLegs) / afterLegs > 0.005;
   return (
     <div className="flex flex-col gap-1.5">
       {legs.map((leg, i) => (
@@ -114,7 +114,7 @@ function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown })
       )}
       {capped && (
         <DetailRow label="Payout cap" className="text-no">
-          {signedMult(bd.actualMultiplier - modelled)}
+          {signedMult(bd.actualMultiplier - afterLegs)}
         </DetailRow>
       )}
       <DetailRow label="Your multiplier" className="text-accent">
@@ -203,7 +203,7 @@ export function Ticket({
       {!compact && (
         <div className="flex items-start justify-between">
           <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Your slip</span>
-          <Overround size={44} margin={margin} />
+          <Overround margin={margin} />
         </div>
       )}
 

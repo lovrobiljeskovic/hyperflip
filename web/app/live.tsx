@@ -19,12 +19,10 @@ export function CountUp({
   value,
   format,
   className,
-  durationMs = 600,
 }: {
   value: number;
   format: (n: number) => string;
   className?: string;
-  durationMs?: number;
 }) {
   const [shown, setShown] = useState(0);
   const current = useRef(0);
@@ -38,7 +36,7 @@ export function CountUp({
     const t0 = performance.now();
     let raf = 0;
     const step = (t: number) => {
-      const k = Math.min(1, (t - t0) / durationMs);
+      const k = Math.min(1, (t - t0) / 600);
       const v = start + (value - start) * (1 - (1 - k) ** 3);
       current.current = v;
       setShown(v);
@@ -46,7 +44,7 @@ export function CountUp({
     };
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
-  }, [value, durationMs]);
+  }, [value]);
   return <span className={className}>{format(shown)}</span>;
 }
 

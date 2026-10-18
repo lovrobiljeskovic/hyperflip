@@ -17,9 +17,7 @@
   --color-no: #ff5d6c;
   --font-sans: var(--font-instrument), ui-sans-serif, system-ui, sans-serif;
   --font-display: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
-  --font-display--font-variation-settings: "opsz" 96, "wght" 800;
   --font-mono: var(--font-martian), ui-monospace, monospace;
-  --font-mono--font-variation-settings: "wdth" 90;
   --radius-card: 12px;
   --radius-control: 8px;
 }
@@ -68,9 +66,6 @@ details[open] > summary::after { content: "-"; }
 .print-line { animation: print-line .28s steps(4, end) both paused; }
 .printing .print-line { animation-play-state: running; }
 @media (scripting: none) { .print-line { animation: none; } }
-
-@keyframes ttl { from { transform: scaleX(1); } to { transform: scaleX(0); } }
-.ttl-bar { transform-origin: left; animation: ttl 30s linear infinite; }
 
 @keyframes hero-enter { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
 .hero-enter { animation: hero-enter .6s .18s cubic-bezier(.2,.8,.2,1) both; }
@@ -134,7 +129,7 @@ details[open] > summary::after { content: "-"; }
 @keyframes route-in { from { opacity: 0; transform: translateX(10px); } }
 
 @media (prefers-reduced-motion: reduce) {
-  .flash-up, .flash-down, .live-dot, .print-line, .ttl-bar,
+  .flash-up, .flash-down, .live-dot, .print-line,
   .hero-enter, .slip-turn, .section-reveal, .market-rail-track, .motif-spin { animation: none; }
   .motif-ring { transition: none; }
   ::view-transition-old(*), ::view-transition-new(*), ::view-transition-group(*) {
@@ -151,7 +146,6 @@ details[open] > summary::after { content: "-"; }
 
 @keyframes slip-print { from { opacity: 0; transform: translateY(40px) scale(.97); } to { opacity: 1; transform: none; } }
 @media (min-width: 640px) { @keyframes slip-print { from { opacity: 0; transform: translateY(-40px) scale(.97); clip-path: inset(0 0 100% 0); } to { opacity: 1; transform: none; clip-path: inset(0); } } }
-@keyframes backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 
 .minted-slip {
   overflow: hidden;

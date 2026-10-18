@@ -19,10 +19,7 @@ const transports = {
   ...(BRIDGED ? { [coreChain.id]: http(undefined, { batch: true, retryCount: 6, retryDelay: 2_000 }) } : {}),
 };
 
-const wagmiConfig = createConfig({
-  chains,
-  transports,
-});
+const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? "";
 
 // Fallback config for when no Privy app id is set (below): @privy-io/wagmi's
 // WagmiProvider renders a connector that calls @privy-io/react-auth hooks
@@ -30,17 +27,14 @@ const wagmiConfig = createConfig({
 // WagmiProvider needs no such ancestor - same chain, zero connectors, so
 // wagmi hooks (useAccount, usePublicClient, useReadContract, ...) resolve
 // instead of crashing, with wallet-connect features simply inert.
-const wagmiConfigNoPrivy = createWagmiConfigNoPrivy({
-  chains,
-  transports,
-});
+// Only the config the app id selects is built.
+const wagmiConfig = privyAppId ? createConfig({ chains, transports }) : null;
+const wagmiConfigNoPrivy = privyAppId ? null : createWagmiConfigNoPrivy({ chains, transports });
 
 const queryClient = new QueryClient();
 
-const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? "";
-
 export function Providers({ children }: { children: React.ReactNode }) {
-  if (!privyAppId) {
+  if (wagmiConfigNoPrivy) {
     return (
       <QueryClientProvider client={queryClient}>
         <WagmiProviderNoPrivy config={wagmiConfigNoPrivy}>{children}</WagmiProviderNoPrivy>
@@ -60,7 +54,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       }}
     >
       <QueryClientProvider client={queryClient}>
-        <WagmiProvider config={wagmiConfig}>{children}</WagmiProvider>
+        <WagmiProvider config={wagmiConfig!}>{children}</WagmiProvider>
       </QueryClientProvider>
     </PrivyProvider>
   );

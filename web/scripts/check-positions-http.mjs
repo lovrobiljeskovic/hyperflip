@@ -37,7 +37,7 @@ fixture.listen(0, '127.0.0.1'); await once(fixture, 'listening');
 const fixtureUrl = `http://127.0.0.1:${fixture.address().port}`;
 const reserve = createServer(); reserve.listen(0, '127.0.0.1'); await once(reserve, 'listening');
 const port = reserve.address().port; await new Promise(resolve => reserve.close(resolve));
-const app = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '-p', String(port), '-H', '127.0.0.1'], { cwd: `${root}/web`, env: { ...process.env, NEXT_TELEMETRY_DISABLED:'1', WRITER_URL:fixtureUrl, DEPLOYMENT_FILE:`${root}/tools/fixtures/deployment.json`, NEXT_PUBLIC_CHAIN_ID:'998', NEXT_PUBLIC_PARLAY_VAULT:deployment.parlayVault, NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK:'1', NEXT_PUBLIC_POSITIONS_SOURCE:'subgraph', POSITIONS_SUBGRAPH_URL:`${fixtureUrl}/graphql`, POSITIONS_RPC_URL:`${fixtureUrl}/rpc` }, stdio: ['ignore', 'ignore', 'ignore'] });
+const app = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '-p', String(port), '-H', '127.0.0.1'], { cwd: `${root}/web`, env: { ...process.env, NEXT_TELEMETRY_DISABLED:'1', NEXT_PUBLIC_WRITER_URL:fixtureUrl, DEPLOYMENT_FILE:`${root}/tools/fixtures/deployment.json`, NEXT_PUBLIC_CHAIN_ID:'998', NEXT_PUBLIC_PARLAY_VAULT:deployment.parlayVault, NEXT_PUBLIC_PARLAY_DEPLOY_BLOCK:'1', NEXT_PUBLIC_POSITIONS_SOURCE:'subgraph', POSITIONS_SUBGRAPH_URL:`${fixtureUrl}/graphql`, POSITIONS_RPC_URL:`${fixtureUrl}/rpc` }, stdio: ['ignore', 'ignore', 'ignore'] });
 try {
   const url = `http://127.0.0.1:${port}`;
   for (let attempt = 0; ; attempt++) { try { await fetch(`${url}/api/positions?wallet=bad`); break; } catch { if (attempt > 100) throw new Error('Local app did not start'); await new Promise(resolve => setTimeout(resolve, 100)); } }

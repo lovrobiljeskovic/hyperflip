@@ -3,7 +3,6 @@ import {
   edgeSteps,
   formatUsdc,
   multiplier,
-  impliedPct,
   pct1,
   priceBreakdown,
   quotedOverround,
@@ -22,11 +21,6 @@ test("formatUsdc renders 6-decimal base units at 2dp with grouping", () => {
 test("multiplier is maxPayout/premium at 2dp", () => {
   expect(multiplier(100_000_000n, 316_200_000n)).toBe("3.16x");
   expect(multiplier(0n, 1n)).toBe("—");
-});
-
-test("impliedPct rounds a mid to whole percent", () => {
-  expect(impliedPct(0.56667)).toBe("57%");
-  expect(impliedPct(0)).toBe("0%");
 });
 
 test("secondsLeft floors and clamps at zero", () => {
@@ -64,13 +58,12 @@ describe("edgeSteps", () => {
 
   it("applies each edge component in turn, cumulatively", () => {
     const bd = priceBreakdown([wad(0.5), wad(0.5)], "500", "300", 1_000_000n, 3_773_584n)!;
-    const { afterEdge, afterLegs, modelled } = edgeSteps(bd);
+    const { afterEdge, afterLegs } = edgeSteps(bd);
     expect(bd.fairMultiplier).toBeCloseTo(4, 6);
     expect(afterEdge).toBeCloseTo(1 / (0.25 + 0.25 * 0.75 * 0.05), 6);
     expect(afterLegs).toBeCloseTo(1 / (0.25 + 0.25 * 0.75 * 0.08), 6);
-    expect(modelled).toBeCloseTo(1 / (0.25 + 0.25 * 0.75 * 0.08), 6);
     expect(afterEdge).toBeGreaterThan(afterLegs);
-    expect(modelled).toBeCloseTo(bd.actualMultiplier, 3);
+    expect(afterLegs).toBeCloseTo(bd.actualMultiplier, 3);
   });
 
   it("treats a writer without legBps as zero leg surcharge", () => {

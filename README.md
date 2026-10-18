@@ -53,12 +53,12 @@ npm run dev --prefix web
 Open `http://localhost:3000`. `/build`, `/positions`, and `/pricing` are the trading
 routes. An empty Privy app ID uses the existing wallet-connector fallback.
 The frontend can render without a writer; markets and quotes require a reachable
-writer. Wallet actions require testnet funds and a valid invite code.
+writer. Wallet actions require testnet funds.
 
 ## Run your own services
 
 Create a root `.env` from `.env.example`, then fill in the wallet addresses,
-service keys, invite codes, and risk limits. Public deployment identity comes from
+service keys, and risk limits. Public deployment identity comes from
 `registry/deployment.testnet.json`; select an explicit `DEPLOYMENT_FILE` for another
 test deployment. Existing address/block overrides must match that manifest. Both
 services read this root file, regardless of the working directory. Never put
@@ -77,9 +77,8 @@ frontend configuration.
 Services ship generated ABIs; regenerate them with `forge build && node scripts/abis.mjs`.
 Run `node scripts/deployment.mjs` after changing the public deployment manifest.
 The repository gate checks drift and package imports. The writer refuses quotes until
-on-chain exposure is loaded. An unset `RESEND_API_KEY` disables email signup;
-configured invite codes still work. Keep one writer per deployment: reservations
-are process-local and are not shared between replicas.
+on-chain exposure is loaded. An unset `RESEND_API_KEY` disables email signup. Keep one
+writer per deployment: reservations are process-local and are not shared between replicas.
 
 See [DEPLOY.md](DEPLOY.md) for persistent state, RPC requirements, rotation, and
 service operations. Production deployment and contract broadcasts are separate

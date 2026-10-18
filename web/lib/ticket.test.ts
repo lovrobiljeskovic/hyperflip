@@ -1,6 +1,6 @@
 import { appChain } from "./chain";
 import { beforeEach, expect, test, vi } from "vitest";
-import { ALLOWANCE_MULTIPLE, mintTicket, revokeUsdc, standingAllowance, TicketSession } from "./ticket";
+import { ALLOWANCE_MULTIPLE, approveUsdc, mintTicket, standingAllowance, TicketSession } from "./ticket";
 import { requestQuote, type QuoteResult } from "./writer";
 import { encodeAbiParameters, encodeEventTopics, type TransactionReceipt } from "viem";
 import { PARLAY_VAULT, parlayMintedEvent } from "./contracts";
@@ -102,8 +102,8 @@ test("standing allowance is 25x the house max stake, never below the premium, ex
   expect(standingAllowance(1_000_000n, 0n)).toBe(1_000_000n);
 });
 
-test("revokeUsdc approves zero for the vault", async () => {
+test("approveUsdc with amount 0 revokes for the vault", async () => {
   const { client, write } = setup();
-  await revokeUsdc({ client: client as never, write: write as never, usdc: vault, taker, current: () => true });
+  await approveUsdc({ client: client as never, write: write as never, usdc: vault, taker, current: () => true, amount: 0n });
   expect(write.mock.calls[0][0]).toMatchObject({ functionName: "approve", args: [PARLAY_VAULT, 0n] });
 });

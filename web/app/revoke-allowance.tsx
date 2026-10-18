@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePublicClient, useWriteContract } from "wagmi";
 import { shortError } from "@/lib/format";
-import { revokeUsdc } from "@/lib/ticket";
+import { approveUsdc } from "@/lib/ticket";
 import { useUsdc, useWalletState } from "@/lib/wallet";
 import { Button } from "@/components/ui/button";
 
@@ -23,7 +23,7 @@ export function RevokeAllowance({ className = row }: { className?: string }) {
     if (!client || !usdc || !address) return;
     setRevoking("pending");
     try {
-      await revokeUsdc({ client, write: writeContractAsync, usdc, taker: address, current: () => true });
+      await approveUsdc({ client, write: writeContractAsync, usdc, taker: address, current: () => true, amount: 0n });
       setRevoking("done");
       void queryClient.invalidateQueries();
     } catch (err) { setError(shortError(err)); setRevoking("error"); }

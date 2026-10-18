@@ -31,7 +31,7 @@ const DOT_CLASS: Record<LegVerdict, string> = {
   lost: "bg-no",
   pending: "bg-line",
   unknown: "border border-dim",
-  fractional: "bg-[linear-gradient(90deg,#35D07A_50%,#262C38_50%)]",
+  fractional: "bg-[linear-gradient(90deg,var(--color-yes)_50%,var(--color-line)_50%)]",
 };
 
 function ago(ms: number): string {

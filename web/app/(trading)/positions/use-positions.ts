@@ -59,10 +59,8 @@ export function usePositions(client: PublicClient | undefined, address: `0x${str
       if (request !== sequence.current || quiet) return;
       setError(true);
       setNotice("Positions could not be updated. Refresh to try again.");
-      if (preview) {
-        const overlay = await preview;
-        if (request === sequence.current && overlay.rows.length) setRows(previous => mergePositionRows(previous ?? [], overlay.rows));
-      }
+      const overlay = await preview;
+      if (request === sequence.current && overlay.rows.length) setRows(previous => mergePositionRows(previous ?? [], overlay.rows));
     } finally {
       if (request === sequence.current) { loadingRef.current = false; setLoading(false); }
     }

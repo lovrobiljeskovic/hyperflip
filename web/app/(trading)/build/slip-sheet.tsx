@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { ChevronUpIcon, XIcon } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import { barSummary } from "@/lib/slip-summary";
@@ -35,7 +34,7 @@ export function SlipSheet({ legs, ticket, onClear, children }: { legs: BuilderLe
   const [pulse, setPulse] = useState(0);
   const prevCount = useRef(legs.length);
   useEffect(() => { if (legs.length !== prevCount.current) { prevCount.current = legs.length; setPulse((n) => n + 1); } }, [legs.length]);
-  const badge = <Badge key={pulse} className="badge-pulse h-4 min-w-4 px-1 font-sans text-[10px] font-semibold">{legs.length}</Badge>;
+  const badge = <span key={pulse} className="badge-pulse inline-flex h-4 w-fit min-w-4 shrink-0 items-center justify-center gap-1 overflow-hidden rounded-4xl border border-transparent bg-primary px-1 py-0.5 font-sans text-[10px] font-semibold whitespace-nowrap text-primary-foreground transition-all">{legs.length}</span>;
 
   return (
     <>
