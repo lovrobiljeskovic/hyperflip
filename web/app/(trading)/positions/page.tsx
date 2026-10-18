@@ -1,163 +1,54 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAccount, usePublicClient, useWriteContract } from "wagmi";
 import { usePositions } from "./use-positions";
-import { INDEXED_POSITIONS, deriveRow, loadRow, summarizePositions, type Row, type LegVerdict } from "@/lib/positions";
-import { PARLAY_VAULT, parlayVaultAbi } from "@/lib/contracts";
-import { formatUsdc, multiplier, pct1, shortError, USDC_DECIMALS, usdc2 } from "@/lib/format";
-import { CountUp, Kickoff } from "@/app/live";
-import { formatUnits } from "viem";
-import { appChain, explorerAddress, tradeUrl } from "@/lib/chain";
-import { fetchMarkets, type Market, marketMid, sideLabel, withMarketVolumes } from "@/lib/writer";
+import { usePositionAction } from "./use-position-action";
+import { DotLegend, LegDots, LegTable, ago } from "./leg-table";
+import { SummaryStrip } from "./summary-strip";
+import { INDEXED_POSITIONS, deriveRow } from "@/lib/positions";
+import { formatUsdc, multiplier } from "@/lib/format";
+import { fetchMarkets, type Market, withMarketVolumes } from "@/lib/writer";
 import { fetchMarketVolumes } from "@/lib/info";
 import { useMids } from "@/lib/mids";
 import { useConnectAction, useWalletState } from "@/lib/wallet";
 import { appHref } from "@/lib/site";
-import { rememberPosition } from "@/lib/position-receipts";
-import { receiptOrThrow } from "@/lib/ticket";
 
-
-const VERDICT_STYLE: Record<LegVerdict, { label: string; className: string }> = {
-  pending: { label: "Pending", className: "text-dim" },
-  unknown: { label: "Unavailable", className: "text-dim" },
-  hit: { label: "Hit", className: "text-yes" },
-  lost: { label: "Lost", className: "text-no" },
-  fractional: { label: "Partial", className: "text-fg" },
-};
-
-const DOT_CLASS: Record<LegVerdict, string> = {
-  hit: "bg-yes",
-  lost: "bg-no",
-  pending: "bg-line",
-  unknown: "border border-dim",
-  fractional: "bg-[linear-gradient(90deg,var(--color-yes)_50%,var(--color-line)_50%)]",
-};
-
-function ago(ms: number): string {
-  const s = Math.max(0, (Date.now() - ms) / 1000);
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86_400) return `${Math.floor(s / 3600)}h ago`;
-  if (s < 7 * 86_400) return `${Math.floor(s / 86_400)}d ago`;
-  return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-function LegDots({ verdicts }: { verdicts: LegVerdict[] }) {
+function TicketLabel({ id, mintedAtMs }: { id: bigint; mintedAtMs: number }) {
   return (
-    <span
-      role="img"
-      aria-label={verdicts.map((v) => VERDICT_STYLE[v].label).join(", ")}
-      className="inline-flex items-center gap-[3px]"
-    >
-      {verdicts.map((v, i) => (
-        <span
-          key={i}
-          title={VERDICT_STYLE[v].label}
-          className={`inline-block size-1.5 rounded-full ${DOT_CLASS[v]}`}
-        />
-      ))}
+    <span>
+      #{id.toString().padStart(4, "0")}
+      <span className="ml-2 text-[11px] text-dim">{ago(mintedAtMs)}</span>
     </span>
   );
 }
 
-function DotLegend() {
-  const order: LegVerdict[] = ["hit", "fractional", "lost", "pending"];
-  return (
-    <div className="mono mt-4 flex flex-wrap items-center gap-5 text-[10px] uppercase tracking-[0.16em] text-dim">
-      {order.map((v) => (
-        <span key={v} className="flex items-center gap-2">
-          <span className={`inline-block size-1.5 rounded-full ${DOT_CLASS[v]}`} aria-hidden />
-          {v === "fractional" ? "partial" : v}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function LegTable({
-  row,
-  markets,
-  mids,
-}: {
-  row: Row;
-  markets: Map<string, Market>;
-  mids: Record<string, string>;
+function ActionButton({ kind, label, isPending, disabled, onClick, className }: {
+  kind: "claim" | "resolve";
+  label: string;
+  isPending: boolean;
+  disabled: boolean;
+  onClick: () => void;
+  className: string;
 }) {
   return (
-    <div className="flex flex-col gap-2 border-l-2 border-line bg-raised/30 px-4 py-4 sm:px-5">
-      <div className="hidden gap-4 mono text-[9px] uppercase tracking-[0.16em] text-dim sm:flex">
-        <span className="w-10 sm:w-16">Side</span>
-        <span className="flex-1">Market</span>
-        <span className="w-16 text-right">Live</span>
-        <span className="w-32 text-right">Kickoff</span>
-        <span className="w-20 text-right">Outcome</span>
-      </div>
-      {row.parlay.legs.map((leg, i) => {
-        const m = markets.get(leg.vault.toLowerCase());
-        const coin = m ? (leg.isYes ? m.coinYes : m.coinNo) : undefined;
-        // Same rule as the board: allMids prints 0.5 for every untraded book,
-        // which is a placeholder, not a price.
-        const live = m && coin !== undefined ? marketMid(mids, m, coin) : null;
-        const verdict = VERDICT_STYLE[row.legVerdicts[i]];
-        return (
-          // flex-wrap: on mobile the meta line's basis-full pushes it to a
-          // second row; live/kickoff columns only exist at sm+.
-          <div key={leg.vault} className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 mono text-xs">
-            <span className={`w-10 shrink-0 truncate sm:w-16 ${m?.group ? "" : "uppercase"} ${leg.isYes ? "text-yes" : "text-no"}`}>{sideLabel(m, leg.isYes)}</span>
-            {/* The leg is a HyperCore market - link its live order book, not the
-                EVM explorer. Explorer stays the fallback for archived legs whose
-                market (and coin) the registry no longer carries. */}
-            <a
-              href={
-                coin === undefined
-                  ? explorerAddress(leg.vault) ?? undefined
-                  : tradeUrl(coin)
-              }
-              target="_blank"
-              rel="noreferrer"
-              className="min-w-0 flex-1 truncate text-fg underline decoration-line underline-offset-4 transition-colors hover:decoration-dim"
-            >
-              {m?.title ?? leg.vault}
-            </a>
-            <span className="hidden w-16 text-right text-dim sm:block">
-              {live === null ? "-" : pct1(live)}
-            </span>
-            <span className="hidden w-32 justify-end sm:flex">{m ? <Kickoff market={m} /> : <span className="text-dim">-</span>}</span>
-            <span className={`text-right sm:w-20 ${verdict.className}`}>{verdict.label}</span>
-            <span className="flex basis-full items-center gap-2 pl-14 text-[10px] text-dim sm:hidden">
-              {live === null ? "-" : pct1(live)} live · {m ? <Kickoff market={m} align="left" /> : "-"}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function SummaryStrip({ rows, wallet }: { rows: Row[]; wallet: string }) {
-  const { staked, open, claimable, won } = summarizePositions(rows, wallet);
-  const usdc = (v: bigint) => Number(formatUnits(v, USDC_DECIMALS));
-  const usdcLabel = (x: number) => `${usdc2(x)} USDC`;
-  const whole = (x: number) => String(Math.round(x));
-  const cells = [
-    { label: "Tickets", value: rows.length, format: whole, className: "" },
-    { label: "Total staked", value: usdc(staked), format: usdcLabel, className: "" },
-    { label: "Open", value: open, format: whole, className: "" },
-    { label: "Claimable", value: usdc(claimable), format: usdcLabel, className: claimable > 0n ? "text-accent" : "" },
-    { label: "Claimed", value: usdc(won), format: usdcLabel, className: won > 0n ? "text-yes" : "" },
-  ];
-  return (
-    <div className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-card border border-line bg-line sm:grid-cols-3 lg:grid-cols-5">
-      {cells.map((c) => (
-        <div key={c.label} className="bg-panel px-[18px] py-[14px]">
-          <p className="mono text-[10px] uppercase tracking-[0.16em] text-dim">{c.label}</p>
-          <p className={`mono mt-1 text-[16px] ${c.className}`}>
-            <CountUp value={c.value} format={c.format} />
-          </p>
-        </div>
-      ))}
-    </div>
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={`${className} transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+        kind === "claim"
+          ? "bg-accent font-medium text-on-accent hover:opacity-90"
+          : "border border-line text-fg hover:border-dim"
+      }`}
+    >
+      {isPending
+        ? kind === "claim"
+          ? "Claiming…"
+          : "Resolving…"
+        : label}
+    </button>
   );
 }
 
@@ -184,11 +75,7 @@ function PositionsContent() {
   const connect = useConnectAction();
 
   const { rows, error, notice, loading, hasMore, load, loadMore, reloadRow } = usePositions(publicClient, address);
-  const actionInFlight = useRef(false);
-  const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const [pending, setPending] = useState<{ id: bigint; kind: "claim" | "resolve" } | null>(null);
-  const [actionError, setActionError] = useState<{ id: bigint; msg: string } | null>(null);
+  const { pending, actionError, act } = usePositionAction(publicClient, address, writeContractAsync, reloadRow);
   const [expanded, setExpanded] = useState<bigint | null>(null);
   const [markets, setMarkets] = useState<Market[]>([]);
   const mids = useMids();
@@ -203,43 +90,12 @@ function PositionsContent() {
       fetchMarketVolumes(),
     ])
       .then(([ms, volumes]) => setMarkets(withMarketVolumes(ms, volumes)))
-      .catch(() => {});
+      .catch((err) => console.warn("positions: market labels unavailable", err));
   }, []);
   const marketsByVault = useMemo(
     () => new Map(markets.map((m) => [m.vault.toLowerCase(), m])),
     [markets],
   );
-
-  async function act(row: Row, kind: "claim" | "resolve") {
-    const id = row.id;
-    if (!publicClient || !address || actionInFlight.current) return;
-    actionInFlight.current = true;
-    setPending({ id, kind });
-    setActionError(null);
-    try {
-      const fresh = await loadRow(publicClient, row);
-      if (deriveRow(fresh, address).action?.kind !== kind) throw new Error("Position changed. Refresh before trying again.");
-      await publicClient.simulateContract({ address: PARLAY_VAULT, abi: parlayVaultAbi,
-        functionName: kind === "claim" ? "claim" : "resolveParlay", args: [id], account: address });
-      const hash = await writeContractAsync({
-        address: PARLAY_VAULT,
-        abi: parlayVaultAbi,
-        functionName: kind === "claim" ? "claim" : "resolveParlay",
-        args: [id],
-        account: address,
-        chainId: appChain.id,
-      });
-      const receipt = await receiptOrThrow(publicClient, hash, "Transaction reverted; retry after refreshing the position.");
-      rememberPosition(address, receipt, kind, id, row.block);
-      if (!mounted.current) return;
-      await reloadRow(row, receipt);
-    } catch (err) {
-      if (mounted.current) setActionError({ id, msg: shortError(err) });
-    } finally {
-      actionInFlight.current = false;
-      if (mounted.current) setPending(null);
-    }
-  }
 
   return (
     <div className="min-h-screen text-[13px] text-fg">
@@ -323,10 +179,7 @@ function PositionsContent() {
                       className="mono w-full px-4 py-3 text-left text-[12px]"
                     >
                       <div className="flex items-baseline justify-between gap-3">
-                        <span>
-                          #{row.id.toString().padStart(4, "0")}
-                          <span className="ml-2 text-[11px] text-dim">{ago(row.mintedAtMs)}</span>
-                        </span>
+                        <TicketLabel id={row.id} mintedAtMs={row.mintedAtMs} />
                         <span className={view.statusClass}>{view.statusLabel}</span>
                       </div>
                       <div className="mt-1.5 flex items-center gap-2 text-dim">
@@ -356,22 +209,14 @@ function PositionsContent() {
                     </button>
                     {view.action && (
                       <div className="px-4 pb-3">
-                        <button
-                          type="button"
+                        <ActionButton
+                          kind={view.action.kind}
+                          label={view.action.label}
+                          isPending={isPending}
                           disabled={pending !== null}
                           onClick={() => void act(row, view.action!.kind)}
-                          className={`mono w-full rounded-[4px] px-3 py-2 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                            view.action.kind === "claim"
-                              ? "bg-accent font-medium text-on-accent hover:opacity-90"
-                              : "border border-line text-fg hover:border-dim"
-                          }`}
-                        >
-                          {isPending
-                            ? view.action.kind === "claim"
-                              ? "Claiming…"
-                              : "Resolving…"
-                            : view.action.label}
-                        </button>
+                          className="mono w-full rounded-[4px] px-3 py-2 text-xs"
+                        />
                         {rowError && <p className="mt-2 text-[11px] text-no">{rowError}</p>}
                       </div>
                     )}
@@ -423,10 +268,7 @@ function PositionsContent() {
                               <span className={`text-dim transition-transform motion-reduce:transition-none ${isOpen ? "rotate-90" : ""}`} aria-hidden>
                                 ›
                               </span>
-                              <span>
-                                #{row.id.toString().padStart(4, "0")}
-                                <span className="ml-2 text-[11px] text-dim">{ago(row.mintedAtMs)}</span>
-                              </span>
+                              <TicketLabel id={row.id} mintedAtMs={row.mintedAtMs} />
                             </span>
                           </td>
                           <td className="px-5 py-4">
@@ -445,22 +287,14 @@ function PositionsContent() {
                           <td className={`px-5 py-4 ${view.statusClass}`}>{view.statusLabel}</td>
                           <td className="px-5 py-4 text-right" onClick={(e) => e.stopPropagation()}>
                             {view.action ? (
-                              <button
-                                type="button"
+                              <ActionButton
+                                kind={view.action.kind}
+                                label={view.action.label}
+                                isPending={isPending}
                                 disabled={pending !== null}
                                 onClick={() => void act(row, view.action!.kind)}
-                                className={`rounded-[4px] px-3 py-1 mono text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                                  view.action.kind === "claim"
-                                    ? "bg-accent font-medium text-on-accent hover:opacity-90"
-                                    : "border border-line text-fg hover:border-dim"
-                                }`}
-                              >
-                                {isPending
-                                  ? view.action.kind === "claim"
-                                    ? "Claiming…"
-                                    : "Resolving…"
-                                  : view.action.label}
-                              </button>
+                                className="rounded-[4px] px-3 py-1 mono text-xs"
+                              />
                             ) : (
                               <span className="text-dim">-</span>
                             )}
