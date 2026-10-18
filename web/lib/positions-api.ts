@@ -1,5 +1,8 @@
 import type { Row } from "./positions";
 
+export const ZERO_ADDRESS = /^0x0{40}$/;
+export const byIdDesc = (a: { id: bigint }, b: { id: bigint }) => a.id > b.id ? -1 : a.id < b.id ? 1 : 0;
+
 export type PositionSnapshot = { number: string; hash: `0x${string}` };
 export type PositionPage = {
   rows: Row[];

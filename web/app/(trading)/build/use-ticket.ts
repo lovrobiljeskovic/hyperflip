@@ -4,22 +4,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { erc20Abi } from "viem";
 import { useAccount, useBalance, usePublicClient, useReadContract, useSwitchChain, useWriteContract } from "wagmi";
 import { fetchLimits, type QuoteResult, type WriterLimits, type WriterQuote } from "@/lib/writer";
-import { formatUsdc, multiplierNum, secondsLeft, shortError } from "@/lib/format";
+import { errorText, formatUsdc, multiplierNum, secondsLeft, shortError } from "@/lib/format";
 import { appChain, BRIDGED, coreChain, HL_DRIP } from "@/lib/chain";
 import { PARLAY_VAULT } from "@/lib/contracts";
 import { useConnectAction, useUsdc, useWalletState } from "@/lib/wallet";
-import { tryParseStake, standingAllowance, TicketSession, approveUsdc, mintTicket, quoteMatches, type BuilderLeg } from "@/lib/ticket";
+import { MIN_LEGS, tryParseStake, standingAllowance, TicketSession, approveUsdc, mintTicket, quoteMatches, type BuilderLeg } from "@/lib/ticket";
 
 export type MintedSlip = { legs: BuilderLeg[]; premium: bigint; maxPayout: bigint; hash: `0x${string}`; id: string | null };
 
-const MIN_LEGS = 2;
 const QUOTE_DEBOUNCE_MS = 400;
 const TTL_SECONDS = 30;
 const DRIP_HINT = "Claim testnet USDC at the Hyperliquid drip, then transfer it (and some HYPE for gas) from Core to EVM.";
 
 function shortMintError(err: unknown): string {
-  const raw = String((err as Error)?.message ?? err);
-  if (raw.includes("exceeds balance")) return "Not enough testnet USDC in your wallet for the stake.";
+  if (errorText(err).includes("exceeds balance")) return "Not enough testnet USDC in your wallet for the stake.";
   return shortError(err);
 }
 
@@ -176,7 +174,7 @@ export function useTicket(legs: BuilderLeg[]) {
       if (done) setMinted({ legs, premium: BigInt(signed.premium), maxPayout: BigInt(signed.maxPayout), hash: done.hash, id: done.id });
     } catch (err) {
       if (session.revision !== revision) return;
-      const msg = String((err as Error)?.message ?? err);
+      const msg = errorText(err);
       if (msg.includes("LEG_SETTLED") || msg.includes("QUOTE_EXPIRED")) {
         retryQuote = true;
         setMintState("requoted");
@@ -203,7 +201,7 @@ export function useTicket(legs: BuilderLeg[]) {
     } catch (err) {
       if (session.revision !== revision) return;
       setMintErrorMsg(shortMintError(err));
-      setMintErrorDetail(String((err as Error)?.message ?? err));
+      setMintErrorDetail(errorText(err));
       setMintState("error");
     } finally {
       setApproving(false);

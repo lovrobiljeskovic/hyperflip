@@ -1,5 +1,5 @@
 import { formatUsdc, multiplier } from "./format";
-import type { BuilderLeg } from "./ticket";
+import { legLabel, type BuilderLeg } from "./ticket";
 
 type SlipImageInput = { legs: Pick<BuilderLeg, "isYes" | "title" | "label" | "group">[]; premium: bigint; maxPayout: bigint };
 
@@ -76,7 +76,7 @@ export async function renderSlipPng(slip: SlipImageInput): Promise<Blob> {
     ctx.fillRect(card.x, y, card.w, 2);
     ctx.fillStyle = C.ink;
     ctx.fillRect(card.x, y + 2, card.w, ROW - 2);
-    const label = leg.label ?? (leg.isYes ? "YES" : "NO");
+    const label = legLabel(leg);
     ctx.font = `500 24px ${f.mono}`;
     ctx.fillStyle = leg.isYes ? C.yes : C.no;
     ctx.fillText(leg.group ? label : label.toUpperCase(), PAD, y + 44);

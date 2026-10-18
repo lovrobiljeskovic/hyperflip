@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRef } from "react";
 import type { useTicket } from "./use-ticket";
-import type { BuilderLeg } from "@/lib/ticket";
+import { legLabel, type BuilderLeg } from "@/lib/ticket";
 import { formatUnits } from "viem";
 import {
   marketMid,
@@ -15,10 +15,13 @@ import { usePrinting } from "@/lib/print";
 import {
   formatUsdc,
   edgeSteps,
+  mult,
   multiplierNum,
+  pct,
   priceBreakdown,
   quotedOverround,
   USDC_DECIMALS,
+  usdc2,
   type PriceBreakdown,
 } from "@/lib/format";
 import { appChain, tradeUrl } from "@/lib/chain";
@@ -32,7 +35,6 @@ import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 export type { BuilderLeg } from "@/lib/ticket";
-const legLabel = (leg: BuilderLeg): string => leg.label ?? (leg.isYes ? "YES" : "NO");
 
 function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: BuilderLeg[] = []): string {
   if (res.status === 400 && res.error === "dominated") {
@@ -82,9 +84,6 @@ function DetailRow({
   );
 }
 
-const pct = (x: number) => `${(x * 100).toFixed(2)}%`;
-const mult = (x: number) => `${x.toFixed(2)}x`;
-const usdc2 = (x: number) => x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const signedMult = (x: number) => `${x < 0 ? "\u2212" : "+"}${Math.abs(x).toFixed(2)}x`;
 
 function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown }) {

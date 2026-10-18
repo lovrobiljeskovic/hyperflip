@@ -6,7 +6,7 @@ import { useAccount, usePublicClient, useWriteContract } from "wagmi";
 import { usePositions } from "./use-positions";
 import { INDEXED_POSITIONS, deriveRow, loadRow, summarizePositions, type Row, type LegVerdict } from "@/lib/positions";
 import { PARLAY_VAULT, parlayVaultAbi } from "@/lib/contracts";
-import { formatUsdc, multiplier, pct1, shortError, USDC_DECIMALS } from "@/lib/format";
+import { formatUsdc, multiplier, pct1, shortError, USDC_DECIMALS, usdc2 } from "@/lib/format";
 import { CountUp, Kickoff } from "@/app/live";
 import { formatUnits } from "viem";
 import { appChain, explorerAddress, tradeUrl } from "@/lib/chain";
@@ -16,6 +16,7 @@ import { useMids } from "@/lib/mids";
 import { useConnectAction, useWalletState } from "@/lib/wallet";
 import { appHref } from "@/lib/site";
 import { rememberPosition } from "@/lib/position-receipts";
+import { receiptOrThrow } from "@/lib/ticket";
 
 
 const VERDICT_STYLE: Record<LegVerdict, { label: string; className: string }> = {
@@ -137,14 +138,14 @@ function LegTable({
 function SummaryStrip({ rows, wallet }: { rows: Row[]; wallet: string }) {
   const { staked, open, claimable, won } = summarizePositions(rows, wallet);
   const usdc = (v: bigint) => Number(formatUnits(v, USDC_DECIMALS));
-  const usdc2 = (x: number) => `${x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDC`;
+  const usdcLabel = (x: number) => `${usdc2(x)} USDC`;
   const whole = (x: number) => String(Math.round(x));
   const cells = [
     { label: "Tickets", value: rows.length, format: whole, className: "" },
-    { label: "Total staked", value: usdc(staked), format: usdc2, className: "" },
+    { label: "Total staked", value: usdc(staked), format: usdcLabel, className: "" },
     { label: "Open", value: open, format: whole, className: "" },
-    { label: "Claimable", value: usdc(claimable), format: usdc2, className: claimable > 0n ? "text-accent" : "" },
-    { label: "Claimed", value: usdc(won), format: usdc2, className: won > 0n ? "text-yes" : "" },
+    { label: "Claimable", value: usdc(claimable), format: usdcLabel, className: claimable > 0n ? "text-accent" : "" },
+    { label: "Claimed", value: usdc(won), format: usdcLabel, className: won > 0n ? "text-yes" : "" },
   ];
   return (
     <div className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-card border border-line bg-line sm:grid-cols-3 lg:grid-cols-5">
@@ -228,8 +229,7 @@ function PositionsContent() {
         account: address,
         chainId: appChain.id,
       });
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      if (receipt.status !== "success") throw new Error("Transaction reverted; retry after refreshing the position.");
+      const receipt = await receiptOrThrow(publicClient, hash, "Transaction reverted; retry after refreshing the position.");
       rememberPosition(address, receipt, kind, id, row.block);
       if (!mounted.current) return;
       await reloadRow(row, receipt);

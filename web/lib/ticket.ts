@@ -1,8 +1,8 @@
-import { erc20Abi, parseEventLogs, parseUnits, type PublicClient } from "viem";
+import { erc20Abi, parseEventLogs, parseUnits, type PublicClient, type TransactionReceipt } from "viem";
 import type { UseWriteContractReturnType } from "wagmi";
 import { requestQuote, type QuoteResult, type WriterQuote } from "./writer";
 import { PARLAY_VAULT, parlayVaultAbi, parlayMintedEvent } from "./contracts";
-import { rememberPosition, type PositionReceipt } from "./position-receipts";
+import { fromVault, rememberPosition, type PositionReceipt } from "./position-receipts";
 import { appChain } from "./chain";
 import { secondsLeft, USDC_DECIMALS } from "./format";
 
@@ -17,6 +17,15 @@ export interface BuilderLeg {
   group?: string;
 }
 
+export const MIN_LEGS = 2;
+
+export const legLabel = (leg: Pick<BuilderLeg, "label" | "isYes">): string => leg.label ?? (leg.isYes ? "YES" : "NO");
+
+export async function receiptOrThrow(client: PublicClient, hash: `0x${string}`, message: string): Promise<TransactionReceipt> {
+  const receipt = await client.waitForTransactionReceipt({ hash });
+  if (receipt.status !== "success") throw new Error(message);
+  return receipt;
+}
 
 export function tryParseStake(v: string): bigint | null {
   if (!v.trim()) return null;
@@ -117,9 +126,8 @@ export async function mintTicket({ client, write, usdc, quote, sig, input, curre
   await client.simulateContract({ address: PARLAY_VAULT, abi: parlayVaultAbi, functionName: "mint", args, account: quote.taker });
   check();
   const hash = await write({ address: PARLAY_VAULT, abi: parlayVaultAbi, functionName: "mint", args, account: quote.taker, chainId: appChain.id });
-  const receipt = await client.waitForTransactionReceipt({ hash });
-  if (receipt.status !== "success") throw new Error("QUOTE_EXPIRED (mint reverted on-chain)");
-  const minted = parseEventLogs({ abi: [parlayMintedEvent], logs: receipt.logs.filter(l => l.address.toLowerCase() === PARLAY_VAULT.toLowerCase()) })
+  const receipt = await receiptOrThrow(client, hash, "QUOTE_EXPIRED (mint reverted on-chain)");
+  const minted = parseEventLogs({ abi: [parlayMintedEvent], logs: receipt.logs.filter(fromVault) })
     .find(l => l.args.taker.toLowerCase() === quote.taker.toLowerCase() &&
       l.args.quoteId === quote.quoteId && l.args.premium === premium && l.args.maxPayout === BigInt(quote.maxPayout));
   // A confirmed mint stays confirmed even if the wallet changes or indexing lags.

@@ -1,7 +1,7 @@
 import { formatUsdc, USDC_DECIMALS } from "./format";
+import { MIN_LEGS } from "./ticket";
 
 export const STAKE_CHIPS = [5, 10, 25, 50, 100] as const;
-const MIN_LEGS = 2;
 
 export function chipState(usdc: number, maxStake: bigint | null, balance: bigint | undefined): { enabled: boolean; title?: string } {
   const base = BigInt(usdc) * 10n ** BigInt(USDC_DECIMALS);

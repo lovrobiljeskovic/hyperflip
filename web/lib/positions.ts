@@ -2,8 +2,8 @@ import { BaseError, ContractFunctionRevertedError, type PublicClient } from "vie
 import { fetchParlays, type ParlayRef } from "./writer";
 import { pool } from "./pool";
 import { PARLAY_VAULT, STATUS, outcomeVaultAbi, parlayVaultAbi } from "./contracts";
-
-const WAD = 10n ** 18n;
+import { WAD } from "./format";
+import { byIdDesc } from "./positions-api";
 
 export type Leg = { vault: `0x${string}`; isYes: boolean };
 export type ParlayData = {
@@ -158,7 +158,7 @@ export async function loadPositions(client: PublicClient, address: `0x${string}`
     try { return { ...await loadRow(client, ref), taker: address } as Row; } catch { return null; }
   });
   const rows = results.filter((row): row is Row => row !== null);
-  rows.sort((a, b) => a.id > b.id ? -1 : a.id < b.id ? 1 : 0);
+  rows.sort(byIdDesc);
   return { rows, failed: results.length - rows.length };
 }
 

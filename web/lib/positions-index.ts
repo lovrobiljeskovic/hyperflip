@@ -2,12 +2,12 @@ import { isAddress, type Address, type PublicClient } from "viem";
 import { DEPLOY_BLOCK, PARLAY_VAULT, outcomeVaultAbi, parlayVaultAbi } from "./contracts";
 import { appChain } from "./chain";
 import { legVerdict, type Leg, type ParlayData, type Row } from "./positions";
-import type { PositionPage, PositionSnapshot } from "./positions-api";
+import { WAD } from "./format";
+import { ZERO_ADDRESS, type PositionPage, type PositionSnapshot } from "./positions-api";
 import { pool } from "./pool";
 
 const DECIMAL = /^(0|[1-9][0-9]{0,77})$/;
 const HASH = /^0x[0-9a-fA-F]{64}$/;
-const ZERO = /^0x0{40}$/;
 const MAX_ID = (1n << 256n) - 1n;
 const SCOPE = `${appChain.id}:${PARLAY_VAULT.toLowerCase()}`;
 
@@ -21,7 +21,7 @@ export function parsePositionQuery(query: URLSearchParams) {
   const limit = query.get("limit") ?? "20";
   const hash = query.get("snapshot");
   const block = query.get("block");
-  if (!isAddress(wallet, { strict: false }) || ZERO.test(wallet) || !/^[1-9][0-9]?$/.test(limit) || Number(limit) > 50 ||
+  if (!isAddress(wallet, { strict: false }) || ZERO_ADDRESS.test(wallet) || !/^[1-9][0-9]?$/.test(limit) || Number(limit) > 50 ||
       (before !== null && (!DECIMAL.test(before) || BigInt(before) === 0n || BigInt(before) > MAX_ID)) ||
       (hash !== null && !HASH.test(hash)) || (block !== null && (!DECIMAL.test(block) || BigInt(block) > MAX_ID)) ||
       (hash === null) !== (block === null) || (before !== null && hash === null)) {
@@ -56,11 +56,11 @@ function validateTicket(ticket: Ticket, snapshot: PositionSnapshot) {
   if (amounts.some(v => typeof v !== "string" || !DECIMAL.test(v) || BigInt(v) > MAX_ID) || BigInt(ticket.number) < 1n ||
       ticket.id !== `${SCOPE}:${ticket.number}` || BigInt(ticket.mintBlock) < DEPLOY_BLOCK || BigInt(ticket.mintBlock) > BigInt(snapshot.number) ||
       !HASH.test(ticket.mintHash) || !Number.isSafeInteger(Number(ticket.mintTimestamp) * 1000) ||
-      !isAddress(ticket.taker, { strict: false }) || ZERO.test(ticket.taker) ||
+      !isAddress(ticket.taker, { strict: false }) || ZERO_ADDRESS.test(ticket.taker) ||
       !Number.isInteger(ticket.status) || ticket.status < 0 || ticket.status > 3 || typeof ticket.burned !== "boolean" ||
       BigInt(ticket.maxPayout) <= BigInt(ticket.premium) ||
-      (ticket.burned ? ticket.owner !== null || !ticket.burnHolder || !isAddress(ticket.burnHolder, { strict: false }) || ZERO.test(ticket.burnHolder) || ![1, 3].includes(ticket.status)
-        : !ticket.owner || !isAddress(ticket.owner, { strict: false }) || ZERO.test(ticket.owner) || ticket.burnHolder !== null || ticket.status === 3)) {
+      (ticket.burned ? ticket.owner !== null || !ticket.burnHolder || !isAddress(ticket.burnHolder, { strict: false }) || ZERO_ADDRESS.test(ticket.burnHolder) || ![1, 3].includes(ticket.status)
+        : !ticket.owner || !isAddress(ticket.owner, { strict: false }) || ZERO_ADDRESS.test(ticket.owner) || ticket.burnHolder !== null || ticket.status === 3)) {
     throw new PositionsError("Invalid indexed ticket");
   }
 }
@@ -161,7 +161,7 @@ export function createPositionsIndex(client: PublicClient, endpoint: string, tok
         return await cached(`outcome:${head.hash}:${vault}`, 15_000, async () => {
           const settled = await readRpc(() => client.readContract({ address: vault, abi: outcomeVaultAbi, functionName: "settled", blockNumber: head.number! }));
           const fraction = settled ? await readRpc(() => client.readContract({ address: vault, abi: outcomeVaultAbi, functionName: "settleFractionWad", blockNumber: head.number! })) : null;
-          if (fraction !== null && (fraction < 0n || fraction > 10n ** 18n)) throw new Error("Invalid fraction");
+          if (fraction !== null && (fraction < 0n || fraction > WAD)) throw new Error("Invalid fraction");
           return { settled, fraction };
         });
       } catch { return null; }

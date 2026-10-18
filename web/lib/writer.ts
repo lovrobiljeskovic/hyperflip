@@ -44,6 +44,10 @@ export function isPriced(mids: Record<string, string>, market: Market): boolean 
   return marketMid(mids, market, market.coinYes) !== null && marketMid(mids, market, market.coinNo) !== null;
 }
 
+export function liveMarkets(markets: Market[], mids: Record<string, string>, now = Date.now()): Market[] {
+  return markets.filter((m) => (m.expiryMs ?? Infinity) >= now && isPriced(mids, m));
+}
+
 /** Tab label. Core deployers spell the same sport several ways ("Soccer", "Association Football",
  * "American football"); fold them so one sport gets one tab. */
 export function sportLabel(market: Pick<Market, "sport" | "category">): string {
@@ -130,8 +134,8 @@ export function withMarketVolumes(markets: Market[], volumes: Record<string, num
   return markets.map((market) => ({ ...market, volume24h: volumes[market.coinYes] }));
 }
 
-export async function fetchMarketBoard(): Promise<Market[]> {
-  const [markets, volumes] = await Promise.all([fetchMarkets(), fetchMarketVolumes()]);
+export async function fetchMarketBoard({ includeArchived = false } = {}): Promise<Market[]> {
+  const [markets, volumes] = await Promise.all([fetchMarkets(includeArchived), fetchMarketVolumes()]);
   return withMarketVolumes(markets, volumes);
 }
 

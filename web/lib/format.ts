@@ -2,12 +2,18 @@ import { formatUnits } from "viem";
 
 export const USDC_DECIMALS = 6;
 
-export function formatUsdc(v: bigint): string {
-  return Number(formatUnits(v, USDC_DECIMALS)).toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+const USDC_2 = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+export function usdc2(x: number): string {
+  return USDC_2.format(x);
 }
+
+export function formatUsdc(v: bigint): string {
+  return usdc2(Number(formatUnits(v, USDC_DECIMALS)));
+}
+
+export const pct = (x: number) => `${(x * 100).toFixed(2)}%`;
+export const mult = (x: number) => `${x.toFixed(2)}x`;
 
 export function multiplier(premium: bigint, maxPayout: bigint): string {
   if (premium === 0n) return "—";
@@ -41,7 +47,7 @@ export function edgeSteps(bd: PriceBreakdown): {
   afterEdge: number;
   afterLegs: number;
 } {
-  // Mirrors the writer: price = p + p(1-p) x edge, so the edge fades at both extremes.
+  // mirrors writer/src/pricing.ts:37 — price = p + p(1-p)·edge, so the edge fades at both extremes
   const p = 1 / bd.fairMultiplier;
   const at = (edge: number) => 1 / (p + p * (1 - p) * edge);
   return {
@@ -96,8 +102,12 @@ export function quotedOverround(bd: PriceBreakdown): number {
   return bd.fairMultiplier / bd.actualMultiplier - 1;
 }
 
+export function errorText(err: unknown): string {
+  return String((err as Error)?.message ?? err);
+}
+
 export function shortError(err: unknown): string {
-  const raw = String((err as Error)?.message ?? err);
+  const raw = errorText(err);
   const firstLine = raw.split("\n")[0] ?? raw;
   return firstLine.length > 140 ? `${firstLine.slice(0, 140)}…` : firstLine;
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { compareKickoff, fetchMarketBoard, groupMarkets, isPriced, marketMid, onlySports, sideLabel, sportLabel, type Market } from "@/lib/writer";
+import { compareKickoff, fetchMarketBoard, groupMarkets, liveMarkets, marketMid, sideLabel, sportLabel, type Market } from "@/lib/writer";
 import { tradeUrl } from "@/lib/chain";
 import { useMids } from "@/lib/mids";
 import { formatOdds, useOddsFormat } from "@/lib/odds-format";
@@ -222,7 +222,7 @@ export default function BuildPage() {
     setError(false);
     setMarkets(null);
     try {
-      const board = onlySports(await fetchMarketBoard());
+      const board = await fetchMarketBoard();
       setMarkets(board);
       if (!restored.current) {
         restored.current = true;
@@ -240,7 +240,7 @@ export default function BuildPage() {
   }, []);
 
   const live = useMemo(
-    () => (markets ?? []).filter((m) => (m.expiryMs ?? Infinity) >= Date.now() && isPriced(mids, m)),
+    () => liveMarkets(markets ?? [], mids),
     [markets, mids],
   );
   const tabs = useMemo(() => ["all", ...new Set(live.map(sportLabel))], [live]);

@@ -4,12 +4,28 @@ import { useEffect, useRef, useState } from "react";
 import { until, whenLabel } from "@/lib/format";
 import { isMatchQuestion, kickoffKey } from "@/lib/writer";
 
-function useNow(everyMs = 1000): number {
+// One shared 1 s clock: every countdown ticks on the same beat, and the interval runs only
+// while something subscribes.
+const ticks = new Set<(now: number) => void>();
+let timer: ReturnType<typeof setInterval> | undefined;
+
+export function subscribeNow(onTick: (now: number) => void): () => void {
+  ticks.add(onTick);
+  if (ticks.size === 1) {
+    timer = setInterval(() => {
+      const now = Date.now();
+      ticks.forEach((tick) => tick(now));
+    }, 1000);
+  }
+  return () => {
+    ticks.delete(onTick);
+    if (ticks.size === 0) clearInterval(timer);
+  };
+}
+
+function useNow(): number {
   const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), everyMs);
-    return () => clearInterval(id);
-  }, [everyMs]);
+  useEffect(() => subscribeNow(setNow), []);
   return now;
 }
 

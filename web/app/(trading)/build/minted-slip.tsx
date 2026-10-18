@@ -6,6 +6,7 @@ import { HyperflipLogo } from "@/app/brand";
 import { formatUsdc, multiplier } from "@/lib/format";
 import { slipShareText, xIntentUrl } from "@/lib/share";
 import { renderSlipPng } from "@/lib/slip-image";
+import { legLabel } from "@/lib/ticket";
 import type { MintedSlip } from "./use-ticket";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -72,7 +73,7 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
           {legs.map((leg) => (
             <li key={leg.vault} className="flex flex-col gap-0.5 bg-ink px-6 py-3">
               <span className={`mono text-[11px] ${leg.group ? "" : "uppercase"} ${leg.isYes ? "text-yes" : "text-no"}`}>
-                {leg.label ?? (leg.isYes ? "YES" : "NO")}
+                {legLabel(leg)}
               </span>
               <span className="text-dim">{leg.title}</span>
             </li>

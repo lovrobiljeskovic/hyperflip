@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { fetchMids } from "@/lib/info";
-import { fetchMarketBoard, onlySports } from "@/lib/writer";
+import { fetchMarketBoard } from "@/lib/writer";
 import { LandingHeader } from "./landing-header";
 import { appHref } from "@/lib/site";
 import { HeroSlip, LiveMarketBoard, LiveMarketRail, type BoardSnapshot } from "./live-markets";
@@ -44,7 +44,7 @@ const faq = [
 
 async function boardSnapshot(): Promise<BoardSnapshot> {
   const [markets, mids] = await Promise.all([fetchMarketBoard().catch(() => null), fetchMids(10)]);
-  return { markets: markets && onlySports(markets), mids };
+  return { markets, mids };
 }
 
 export default async function Home() {

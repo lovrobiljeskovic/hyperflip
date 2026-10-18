@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { appHref } from "@/lib/site";
-import { compareKickoff, fetchMarketBoard, isPriced, marketMid, onlySports, sideLabel, type Market } from "@/lib/writer";
+import { compareKickoff, fetchMarketBoard, liveMarkets, marketMid, sideLabel, type Market } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
 import { pct1 } from "@/lib/format";
@@ -15,7 +15,7 @@ import { CountUp, Kickoff } from "./live";
    revisit retries. */
 let marketsCache: Promise<Market[]> | null = null;
 function loadMarkets(): Promise<Market[]> {
-  marketsCache ??= fetchMarketBoard().then(onlySports).catch((e) => {
+  marketsCache ??= fetchMarketBoard().catch((e) => {
     marketsCache = null;
     throw e;
   });
@@ -174,8 +174,7 @@ export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
     );
   }
 
-  const pricedAll = [...state.markets]
-    .filter((m) => (m.expiryMs ?? Infinity) >= Date.now() && isPriced(mids, m))
+  const pricedAll = liveMarkets(state.markets, mids)
     .sort((a, b) => compareKickoff(a, b));
   // One row per question first (five different games beats five sides of one
   // futures market), then fill from the rest if the registry is narrow.

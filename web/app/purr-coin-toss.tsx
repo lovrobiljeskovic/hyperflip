@@ -1,21 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useMediaQuery } from "@/lib/media";
 
 const poster = "/brand/purr-hero-poster.jpg";
 
 export function PurrCoinToss() {
   const video = useRef<HTMLVideoElement>(null);
-  const [animate, setAnimate] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const animate = useMediaQuery("(min-width: 1024px) and (prefers-reduced-motion: no-preference)") && !failed;
   const [playing, setPlaying] = useState(false);
-
-  useEffect(() => {
-    const media = window.matchMedia("(min-width: 1024px) and (prefers-reduced-motion: no-preference)");
-    const update = () => setAnimate(media.matches);
-    update();
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
 
   return (
     <>
@@ -39,7 +33,7 @@ export function PurrCoinToss() {
               height="720"
               onPlay={() => setPlaying(true)}
               onPause={() => setPlaying(false)}
-              onError={() => setAnimate(false)}
+              onError={() => setFailed(true)}
             />
           )}
         </div>

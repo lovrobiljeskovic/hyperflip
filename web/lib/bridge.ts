@@ -1,6 +1,7 @@
 import { encodeAbiParameters, erc20Abi, parseAbi, parseEther, type PublicClient } from "viem";
 import type { UseWriteContractReturnType } from "wagmi";
 import { coreChain } from "./chain";
+import { receiptOrThrow } from "./ticket";
 
 /** Elysium testnet's canonical Arbitrum bridge, on HyperEVM testnet (998). */
 export const BRIDGE = {
@@ -49,8 +50,7 @@ export async function quoteBridgeFees(core: PublicClient, l2GasPrice: bigint) {
 type Write = UseWriteContractReturnType["writeContractAsync"];
 
 async function confirmed(core: PublicClient, hash: `0x${string}`, what: string): Promise<`0x${string}`> {
-  const receipt = await core.waitForTransactionReceipt({ hash });
-  if (receipt.status !== "success") throw new Error(`${what} reverted`);
+  await receiptOrThrow(core, hash, `${what} reverted`);
   return hash;
 }
 

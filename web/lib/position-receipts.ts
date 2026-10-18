@@ -2,11 +2,12 @@ import { parseAbi, parseEventLogs, TransactionReceiptNotFoundError, type Address
 import { PARLAY_VAULT, parlayMintedEvent } from "./contracts";
 import { appChain } from "./chain";
 import { loadRow, type Row } from "./positions";
-import type { PositionSnapshot } from "./positions-api";
+import { byIdDesc, ZERO_ADDRESS, type PositionSnapshot } from "./positions-api";
 import { pool } from "./pool";
 
 const events = [...parseAbi(["event ParlayResolved(uint256 indexed id, uint8 status)", "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)"]), parlayMintedEvent];
 export type PositionReceipt = { hash: `0x${string}`; block: string; blockHash: `0x${string}`; mintBlock: string; id: string | null; kind: "mint" | "claim" | "resolve" };
+export const fromVault = (l: { address: string }) => l.address.toLowerCase() === PARLAY_VAULT.toLowerCase();
 const memory = new Map<string, PositionReceipt[]>();
 const storageUnavailable = new Set<string>();
 const key = (wallet: string) => `positions:${appChain.id}:${PARLAY_VAULT.toLowerCase()}:${wallet.toLowerCase()}`;
@@ -47,10 +48,10 @@ export async function receiptPositions(client: PublicClient, wallet: Address, in
       if (receipt.status !== "success" || receipt.blockHash !== block.hash || receipt.blockHash !== hint.blockHash || String(receipt.blockNumber) !== hint.block) {
         discard.add(hint.hash); return null;
       }
-      const logs = parseEventLogs({ abi: events, logs: receipt.logs.filter(l => l.address.toLowerCase() === PARLAY_VAULT.toLowerCase()), strict: true });
+      const logs = parseEventLogs({ abi: events, logs: receipt.logs.filter(fromVault), strict: true });
       const minted = logs.filter(l => l.eventName === "ParlayMinted").find(l => l.args.taker.toLowerCase() === wallet.toLowerCase());
       const id = hint.kind === "mint" ? minted?.args.id : hint.id === null ? undefined : BigInt(hint.id);
-      const validAction = logs.some(l => l.eventName === "Transfer" && l.args.tokenId === id && l.args.from.toLowerCase() === wallet.toLowerCase() && /^0x0{40}$/.test(l.args.to));
+      const validAction = logs.some(l => l.eventName === "Transfer" && l.args.tokenId === id && l.args.from.toLowerCase() === wallet.toLowerCase() && ZERO_ADDRESS.test(l.args.to));
       if (id === undefined || (hint.kind !== "mint" && !validAction)) { discard.add(hint.hash); return null; }
       if (indexed && BigInt(indexed.number) >= receipt.blockNumber) { discard.add(hint.hash); return null; }
       pending = true;
@@ -87,14 +88,14 @@ export function mergePositionRows(rows: Row[], updates: Row[]): Row[] {
     merged.set(String(row.id), { ...old, ...row, taker: row.taker ?? old?.taker,
       burnHolder: row.burnHolder ?? old?.burnHolder, block: old?.block ?? row.block, mintedAtMs: old?.mintedAtMs ?? row.mintedAtMs });
   }
-  return [...merged.values()].sort((a, b) => a.id > b.id ? -1 : a.id < b.id ? 1 : 0);
+  return [...merged.values()].sort(byIdDesc);
 }
 
 export function confirmedPositionRow(row: Row, receipt: TransactionReceipt): Row {
   let next = { ...row };
-  for (const log of parseEventLogs({ abi: events, logs: receipt.logs.filter(l => l.address.toLowerCase() === PARLAY_VAULT.toLowerCase()) })) {
+  for (const log of parseEventLogs({ abi: events, logs: receipt.logs.filter(fromVault) })) {
     if (log.eventName === "ParlayResolved" && log.args.id === row.id) next = { ...next, parlay: { ...next.parlay, status: log.args.status } };
-    if (log.eventName === "Transfer" && log.args.tokenId === row.id && /^0x0{40}$/.test(log.args.to)) next = { ...next, burned: true, owner: null, burnHolder: log.args.from };
+    if (log.eventName === "Transfer" && log.args.tokenId === row.id && ZERO_ADDRESS.test(log.args.to)) next = { ...next, burned: true, owner: null, burnHolder: log.args.from };
   }
   return next;
 }
