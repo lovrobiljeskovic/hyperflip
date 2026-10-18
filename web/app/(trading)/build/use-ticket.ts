@@ -3,35 +3,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { erc20Abi } from "viem";
 import { useAccount, useBalance, usePublicClient, useReadContract, useSwitchChain, useWriteContract } from "wagmi";
-import { fetchLimits, type QuoteResult, type WriterLimits, type WriterQuote } from "@/lib/writer";
-import { errorText, formatUsdc, multiplierNum, secondsLeft, shortError } from "@/lib/format";
-import { appChain, BRIDGED, coreChain, HL_DRIP } from "@/lib/chain";
+import type { QuoteResult, WriterQuote } from "@/lib/writer";
+import { errorText, multiplierNum, shortError } from "@/lib/format";
+import { appChain, BRIDGED } from "@/lib/chain";
 import { PARLAY_VAULT } from "@/lib/contracts";
 import { useConnectAction, useUsdc, useWalletState } from "@/lib/wallet";
+import { useQuoteTtl } from "./use-quote-ttl";
+import { useWriterLimits } from "./use-writer-limits";
+import { computeCta } from "@/lib/ticket-cta";
 import { MIN_LEGS, tryParseStake, standingAllowance, TicketSession, approveUsdc, mintTicket, quoteMatches, type BuilderLeg } from "@/lib/ticket";
 
 export type MintedSlip = { legs: BuilderLeg[]; premium: bigint; maxPayout: bigint; hash: `0x${string}`; id: string | null };
 
 const QUOTE_DEBOUNCE_MS = 400;
-const TTL_SECONDS = 30;
-const DRIP_HINT = "Claim testnet USDC at the Hyperliquid drip, then transfer it (and some HYPE for gas) from Core to EVM.";
 
 function shortMintError(err: unknown): string {
   if (errorText(err).includes("exceeds balance")) return "Not enough testnet USDC in your wallet for the stake.";
   return shortError(err);
 }
-
-type Cta =
-  | { kind: "disabled"; label: string }
-  | { kind: "connect"; label: string }
-  /** Off-site next step (the faucet) - opens a new tab, with a one-line hint. */
-  | { kind: "external"; label: string; href: string; hint: string }
-  | { kind: "done"; label: string; href: string }
-  | { kind: "switch-chain"; label: string }
-  /** Funds live on HyperEVM; the bridge panel moves the USDC shortfall and gas across first. */
-  | { kind: "bridge"; usdc: bigint; gas: boolean }
-  /** Past every gate: step one approves the stake, step two mints once the allowance covers it. */
-  | { kind: "pay"; step: "approve" | "mint"; label: string; enabled: boolean; needsApproval: boolean };
 
 export function useTicket(legs: BuilderLeg[]) {
   const { ready: walletReady, address, isConnected, isLinked, accountId } = useWalletState();
@@ -40,7 +29,6 @@ export function useTicket(legs: BuilderLeg[]) {
   const [stake, setStake] = useState("");
   const [storedQuote, setStoredQuote] = useState<{ revision: number; result: QuoteResult } | null>(null);
   const [quoting, setQuoting] = useState(false);
-  const [ttlLeft, setTtlLeft] = useState(0);
   const [mintState, setMintState] = useState<"idle" | "pending" | "done" | "requoted" | "error">("idle");
   const [mintErrorMsg, setMintErrorMsg] = useState("");
   const [mintErrorDetail, setMintErrorDetail] = useState("");
@@ -73,22 +61,9 @@ export function useTicket(legs: BuilderLeg[]) {
     query: { enabled: !!usdcAddr && !!address },
   });
 
-  const [maxStake, setMaxStake] = useState<bigint | null>(null);
-  const [limits, setLimits] = useState<WriterLimits | null>(null);
-  const [ttlSeconds, setTtlSeconds] = useState(TTL_SECONDS);
-  useEffect(() => {
-    void fetchLimits().then((l) => {
-      if (!l) return;
-      setLimits(l);
-      setMaxStake(BigInt(l.maxStake));
-      if (l.quoteTtlMs > 0) setTtlSeconds(Math.round(l.quoteTtlMs / 1000));
-    });
-  }, []);
+  const { maxStake, limits, ttlSeconds } = useWriterLimits();
 
   const stakeBase = tryParseStake(stake);
-  // premium === stake by construction (quoteMatches), so the allowance needed is
-  // known before any quote arrives and survives requotes.
-  const needsApproval = stakeBase !== null && (allowance === undefined || allowance < stakeBase);
   // Allow one immediate-expiry retry; clock skew must not loop requests.
   const clockSkewRetried = useRef(false);
 
@@ -121,34 +96,7 @@ export function useTicket(legs: BuilderLeg[]) {
     return () => clearTimeout(t);
   }, [runQuote, session, setQuoteResult]);
 
-  useEffect(() => {
-    if (!quoteResult?.ok) {
-      setTtlLeft(0);
-      return;
-    }
-    if (mintState === "pending" || mintState === "done") return; // freeze - don't requote under a mint
-    let firstTick = true;
-    let expired = false;
-    const tick = () => {
-      if (expired) return;
-      const left = secondsLeft(BigInt(quoteResult.quote.deadline), Date.now());
-      setTtlLeft(left);
-      if (left <= 0) {
-        expired = true;
-        if (firstTick && clockSkewRetried.current) {
-          setQuoteResult({ ok: false, status: 0, error: "clock-skew" });
-          return;
-        }
-        if (firstTick) clockSkewRetried.current = true;
-        setQuoteResult(null);
-        void runQuote();
-      }
-      firstTick = false;
-    };
-    tick();
-    const id = setInterval(tick, 250);
-    return () => clearInterval(id);
-  }, [quoteResult, mintState, runQuote, setQuoteResult]);
+  const ttlLeft = useQuoteTtl({ quoteResult, mintState, runQuote, setQuoteResult, clockSkewRetried });
 
   const latestQuote = useRef(runQuote);
   latestQuote.current = runQuote;
@@ -209,49 +157,9 @@ export function useTicket(legs: BuilderLeg[]) {
     }
   }
 
-  function computeCta(): Cta {
-    if (legs.length < MIN_LEGS) return { kind: "disabled", label: legs.length === 1 ? "Add 1 more leg to price a ticket" : "Add 2 legs to price a ticket" };
-    if (!walletReady) return { kind: "disabled", label: "Checking wallet…" };
-    if (!isConnected) return { kind: "connect", label: "Connect wallet" };
-    if (!isLinked) return { kind: "connect", label: "Verify wallet" };
-    // The bridge step moves the wallet to the core chain mid-flow; keep it mounted (and its
-    // "sent" status visible) instead of swapping in the switch-chain CTA until funds land.
-    const onCore = BRIDGED && chainId === coreChain.id;
-    if (chainId !== undefined && chainId !== appChain.id && !onCore)
-      return { kind: "switch-chain", label: `Switch to ${appChain.name}` };
-    if (BRIDGED) {
-      const gasOut = gas !== undefined && gas.value === 0n;
-      const short = stakeBase !== null && usdcBalance !== undefined ? stakeBase - usdcBalance : 0n;
-      if (gasOut || usdcBalance === 0n || short > 0n) return { kind: "bridge", usdc: short > 0n ? short : 0n, gas: gasOut };
-    }
-    if (onCore) return { kind: "switch-chain", label: `Switch to ${appChain.name}` };
-    if (usdcBalance === 0n) return { kind: "external", label: "Get testnet USDC →", href: HL_DRIP, hint: DRIP_HINT };
-    if (gas !== undefined && gas.value === 0n)
-      return { kind: "external", label: "Get HYPE for gas →", href: HL_DRIP, hint: DRIP_HINT };
-    if (stakeBase === null) return { kind: "disabled", label: "Enter a stake to quote" };
-    // approve() needs the token address and mint needs a real allowance read; never offer
-    // "Approve" while either is unknown, or the click is a silent no-op.
-    if (!usdcAddr || allowance === undefined)
-      return { kind: "disabled", label: usdcError || allowanceError ? "RPC unavailable - try again later" : "Checking wallet…" };
-    if (usdcBalance !== undefined && stakeBase > usdcBalance)
-      return { kind: "disabled", label: `Insufficient USDC - ${formatUsdc(usdcBalance)} available` };
-    if (mintState === "done") return { kind: "done", label: "Minted · view positions", href: "/positions" };
-    const minting = session.minting || mintState === "pending";
-    if (needsApproval) {
-      return { kind: "pay", step: "approve", needsApproval: true, enabled: !approving && !minting,
-        label: approving ? "Confirm in wallet…" : "Approve USDC once" };
-    }
-    const waiting =
-      minting ? "Confirm in wallet…"
-      : quoting ? "Quoting…"
-      : !quoteResult ? "Waiting for quote…"
-      : !quoteResult.ok ? "Unable to quote"
-      : secondsLeft(BigInt(quoteResult.quote.deadline), Date.now()) <= 0 ? "Refreshing quote…"
-      : null;
-    if (waiting || !quoteResult?.ok) return { kind: "pay", step: "mint", needsApproval: false, enabled: false, label: waiting ?? "Waiting for quote…" };
-    return { kind: "pay", step: "mint", needsApproval: false, enabled: true, label: `Mint ticket · $${formatUsdc(BigInt(quoteResult.quote.premium))}` };
-  }
-  const cta = computeCta();
+  const cta = computeCta({ legCount: legs.length, walletReady, isConnected, isLinked, chainId, bridged: BRIDGED,
+    gas: gas?.value, usdcBalance, stakeBase, usdcAddr, allowance, rpcError: usdcError || allowanceError, mintState,
+    minting: session.minting, approving, quoting, quoteResult, now: Date.now() });
   function retry() {
     setMintState("idle");
     clockSkewRetried.current = false;
