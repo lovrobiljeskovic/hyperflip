@@ -39,20 +39,8 @@ export function QuoteError({
 
 const ctaClass = "mono h-12 w-full text-[14px] font-semibold";
 
-export function TicketCta({
-  cta,
-  connect,
-  switchChain,
-  address,
-  approve,
-  mintQuoted,
-  quoteResult,
-  mintState,
-  mintErrorMsg,
-  mintErrorDetail,
-}: Pick<T, "connect" | "switchChain" | "address" | "approve" | "mintQuoted" | "quoteResult" | "mintState" | "mintErrorMsg" | "mintErrorDetail"> & {
-  cta: NonNullable<T["cta"]>;
-}) {
+export function TicketCta({ ticket }: { ticket: T }) {
+  const { cta, connect, switchChain, address, approve, mintQuoted, quoteResult, mintState, mintErrorMsg, mintErrorDetail } = ticket;
   return (
     <>
       {cta.kind === "connect" && <Button size="lg" onClick={() => connect()} className={`${ctaClass} mt-4`}>{cta.label}</Button>}

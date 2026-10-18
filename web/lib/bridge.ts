@@ -19,6 +19,7 @@ const routerAbi = parseAbi([
   "function outboundTransfer(address token, address to, uint256 amount, uint256 maxGas, uint256 gasPriceBid, bytes data) payable returns (bytes)",
 ]);
 
+// The first deposit of a token on Elysium deploys it (finalizeInboundTransfer), hence 300k.
 export const BRIDGE_GAS = 300_000n;
 /** Upper bound on the retryable's calldata; the fee is per byte and refunds the excess. */
 const BRIDGE_DATA_LENGTH = 512n;

@@ -16,6 +16,7 @@ export function SlipSheet({ legs, ticket, onClear, children }: { legs: BuilderLe
 
   useEffect(() => { if (ticket.mintState === "done") setOpen(false); }, [ticket.mintState]);
 
+  // Upward swipe on the bar opens the drawer; the bar's click is ignored right after a swipe.
   const swipeStart = useRef<number | null>(null);
   const swiped = useRef(false);
   const swipe = {

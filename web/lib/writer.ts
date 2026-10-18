@@ -134,8 +134,8 @@ export function withMarketVolumes(markets: Market[], volumes: Record<string, num
   return markets.map((market) => ({ ...market, volume24h: volumes[market.coinYes] }));
 }
 
-export async function fetchMarketBoard({ includeArchived = false } = {}): Promise<Market[]> {
-  const [markets, volumes] = await Promise.all([fetchMarkets(includeArchived), fetchMarketVolumes()]);
+export async function fetchMarketBoard(): Promise<Market[]> {
+  const [markets, volumes] = await Promise.all([fetchMarkets(), fetchMarketVolumes()]);
   return withMarketVolumes(markets, volumes);
 }
 

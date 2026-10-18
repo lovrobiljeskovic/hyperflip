@@ -12,20 +12,17 @@ type T = ReturnType<typeof useTicket>;
 
 /** `ticketMult` is the quoted multiplier, null while there is no live quote. */
 export function StakeInput({
-  stake,
-  setStake,
-  toWin,
+  ticket,
   lastWin,
-  maxStake,
-  usdcBalance,
   ticketMult,
   legCount,
-  ttlLeft,
-}: Pick<T, "stake" | "setStake" | "toWin" | "maxStake" | "usdcBalance" | "ttlLeft"> & {
+}: {
+  ticket: T;
   lastWin: bigint | null;
   ticketMult: number | null;
   legCount: number;
 }) {
+  const { stake, setStake, toWin, maxStake, usdcBalance, ttlLeft } = ticket;
   const maxAllowed =
     usdcBalance === undefined
       ? maxStake

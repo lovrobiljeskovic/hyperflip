@@ -20,3 +20,12 @@ test("subscribeNow runs one interval for all subscribers and stops it with the l
   vi.advanceTimersByTime(1000);
   expect(b).toHaveBeenCalledTimes(1);
 });
+
+test("subscribeNow restarts the interval when a subscriber returns after the last left", () => {
+  vi.useFakeTimers();
+  subscribeNow(vi.fn())();
+  expect(vi.getTimerCount()).toBe(0);
+  const off = subscribeNow(vi.fn());
+  expect(vi.getTimerCount()).toBe(1);
+  off();
+});

@@ -2,7 +2,7 @@
 
 import { useRef } from "react";
 import type { useTicket } from "./use-ticket";
-import { legLabel, type BuilderLeg } from "@/lib/ticket";
+import { legLabel, MIN_LEGS, type BuilderLeg } from "@/lib/ticket";
 import { marketMid } from "@/lib/writer";
 import { useMids } from "@/lib/mids";
 import { usePrinting } from "@/lib/print";
@@ -32,11 +32,11 @@ export function Ticket({
   const mids = useMids();
   const printing = usePrinting();
   const format = useOddsFormat();
-  const { stake, setStake, quoteResult, ttlLeft, ttlSeconds, mintState, mintErrorMsg, mintErrorDetail,
-    maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain, address, stakeBase, toWin } = ticket;
+  const { stake, setStake, quoteResult, ttlLeft, ttlSeconds, maxStake, limits, retry, stakeBase, toWin } = ticket;
+  // Mutated during render on purpose: keeps the last to-win dimmed during a requote so the figure does not jump to a dash.
   const lastWin = useRef<bigint | null>(null);
   if (toWin !== null) lastWin.current = toWin;
-  if (legs.length < 2 || stakeBase === null || (quoteResult && !quoteResult.ok)) lastWin.current = null;
+  if (legs.length < MIN_LEGS || stakeBase === null || (quoteResult && !quoteResult.ok)) lastWin.current = null;
 
   // Quote-derived display values. premium/maxPayout are the signed truth;
   // `bd` re-derives the writer's pricing steps for the breakdown accordion.
@@ -93,15 +93,10 @@ export function Ticket({
       )}
 
       <StakeInput
-        stake={stake}
-        setStake={setStake}
-        toWin={toWin}
+        ticket={ticket}
         lastWin={lastWin.current}
-        maxStake={maxStake}
-        usdcBalance={usdcBalance}
         ticketMult={quoteResult?.ok ? multiplierNum(premium, maxPayout) : null}
         legCount={legs.length}
-        ttlLeft={ttlLeft}
       />
 
       {quoteResult?.ok && (
@@ -123,20 +118,7 @@ export function Ticket({
         <QuoteError quoteResult={quoteResult} legs={legs} retry={retry} setStake={setStake} />
       )}
 
-      {cta ? (
-        <TicketCta
-          cta={cta}
-          connect={connect}
-          switchChain={switchChain}
-          address={address}
-          approve={approve}
-          mintQuoted={mintQuoted}
-          quoteResult={quoteResult}
-          mintState={mintState}
-          mintErrorMsg={mintErrorMsg}
-          mintErrorDetail={mintErrorDetail}
-        />
-      ) : null}
+      <TicketCta ticket={ticket} />
     </div>
   );
 }
