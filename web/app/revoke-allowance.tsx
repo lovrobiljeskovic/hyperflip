@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 
 const row = "flex w-full items-center justify-between gap-4 py-2 text-left text-[12px] normal-case tracking-normal";
 
-/** Standing USDC allowance revoke: button, live status, error line. */
 export function RevokeAllowance({ className = row }: { className?: string }) {
   const { address } = useWalletState();
   const { address: usdc } = useUsdc();

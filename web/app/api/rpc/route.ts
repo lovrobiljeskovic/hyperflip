@@ -18,10 +18,9 @@ const isRead = (call: unknown) => {
   return id !== undefined && typeof method === "string" && READS.has(method);
 };
 
-/** Same-origin JSON-RPC proxy: keyed URLs stay server-side, the browser bundle keeps only the
- * public one. Anything but a read is refused before it reaches an endpoint. `APP_RPC` is a
- * comma-separated list tried in order; a provider that throws or answers non-2xx hands the batch
- * to the next (2026-10-17: Chainlink's hl-node went away while its chain-id probe still answered). */
+/** Same-origin JSON-RPC proxy: keyed URLs stay server-side. Anything but a read is refused.
+ * `APP_RPC` is a comma-separated list tried in order; a provider that throws or answers non-2xx
+ * hands the batch to the next. */
 export async function POST(request: Request) {
   const headers = { "Content-Type": "application/json", "Cache-Control": "no-store" };
   let body: unknown;

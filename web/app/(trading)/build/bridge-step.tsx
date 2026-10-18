@@ -13,10 +13,6 @@ const DEFAULT_USDC = "5";
 type BridgeState = "idle" | "pending" | "sent" | "error";
 const bridgeMemory = new Map<string, { amount: string; state: BridgeState }>();
 
-/** Moves USDC and gas from HyperEVM to the app chain through the canonical bridge: approve the
- * gateway, `outboundTransfer` on the router, `depositEth` on the Inbox, then switch the wallet
- * back. Funds land on the same address after about a minute; the balances above refetch on
- * their own, so the CTA turns into the pay buttons without a reload. */
 export function BridgeStep({ address, needUsdc, needGas }: { address: `0x${string}`; needUsdc: bigint; needGas: boolean }) {
   const core = usePublicClient({ chainId: coreChain.id });
   const app = usePublicClient({ chainId: appChain.id });

@@ -16,8 +16,6 @@ import { useTicket } from "./use-ticket";
 import { SlipSheet } from "./slip-sheet";
 import { MintedSlipDialog } from "./minted-slip";
 
-/** A price cell is the control - clicking a price takes that side. It stays a
- * <button> so the keyboard and a screen reader still have a target. */
 function PriceCell({ mid, side, tone, selected, label, onPick }: { mid: number | null; side: string; tone: "yes" | "no"; selected: boolean; label: string; onPick: () => void }) {
   const format = useOddsFormat();
   return (
@@ -30,9 +28,7 @@ function PriceCell({ mid, side, tone, selected, label, onPick }: { mid: number |
   );
 }
 
-/** American football: Tabler's `ball-american-football` (MIT), inlined - the
- * installed lucide set has no football. No league or team marks - those are
- * licensed. Other sports keep the two-letter badge. */
+/** American football: Tabler's `ball-american-football` (MIT), inlined; the lucide set has none. */
 function SportBadge({ market }: { market: Pick<Market, "sport" | "category"> }) {
   if (sportLabel(market) === "Football") {
     return (
@@ -104,7 +100,6 @@ function BoardRow({
   );
 }
 
-/** Title as a deep link to the leg's live Core book, new tab. */
 function MarketLink({ coin, children }: { coin: string; children: ReactNode }) {
   return (
     <a
@@ -118,11 +113,8 @@ function MarketLink({ coin, children }: { coin: string; children: ReactNode }) {
   );
 }
 
-/** One HIP-4 question (A / Draw / B, tournament winner): one card, one button
- * per outcome, YES side only - a sportsbook card, not a Yes/No grid. The NO
- * side of a grouped outcome is the sum of the others and stays off the board.
- * The writer refuses two legs from one question (`same-game`), so picking a
- * second outcome swaps the first. */
+/** One HIP-4 question: one card, a button per outcome, YES side only (a grouped NO is the sum of the
+ * others). The writer refuses two legs from one question (`same-game`), so a second pick swaps the first. */
 function GroupRow({
   title,
   members,
@@ -138,7 +130,6 @@ function GroupRow({
 }) {
   const current = legs.find((l) => members.some((m) => m.vault === l.vault));
   const head = members[0];
-  // Favourite first, unpriced last: the eye lands on the short-priced outcome.
   const priced = members
     .map((m) => ({ m, mid: marketMid(mids, m, m.coinYes) }))
     .sort((a, b) => (b.mid ?? -1) - (a.mid ?? -1));
@@ -191,7 +182,6 @@ function legFor(market: Market, isYes: boolean): BuilderLeg {
   return {
     vault: market.vault,
     isYes,
-    // Grouped leg: the outcome is the label, the question is the title.
     title: market.group ? (market.groupTitle ?? market.group) : market.title,
     coin: isYes ? market.coinYes : market.coinNo,
     label: market.group ? market.title : sideLabel(market, isYes),
@@ -205,7 +195,6 @@ export default function BuildPage() {
   const [legs, setLegs] = useState<BuilderLeg[]>([]);
   const ticket = useTicket(legs);
   const isDesktop = useIsDesktop();
-  // Persist legs; restore once the board is known so a stale vault never renders.
   const restored = useRef(false);
   useEffect(() => { if (restored.current) saveSlip(legs); }, [legs]);
   const slipRef = useRef<HTMLElement>(null);
@@ -250,8 +239,6 @@ export default function BuildPage() {
     }
   }, []);
 
-  // Only rows that will actually render: unpriced or expired markets are dropped
-  // below, so a sport whose every market is dead gets no tab either.
   const live = useMemo(
     () => (markets ?? []).filter((m) => (m.expiryMs ?? Infinity) >= Date.now() && isPriced(mids, m)),
     [markets, mids],
@@ -271,7 +258,6 @@ export default function BuildPage() {
       // One leg per question: the writer refuses two (`same-game`), so a second
       // outcome from the same group replaces the first instead of stacking.
       const rest = prev.filter((l) => l.vault !== market.vault && !(market.group && l.group === market.group));
-      // Clicking the already-selected side toggles the leg off; the other side swaps it.
       if (prev.some((l) => l.vault === market.vault && l.isYes === isYes)) return rest;
       return [...rest, legFor(market, isYes)];
     });

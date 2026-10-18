@@ -85,7 +85,6 @@ type RowView = {
   action: { kind: "claim" | "resolve"; label: string } | null;
 };
 
-/** Derive actions from the ticket and its observed leg outcomes. */
 export function deriveRow(row: Row, wallet?: string): RowView {
   const { parlay, burned, legVerdicts } = row;
   if (wallet && row.owner !== undefined && !burned && row.owner?.toLowerCase() !== wallet.toLowerCase()) {

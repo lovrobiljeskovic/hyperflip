@@ -7,21 +7,13 @@ import { useAccount, useDisconnect, useReadContract } from "wagmi";
 import { appChain } from "./chain";
 import { PARLAY_VAULT, parlayVaultAbi } from "./contracts";
 
-// @privy-io/wagmi's WagmiProvider only mounts when NEXT_PUBLIC_PRIVY_APP_ID is
-// set (see app/providers.tsx); usePrivy() throws without a PrivyProvider
-// ancestor. PRIVY_ENABLED is a build-time constant (inlined by Next.js), so it
-// never changes across a running instance's renders — safe to branch a hook
-// call on it.
+// PRIVY_ENABLED is a build-time constant (inlined by Next.js), so branching hooks on it is safe;
+// usePrivy() throws without a PrivyProvider, which only mounts when NEXT_PUBLIC_PRIVY_APP_ID is set.
 const PRIVY_ENABLED = !!process.env.NEXT_PUBLIC_PRIVY_APP_ID;
 
-/** The wallet state every connection-dependent branch must render from.
- *
- * Privy restores its session asynchronously and @privy-io/wagmi only mirrors
- * the restored wallet into wagmi a tick after that, so wagmi's `isConnected`
- * reads false for the first frames of every page load — rendering it directly
- * flashes "Connect wallet" at a user who is already connected. `ready` stays
- * false until Privy has loaded, its wallet list has resolved, and any wallet it
- * found has landed in wagmi; render a neutral placeholder until then. */
+/** What every connection-dependent branch renders from. Privy restores asynchronously and
+ * @privy-io/wagmi mirrors into wagmi a tick later, so wagmi's `isConnected` is false for the first
+ * frames; `ready` holds a neutral placeholder until both have landed. */
 export function useWalletState(): {
   ready: boolean;
   isConnected: boolean;
@@ -37,12 +29,10 @@ export function useWalletState(): {
   // only render the disconnected placeholder. Hold both to that placeholder
   // through the first client render so their hydration trees stay identical.
   if (!PRIVY_ENABLED) return { ready: mounted, isConnected, address, isLinked: false };
-  /* eslint-disable react-hooks/rules-of-hooks */
   const { ready: privyReady, user, authenticated } = usePrivy();
   const { ready: walletsReady, wallets } = useWallets();
   const [timedOut, setTimedOut] = useState(false);
 
-  // Privy knows about a wallet that wagmi hasn't picked up yet.
   const syncing = privyReady && walletsReady && wallets.length > 0 && !isConnected;
 
   useEffect(() => {
@@ -52,7 +42,6 @@ export function useWalletState(): {
     const t = setTimeout(() => setTimedOut(true), 2_000);
     return () => clearTimeout(t);
   }, [syncing]);
-  /* eslint-enable react-hooks/rules-of-hooks */
 
   return {
     ready: mounted && ((privyReady && walletsReady && !syncing) || timedOut),
@@ -63,31 +52,20 @@ export function useWalletState(): {
   };
 }
 
-/** Click handler for every "Connect wallet" button.
- *
- * Privy's auth session survives a reload, but an external wallet's *connection*
- * does not: after a refresh the user is `authenticated` with a linked wallet
- * while useWallets() (and therefore wagmi) has no account, so the UI still
- * gates on wagmi's isConnected. In that state login() is a no-op — Privy logs
- * "Attempted to log in, but user is already logged in" and the button does
- * nothing. connectWallet() is the path that re-establishes the connection and
- * lets @privy-io/wagmi's sync hook wire it into wagmi. */
+/** After a reload Privy is `authenticated` but wagmi has no account, and login() is a no-op
+ * ("already logged in"); connectWallet() re-establishes the connection. */
 export function useConnectAction(): () => void {
   if (!PRIVY_ENABLED) return () => {};
-  // eslint-disable-next-line react-hooks/rules-of-hooks
   const { authenticated, login, connectWallet, linkWallet, user } = usePrivy();
   const { address, isConnected } = useAccount();
   const linked = user?.linkedAccounts.some(a => a.type === "wallet" && a.address.toLowerCase() === address?.toLowerCase());
   return () => !authenticated ? login({ loginMethods: ["wallet"] }) : isConnected && !linked ? linkWallet() : connectWallet();
 }
 
-/** Click handler for "Disconnect". Privy owns the session, so logout() is the
- * one that actually clears it — wagmi's disconnect alone leaves the user
- * authenticated and silently reconnected on the next render. */
+/** Privy owns the session: wagmi's disconnect alone leaves the user authenticated and reconnected. */
 export function useDisconnectAction(): () => void {
   const { disconnect } = useDisconnect();
   if (!PRIVY_ENABLED) return () => disconnect();
-  // eslint-disable-next-line react-hooks/rules-of-hooks
   const { logout } = usePrivy();
   return () => {
     disconnect();
@@ -95,8 +73,6 @@ export function useDisconnectAction(): () => void {
   };
 }
 
-/** USDC token address + the connected wallet's balance, read through the vault
- * so the token never has to be configured twice. */
 export function useUsdc(): { address?: `0x${string}`; balance?: bigint; error: boolean } {
   const { address: account } = useAccount();
   const { data: token, isError: error } = useReadContract({

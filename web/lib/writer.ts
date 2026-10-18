@@ -39,7 +39,7 @@ export function marketMid(mids: Record<string, string>, market: Partial<Pick<Mar
   return n;
 }
 
-/** Both sides quotable: a book price, a traded 0.5, or a house prior. Unpriced rows are dead weight on a board. */
+/** Both sides quotable: a book price, a traded 0.5, or a house prior. */
 export function isPriced(mids: Record<string, string>, market: Market): boolean {
   return marketMid(mids, market, market.coinYes) !== null && marketMid(mids, market, market.coinNo) !== null;
 }
@@ -111,8 +111,6 @@ export interface ParlayRef {
   block: bigint; // mint block
 }
 
-/** The taker's slips from the writer's mint index - one request instead of an
- * eth_getLogs scan from the deploy block on a rate-limited public RPC. */
 export async function fetchParlays(taker: `0x${string}`): Promise<ParlayRef[]> {
   const r = await fetch(`${BASE}/parlays?taker=${taker}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`parlays ${r.status}`);
@@ -144,10 +142,8 @@ export function isMatchQuestion(m: Pick<Market, "startMs" | "expiryMs" | "group"
   return m.group !== undefined && m.startMs !== undefined && m.expiryMs !== undefined && m.expiryMs - m.startMs <= 7 * 86_400_000;
 }
 
-/** Soonest kickoff first; markets with neither start nor deadline sink to the
- * bottom. A grouped season ranks on its settlement deadline rather than a
- * start months ago; a grouped match ranks on its kickoff like any game. The
- * board's only sort now that volume is hidden. */
+/** Soonest kickoff first; markets with neither start nor deadline sink to the bottom. A grouped
+ * season ranks on its settlement deadline, a grouped match on its kickoff. */
 export function kickoffKey(m: Pick<Market, "startMs" | "expiryMs" | "group">): number | undefined {
   return (m.group === undefined || isMatchQuestion(m) ? m.startMs : undefined) ?? m.expiryMs;
 }
@@ -168,7 +164,6 @@ export interface WriterLimits {
   perMarketCap?: string;
   perClusterCap?: string;
   perCodeReservedCap?: string;
-  /** Cached allowance/balance room from the last quote; null before the first. */
   bankroll?: string | null;
   reserved?: string;
 }

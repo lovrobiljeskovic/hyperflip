@@ -34,5 +34,4 @@ export const outcomeVaultAbi = parseAbi([
   "function settleFractionWad() view returns (uint256)",
 ]);
 
-/** ParlayVault.Status */
 export const STATUS = { Open: 0, Won: 1, Dead: 2, Void: 3 } as const;

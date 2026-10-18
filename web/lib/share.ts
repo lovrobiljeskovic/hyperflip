@@ -1,7 +1,5 @@
 const HYPERFLIP_X = "@hyperflip_xyz";
 
-/** Post text for a minted slip. The link travels separately (intent `url`
- * param, or appended for the native share sheet). */
 export function slipShareText(legCount: number): string {
   return `Just minted a ${legCount}-leg slip on ${HYPERFLIP_X}`;
 }

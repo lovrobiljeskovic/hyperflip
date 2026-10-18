@@ -14,8 +14,6 @@ const SITE = "https://hyperflip.xyz";
 const shareClass = "mono flex h-11 items-center justify-center gap-2 rounded-[8px] border border-line text-[12px] uppercase tracking-[0.1em] text-fg transition-colors hover:border-dim";
 const xIcon = "M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z";
 
-/** The confirmed slip, printed once the mint lands. A native dialog: focus
- * trap, Escape and backdrop come free, so the only state is open or not. */
 export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
   const [imageError, setImageError] = useState(false);

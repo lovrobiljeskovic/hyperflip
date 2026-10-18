@@ -5,11 +5,7 @@ import { fetchMids, NO_MIDS } from "./info";
 
 const POLL_MS = 5000;
 
-/* One poll for the whole page. useMids() used to own a fetch and an interval
-   per caller, so the landing page ran two of each (hero slip + board) and
-   /build ran two more (market table + ticket): double the requests, and two
-   copies of the same state landing in separate commits, so the hero and the
-   board showed different numbers for a second at a time.
+/* One shared poll per page: every caller reads the same snapshot in the same commit.
 
    Scheduled with setTimeout after each response rather than setInterval:
    allMids has been measured at 1.8-4.7s against a 5s period, so a fixed
@@ -48,14 +44,9 @@ function subscribe(onChange: () => void) {
   };
 }
 
-/** Live mids for every coin, keyed by coin string. Every caller on the page
- * shares one poll of allMids (CORS-open, spec §7.5), so they all read the same
- * snapshot in the same commit.
- *
- * `fallback` is a server-rendered snapshot. The first client poll lands ~1.9s
- * after hydration, so without it the hero would print an em dash for every leg
- * and fill the numbers in afterwards — the same "renders twice" problem the
- * market list had. */
+/** Live mids for every coin, keyed by coin string. All callers share one allMids poll.
+ * `fallback` is a server-rendered snapshot so the first client poll (~1.9s after hydration)
+ * does not print an em dash for every leg. */
 export function useMids(fallback: Record<string, string> = NO_MIDS): Record<string, string> {
   const live = useSyncExternalStore(
     subscribe,

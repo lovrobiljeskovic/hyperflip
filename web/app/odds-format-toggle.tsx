@@ -3,7 +3,6 @@
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ODDS_FORMAT_LABEL, ODDS_FORMATS, setOddsFormat, useOddsFormat, type OddsFormat } from "@/lib/odds-format";
 
-/** Segmented control. Lives in the hamburger on the phone and at the right of the market filters on desktop. */
 export function OddsFormatToggle({ className = "" }: { className?: string }) {
   const format = useOddsFormat();
   return (

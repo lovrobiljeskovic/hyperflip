@@ -78,7 +78,6 @@ export function priceBreakdown(
   };
 }
 
-/** Time left as the two largest units, so a countdown visibly ticks. */
 export function until(ms: number, now = Date.now()): string {
   const s = (ms - now) / 1000;
   if (s <= 0) return "expired";
@@ -90,7 +89,6 @@ export function until(ms: number, now = Date.now()): string {
   return `${m}m ${Math.floor(s % 60)}s`;
 }
 
-/** Exact calendar time, "Sep 20, 1:00 PM", in the viewer's zone unless told otherwise. */
 export function whenLabel(ms: number, timeZone?: string): string {
   return new Date(ms).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone });
 }

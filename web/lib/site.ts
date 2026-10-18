@@ -19,7 +19,6 @@ export function appCanonical(path = "/"): string {
   return new URL(appHref(path), siteUrl).href;
 }
 
-/** Host the app lane answers on: app.hyperflip.xyz or elysium.hyperflip.xyz in production. */
 export const appHost = new URL(appCanonical()).host;
 
 /** Full card metadata for one app page; og and twitter must both be set or the page inherits
@@ -37,12 +36,10 @@ export function appPageMetadata(title: string, description: string, path = "/"):
   };
 }
 
-/** Absolute apex URL in production so app.hyperflip.xyz footers land on hyperflip.xyz pages. */
 export function siteHref(path: string): string {
   return `${process.env.NEXT_PUBLIC_SITE_ORIGIN || ""}${path}`;
 }
 
-/** The other chain's app, when this deployment has a sibling (998 default, Elysium optional). */
 export const altLane = process.env.NEXT_PUBLIC_ALT_LANE_URL
   ? process.env.NEXT_PUBLIC_CHAIN_ID === "998"
     ? { href: process.env.NEXT_PUBLIC_ALT_LANE_URL, label: "Elysium", icon: "/brand/elysium-logomark-colorized.svg" }

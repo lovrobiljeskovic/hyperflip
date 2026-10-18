@@ -5,7 +5,6 @@ import { ImageResponse } from "next/og";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-/** One card layout for every lane and route; only the words change. */
 export async function ogCard(headline: string, subtitle: string) {
   const svg = await readFile(join(process.cwd(), "public/brand/logo-clean.svg"), "utf8");
   const logo = `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;

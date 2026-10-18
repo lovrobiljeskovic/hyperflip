@@ -3,9 +3,6 @@ import { Bricolage_Grotesque, Instrument_Sans, Martian_Mono } from "next/font/go
 import "./globals.css";
 import { appCanonical, siteUrl } from "@/lib/site";
 
-/* Three faces, both grounds. Bricolage carries display and the wordmark through
-   its opsz axis, Instrument Sans the body and UI labels, Martian Mono every
-   printed number, ticker, address and field label. */
 const bricolage = Bricolage_Grotesque({
   variable: "--font-bricolage",
   subsets: ["latin"],

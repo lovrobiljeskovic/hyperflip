@@ -28,9 +28,8 @@ export function tryParseStake(v: string): bigint | null {
   }
 }
 
-/** One approval per wallet, not one per ticket: the first mint approves a standing allowance
- * so later mints are a single wallet prompt. Capped at a multiple of the house max stake;
- * mainnet can lower the multiple. Exact premium when /limits is unavailable. */
+/** One approval per wallet: the first mint approves a standing allowance, capped at a multiple of the
+ * house max stake (mainnet can lower it); exact premium when /limits is unavailable. */
 export const ALLOWANCE_MULTIPLE = 25n;
 export function standingAllowance(premium: bigint, maxStake: bigint | null): bigint {
   const standing = maxStake === null ? 0n : maxStake * ALLOWANCE_MULTIPLE;

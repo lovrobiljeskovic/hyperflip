@@ -21,8 +21,6 @@ export const appChain = defineChain({
   testnet: true,
 });
 
-/** HyperEVM testnet: Core accounts, OutcomeVaults, the faucet and the near side of the canonical
- * bridge. The same object as appChain when the app runs there. */
 export const coreChain = appChain.id === CORE_CHAIN_ID ? appChain : defineChain({
   id: CORE_CHAIN_ID,
   name: "HyperEVM Testnet",
@@ -32,15 +30,12 @@ export const coreChain = appChain.id === CORE_CHAIN_ID ? appChain : defineChain(
   testnet: true,
 });
 
-/** True when USDC and gas must cross the canonical bridge from HyperEVM before minting. */
 export const BRIDGED = appChain.id !== coreChain.id;
 
 /** Explorer page for an address on the app chain, or null when the chain has no explorer. */
 export const explorerAddress = (address: string): string | null =>
   appChain.blockExplorers ? `${appChain.blockExplorers.default.url}/address/${address}` : null;
 
-/** Hyperliquid testnet frontend — Core order books and the testnet faucet. */
 export const HL_APP = "https://app.hyperliquid-testnet.xyz";
 export const HL_DRIP = `${HL_APP}/drip`;
-/** Live Core order book for an outcome coin (`#114180`). */
 export const tradeUrl = (coin: string) => `${HL_APP}/trade/${encodeURIComponent(coin)}`;

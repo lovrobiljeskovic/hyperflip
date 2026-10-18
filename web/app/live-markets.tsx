@@ -27,19 +27,13 @@ type MarketsState =
   | { status: "offline" }
   | { status: "live"; markets: Market[] };
 
-/* `initial` is the board as the server rendered it. Measured cold on Chrome:
-   hydration starts the client fetch at ~1.45s and /markets answers at ~2.28s,
-   while the hero's print cascade runs 240-1510ms - so a client-only fetch
-   guaranteed the slip printed placeholder legs and then swapped to the real
-   ones after the animation was already over. Seeding from the server means
-   there is one market set and one print. The fetch below is the fallback for
-   when the writer was unreachable at render time. */
+/* `initial` is the server-rendered board. A client-only fetch lands after the hero's print cascade
+   ends, so the slip would print placeholder legs and then swap; seeding avoids that. The fetch below
+   is the fallback for a writer unreachable at render time. */
 function useMarkets(initial: Market[] | null): { state: MarketsState; retry: () => void } {
   const [state, setState] = useState<MarketsState>(
     initial ? { status: "live", markets: initial } : { status: "loading" },
   );
-  // Manual retry for the offline state - loadMarkets() already clears
-  // marketsCache on failure, so this just re-runs the same fetch.
   const retry = useCallback(() => {
     setState({ status: "loading" });
     loadMarkets()
@@ -59,19 +53,11 @@ function useMarkets(initial: Market[] | null): { state: MarketsState; retry: () 
   return { state, retry };
 }
 
-/** What the server hands every live component on the landing page. */
 export interface BoardSnapshot {
   markets: Market[] | null;
   mids: Record<string, string>;
 }
 
-/* --- mid helpers: never fake a number, dash on missing --- */
-
-/** A coin's mid as a probability. allMids carries every coin on the venue, so
- * a mid is only meaningful here when it lands strictly inside (0, 1) - the
- * same domain priceBreakdown() enforces on a signed quote's leg prices.
- * Anything else is not a probability and must not reach the board or the
- * hero, where it would print as a nonsense percentage or payout. */
 /* Odds cell that nudges on a mid change while the semantic YES/NO text color
    carries direction. */
 function OddsCell({ side, mid }: { side: "YES" | "NO"; mid: number | null }) {
@@ -105,8 +91,6 @@ function OddsCell({ side, mid }: { side: "YES" | "NO"; mid: number | null }) {
   );
 }
 
-/** The line that says which game or competition a market belongs to: the
- * group question when it differs from the outcome, else sport and league. */
 function marketContext(m: Market): string {
   return m.groupTitle && m.groupTitle !== m.title
     ? m.groupTitle
@@ -116,7 +100,6 @@ function marketContext(m: Market): string {
 function BoardRow({ market, mids }: { market: Market; mids: Record<string, string> }) {
   const yes = marketMid(mids, market, market.coinYes);
   const no = marketMid(mids, market, market.coinNo);
-  // The leading side tints the row so direction reads before the numbers.
   const lead =
     yes === null || no === null
       ? ""
@@ -150,11 +133,8 @@ function Slab({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** How many rows the landing board shows; the full list lives in the builder. */
 const BOARD_ROWS = 5;
 
-/** The board for the #board section: the busiest markets with both sides
- * priced live. Unpriced markets never make the cut - a dash row sells nothing. */
 export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
   const { state, retry } = useMarkets(board.markets);
   const mids = useMids(board.mids);
@@ -194,7 +174,6 @@ export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
     );
   }
 
-  // Same cut as the builder: unexpired and priced on both sides.
   const pricedAll = [...state.markets]
     .filter((m) => (m.expiryMs ?? Infinity) >= Date.now() && isPriced(mids, m))
     .sort((a, b) => compareKickoff(a, b));
@@ -245,9 +224,7 @@ export function LiveMarketBoard({ board }: { board: BoardSnapshot }) {
   );
 }
 
-/** One continuous line of actual markets, each a link into the builder with
- * that market pre-picked. The duplicate set is hidden from assistive tech and
- * exists only to make the native CSS loop seamless. */
+/** The duplicate set is aria-hidden and exists only to make the CSS loop seamless. */
 export function LiveMarketRail({ board }: { board: BoardSnapshot }) {
   const { state } = useMarkets(board.markets);
   const mids = useMids(board.mids);
@@ -300,7 +277,6 @@ export function LiveMarketRail({ board }: { board: BoardSnapshot }) {
   );
 }
 
-/* --- the hero slip --- */
 
 type SlipLeg = { side: "YES" | "NO"; label: string; title: string; context: string; prob: number | null };
 
@@ -322,10 +298,6 @@ function Line({ i, children }: { i: number; children: React.ReactNode }) {
   );
 }
 
-/** The signature: a slip printing itself, line by line, on live odds when the
- * board is up and on the worked example when it isn't. It turns to face the
- * reader as they scroll. Every number shown is labelled for which it is -
- * this is fair value off the book, not a signed quote. */
 export function HeroSlip({ board }: { board: BoardSnapshot }) {
   const { state } = useMarkets(board.markets);
   const mids = useMids(board.mids);

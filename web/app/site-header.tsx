@@ -14,7 +14,6 @@ export function SiteHeader({ links, action, mobileAction, menu, home = "/" }: {
   action: ReactNode;
   /** Phone header slot; falls back to `action`. */
   mobileAction?: ReactNode;
-  /** Rows under the links in the hamburger. */
   menu?: ReactNode;
   home?: string;
 }) {

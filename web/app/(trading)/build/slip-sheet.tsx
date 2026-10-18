@@ -11,16 +11,12 @@ import type { useTicket } from "./use-ticket";
 
 const SWIPE_PX = 40;
 
-/** Phone-only slip. Collapsed: a fixed bar with legs, multiplier, stake and to-win. Expanded: a
- * vaul drawer (finger-follow drag, velocity close, scroll handoff) holding the ticket. Opens on a
- * tap or an upward swipe on the bar; closes on drag down, overlay tap, Escape, or after a mint. */
 export function SlipSheet({ legs, ticket, onClear, children }: { legs: BuilderLeg[]; ticket: ReturnType<typeof useTicket>; onClear: () => void; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const summary = barSummary({ legs: legs.length, multiplier: ticket.multiplier, stakeUsdc: ticket.stakeBase, maxPayout: ticket.toWin });
 
   useEffect(() => { if (ticket.mintState === "done") setOpen(false); }, [ticket.mintState]);
 
-  // Upward swipe on the bar opens the drawer; the bar's click is ignored right after a swipe.
   const swipeStart = useRef<number | null>(null);
   const swiped = useRef(false);
   const swipe = {
@@ -36,7 +32,6 @@ export function SlipSheet({ legs, ticket, onClear, children }: { legs: BuilderLe
     },
   };
 
-  // Badge pulse on every leg count change.
   const [pulse, setPulse] = useState(0);
   const prevCount = useRef(legs.length);
   useEffect(() => { if (legs.length !== prevCount.current) { prevCount.current = legs.length; setPulse((n) => n + 1); } }, [legs.length]);

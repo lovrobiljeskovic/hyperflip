@@ -8,8 +8,7 @@ import { BridgeStep } from "@/app/(trading)/build/bridge-step";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
-/** Balance plus Deposit. Deposit is the faucet on 998 and the bridge on a bridged lane.
- * `connect={false}` renders nothing while disconnected (desktop, where WalletButton has Connect). */
+/** `connect={false}` renders nothing while disconnected (desktop, where WalletButton has Connect). */
 export function FundsChip({ connect: showConnect = true }: { connect?: boolean }) {
   const { ready, isConnected, address } = useWalletState();
   const connect = useConnectAction();

@@ -22,7 +22,6 @@ export function usePositions(client: PublicClient | undefined, address: `0x${str
     const request = ++sequence.current;
     setLoading(true);
     if (!quiet) setError(false);
-    // Show confirmed receipts while the index request is still in flight.
     const preview = receiptPositions(client, address).then(overlay => {
       if (request === sequence.current && overlay.rows.length) setRows(previous => mergePositionRows(previous ?? [], overlay.rows));
       return overlay;
@@ -75,7 +74,6 @@ export function usePositions(client: PublicClient | undefined, address: `0x${str
     setNotice("");
     loadingRef.current = false;
     void load();
-    // Bounded reconciliation: manual refresh remains available after these attempts.
     const timers = address && savedPositions(address).length
       ? [3000, 8000, 15_000, 30_000].map(ms => setTimeout(() => void load(undefined, true), ms)) : [];
     return () => { sequence.current++; timers.forEach(clearTimeout); };

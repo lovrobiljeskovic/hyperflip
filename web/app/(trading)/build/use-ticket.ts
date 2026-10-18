@@ -10,8 +10,6 @@ import { PARLAY_VAULT } from "@/lib/contracts";
 import { useConnectAction, useUsdc, useWalletState } from "@/lib/wallet";
 import { tryParseStake, standingAllowance, TicketSession, approveUsdc, mintTicket, quoteMatches, type BuilderLeg } from "@/lib/ticket";
 
-/** What the confirmed mint put on-chain, frozen for the slip overlay: the
- * ticket's legs and signed terms at the moment of the receipt. */
 export type MintedSlip = { legs: BuilderLeg[]; premium: bigint; maxPayout: bigint; hash: `0x${string}`; id: string | null };
 
 const MIN_LEGS = 2;
@@ -19,7 +17,6 @@ const QUOTE_DEBOUNCE_MS = 400;
 const TTL_SECONDS = 30;
 const DRIP_HINT = "Claim testnet USDC at the Hyperliquid drip, then transfer it (and some HYPE for gas) from Core to EVM.";
 
-/** Short, user-facing line for a thrown mint error (wallet rejection, RPC, revert). */
 function shortMintError(err: unknown): string {
   const raw = String((err as Error)?.message ?? err);
   if (raw.includes("exceeds balance")) return "Not enough testnet USDC in your wallet for the stake.";
@@ -65,13 +62,11 @@ export function useTicket(legs: BuilderLeg[]) {
   useEffect(() => () => session.invalidate(), [session]);
   const { switchChain } = useSwitchChain();
   const { address: usdcAddr, balance: usdcBalance, error: usdcError } = useUsdc();
-  // Check gas before opening the wallet.
   const { data: gas } = useBalance({
     address,
     chainId: appChain.id,
     query: { enabled: !!address, refetchInterval: 15_000 },
   });
-  // Gates the mint button; refetched after approve confirms. mint re-reads it too.
   const { data: allowance, isError: allowanceError, refetch: refetchAllowance } = useReadContract({
     address: usdcAddr,
     abi: erc20Abi,
@@ -82,7 +77,6 @@ export function useTicket(legs: BuilderLeg[]) {
 
   const [maxStake, setMaxStake] = useState<bigint | null>(null);
   const [limits, setLimits] = useState<WriterLimits | null>(null);
-  // Use the writer’s lifetime for the countdown bar.
   const [ttlSeconds, setTtlSeconds] = useState(TTL_SECONDS);
   useEffect(() => {
     void fetchLimits().then((l) => {
@@ -120,7 +114,6 @@ export function useTicket(legs: BuilderLeg[]) {
     setMintState((s) => (s === "requoted" && res.ok ? "requoted" : "idle"));
   }, [legs, stake, address, isLinked, chainId, session, revision, setQuoteResult]);
 
-  // Debounced (re)quote whenever the ticket's inputs change.
   useEffect(() => {
     setQuoteResult(null);
     setQuoting(false);
@@ -130,7 +123,6 @@ export function useTicket(legs: BuilderLeg[]) {
     return () => clearTimeout(t);
   }, [runQuote, session, setQuoteResult]);
 
-  // Pause expiry refresh during mint and after success.
   useEffect(() => {
     if (!quoteResult?.ok) {
       setTtlLeft(0);

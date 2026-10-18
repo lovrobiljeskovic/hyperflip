@@ -36,14 +36,12 @@ export function WalletButton() {
 
   useEffect(() => () => void (copyTimer.current && clearTimeout(copyTimer.current)), []);
 
-  // Popover only exists while connected - closing it on disconnect keeps a
-  // stale panel from hanging over the "Connect wallet" button.
+  // Close the popover on disconnect so a stale panel cannot hang over "Connect wallet".
   useEffect(() => {
     if (!isConnected) setOpen(false);
   }, [isConnected]);
 
-  // Placeholder holds the button's footprint while Privy restores its session,
-  // so a connected user never sees "Connect wallet" flash first.
+  // Holds the button's footprint while Privy restores its session, so no "Connect wallet" flash.
   if (!ready) {
     return <div className="h-[34px] w-[132px] animate-pulse motion-reduce:animate-none rounded-card bg-panel" aria-hidden />;
   }

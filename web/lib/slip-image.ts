@@ -9,7 +9,6 @@ const ROW = 112;
 const SCALE = 2;
 const C = { ink: "#0d0f0c", panel: "#151912", line: "#30362b", fg: "#f1f4eb", dim: "#9ca592", accent: "#c8f36a", yes: "#44d17a", no: "#ff5d6c" };
 
-/** Font families as the page resolved them (next/font hashes the names). */
 function families() {
   const pick = (cls: string) => {
     const el = document.querySelector(`.${cls}`);
@@ -34,8 +33,6 @@ function ellipsis(ctx: CanvasRenderingContext2D, text: string, max: number): str
   return `${t}…`;
 }
 
-/** The slip as a PNG, drawn by hand on a canvas so it needs no DOM
- * serialisation and no library. Same layout as the printed ticket. */
 export async function renderSlipPng(slip: SlipImageInput): Promise<Blob> {
   await document.fonts.ready;
   const [logo, f] = await Promise.all([loadLogo(), families()]);
@@ -46,7 +43,6 @@ export async function renderSlipPng(slip: SlipImageInput): Promise<Blob> {
   const ctx = canvas.getContext("2d")!;
   ctx.scale(SCALE, SCALE);
 
-  // Backdrop and card.
   ctx.fillStyle = C.ink;
   ctx.fillRect(0, 0, W, H);
   const card = { x: 40, y: 40, w: W - 80, h: H - 80, r: 28 };
@@ -58,7 +54,6 @@ export async function renderSlipPng(slip: SlipImageInput): Promise<Blob> {
   ctx.strokeStyle = C.line;
   ctx.stroke();
 
-  // Brand.
   let y = card.y + PAD;
   ctx.drawImage(logo, PAD, y, 48, 48);
   ctx.fillStyle = C.fg;
@@ -66,7 +61,6 @@ export async function renderSlipPng(slip: SlipImageInput): Promise<Blob> {
   ctx.textBaseline = "middle";
   ctx.fillText("hyperflip", PAD + 62, y + 25);
 
-  // Title.
   y += 130;
   ctx.font = `700 76px ${f.display}`;
   ctx.textBaseline = "alphabetic";
@@ -76,7 +70,6 @@ export async function renderSlipPng(slip: SlipImageInput): Promise<Blob> {
   ctx.fillStyle = C.dim;
   ctx.fillText("All legs must hit.", PAD, y);
 
-  // Legs.
   y += 52;
   for (const leg of slip.legs) {
     ctx.fillStyle = C.line;
@@ -86,7 +79,6 @@ export async function renderSlipPng(slip: SlipImageInput): Promise<Blob> {
     const label = leg.label ?? (leg.isYes ? "YES" : "NO");
     ctx.font = `500 24px ${f.mono}`;
     ctx.fillStyle = leg.isYes ? C.yes : C.no;
-    // Pick over match name, each on its own line so neither is cut.
     ctx.fillText(leg.group ? label : label.toUpperCase(), PAD, y + 44);
     ctx.font = `400 28px ${f.sans}`;
     ctx.fillStyle = C.dim;
@@ -96,7 +88,6 @@ export async function renderSlipPng(slip: SlipImageInput): Promise<Blob> {
   ctx.fillStyle = C.line;
   ctx.fillRect(card.x, y, card.w, 2);
 
-  // Terms.
   y += 64;
   const right = W - PAD;
   ctx.font = `400 26px ${f.mono}`;
@@ -126,7 +117,6 @@ export async function renderSlipPng(slip: SlipImageInput): Promise<Blob> {
   ctx.font = `500 82px ${f.mono}`;
   ctx.fillText(formatUsdc(slip.maxPayout), right + 4, y + 6);
 
-  // Tear line with notches, then the site.
   y += 60;
   ctx.setLineDash([8, 10]);
   ctx.strokeStyle = C.line;

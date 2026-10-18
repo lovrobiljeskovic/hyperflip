@@ -124,8 +124,6 @@ function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown })
   );
 }
 
-/** What the house can take right now, so a taker sizes a stake that quotes
- * instead of bouncing off a 409. Caps are on house risk (payout minus stake). */
 function HouseLimits({ limits, maxStake }: { limits: WriterLimits | null; maxStake: bigint }) {
   const usdc = (v: string | null | undefined) => (v ? `${formatUsdc(BigInt(v))} USDC` : "-");
   const available =
@@ -167,7 +165,6 @@ export function Ticket({
   const format = useOddsFormat();
   const { stake, setStake, quoteResult, ttlLeft, ttlSeconds, mintState, mintErrorMsg, mintErrorDetail,
     maxStake, limits, usdcBalance, cta, approve, mintQuoted, retry, connect, switchChain, address, stakeBase, toWin } = ticket;
-  // Keep the last to-win dimmed while a requote is in flight, so it does not jump to a dash.
   const lastWin = useRef<bigint | null>(null);
   if (toWin !== null) lastWin.current = toWin;
   if (legs.length < 2 || stakeBase === null || (quoteResult && !quoteResult.ok)) lastWin.current = null;
@@ -186,13 +183,11 @@ export function Ticket({
           maxPayout,
         )
       : null;
-  // The motif's ring splay is the book's margin on the live quote.
   const margin = bd ? quotedOverround(bd) : null;
   // The stake you'd need to win back exactly what you paid - the honest
   // "how likely does this have to be" number behind the multiplier.
   const m = multiplierNum(premium, maxPayout);
   const breakEven = m > 0 ? 1 / m : null;
-  // Max is whichever runs out first: your balance or the house per-ticket cap.
   const maxAllowed =
     usdcBalance === undefined
       ? maxStake

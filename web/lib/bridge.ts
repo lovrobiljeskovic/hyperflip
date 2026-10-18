@@ -2,8 +2,7 @@ import { encodeAbiParameters, erc20Abi, parseAbi, parseEther, type PublicClient 
 import type { UseWriteContractReturnType } from "wagmi";
 import { coreChain } from "./chain";
 
-/** Elysium testnet's canonical Arbitrum bridge, on HyperEVM testnet (998). Read off the bridged
- * USDC's gateway chain on 2026-09-22 (knowledge base: Reference/Elysium). */
+/** Elysium testnet's canonical Arbitrum bridge, on HyperEVM testnet (998). */
 export const BRIDGE = {
   inbox: "0x11178Df40CBf87a4343f4B3F8B09B366ceFA8Ec0",
   router: "0x1aAE2caD8B0249905492087EF230FcCEa3707C45",
@@ -19,7 +18,6 @@ const routerAbi = parseAbi([
   "function outboundTransfer(address token, address to, uint256 amount, uint256 maxGas, uint256 gasPriceBid, bytes data) payable returns (bytes)",
 ]);
 
-/** Gas for the gateway's finalizeInboundTransfer on Elysium (first deposit of a token deploys it). */
 export const BRIDGE_GAS = 300_000n;
 /** Upper bound on the retryable's calldata; the fee is per byte and refunds the excess. */
 const BRIDGE_DATA_LENGTH = 512n;
@@ -36,7 +34,6 @@ export function bridgeFees(submissionFee: bigint, l2GasPrice: bigint): {
   return { maxSubmissionCost, maxGas: BRIDGE_GAS, gasPriceBid, value: maxSubmissionCost + BRIDGE_GAS * gasPriceBid };
 }
 
-/** Router `data`: (maxSubmissionCost, callHookData) with no hook. */
 export function outboundData(maxSubmissionCost: bigint): `0x${string}` {
   return encodeAbiParameters([{ type: "uint256" }, { type: "bytes" }], [maxSubmissionCost, "0x"]);
 }
@@ -57,7 +54,6 @@ async function confirmed(core: PublicClient, hash: `0x${string}`, what: string):
   return hash;
 }
 
-/** Approve the gateway when needed, then deposit USDC to the same address on Elysium. */
 export async function bridgeUsdc({ core, write, taker, amount, fees }: {
   core: PublicClient; write: Write; taker: `0x${string}`; amount: bigint; fees: ReturnType<typeof bridgeFees>;
 }): Promise<`0x${string}`> {
@@ -71,7 +67,6 @@ export async function bridgeUsdc({ core, write, taker, amount, fees }: {
   return confirmed(core, hash, "bridge");
 }
 
-/** Deposit HYPE 1:1 as Elysium gas for the same address. */
 export async function bridgeGas({ core, write, taker, amount }: { core: PublicClient; write: Write; taker: `0x${string}`; amount: bigint }): Promise<`0x${string}`> {
   const hash = await write({ address: BRIDGE.inbox, abi: inboxAbi, functionName: "depositEth", value: amount, account: taker, chainId: coreChain.id });
   return confirmed(core, hash, "gas deposit");

@@ -7,7 +7,6 @@ export const INFO_API =
 export const NO_MIDS: Record<string, string> = {};
 const NO_VOLUMES: Record<string, number> = {};
 
-/** HIP-4 side coin -> rolling 24h USDC notional from spotMetaAndAssetCtxs. */
 export function parseMarketVolumes(value: unknown): Record<string, number> {
   const contexts = Array.isArray(value) && Array.isArray(value[1]) ? value[1] : [];
   const volumes: Record<string, number> = {};

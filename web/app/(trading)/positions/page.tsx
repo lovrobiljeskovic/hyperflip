@@ -26,9 +26,6 @@ const VERDICT_STYLE: Record<LegVerdict, { label: string; className: string }> = 
   fractional: { label: "Partial", className: "text-fg" },
 };
 
-/** The four dot states, shared by the leg dots and the legend beneath the
- * table. `fractional` is a half-filled hit dot - the retired yellow's only
- * remaining job, done without a third colour. */
 const DOT_CLASS: Record<LegVerdict, string> = {
   hit: "bg-yes",
   lost: "bg-no",
@@ -37,7 +34,6 @@ const DOT_CLASS: Record<LegVerdict, string> = {
   fractional: "bg-[linear-gradient(90deg,#35D07A_50%,#262C38_50%)]",
 };
 
-/** Compact "2h ago" / "3d ago". Absolute date once it stops being useful as an age. */
 function ago(ms: number): string {
   const s = Math.max(0, (Date.now() - ms) / 1000);
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
@@ -46,8 +42,6 @@ function ago(ms: number): string {
   return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-/** One dot per leg, coloured by that leg's verdict - the whole ticket's
- * settlement progress readable without expanding the row. */
 function LegDots({ verdicts }: { verdicts: LegVerdict[] }) {
   return (
     <span
@@ -66,8 +60,6 @@ function LegDots({ verdicts }: { verdicts: LegVerdict[] }) {
   );
 }
 
-/** Names the four dot states; without it the half-filled dot is a puzzle
- * rather than a state. */
 function DotLegend() {
   const order: LegVerdict[] = ["hit", "fractional", "lost", "pending"];
   return (
@@ -200,9 +192,8 @@ function PositionsContent() {
   const [markets, setMarkets] = useState<Market[]>([]);
   const mids = useMids();
 
-  // Registry metadata supplies sports labels; addresses remain the fallback. The lane's writer serves
-  // the authoritative (box-rotated) registry resolved for this chain; the static snapshot is built from
-  // the repo registry, which lags behind, so it only backs the indexed path when the writer is down.
+  // Registry metadata supplies sports labels. The lane's writer serves the authoritative (box-rotated) registry;
+  // the static snapshot lags the repo registry, so it only backs the indexed path when the writer is down.
   useEffect(() => {
     // Volumes too, so a book trading at exactly 0.5 prices the same as on /build.
     const staticLabels = () => fetch("/position-markets.json").then(r => { if (!r.ok) throw new Error("Market labels unavailable"); return r.json() as Promise<Market[]>; });

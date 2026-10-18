@@ -65,7 +65,6 @@ function validateTicket(ticket: Ticket, snapshot: PositionSnapshot) {
   }
 }
 
-/** One instance per server process. No correctness depends on the cache surviving. */
 export function createPositionsIndex(client: PublicClient, endpoint: string, token?: string, request: typeof fetch = fetch) {
   // ponytail: per-process cache, add shared caching only if multi-instance RPC use warrants it.
   const cache = new Map<string, { until: number; value: Promise<unknown> }>();

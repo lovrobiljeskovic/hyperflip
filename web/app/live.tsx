@@ -4,8 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { until, whenLabel } from "@/lib/format";
 import { isMatchQuestion, kickoffKey } from "@/lib/writer";
 
-/** A clock that re-renders on a fixed beat. Countdowns tick, "live" flips on
- * its own, and nothing waits for the next data fetch to change. */
 function useNow(everyMs = 1000): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -17,8 +15,6 @@ function useNow(everyMs = 1000): number {
 
 const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-/** A number that rolls from what it last showed to `value` instead of
- * snapping. First paint rolls up from zero. Honours reduced motion. */
 export function CountUp({
   value,
   format,
@@ -54,10 +50,7 @@ export function CountUp({
   return <span className={className}>{format(shown)}</span>;
 }
 
-/** Exact kickoff in the viewer's time zone with a ticking countdown under
- * it, or a pulsing LIVE once the game is on. Falls back to the settlement
- * deadline for markets without a start time. The server renders UTC-ish
- * text that the client immediately replaces, hence suppressHydrationWarning. */
+/** The server renders UTC-ish text the client replaces at once, hence suppressHydrationWarning. */
 export function Kickoff({ market, align = "right" }: { market: { startMs?: number; expiryMs?: number; group?: string }; align?: "left" | "right" }) {
   const now = useNow();
   // A grouped season or tournament: its start is long gone and "live" for months

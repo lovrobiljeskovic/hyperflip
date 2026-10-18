@@ -26,7 +26,6 @@ export function saveSlip(legs: BuilderLeg[]): void {
   } catch { /* storage blocked: the slip lives for this page only */ }
 }
 
-/** Rebuild legs from a saved list against the board that just loaded. Unknown vaults are dropped. */
 export function restoreLegs(saved: SavedLeg[], board: Market[], legFor: (m: Market, isYes: boolean) => BuilderLeg): BuilderLeg[] {
   const byVault = new Map(board.map((m) => [m.vault.toLowerCase(), m]));
   return saved.flatMap((s) => { const m = byVault.get(s.vault.toLowerCase()); return m ? [legFor(m, s.isYes)] : []; });
