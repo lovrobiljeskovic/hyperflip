@@ -1,7 +1,7 @@
 import { appChain } from "./chain";
 import { PARLAY_VAULT } from "./contracts";
 import type { BuilderLeg } from "./ticket";
-import type { Market } from "./writer";
+import { sideLabel, type Market } from "./writer";
 
 export type SavedLeg = { vault: `0x${string}`; isYes: boolean };
 
@@ -26,9 +26,20 @@ export function saveSlip(legs: BuilderLeg[]): void {
   } catch { /* storage blocked: the slip lives for this page only */ }
 }
 
-export function restoreLegs(saved: SavedLeg[], board: Market[], legFor: (m: Market, isYes: boolean) => BuilderLeg): BuilderLeg[] {
+export function legFor(market: Market, isYes: boolean): BuilderLeg {
+  return {
+    vault: market.vault,
+    isYes,
+    title: market.group ? (market.groupTitle ?? market.group) : market.title,
+    coin: isYes ? market.coinYes : market.coinNo,
+    label: market.group ? market.title : sideLabel(market, isYes),
+    group: market.group,
+  };
+}
+
+export function restoreLegs(saved: SavedLeg[], board: Market[], toLeg: (m: Market, isYes: boolean) => BuilderLeg = legFor): BuilderLeg[] {
   const byVault = new Map(board.map((m) => [m.vault.toLowerCase(), m]));
-  return saved.flatMap((s) => { const m = byVault.get(s.vault.toLowerCase()); return m ? [legFor(m, s.isYes)] : []; });
+  return saved.flatMap((s) => { const m = byVault.get(s.vault.toLowerCase()); return m ? [toLeg(m, s.isYes)] : []; });
 }
 
 /** Markets a saved leg may restore onto: unexpired. Mids may not be loaded yet, so price is not checked here. */
