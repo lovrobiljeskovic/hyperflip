@@ -7,8 +7,11 @@ const poster = "/brand/purr-hero-poster.jpg";
 
 export function PurrCoinToss() {
   const video = useRef<HTMLVideoElement>(null);
+  const matches = useMediaQuery("(min-width: 1024px) and (prefers-reduced-motion: no-preference)");
   const [failed, setFailed] = useState(false);
-  const animate = useMediaQuery("(min-width: 1024px) and (prefers-reduced-motion: no-preference)") && !failed;
+  // A failed video retries once the query stops matching and matches again.
+  if (failed && !matches) setFailed(false);
+  const animate = matches && !failed;
   const [playing, setPlaying] = useState(false);
 
   return (
