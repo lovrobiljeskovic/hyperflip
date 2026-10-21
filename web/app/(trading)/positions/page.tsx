@@ -52,9 +52,9 @@ function ActionButton({ kind, label, isPending, disabled, onClick, className }: 
   );
 }
 
-function LoadingSkeleton() {
+function LoadingSkeleton({ className = "mt-10" }: { className?: string }) {
   return (
-    <div className="mt-10 flex flex-col gap-2">
+    <div className={`${className} flex flex-col gap-2`}>
       {[0, 1, 2].map((i) => (
         <div key={i} className="h-12 animate-pulse motion-reduce:animate-none rounded-card border border-line bg-panel" />
       ))}
@@ -74,7 +74,7 @@ function PositionsContent() {
   const { writeContractAsync } = useWriteContract();
   const connect = useConnectAction();
 
-  const { rows, error, notice, loading, hasMore, load, loadMore, reloadRow } = usePositions(publicClient, address);
+  const { rows, error, notice, loading, settled, hasMore, load, loadMore, reloadRow } = usePositions(publicClient, address);
   const { pending, actionError, act } = usePositionAction(publicClient, address, writeContractAsync, reloadRow);
   const [expanded, setExpanded] = useState<bigint | null>(null);
   const [markets, setMarkets] = useState<Market[]>([]);
@@ -314,6 +314,8 @@ function PositionsContent() {
                 </tbody>
               </table>
             </div>
+            {/* Receipt preview rows render before the full page; keep the skeleton up for the rest. */}
+            {!settled && <LoadingSkeleton className="mt-3" />}
             <DotLegend />
             {hasMore && <button type="button" disabled={loading} onClick={() => void loadMore()} className="mt-6 rounded-card border border-line px-4 py-2 disabled:opacity-50">{loading ? "Loading…" : "Load more"}</button>}
           </>

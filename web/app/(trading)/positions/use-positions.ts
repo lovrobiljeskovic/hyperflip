@@ -11,6 +11,9 @@ export function usePositions(client: PublicClient | undefined, address: `0x${str
   const [error, setError] = useState(false);
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
+  // False until the first full page lands (or fails), so the page can show the receipt
+  // preview rows and still signal that the rest of the history is loading.
+  const [settled, setSettled] = useState(false);
   const [cursor, setCursor] = useState<{ before: string; snapshot: PositionSnapshot } | null>(null);
   const sequence = useRef(0);
   const loadingRef = useRef(false);
@@ -62,7 +65,7 @@ export function usePositions(client: PublicClient | undefined, address: `0x${str
       const overlay = await preview;
       if (request === sequence.current && overlay.rows.length) setRows(previous => mergePositionRows(previous ?? [], overlay.rows));
     } finally {
-      if (request === sequence.current) { loadingRef.current = false; setLoading(false); }
+      if (request === sequence.current) { loadingRef.current = false; setLoading(false); setSettled(true); }
     }
   }, [client, address]);
 
@@ -70,6 +73,7 @@ export function usePositions(client: PublicClient | undefined, address: `0x${str
     setRows(null);
     setCursor(null);
     setNotice("");
+    setSettled(false);
     loadingRef.current = false;
     void load();
     const timers = address && savedPositions(address).length
@@ -83,6 +87,7 @@ export function usePositions(client: PublicClient | undefined, address: `0x${str
     sequence.current++;
     loadingRef.current = false;
     setLoading(false);
+    setSettled(true);
     const confirmed = confirmedPositionRow(row, receipt);
     setRows(previous => mergePositionRows(previous ?? [], [confirmed]));
     setNotice("Transaction confirmed. Refresh to update the ticket history.");
@@ -92,6 +97,6 @@ export function usePositions(client: PublicClient | undefined, address: `0x${str
       if (request === sequence.current && (!confirmed.burned || fresh.burned)) setRows(previous => mergePositionRows(previous ?? [], [{ ...confirmed, ...fresh }]));
     } catch { /* Keep the confirmed receipt result if the RPC is temporarily behind. */ }
   }
-  return { rows, error, notice, loading, hasMore: cursor !== null, load: () => load(),
+  return { rows, error, notice, loading, settled, hasMore: cursor !== null, load: () => load(),
     loadMore: () => cursor ? load(cursor) : Promise.resolve(), reloadRow };
 }
