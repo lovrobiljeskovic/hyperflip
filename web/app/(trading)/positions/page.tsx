@@ -7,8 +7,8 @@ import { usePositions } from "./use-positions";
 import { usePositionAction } from "./use-position-action";
 import { DotLegend, LegDots, LegTable, ago } from "./leg-table";
 import { SummaryStrip } from "./summary-strip";
-import { INDEXED_POSITIONS, deriveRow } from "@/lib/positions";
-import { formatUsdc, multiplier } from "@/lib/format";
+import { INDEXED_POSITIONS, chanceNeeded, chanceNow, deriveRow, type Row } from "@/lib/positions";
+import { formatUsdc, multiplier, pct1 } from "@/lib/format";
 import { fetchMarkets, type Market, withMarketVolumes } from "@/lib/writer";
 import { fetchMarketVolumes } from "@/lib/info";
 import { useMids } from "@/lib/mids";
@@ -20,6 +20,21 @@ function TicketLabel({ id, mintedAtMs }: { id: bigint; mintedAtMs: number }) {
     <span>
       #{id.toString().padStart(4, "0")}
       <span className="ml-2 text-[11px] text-dim">{ago(mintedAtMs)}</span>
+    </span>
+  );
+}
+
+const MARKETS_POLL_MS = 15_000;
+
+/** "23.0% now · needs 18.0%" for an open ticket, green at or above break-even, red below. */
+function Chance({ row, markets, mids }: { row: Row; markets: Map<string, Market>; mids: Record<string, string> }) {
+  const now = chanceNow(row, markets, mids);
+  if (now === null) return <span className="text-dim">-</span>;
+  const needed = chanceNeeded(row);
+  return (
+    <span className="whitespace-nowrap">
+      <span className={now >= needed ? "text-yes" : "text-no"}>{pct1(now)}</span>
+      <span className="text-dim"> now · needs {pct1(needed)}</span>
     </span>
   );
 }
@@ -82,15 +97,23 @@ function PositionsContent() {
 
   // Registry metadata supplies sports labels. The lane's writer serves the authoritative (box-rotated) registry;
   // the static snapshot lags the repo registry, so it only backs the indexed path when the writer is down.
+  // Re-read every MARKETS_POLL_MS: the writer overlays its live prior onto priorYes, which is what
+  // "chance now" and the per-leg Live column move on. Scheduled after each response, like the mids poll.
   useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     // Volumes too, so a book trading at exactly 0.5 prices the same as on /build.
     const staticLabels = () => fetch("/position-markets.json").then(r => { if (!r.ok) throw new Error("Market labels unavailable"); return r.json() as Promise<Market[]>; });
-    Promise.all([
-      INDEXED_POSITIONS ? fetchMarkets(true).catch(staticLabels) : fetchMarkets(true),
-      fetchMarketVolumes(),
-    ])
-      .then(([ms, volumes]) => setMarkets(withMarketVolumes(ms, volumes)))
-      .catch((err) => console.warn("positions: market labels unavailable", err));
+    const load = () =>
+      Promise.all([
+        INDEXED_POSITIONS ? fetchMarkets(true).catch(staticLabels) : fetchMarkets(true),
+        fetchMarketVolumes(),
+      ])
+        .then(([ms, volumes]) => { if (alive) setMarkets(withMarketVolumes(ms, volumes)); })
+        .catch((err) => console.warn("positions: market labels unavailable", err))
+        .finally(() => { if (alive) timer = setTimeout(load, MARKETS_POLL_MS); });
+    void load();
+    return () => { alive = false; clearTimeout(timer); };
   }, []);
   const marketsByVault = useMemo(
     () => new Map(markets.map((m) => [m.vault.toLowerCase(), m])),
@@ -155,7 +178,7 @@ function PositionsContent() {
             <p className="mt-5 text-xs text-dim">Summary of loaded tickets</p>
             <SummaryStrip rows={rows} wallet={address!} />
 
-            {/* Mobile: one card per slip; the table needs 860px and horizontal
+            {/* Mobile: one card per slip; the table needs 980px and horizontal
                 scrolling a slip list shouldn't. */}
             <div className="mt-4 flex flex-col gap-3 md:hidden">
               {rows.map((row) => {
@@ -206,6 +229,12 @@ function PositionsContent() {
                           </div>
                         ))}
                       </div>
+                      {chanceNow(row, marketsByVault, mids) !== null && (
+                        <div className="mt-3">
+                          <p className="text-[9px] uppercase tracking-[0.16em] text-dim">Chance</p>
+                          <p className="mt-0.5"><Chance row={row} markets={marketsByVault} mids={mids} /></p>
+                        </div>
+                      )}
                     </button>
                     {view.action && (
                       <div className="px-4 pb-3">
@@ -234,7 +263,7 @@ function PositionsContent() {
             </div>
 
             <div className="mt-4 hidden overflow-x-auto rounded-card border border-line bg-panel md:block">
-              <table className="w-full min-w-[860px] text-left text-sm">
+              <table className="w-full min-w-[980px] text-left text-sm">
                 <thead className="mono text-[9px] uppercase tracking-[0.16em] text-dim">
                   <tr className="border-b border-line">
                     <th className="px-5 py-3 font-normal">Ticket</th>
@@ -242,6 +271,7 @@ function PositionsContent() {
                     <th className="px-5 py-3 text-right font-normal">Stake</th>
                     <th className="px-5 py-3 text-right font-normal">Multiplier</th>
                     <th className="px-5 py-3 text-right font-normal">Max payout</th>
+                    <th className="px-5 py-3 font-normal">Chance</th>
                     <th className="px-5 py-3 font-normal">Status</th>
                     <th className="px-5 py-3 text-right font-normal">Action</th>
                   </tr>
@@ -284,6 +314,7 @@ function PositionsContent() {
                           <td className={`px-5 py-4 text-right ${view.payoutClass}`}>
                             {formatUsdc(row.parlay.maxPayout)}
                           </td>
+                          <td className="px-5 py-4"><Chance row={row} markets={marketsByVault} mids={mids} /></td>
                           <td className={`px-5 py-4 ${view.statusClass}`}>{view.statusLabel}</td>
                           <td className="px-5 py-4 text-right" onClick={(e) => e.stopPropagation()}>
                             {view.action ? (

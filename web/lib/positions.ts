@@ -1,5 +1,5 @@
 import { BaseError, ContractFunctionRevertedError, type PublicClient } from "viem";
-import { fetchParlays, type ParlayRef } from "./writer";
+import { fetchParlays, marketMid, type Market, type ParlayRef } from "./writer";
 import { pool } from "./pool";
 import { PARLAY_VAULT, STATUS, outcomeVaultAbi, parlayVaultAbi } from "./contracts";
 import { WAD } from "./format";
@@ -27,6 +27,29 @@ export interface Row {
   taker?: `0x${string}`;
   burnHolder?: `0x${string}` | null;
   dataError?: boolean;
+}
+
+/** The chance an open ticket still pays out, from the writer's live prior per pending leg (hit legs
+ * are certain). Null when the ticket is not open, a leg is lost or voided, or a pending leg has no
+ * live price. Legs are priced independently, same as the quote. */
+export function chanceNow(row: Row, markets: Map<string, Market>, mids: Record<string, string>): number | null {
+  if (row.parlay.status !== STATUS.Open) return null;
+  let p = 1;
+  for (const [i, leg] of row.parlay.legs.entries()) {
+    const verdict = row.legVerdicts[i];
+    if (verdict === "hit") continue;
+    if (verdict !== "pending") return null;
+    const m = markets.get(leg.vault.toLowerCase());
+    const mid = m ? marketMid(mids, m, leg.isYes ? m.coinYes : m.coinNo) : null;
+    if (mid === null) return null;
+    p *= mid;
+  }
+  return p;
+}
+
+/** Break-even probability of the ticket, the same number the builder shows before minting. */
+export function chanceNeeded(row: Row): number {
+  return Number(row.parlay.premium) / Number(row.parlay.maxPayout);
 }
 
 /** A leg is done once its vault settled or its market's settlement deadline passed: no live

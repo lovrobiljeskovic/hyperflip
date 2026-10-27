@@ -1,10 +1,10 @@
 import { expect, test, vi } from "vitest";
 import { ContractFunctionRevertedError, encodeErrorResult } from "viem";
-import { deriveRow, legDone, loadPositions, loadRow, summarizePositions, type Row } from "./positions";
+import { chanceNeeded, chanceNow, deriveRow, legDone, loadPositions, loadRow, summarizePositions, type Row } from "./positions";
 import { DEPLOY_BLOCK, parlayVaultAbi, STATUS } from "./contracts";
 import { fetchParlays } from "./writer";
 
-vi.mock("./writer", () => ({ fetchParlays: vi.fn() }));
+vi.mock("./writer", async (orig) => ({ ...(await orig<typeof import("./writer")>()), fetchParlays: vi.fn() }));
 const vault = `0x${"1".repeat(40)}` as const;
 const parlay = { legs: [{ vault, isYes: true }], writer: vault, premium: 1000000n, maxPayout: 2000000n, status: STATUS.Won };
 const row: Row = { id: 1n, block: DEPLOY_BLOCK, mintedAtMs: 0, parlay, burned: false, legVerdicts: ["hit"] };
@@ -85,5 +85,22 @@ test("legDone once the vault settled or the market's deadline passed", () => {
   expect(legDone("pending", undefined, 1_000)).toBe(false);
   expect(legDone("hit", { expiryMs: 2_000 }, 1_000)).toBe(true);
   expect(legDone("lost", undefined, 1_000)).toBe(true);
+});
+
+test("chanceNow multiplies live leg probabilities, hit legs count as certain, anything else is unknown", () => {
+  const v2 = `0x${"2".repeat(40)}` as const;
+  const markets = new Map([
+    [vault, { vault, title: "a", category: "sports", coinYes: "#1", coinNo: "#2", priorYes: 0.4 }],
+    [v2, { vault: v2, title: "b", category: "sports", coinYes: "#3", coinNo: "#4", priorYes: 0.5, volume24h: 1 }],
+  ]);
+  const open = { ...parlay, status: STATUS.Open, legs: [{ vault, isYes: false }, { vault: v2, isYes: true }] };
+  const two = (legVerdicts: Row["legVerdicts"]): Row => ({ ...row, parlay: open, legVerdicts });
+  // NO on a: 1 - 0.4; YES on b: the traded mid beats the prior.
+  expect(chanceNow(two(["pending", "pending"]), markets, { "#3": "0.25" })).toBeCloseTo(0.6 * 0.25);
+  expect(chanceNow(two(["hit", "pending"]), markets, {})).toBeCloseTo(0.5);
+  expect(chanceNow(two(["pending", "lost"]), markets, {})).toBeNull();
+  expect(chanceNow(two(["pending", "pending"]), new Map(), {})).toBeNull();
+  expect(chanceNow({ ...two(["pending", "pending"]), parlay: { ...open, status: STATUS.Won } }, markets, {})).toBeNull();
+  expect(chanceNeeded(row)).toBe(0.5);
 });
 
