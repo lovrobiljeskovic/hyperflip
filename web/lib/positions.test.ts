@@ -98,6 +98,8 @@ test("chanceNow multiplies live leg probabilities, hit legs count as certain, an
   // NO on a: 1 - 0.4; YES on b: the traded mid beats the prior.
   expect(chanceNow(two(["pending", "pending"]), markets, { "#3": "0.25" })).toBeCloseTo(0.6 * 0.25);
   expect(chanceNow(two(["hit", "pending"]), markets, {})).toBeCloseTo(0.5);
+  // Every leg decided: the status column says Claimable, a "100% now" would read as live.
+  expect(chanceNow(two(["hit", "hit"]), markets, {})).toBeNull();
   expect(chanceNow(two(["pending", "lost"]), markets, {})).toBeNull();
   expect(chanceNow(two(["pending", "pending"]), new Map(), {})).toBeNull();
   expect(chanceNow({ ...two(["pending", "pending"]), parlay: { ...open, status: STATUS.Won } }, markets, {})).toBeNull();

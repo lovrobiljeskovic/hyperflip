@@ -30,10 +30,11 @@ export interface Row {
 }
 
 /** The chance an open ticket still pays out, from the writer's live prior per pending leg (hit legs
- * are certain). Null when the ticket is not open, a leg is lost or voided, or a pending leg has no
- * live price. Legs are priced independently, same as the quote. */
+ * are certain). Null when the ticket is not open, nothing is pending any more (the status column
+ * carries the result), a leg is lost or voided, or a pending leg has no live price. Legs are priced
+ * independently, same as the quote. */
 export function chanceNow(row: Row, markets: Map<string, Market>, mids: Record<string, string>): number | null {
-  if (row.parlay.status !== STATUS.Open) return null;
+  if (row.parlay.status !== STATUS.Open || !row.legVerdicts.includes("pending")) return null;
   let p = 1;
   for (const [i, leg] of row.parlay.legs.entries()) {
     const verdict = row.legVerdicts[i];
