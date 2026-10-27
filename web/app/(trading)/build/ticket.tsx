@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { QuoteDetails } from "./quote-details";
 import { StakeInput } from "./stake-input";
 import { QuoteError, TicketCta } from "./ticket-cta";
+import { CopySlipLink } from "./copy-slip-link";
 
 export type { BuilderLeg } from "@/lib/ticket";
 
@@ -60,7 +61,10 @@ export function Ticket({
       {!compact && (
         <div className="flex items-start justify-between">
           <span className="mono text-[10px] uppercase tracking-[0.16em] text-dim">Your slip</span>
-          <Overround margin={margin} />
+          <span className="flex items-center gap-1">
+            {legs.length >= MIN_LEGS && <CopySlipLink legs={legs} icon />}
+            <Overround margin={margin} />
+          </span>
         </div>
       )}
 

@@ -4,14 +4,14 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { HyperflipLogo } from "@/app/brand";
 import { formatUsdc, multiplier } from "@/lib/format";
-import { slipShareText, xIntentUrl } from "@/lib/share";
+import { slipShareText, slipUrl, xIntentUrl } from "@/lib/share";
 import { renderSlipPng } from "@/lib/slip-image";
 import { legLabel } from "@/lib/ticket";
 import type { MintedSlip } from "./use-ticket";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { CopySlipLink } from "./copy-slip-link";
 
-const SITE = "https://hyperflip.xyz";
 const shareClass = "mono flex h-11 items-center justify-center gap-2 rounded-[8px] border border-line text-[12px] uppercase tracking-[0.1em] text-fg transition-colors hover:border-dim";
 const xIcon = "M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z";
 
@@ -43,12 +43,14 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
   // X's web intent cannot attach an image, so on desktop the post carries the
   // text and link and the card goes in by hand via copy image. Where the OS
   // share sheet accepts files (phones), the image rides along with the text.
+  // The link rebuilds this slip in the reader's builder (while its markets last).
   const text = slipShareText(legs.length);
-  const share = xIntentUrl(text, SITE);
+  const link = slipUrl(location.origin, legs);
+  const share = xIntentUrl(text, link);
   async function shareNative() {
     try {
       const file = new File([await png()], "hyperflip-slip.png", { type: "image/png" });
-      await navigator.share({ text: `${text}\n${SITE}`, files: [file] });
+      await navigator.share({ text: `${text}\n${link}`, files: [file] });
     } catch (err) {
       if ((err as Error)?.name !== "AbortError") setImageError(true);
     }
@@ -111,9 +113,12 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
             )}
             <Button asChild className="mono h-11 text-[12px] uppercase tracking-[0.1em]"><Link href="/positions">View positions</Link></Button>
           </div>
-          <Button variant="outline" onClick={() => void copyImage()} className="mono mt-2 h-11 w-full text-[12px] uppercase tracking-[0.1em]">
-            {copied ? "Copied" : "Copy image"}
-          </Button>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <Button variant="outline" onClick={() => void copyImage()} className="mono h-11 text-[12px] uppercase tracking-[0.1em]">
+              {copied ? "Copied" : "Copy image"}
+            </Button>
+            <CopySlipLink legs={legs} />
+          </div>
           {imageError && <p className="mono mt-2 text-center text-[11px] text-no">Could not render the image in this browser.</p>}
         </div>
       </div>
