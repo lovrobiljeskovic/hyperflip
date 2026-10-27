@@ -4,6 +4,9 @@ import type { WriterLimits } from "@/lib/writer";
 import type { BuilderLeg } from "@/lib/ticket";
 import { legLabel } from "@/lib/ticket";
 import { edgeSteps, formatUsdc, mult, multiplierNum, pct, type PriceBreakdown } from "@/lib/format";
+import { useIsDesktop } from "@/lib/media";
+import { Kickoff } from "@/app/live";
+import Link from "next/link";
 
 function DetailRow({
   label,
@@ -29,14 +32,22 @@ function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown })
   const capped = Math.abs(bd.actualMultiplier - afterLegs) / afterLegs > 0.005;
   return (
     <div className="flex flex-col gap-1.5">
+      <div className="flex items-baseline gap-3 text-[10px] uppercase tracking-[0.12em] text-dim">
+        <span className="flex-1">Leg</span>
+        <span className="w-14 text-right">Chance</span>
+        <span className="w-14 text-right">Odds</span>
+      </div>
       {legs.map((leg, i) => (
-        <div key={leg.vault} className="flex items-baseline gap-3">
-          <span className={`max-w-24 truncate ${leg.group ? "" : "uppercase"} ${leg.isYes ? "text-yes" : "text-no"}`}>
-            {legLabel(leg)}
-          </span>
-          <span className="flex-1 truncate text-dim">{leg.title}</span>
-          <span className="w-14 text-right">{pct(bd.legProbs[i])}</span>
-          <span className="w-14 text-right">{mult(bd.legOdds[i])}</span>
+        <div key={leg.vault} className="flex flex-col gap-0.5">
+          <div className="flex items-baseline gap-3">
+            <span className={`max-w-24 truncate ${leg.group ? "" : "uppercase"} ${leg.isYes ? "text-yes" : "text-no"}`}>
+              {legLabel(leg)}
+            </span>
+            <span className="flex-1 truncate text-dim">{leg.title}</span>
+            <span className="w-14 text-right">{pct(bd.legProbs[i])}</span>
+            <span className="w-14 text-right">{mult(bd.legOdds[i])}</span>
+          </div>
+          <div className="text-[10px] text-dim"><Kickoff market={leg} align="left" /></div>
         </div>
       ))}
       <div className="mt-1 border-t border-line pt-1.5" />
@@ -57,6 +68,10 @@ function MathBreakdown({ legs, bd }: { legs: BuilderLeg[]; bd: PriceBreakdown })
       <DetailRow label="Your multiplier" className="text-accent">
         {mult(bd.actualMultiplier)}
       </DetailRow>
+      <p className="mt-1 text-[10px] leading-relaxed text-dim">
+        Multiplier = 1 / (chance of every leg hitting + house edge). Payout = stake x multiplier.{" "}
+        <Link href="/pricing" className="underline decoration-line underline-offset-2 hover:decoration-dim">Current pricing</Link>
+      </p>
     </div>
   );
 }
@@ -103,10 +118,13 @@ export function QuoteDetails({
   // "how likely does this have to be" number behind the multiplier.
   const m = multiplierNum(premium, maxPayout);
   const breakEven = m > 0 ? 1 / m : null;
+  // Open where there is room: testers never found the math behind a closed summary. The
+  // phone sheet stays closed, and a reader's own toggle sticks until the layout flips.
+  const isDesktop = useIsDesktop();
   return (
     <div className="print-line mono mt-4 flex flex-col gap-2 text-[12px]">
-      <details className="rounded-[4px] border border-line bg-raised/40 px-3 py-2">
-        <summary className="flex cursor-pointer items-center justify-between text-[11px] text-dim">Quote details</summary>
+      <details open={isDesktop} className="rounded-[4px] border border-line bg-raised/40 px-3 py-2">
+        <summary className="flex cursor-pointer items-center justify-between text-[11px] text-dim">How is this priced?</summary>
         <div className="mt-3 flex flex-col gap-3 text-[11px]">
           {bd && bd.legProbs.length === legs.length ? (
             <MathBreakdown legs={legs} bd={bd} />

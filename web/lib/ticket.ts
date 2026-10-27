@@ -15,6 +15,9 @@ export interface BuilderLeg {
   label?: string;
   /** Question group this leg belongs to; one leg per group on a slip. */
   group?: string;
+  /** Kickoff and settlement, for the slip's per-leg detail. */
+  startMs?: number;
+  expiryMs?: number;
 }
 
 export const MIN_LEGS = 2;

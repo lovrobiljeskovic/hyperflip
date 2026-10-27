@@ -34,7 +34,18 @@ export function legFor(market: Market, isYes: boolean): BuilderLeg {
     coin: isYes ? market.coinYes : market.coinNo,
     label: market.group ? market.title : sideLabel(market, isYes),
     group: market.group,
+    startMs: market.startMs,
+    expiryMs: market.expiryMs,
   };
+}
+
+/** `?leg=<vault>[:n]` hand-offs, from the landing rail (one, YES) or a shared slip link. */
+export function legsFromSearch(search: string): SavedLeg[] {
+  return new URLSearchParams(search).getAll("leg").flatMap((raw) => {
+    const [vault, side] = raw.split(":");
+    const isYes = side === undefined ? true : side === "n" ? false : null;
+    return isYes !== null && isSaved({ vault, isYes }) ? [{ vault: vault.toLowerCase() as `0x${string}`, isYes }] : [];
+  });
 }
 
 export function restoreLegs(saved: SavedLeg[], board: Market[], toLeg: (m: Market, isYes: boolean) => BuilderLeg = legFor): BuilderLeg[] {

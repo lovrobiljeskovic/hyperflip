@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { loadSlip, restorableBoard, restoreLegs, saveSlip, slipKey } from "./slip-storage";
+import { legFor, legsFromSearch, loadSlip, restorableBoard, restoreLegs, saveSlip, slipKey } from "./slip-storage";
 import type { Market } from "./writer";
 import type { BuilderLeg } from "./ticket";
 
@@ -43,4 +43,15 @@ test("restorableBoard drops expired markets, keeps unknown and future expiry", (
   const now = 1_000;
   const board = [{ ...market(vaultA), expiryMs: 500 }, market(vaultB), { ...market(`0x${"c".repeat(40)}`), expiryMs: 2_000 }];
   expect(restorableBoard(board, now).map((m) => m.vault)).toEqual([vaultB, `0x${"c".repeat(40)}`]);
+});
+
+test("legsFromSearch reads every ?leg=, :n picks NO, junk is dropped", () => {
+  expect(legsFromSearch(`?leg=${vaultA}&leg=${vaultB.toUpperCase().replace("0X", "0x")}:n&leg=nope&leg=${vaultA}:x`))
+    .toEqual([{ vault: vaultA, isYes: true }, { vault: vaultB, isYes: false }]);
+  expect(legsFromSearch("")).toEqual([]);
+});
+
+test("legFor carries kickoff and expiry so the slip can show them", () => {
+  const l = legFor({ ...market(vaultA), startMs: 5, expiryMs: 9 }, false);
+  expect([l.startMs, l.expiryMs, l.coin, l.isYes]).toEqual([5, 9, "n", false]);
 });
