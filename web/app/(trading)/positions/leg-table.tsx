@@ -1,4 +1,4 @@
-import type { LegVerdict, Row } from "@/lib/positions";
+import { legDone, type LegVerdict, type Row } from "@/lib/positions";
 import { pct1 } from "@/lib/format";
 import { Kickoff } from "@/app/live";
 import { explorerAddress, tradeUrl } from "@/lib/chain";
@@ -83,7 +83,9 @@ export function LegTable({
         const coin = m ? (leg.isYes ? m.coinYes : m.coinNo) : undefined;
         // Same rule as the board: allMids prints 0.5 for every untraded book,
         // which is a placeholder, not a price.
-        const live = m && coin !== undefined ? marketMid(mids, m, coin) : null;
+        // A done leg has no live price: the mid is the last trade or the stale prior.
+        const done = legDone(row.legVerdicts[i], m, Date.now());
+        const live = !done && m && coin !== undefined ? marketMid(mids, m, coin) : null;
         const verdict = VERDICT_STYLE[row.legVerdicts[i]];
         return (
           // flex-wrap: on mobile the meta line's basis-full pushes it to a
@@ -108,10 +110,10 @@ export function LegTable({
             <span className="hidden w-16 text-right text-dim sm:block">
               {live === null ? "-" : pct1(live)}
             </span>
-            <span className="hidden w-32 justify-end sm:flex">{m ? <Kickoff market={m} /> : <span className="text-dim">-</span>}</span>
+            <span className="hidden w-32 justify-end sm:flex">{m ? <Kickoff market={m} done={done} /> : <span className="text-dim">-</span>}</span>
             <span className={`text-right sm:w-20 ${verdict.className}`}>{verdict.label}</span>
             <span className="flex basis-full items-center gap-2 pl-14 text-[10px] text-dim sm:hidden">
-              {live === null ? "-" : pct1(live)} live · {m ? <Kickoff market={m} align="left" /> : "-"}
+              {live === null ? "-" : pct1(live)} live · {m ? <Kickoff market={m} align="left" done={done} /> : "-"}
             </span>
           </div>
         );

@@ -65,8 +65,12 @@ export function CountUp({
 }
 
 /** The server renders UTC-ish text the client replaces at once, hence suppressHydrationWarning. */
-export function Kickoff({ market, align = "right" }: { market: { startMs?: number; expiryMs?: number; group?: string }; align?: "left" | "right" }) {
+export function Kickoff({ market, align = "right", done = false }: { market: { startMs?: number; expiryMs?: number; group?: string }; align?: "left" | "right"; done?: boolean }) {
   const now = useNow();
+  // Past the settlement deadline, or settled by the caller's account: the game is over, so
+  // neither "Live" nor a countdown applies. `done` lets the positions page end a leg the keeper
+  // settled days before its deadline.
+  const ended = done || (market.expiryMs !== undefined && now >= market.expiryMs);
   // A grouped season or tournament: its start is long gone and "live" for months
   // says nothing, so it counts down to settlement instead. A grouped match
   // (3-way soccer) is a game: kickoff, then live.
@@ -80,7 +84,9 @@ export function Kickoff({ market, align = "right" }: { market: { startMs?: numbe
         {whenLabel(at)}
       </time>
       <span className="text-[10px] uppercase tracking-[0.12em]" suppressHydrationWarning>
-        {futures ? (
+        {ended ? (
+          <span className="text-dim">ended</span>
+        ) : futures ? (
           <span className="text-dim">settles in {until(at, now)}</span>
         ) : live ? (
           <span className="text-yes">

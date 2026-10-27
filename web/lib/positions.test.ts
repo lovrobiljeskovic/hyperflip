@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { ContractFunctionRevertedError, encodeErrorResult } from "viem";
-import { deriveRow, loadPositions, loadRow, summarizePositions, type Row } from "./positions";
+import { deriveRow, legDone, loadPositions, loadRow, summarizePositions, type Row } from "./positions";
 import { DEPLOY_BLOCK, parlayVaultAbi, STATUS } from "./contracts";
 import { fetchParlays } from "./writer";
 
@@ -77,3 +77,13 @@ test("partial row failures retain other positions with bounded concurrency", asy
   expect(loaded.rows[0].id).toBe(13n);
   expect(peak).toBeLessThanOrEqual(6);
 });
+
+test("legDone once the vault settled or the market's deadline passed", () => {
+  expect(legDone("pending", { expiryMs: 2_000 }, 1_000)).toBe(false);
+  expect(legDone("pending", { expiryMs: 2_000 }, 2_000)).toBe(true);
+  expect(legDone("pending", {}, 1_000)).toBe(false);
+  expect(legDone("pending", undefined, 1_000)).toBe(false);
+  expect(legDone("hit", { expiryMs: 2_000 }, 1_000)).toBe(true);
+  expect(legDone("lost", undefined, 1_000)).toBe(true);
+});
+

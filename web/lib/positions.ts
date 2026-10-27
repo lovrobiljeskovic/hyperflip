@@ -29,6 +29,12 @@ export interface Row {
   dataError?: boolean;
 }
 
+/** A leg is done once its vault settled or its market's settlement deadline passed: no live
+ * price and no "Live" badge after that, whatever the mids or the kickoff say. */
+export function legDone(verdict: LegVerdict, market: { expiryMs?: number } | undefined, now: number): boolean {
+  return verdict !== "pending" || (market?.expiryMs !== undefined && now >= market.expiryMs);
+}
+
 export function legVerdict(isYes: boolean, settled: boolean, fraction: bigint | null): LegVerdict {
   if (!settled) return "pending";
   const winFraction = isYes ? WAD : 0n;
