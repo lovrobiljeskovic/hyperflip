@@ -81,7 +81,7 @@ export class ExposureBook {
     perClusterCap: bigint;
     quotaKey: string;
     perKeyCap: bigint;
-  }): { ok: true } | { ok: false; reason: "at-capacity" | "market-cap" | "cluster-cap" | "quota-cap"; headroom: bigint } {
+  }): { ok: true } | { ok: false; reason: "at-capacity" | "market-cap" | "cluster-cap" | "quota-cap"; headroom: bigint; vault?: string } {
     const { risk, vaults, allowance, perMarketCap, now, perClusterCap, quotaKey, perKeyCap } = o;
     // `headroom` is what the binding cap has left. Risk scales linearly with
     // stake, so the caller can turn it into "this ticket fits at stake X"
@@ -92,7 +92,8 @@ export class ExposureBook {
     }
     for (const v of vaults) {
       const room = perMarketCap - this.perMarket(v, now);
-      if (risk > room) return { ok: false, reason: "market-cap", headroom: room > 0n ? room : 0n };
+      // `vault` names the full market so the app can say which leg to drop.
+      if (risk > room) return { ok: false, reason: "market-cap", headroom: room > 0n ? room : 0n, vault: v };
     }
     const clusters = new Set<string>();
     for (const v of vaults) {

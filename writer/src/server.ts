@@ -205,7 +205,7 @@ async function reserveAndSign(
     reject(metrics, check.reason);
     console.log(JSON.stringify({ at: new Date(now).toISOString(), event: "quote-rejected", reason: check.reason, risk: risk.toString() }));
     const fitStake = risk > 0n ? (v.stake * check.headroom) / risk : 0n;
-    return { status: 409, json: { error: check.reason, maxStake: fitStake.toString() } };
+    return { status: 409, json: { error: check.reason, maxStake: fitStake.toString(), ...(check.vault && { vault: check.vault }) } };
   }
   const quoteId = deps.randomId();
   exposure.reserve(quoteId, risk, p.vaults, now + cfg.quoteTtlMs, userId);

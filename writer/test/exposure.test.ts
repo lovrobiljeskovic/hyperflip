@@ -31,7 +31,7 @@ test("per-market cap counts reserved + open, case-insensitive", () => {
   b.onMinted("q0", "7", 30n, [V3]);
   // market total 60; cap 80 -> risk 25 breaches V3 but not global (allowance 1000)
   const r = b.check({ ...base, risk: 25n, vaults: [V3], allowance: 1000n, perMarketCap: 80n, now: 0 });
-  assert.deepEqual(r, { ok: false, reason: "market-cap", headroom: 20n }); // cap 80 - market total 60
+  assert.deepEqual(r, { ok: false, reason: "market-cap", headroom: 20n, vault: V3 }); // cap 80 - market total 60; names the full market
   assert.equal(b.check({ ...base, risk: 25n, vaults: [V2], allowance: 1000n, perMarketCap: 80n, now: 0 }).ok, true);
 });
 

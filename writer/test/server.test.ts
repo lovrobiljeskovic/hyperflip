@@ -516,6 +516,7 @@ test("in-play leg halves the per-market cap (IN_PLAY_CAP_BPS)", async () => {
   const res = await handleQuote(inPlay, { ...body({ legs: [legOn(V1, true), legOn(V2, true)] }), stake: "20000000" } as never, "1.1.1.1");
   assert.equal(res.status, 409);
   assert.equal((res.json as { error: string }).error, "market-cap");
+  assert.equal((res.json as { vault: string }).vault, V1.toLowerCase()); // the app names the full market
 });
 
 test("GET /markets overlays the live prior on priorYes and leaves other rows untouched", () => {

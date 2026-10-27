@@ -22,6 +22,9 @@ export function errorMessage(res: Extract<QuoteResult, { ok: false }>, legs: Bui
     if (res.error === "quota-cap")
       return "This account has hit its open-ticket quota - wait for reservations to clear.";
     const fit = res.maxStake === undefined ? 0n : BigInt(res.maxStake);
+    const full = legs.find((l) => l.vault.toLowerCase() === res.vault?.toLowerCase());
+    if (full && fit > 0n) return `"${full.title}" is at the house limit - stake up to ${formatUsdc(fit)} USDC on this ticket.`;
+    if (full) return `"${full.title}" is at the house limit right now - drop it or try again later.`;
     if (fit > 0n) return `Payout too large for the house limit - stake up to ${formatUsdc(fit)} USDC on this ticket.`;
     if (res.error === "at-capacity") return "House bankroll is fully committed - try again shortly.";
     return "Payout too large for the house limit on one of these markets.";
