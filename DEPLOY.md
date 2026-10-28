@@ -135,7 +135,8 @@ with `Environment=` overrides (they beat the shared `.env`, which dotenv loads w
 | var | `writer` (998, default) | `writer-elysium` |
 | --- | --- | --- |
 | `DEPLOYMENT_FILE` | `/opt/hype/registry/deployment.hyperevm-testnet.json` | `/opt/hype/registry/deployment.elysium-testnet.json` |
-| `WRITER_RPC` | archive-capable 998 endpoint with quota | keyed Elysium (Conduit) URL |
+| `WRITER_RPC` | empty: inherits `TESTNET_RPC` (precompile-first) | keyed Elysium (Conduit) URL |
+| `ARCHIVE_RPC` | `https://hyperliquid-testnet.drpc.org` (archive node for the boot identity check) | unset: Conduit is archive |
 | `WRITER_PORT` | 8787 | 8789 (8788 and 8791+ belong to the v2 trial units under `/opt/hype-v2`) |
 | `PARLAY_INDEX_FILE` | `/opt/hype/writer/parlays.json` | `/opt/hype/writer/parlays-elysium.json` |
 | `PARLAY_INDEX_FROM_BLOCK` | a recent 998 block (the poker scans 100-block chunks; the v1 deploy block is millions back) | Elysium deploy block |

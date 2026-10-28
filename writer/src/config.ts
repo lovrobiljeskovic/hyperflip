@@ -12,6 +12,9 @@ loadDotenv({ path: rootPath(".env") });
 
 export interface WriterConfig extends Deployment {
   rpcUrl: string;
+  /** RPC list for the boot identity check, which reads vault code at the deploy block and needs
+   * an archive node (ARCHIVE_RPC). Defaults to rpcUrl, whose runtime order favours precompiles. */
+  archiveRpcUrl: string;
   writerAddress: Address;
   quoteSignerKey: `0x${string}`;
   pokerKey: `0x${string}`;
@@ -99,6 +102,7 @@ export function loadConfig(): LoadedConfig {
     infoApiUrl: process.env.INFO_API_URL ?? "https://api.hyperliquid-testnet.xyz/info",
     quoteJournalFile: rootPath(process.env.QUOTE_JOURNAL_FILE ?? "writer/quotes.jsonl"),
     rpcUrl: process.env.WRITER_RPC || requireEnv("TESTNET_RPC"),
+    archiveRpcUrl: process.env.ARCHIVE_RPC || process.env.WRITER_RPC || requireEnv("TESTNET_RPC"),
     writerAddress: requireAddress("WRITER_ADDRESS"),
     quoteSignerKey: requireKey("QUOTE_SIGNER_PRIVATE_KEY"),
     pokerKey: requireKey("POKER_PRIVATE_KEY"),

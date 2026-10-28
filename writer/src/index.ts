@@ -28,7 +28,7 @@ async function main(): Promise<void> {
   const journal = new QuoteJournal(loaded.quoteJournalFile);
   const transport = fallback(rpcUrls(loaded.rpcUrl).map((u) => http(u)));
   const publicClient = createPublicClient({ transport });
-  await verifyDeploymentRpc(publicClient, loaded);
+  await verifyDeploymentRpc(createPublicClient({ transport: fallback(rpcUrls(loaded.archiveRpcUrl).map((u) => http(u))) }), loaded);
   const chainId = loaded.chainId;
   const bankroll = await bankrollReader(publicClient, loaded);
   const cfg = await withChainMinPremium(publicClient, loaded);

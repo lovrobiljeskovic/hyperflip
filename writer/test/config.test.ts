@@ -62,7 +62,7 @@ test("writer boots with only sports configuration and filters historical public 
     MAX_STAKE: "1000000", PER_MARKET_CAP: "1000000", PER_CLUSTER_CAP: "1000000", INVITE_CODES: "test",
     WRITER_ADDRESS: "0x2222222222222222222222222222222222222222",
     QUOTE_SIGNER_PRIVATE_KEY: `0x${"11".repeat(32)}`, POKER_PRIVATE_KEY: `0x${"22".repeat(32)}`, TESTNET_RPC: "http://localhost:1",
-    WRITER_RPC: "", SPOT_PX_STALE_MS: "60000", QUOTE_JOURNAL_FILE: join(root, "quotes.jsonl"),
+    WRITER_RPC: "", ARCHIVE_RPC: "", SPOT_PX_STALE_MS: "60000", QUOTE_JOURNAL_FILE: join(root, "quotes.jsonl"),
   };
   const saved = new Map(Object.keys(values).map((key) => [key, process.env[key]]));
   try {
@@ -73,6 +73,11 @@ test("writer boots with only sports configuration and filters historical public 
     assert.equal(config.parlayVault, VAULT);
     assert.equal("inviteCodes" in config, false);
     assert.equal(config.rpcUrl, values.TESTNET_RPC);
+    // The boot identity check needs an archive node; it reads ARCHIVE_RPC and otherwise shares the runtime list.
+    assert.equal(config.archiveRpcUrl, values.TESTNET_RPC);
+    process.env.ARCHIVE_RPC = "http://archive.test:1";
+    assert.equal(loadConfig().archiveRpcUrl, "http://archive.test:1");
+    process.env.ARCHIVE_RPC = "";
     assert.equal(config.deployBlock, 1n);
     assert.deepEqual(config.corsOrigins, ["https://a.test", "https://b.test"]);
     assert.equal(config.perCodeReservedCap, undefined);
