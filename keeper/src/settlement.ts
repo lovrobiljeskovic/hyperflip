@@ -32,7 +32,7 @@ export function saveFraction(cache: Map<string, bigint>, file: string, vault: st
 }
 
 export function createSettlementLoop(state: KeeperState) {
-  const { config, chain, account, publicClient, elysiumClient, walletClient, sendTx, vaultInfo, settledVaults, lastKnownFraction, readVault } = state;
+  const { config, chain, account, publicClient, walletClient, sendTx, vaultInfo, settledVaults, lastKnownFraction, readVault } = state;
   const staleAlerted = new Set<Address>(); // suppresses repeat past-expiry alerts, per vault
   const relaySentAt = new Map<Address, number>();
   const relayedLegs = new Set<Address>();
@@ -74,6 +74,7 @@ export function createSettlementLoop(state: KeeperState) {
 
   /** relay() reads the fraction on-chain and the leg rejects a second delivery, so a stray send costs fees only. */
   async function relayIfNeeded(vault: Address): Promise<void> {
+    const elysiumClient = state.elysiumClient; // set late: relays wait for the Elysium manifest check, settlement does not
     const leg = config.legs.get(vault.toLowerCase());
     if (!leg || !elysiumClient || !config.settlementRelay || relayedLegs.has(leg)) return;
     const legSettled = await elysiumClient.readContract({ address: leg, abi: outcomeLegAbi, functionName: "settled" });

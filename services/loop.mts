@@ -13,6 +13,19 @@ export function every(ms: number, fn: () => Promise<unknown>, onError: (err: unk
   void run();
 }
 
+/** Retries fn every ms until it resolves once; each failure goes to onError, then nothing more is scheduled. */
+export function retryUntil(ms: number, fn: () => Promise<unknown>, onError: (err: unknown) => void): void {
+  const run = async () => {
+    try {
+      await fn();
+    } catch (err) {
+      onError(err);
+      setTimeout(run, ms);
+    }
+  };
+  void run();
+}
+
 export function isStalled(lastTickAt: number, now: number, thresholdMs: number): boolean {
   return now - lastTickAt > thresholdMs;
 }

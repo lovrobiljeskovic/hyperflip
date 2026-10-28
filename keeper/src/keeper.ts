@@ -1,7 +1,7 @@
 import { verifyDeploymentRpc } from "../../registry/deployment.mjs";
 import { rpcUrls } from "../../services/env.mjs";
 import { alert, log } from "../../services/log.mjs";
-import { every, watchdog } from "../../services/loop.mjs";
+import { every, retryUntil, watchdog } from "../../services/loop.mjs";
 import { createPublicClient, createWalletClient, defineChain, fallback, http, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { outcomeVaultAbi } from "./abi.js";
@@ -29,10 +29,7 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
     ? createPublicClient({ transport: fallback(rpcUrls(config.elysiumRpcUrl).map((u) => http(u))) })
     : undefined;
   if (config.chainId === config.coreChainId) await verifyDeploymentRpc(publicClient, config);
-  else {
-    if ((await publicClient.getChainId()) !== config.coreChainId) throw new Error("TESTNET_RPC chain disagrees with the manifest's coreChainId");
-    await verifyDeploymentRpc(elysiumClient!, config);
-  }
+  else if ((await publicClient.getChainId()) !== config.coreChainId) throw new Error("TESTNET_RPC chain disagrees with the manifest's coreChainId");
   const walletClient = createWalletClient({ account, chain, transport });
   // Both loops send from one account with no explicit nonce; serialize the send, not the receipt wait.
   const sendTx = createSerializer();
@@ -60,9 +57,25 @@ export async function runKeeper(config: KeeperConfig): Promise<void> {
   // Vaults seen settled: no op can be pending and 0x801 throws on the pruned coin, so they are not sampled.
   const settledVaults = new Set<Address>();
   const state: KeeperState = {
-    config, chain, account, publicClient, elysiumClient, walletClient, sendTx,
+    config, chain, account, publicClient, elysiumClient: undefined, walletClient, sendTx,
     vaultInfo, settledVaults, lastKnownFraction, readVault,
   };
+  // Elysium only serves leg reads and relay fees. Settling on 998 must not wait for Conduit (2026-10-28: its
+  // spend limit kept the keeper down 82 min), so the manifest check retries in the background and relays
+  // start once it passes. First failure alerts, the rest only log, so Telegram gets one line per outage.
+  if (elysiumClient) {
+    let alerted = false;
+    retryUntil(config.pollIntervalMs, async () => {
+      await verifyDeploymentRpc(elysiumClient, config);
+      state.elysiumClient = elysiumClient;
+      log("elysium manifest verified, relays enabled");
+    }, (err) => {
+      const msg = String((err as Error)?.message ?? err);
+      if (alerted) log("elysium manifest check still failing, relays held", msg);
+      else alert("elysium manifest check failed, relays held until it passes", msg);
+      alerted = true;
+    });
+  }
   const balance = createBalanceLoop(state);
   const settlement = createSettlementLoop(state);
 
