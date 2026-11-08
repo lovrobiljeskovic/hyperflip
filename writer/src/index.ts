@@ -29,7 +29,10 @@ async function main(): Promise<void> {
   const journal = new QuoteJournal(loaded.quoteJournalFile);
   const transport = fallback(rpcUrls(loaded.rpcUrl).map((u) => http(u)));
   const publicClient = createPublicClient({ transport });
-  await verifyDeploymentRpc(rpcUrls(loaded.archiveRpcUrl).map((u) => createPublicClient({ transport: http(u) })), loaded);
+  // One shot per endpoint: the loop inside verifyDeploymentRpc is the fallback. viem's own retries
+  // honour Retry-After, and a rate-limited endpoint (thirdweb: 429, Retry-After 169 s) turned every
+  // rotation restart into a five-minute boot (2026-11-08).
+  await verifyDeploymentRpc(rpcUrls(loaded.archiveRpcUrl).map((u) => createPublicClient({ transport: http(u, { retryCount: 0 }) })), loaded);
   const chainId = loaded.chainId;
   const bankroll = await bankrollReader(publicClient, loaded);
   const cfg = await withChainMinPremium(publicClient, loaded);
