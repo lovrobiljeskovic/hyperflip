@@ -4,7 +4,9 @@ const HYPE = { name: "HYPE", symbol: "HYPE", decimals: 18 };
 const CORE_CHAIN_ID = 998;
 const CORE_RPC = "https://rpcs.chain.link/hyperevm/testnet";
 const ELYSIUM_RPC = "https://testnet-rpc.elysium.kinetiq.xyz";
-const PURRSEC = { name: "Purrsec", url: "https://testnet.purrsec.com" };
+// ponytail: HyperEVMscan indexes mainnet only; testnet (998) addresses resolve to their mainnet
+// page there (no testnet.hyperevmscan.io exists as of 2026-11-08). Operator choice over Purrsec.
+const HYPEREVMSCAN = { name: "HyperEVMscan", url: "https://hyperevmscan.io" };
 const chainId = Number(process.env.NEXT_PUBLIC_CHAIN_ID);
 const explorerUrl = process.env.NEXT_PUBLIC_EXPLORER_URL;
 
@@ -17,7 +19,7 @@ export const appChain = defineChain({
   rpcUrls: { default: { http: [process.env.NEXT_PUBLIC_RPC_URL ?? (chainId === CORE_CHAIN_ID ? CORE_RPC : ELYSIUM_RPC)] } },
   // Elysium testnet has no published explorer yet; links that need one hide themselves.
   ...(explorerUrl ? { blockExplorers: { default: { name: "Explorer", url: explorerUrl } } }
-    : chainId === CORE_CHAIN_ID ? { blockExplorers: { default: PURRSEC } } : {}),
+    : chainId === CORE_CHAIN_ID ? { blockExplorers: { default: HYPEREVMSCAN } } : {}),
   testnet: true,
 });
 
@@ -26,7 +28,7 @@ export const coreChain = appChain.id === CORE_CHAIN_ID ? appChain : defineChain(
   name: "HyperEVM Testnet",
   nativeCurrency: HYPE,
   rpcUrls: { default: { http: [process.env.NEXT_PUBLIC_CORE_RPC_URL ?? CORE_RPC] } },
-  blockExplorers: { default: PURRSEC },
+  blockExplorers: { default: HYPEREVMSCAN },
   testnet: true,
 });
 
