@@ -334,7 +334,7 @@ function PositionsContent() {
                         </tr>
                         {isOpen && (
                           <tr className={i < rows.length - 1 ? "border-b border-line" : ""}>
-                            <td colSpan={7} className="p-0">
+                            <td colSpan={8} className="p-0">
                               <LegTable row={row} markets={marketsByVault} mids={mids} />
                             </td>
                           </tr>
