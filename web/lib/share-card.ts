@@ -10,7 +10,7 @@ export type TicketState = "open" | "won" | "lost" | "void";
 type LegInput = Pick<BuilderLeg, "isYes" | "title" | "label" | "group">;
 
 /** Pixel height of the natural (unscaled) card, mirroring the retired canvas card. */
-export const cardHeight = (legCount: number): number => legCount === 0 ? 900 : 520 + legCount * 112 + 300;
+export const cardHeight = (legCount: number): number => legCount === 0 ? 780 : 520 + legCount * 112 + 300;
 
 const toLeg = (l: LegInput): CardLeg => ({ label: l.group ? legLabel(l) : legLabel(l).toUpperCase(), title: l.title, isYes: l.isYes });
 const stakeRows = (premium: bigint, maxPayout: bigint): [string, string][] =>

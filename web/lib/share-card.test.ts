@@ -75,7 +75,7 @@ test("record card: W-L headline, chain subline, Win % and Settled rows, RANK her
   expect(s.hero).toEqual({ label: "RANK", value: "#3", tone: "accent" });
 });
 
-test("cardHeight follows the canvas card: 520 + legs × 112 + 300; record is 900", () => {
+test("cardHeight follows the canvas card: 520 + legs × 112 + 300; record is 780", () => {
   expect(cardHeight(3)).toBe(1156);
-  expect(cardHeight(0)).toBe(900);
+  expect(cardHeight(0)).toBe(780);
 });
