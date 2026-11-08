@@ -31,8 +31,14 @@ export function ticketShareText(state: TicketState, legCount: number, wonAmount?
   return `Riding a ${slip} on ${HYPERFLIP_X}`;
 }
 
-/** The ticket's page; `v` makes X refetch the preview when the state changes. */
-export const ticketUrl = (origin: string, id: bigint, state: TicketState): string => `${origin}/t/${id}?v=${state}`;
+/** A short per-share token. X caches its verdict on a page URL for days, so a link that failed
+ * its first crawl (cold card) stays blank; a fresh token per share makes every post a fresh crawl.
+ * Seconds in base 36: unique per click in practice, opaque, short. */
+export const shareToken = (nowMs = Date.now()): string => Math.floor(nowMs / 1000).toString(36);
+
+/** The ticket's page; `v` keys the card (and its cache) by state, `s` keeps X's crawl fresh. */
+export const ticketUrl = (origin: string, id: bigint, state: TicketState, token?: string): string =>
+  `${origin}/t/${id}?v=${state}${token ? `&s=${token}` : ""}`;
 
 /** The ticket card as the page advertises it (og:image), so a warm-up fetch and X hit one cache key. */
 export const ticketCardUrl = (origin: string, id: bigint, state: TicketState): string => `${origin}/t/${id}/card?v=${state}`;

@@ -1,10 +1,11 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { appChain } from "@/lib/chain";
 import { pct1, shortAddress } from "@/lib/format";
 import { recordShareText, type Entry } from "@/lib/leaderboard";
-import { warmCard, X_ICON_PATH, xIntentUrl } from "@/lib/share";
+import { shareToken, warmCard, X_ICON_PATH, xIntentUrl } from "@/lib/share";
 import { appCanonical, appHref } from "@/lib/site";
 import { useLinkX, useWalletState } from "@/lib/wallet";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,9 @@ export function ShareRecord({ entries }: { entries: Entry[] }) {
   const { ready, isConnected, address } = useWalletState();
   const { handle, avatar, canLink, link } = useLinkX();
   const entry = address ? entries.find(e => e.wallet === address.toLowerCase()) : undefined;
+  const cardUrl = entry && address ? appCanonical(`/leaderboard/${address.toLowerCase()}/card?v=${entry.wins}-${entry.losses}`) : null;
+  // Warm the record card as soon as it is known, so X's first crawl finds it cached.
+  useEffect(() => { if (cardUrl) warmCard(cardUrl); }, [cardUrl]);
   if (!ready || !isConnected || !address) return null;
 
   const identity = (
@@ -50,9 +54,7 @@ export function ShareRecord({ entries }: { entries: Entry[] }) {
     ["Win %", pct1(entry.winRate), ""],
   ];
   const text = recordShareText(entry, appChain.name);
-  const record = `${entry.wins}-${entry.losses}`;
-  const recordUrl = appCanonical(`/leaderboard/${address.toLowerCase()}?v=${record}`);
-  const cardUrl = appCanonical(`/leaderboard/${address.toLowerCase()}/card?v=${record}`);
+  const recordUrl = appCanonical(`/leaderboard/${address.toLowerCase()}?v=${entry.wins}-${entry.losses}&s=${shareToken()}`);
   const shareClass = "mono h-9 px-4 text-[11px] uppercase tracking-[0.1em]";
 
   return (
@@ -69,7 +71,7 @@ export function ShareRecord({ entries }: { entries: Entry[] }) {
         </dl>
         <div className="ml-auto flex w-full sm:w-auto">
           <Button asChild className={`${shareClass} w-full sm:w-auto`}>
-            <a href={xIntentUrl(text, recordUrl)} target="_blank" rel="noreferrer" onClick={() => warmCard(cardUrl)}><XGlyph />Share record</a>
+            <a href={xIntentUrl(text, recordUrl)} target="_blank" rel="noreferrer"><XGlyph />Share record</a>
           </Button>
         </div>
       </div>

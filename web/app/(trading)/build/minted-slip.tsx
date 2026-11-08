@@ -1,9 +1,10 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { HyperflipLogo } from "@/app/brand";
 import { formatUsdc, multiplier } from "@/lib/format";
-import { slipShareText, slipUrl, warmCard, X_ICON_PATH, xIntentUrl } from "@/lib/share";
+import { shareToken, slipShareText, slipUrl, warmCard, X_ICON_PATH, xIntentUrl } from "@/lib/share";
 import { legLabel } from "@/lib/ticket";
 import type { MintedSlip } from "./use-ticket";
 import { Button } from "@/components/ui/button";
@@ -13,13 +14,14 @@ import { CopySlipLink } from "./copy-slip-link";
 const shareClass = "mono flex h-11 items-center justify-center gap-2 rounded-[8px] border border-line text-[12px] uppercase tracking-[0.1em] text-fg transition-colors hover:border-dim";
 
 export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; onClose: () => void }) {
-  if (!slip) return null;
-  const { legs, premium, maxPayout } = slip;
   // The link rebuilds this slip in the reader's builder (while its markets last), and its link
   // preview is this same card, so the X post carries the image without a clipboard step.
-  const link = slipUrl(location.origin, legs);
-  const share = xIntentUrl(slipShareText(legs.length), link);
-  const cardUrl = link.replace("/build?", "/build/card?");
+  const link = slip ? slipUrl(location.origin, slip.legs) : null;
+  // Warm the card when the dialog opens, so X's first crawl finds it cached.
+  useEffect(() => { if (link) warmCard(link.replace("/build?", "/build/card?")); }, [link]);
+  if (!slip || !link) return null;
+  const { legs, premium, maxPayout } = slip;
+  const share = xIntentUrl(slipShareText(legs.length), `${link}&s=${shareToken()}`);
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -65,7 +67,7 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
         <div className="minted-tear" />
         <div className="px-6 pb-6">
           <div className="grid grid-cols-2 gap-2">
-            <a href={share} target="_blank" rel="noreferrer" onClick={() => warmCard(cardUrl)} className={shareClass}>
+            <a href={share} target="_blank" rel="noreferrer" className={shareClass}>
               <svg viewBox="0 0 24 24" className="size-3.5 fill-current" aria-hidden="true"><path d={X_ICON_PATH} /></svg>
               Share on X
             </a>
