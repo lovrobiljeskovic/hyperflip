@@ -73,13 +73,20 @@ export function useDisconnectAction(): () => void {
   };
 }
 
-/** The signed-in user's linked X account, and the Privy flow that links one (redirects to X).
- * Only a Privy-authenticated user can link, so `canLink` is false for a merely connected wallet. */
+/** The signed-in user's linked X account and the action that links one. A connected wallet that
+ * has not signed in to Privy yet is sent through login first (linking needs an authenticated user),
+ * so the button is always there to discover. */
 export function useLinkX(): { handle?: string; avatar?: string; canLink: boolean; link: () => void } {
+  const connect = useConnectAction();
   if (!PRIVY_ENABLED) return { canLink: false, link: () => {} };
   const { authenticated, user } = usePrivy();
   const { linkTwitter } = useLinkAccount();
-  return { handle: user?.twitter?.username ?? undefined, avatar: user?.twitter?.profilePictureUrl ?? undefined, canLink: authenticated, link: linkTwitter };
+  return {
+    handle: user?.twitter?.username ?? undefined,
+    avatar: user?.twitter?.profilePictureUrl ?? undefined,
+    canLink: true,
+    link: () => authenticated ? linkTwitter() : connect(),
+  };
 }
 
 export function useUsdc(): { address?: `0x${string}`; balance?: bigint; error: boolean } {

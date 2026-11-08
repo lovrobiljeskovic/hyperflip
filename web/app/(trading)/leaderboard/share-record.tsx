@@ -16,8 +16,8 @@ const action = "inline-flex items-center gap-2 uppercase tracking-[0.1em] text-f
 const XGlyph = () => <svg viewBox="0 0 24 24" className="size-3.5 fill-current" aria-hidden><path d={xIcon} /></svg>;
 
 /** The connected wallet's own line: rank, record, a post-to-X link and the record card as an
- * image. A signed-in wallet without X sees the link prompt: handles are what make the board worth
- * sharing, and the writer picks the link up within minutes. */
+ * image. A wallet without X sees the link prompt: handles are what make the board worth sharing,
+ * and the writer picks the link up within minutes. */
 export function ShareRecord({ entries }: { entries: WireEntry[] }) {
   const { ready, isConnected, address } = useWalletState();
   const { handle, canLink, link } = useLinkX();
