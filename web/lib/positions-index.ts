@@ -4,7 +4,6 @@ import { appChain } from "./chain";
 import { legVerdict, type Leg, type ParlayData, type Row } from "./positions";
 import { WAD } from "./format";
 import { ZERO_ADDRESS, type PositionPage, type PositionSnapshot } from "./positions-api";
-import { pool } from "./pool";
 
 const DECIMAL = /^(0|[1-9][0-9]{0,77})$/;
 const HASH = /^0x[0-9a-fA-F]{64}$/;
@@ -143,29 +142,41 @@ export function createPositionsIndex(client: PublicClient, endpoint: string, tok
       previous = BigInt(ticket.number);
     }
     const tickets = page.walletTickets.slice(0, query.limit).map(v => v.ticket);
-    const hydrated = await pool(tickets, 6, async ticket => {
-      try {
-        return await cached(`legs:${ticket.id}:${ticket.mintHash}`, 3_600_000, async () => {
-          const parlay = await readRpc(() => client.readContract({ address: PARLAY_VAULT, abi: parlayVaultAbi,
-            functionName: "parlay", args: [BigInt(ticket.number)], blockNumber: head.number! })) as ParlayData;
-          if (String(parlay.premium) !== ticket.premium ||
-              String(parlay.maxPayout) !== ticket.maxPayout || !parlay.legs.length || parlay.legs.length > 10) throw new Error("Ticket mismatch");
-          return { legs: parlay.legs, writer: parlay.writer };
-        });
-      } catch { return null; }
-    });
+    type Result = { status: "success"; result: unknown } | { status: "failure"; error: Error };
+    // One Multicall3 round trip per batch, pinned to head: a 20-ticket page is a handful of eth_calls,
+    // not ~100, which is what keeps it under a keyless provider's rate cap.
+    const multicall = (contracts: unknown[]): Promise<Result[]> =>
+      readRpc(() => client.multicall({ contracts: contracts as never, blockNumber: head.number!, allowFailure: true, batchSize: 0 }) as Promise<Result[]>);
+    const pick = <T>(batch: Promise<Result[]>, i: number, check: (r: Result) => T) => batch.then(results => check(results[i]));
+    const fresh = (key: string) => (cache.get(key)?.until ?? 0) > Date.now();
+    const settledValue = <T>(key: string) => (cache.get(key)?.value as Promise<T> | undefined)?.catch(() => null) ?? null;
+    const missingTickets = tickets.filter(t => !fresh(`legs:${t.id}:${t.mintHash}`));
+    const legsBatch = missingTickets.length ? multicall(missingTickets.map(t => ({ address: PARLAY_VAULT, abi: parlayVaultAbi, functionName: "parlay", args: [BigInt(t.number)] }))) : Promise.resolve([]);
+    missingTickets.forEach((ticket, i) => void cached(`legs:${ticket.id}:${ticket.mintHash}`, 3_600_000, () => pick(legsBatch, i, r => {
+      if (r?.status !== "success") throw r?.error ?? new Error("No result");
+      const parlay = r.result as ParlayData;
+      if (String(parlay.premium) !== ticket.premium ||
+          String(parlay.maxPayout) !== ticket.maxPayout || !parlay.legs.length || parlay.legs.length > 10) throw new Error("Ticket mismatch");
+      return { legs: parlay.legs, writer: parlay.writer };
+    })).catch(() => {}));
+    const hydrated = await Promise.all(tickets.map(t => settledValue<{ legs: Leg[]; writer: Address }>(`legs:${t.id}:${t.mintHash}`)));
     const vaults = [...new Set(hydrated.flatMap(entry => entry?.legs.map(l => l.vault.toLowerCase() as Address) ?? []))];
-    const states = await pool(vaults, 6, async vault => {
-      try {
-        // Pin both getters to one observation; a recent reorg cannot leave a permanent settled cache entry.
-        return await cached(`outcome:${head.hash}:${vault}`, 15_000, async () => {
-          const settled = await readRpc(() => client.readContract({ address: vault, abi: outcomeVaultAbi, functionName: "settled", blockNumber: head.number! }));
-          const fraction = settled ? await readRpc(() => client.readContract({ address: vault, abi: outcomeVaultAbi, functionName: "settleFractionWad", blockNumber: head.number! })) : null;
-          if (fraction !== null && (fraction < 0n || fraction > WAD)) throw new Error("Invalid fraction");
-          return { settled, fraction };
-        });
-      } catch { return null; }
-    });
+    const missingVaults = vaults.filter(v => !fresh(`outcome:${head.hash}:${v}`));
+    const outcomesBatch = missingVaults.length ? multicall(missingVaults.flatMap(address => [
+      { address, abi: outcomeVaultAbi, functionName: "settled" },
+      { address, abi: outcomeVaultAbi, functionName: "settleFractionWad" },
+    ])) : Promise.resolve([]);
+    // Pin both getters to one observation; a recent reorg cannot leave a permanent settled cache entry.
+    missingVaults.forEach((vault, i) => void cached(`outcome:${head.hash}:${vault}`, 15_000, () => outcomesBatch.then(results => {
+      const settled = results[2 * i], fraction = results[2 * i + 1];
+      if (settled?.status !== "success") throw settled?.error ?? new Error("No result");
+      if (settled.result === false) return { settled: false, fraction: null };
+      if (fraction?.status !== "success") throw fraction?.error ?? new Error("No result");
+      const wad = fraction.result as bigint;
+      if (wad < 0n || wad > WAD) throw new Error("Invalid fraction");
+      return { settled: true, fraction: wad };
+    })).catch(() => {}));
+    const states = await Promise.all(vaults.map(v => settledValue<{ settled: boolean; fraction: bigint | null }>(`outcome:${head.hash}:${v}`)));
     const outcomes = new Map(vaults.map((vault, i) => [vault, states[i]]));
     const rows: Row[] = tickets.map((ticket, i) => {
       const legs = hydrated[i]?.legs ?? [] as Leg[];

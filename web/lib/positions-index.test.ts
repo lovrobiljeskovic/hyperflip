@@ -24,19 +24,22 @@ function setup(count = 21) {
     const body = JSON.parse(String(init?.body));
     return Response.json({ data: body.variables ? { ...page, walletTickets: tickets.filter(t => BigInt(t.ticket.number) < BigInt(body.variables.before)).slice(0, body.variables.first) } : { _meta: meta } });
   });
+  const read = (functionName: string) => {
+    if (functionName === "parlay") return { writer: wallet, premium: 1000000n, maxPayout: 2000000n, status: 0,
+      legs: [{ vault, isYes: true }, { vault, isYes: false }] };
+    if (functionName === "settled") return false;
+    if (functionName === "settleFractionWad") return 10n ** 18n;
+    throw new Error("unexpected RPC");
+  };
   const client = {
     getChainId: vi.fn(async () => appChain.id),
     getBlock: vi.fn(async () => ({ number: BigInt(block), hash, timestamp: BigInt(now) })),
-    readContract: vi.fn(async ({ functionName }: { functionName: string }) => {
-      if (functionName === "parlay") return { writer: wallet, premium: 1000000n, maxPayout: 2000000n, status: 0,
-        legs: [{ vault, isYes: true }, { vault, isYes: false }] };
-      if (functionName === "settled") return false;
-      if (functionName === "settleFractionWad") return 10n ** 18n;
-      throw new Error("unexpected RPC");
-    }),
+    // Multicall3 answers every read in one eth_call; results mirror the contracts array.
+    multicall: vi.fn(async ({ contracts }: { contracts: { functionName: string }[] }): Promise<{ status: string; result?: unknown; error?: Error }[]> =>
+      contracts.map(({ functionName }) => ({ status: "success", result: read(functionName) }))),
   };
   const load = createPositionsIndex(client as never, "https://index.invalid", "secret-token", fetcher as typeof fetch);
-  return { load, page, tickets, meta, client, fetcher };
+  return { load, page, tickets, meta, client, fetcher, read };
 }
 
 test("20-ticket pages dedupe repeated legs and concurrent requests; pagination pins the snapshot", async () => {
@@ -47,7 +50,9 @@ test("20-ticket pages dedupe repeated legs and concurrent requests; pagination p
   expect(a.next).toBe("2");
   expect(a.rows[0].id).toBe(21n);
   expect(a.rows[0].legVerdicts).toEqual(["pending", "pending"]);
-  expect(s.client.readContract).toHaveBeenCalledTimes(21); // 20 tickets + one unique market.
+  expect(s.client.multicall).toHaveBeenCalledTimes(2); // one for legs, one for the unique market, pinned to head
+  expect(s.client.multicall.mock.calls.flatMap(([a]) => a.contracts).filter(c => c.functionName === "parlay")).toHaveLength(20);
+  expect(s.client.multicall.mock.calls.every(([a]) => (a as { blockNumber?: bigint }).blockNumber === BigInt(block))).toBe(true);
   expect(s.fetcher).toHaveBeenCalledTimes(2);
   const next = await s.load(query(`&before=2&block=${block}&snapshot=${hash}`));
   expect(next.rows.map(r => r.id)).toEqual([1n]);
@@ -84,20 +89,19 @@ test("reorged snapshots fail; old index heads are marked stale", async () => {
 
 test("RPC failures keep ticket shells and unknown outcomes; burnt tickets still hydrate", async () => {
   const s = setup(2);
+  const { read } = s;
   s.tickets[0].ticket.status = 1;
   s.tickets[0].ticket.burned = true;
   Object.assign(s.tickets[0].ticket, { owner: null, burnHolder: wallet });
-  s.client.readContract.mockRejectedValueOnce(new Error("Ticket RPC failed"));
+  s.client.multicall.mockImplementationOnce(async ({ contracts }) => contracts.map((_, i) => i === 0
+    ? { status: "failure", error: new Error("Ticket RPC failed") } : { status: "success", result: read("parlay") }));
   const page = await s.load(query());
   expect(page.rows).toHaveLength(2);
   expect(page.failed).toBe(1);
   expect(page.rows[0]).toMatchObject({ burned: true, dataError: true });
   const outcomes = setup(1);
-  const read = outcomes.client.readContract.getMockImplementation()!;
-  outcomes.client.readContract.mockImplementation(async args => {
-    if (args.functionName === "settled") throw new Error("RPC offline");
-    return read(args);
-  });
+  outcomes.client.multicall.mockImplementation(async ({ contracts }) => contracts.map(({ functionName }) =>
+    functionName === "settled" ? { status: "failure", error: new Error("RPC offline") } : { status: "success", result: read(functionName) }));
   expect((await outcomes.load(query())).rows[0].legVerdicts).toEqual(["unknown", "unknown"]);
 });
 
@@ -105,8 +109,8 @@ test("warm pages retain immutable legs and refresh market reads after expiry", a
   vi.useFakeTimers();
   const s = setup(2);
   await s.load(query());
-  expect(s.client.readContract).toHaveBeenCalledTimes(3);
+  expect(s.client.multicall).toHaveBeenCalledTimes(2);
   vi.setSystemTime(Date.now() + 16_000);
   await s.load(query());
-  expect(s.client.readContract).toHaveBeenCalledTimes(4);
+  expect(s.client.multicall).toHaveBeenCalledTimes(3); // legs cached; only the market states are re-read
 });

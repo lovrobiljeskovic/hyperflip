@@ -1,6 +1,7 @@
 import "server-only";
 import { createPublicClient, fallback, http } from "viem";
 import { appChain } from "@/lib/chain";
+import { MULTICALL3 } from "@/lib/contracts";
 import { createPositionsIndex, parsePositionQuery, PositionsError } from "@/lib/positions-index";
 import { encodeRow } from "@/lib/positions-api";
 
@@ -18,7 +19,7 @@ export async function GET(request: Request) {
     // hard enough to fail the first getChainId, and rpc() rethrows that as a 503.
     const rpcUrls = (process.env.POSITIONS_RPC_URL ?? appChain.rpcUrls.default.http[0])
       .split(",").map((url) => url.trim()).filter(Boolean);
-    index ??= createPositionsIndex(createPublicClient({ chain: appChain,
+    index ??= createPositionsIndex(createPublicClient({ chain: { ...appChain, contracts: { multicall3: { address: MULTICALL3 } } },
       transport: fallback(rpcUrls.map((url) => http(url, { timeout: 8_000, retryCount: 0 }))) }),
     endpoint, process.env.POSITIONS_SUBGRAPH_TOKEN);
     const page = await index(query);

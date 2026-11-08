@@ -35,3 +35,5 @@ export const outcomeVaultAbi = parseAbi([
 ]);
 
 export const STATUS = { Open: 0, Won: 1, Dead: 2, Void: 3 } as const;
+/** Multicall3 at its canonical address on 998 and Elysium. Server-side batch reads only; wagmi reads are untouched. */
+export const MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11" as const;
