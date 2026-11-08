@@ -9,8 +9,11 @@ export type CardState = { headline: string; subline: string; legs: CardLeg[]; ro
 export type TicketState = "open" | "won" | "lost" | "void";
 type LegInput = Pick<BuilderLeg, "isYes" | "title" | "label" | "group">;
 
-/** Pixel height of the natural (unscaled) card, mirroring the retired canvas card. */
-export const cardHeight = (legCount: number): number => legCount === 0 ? 780 : 520 + legCount * 112 + 300;
+/** Pixel height of the natural (unscaled) card: header, one 112px row per leg, and the stake and
+ * hero blocks only when the state has them (a link-only slip has neither). A full three-leg ticket
+ * is 1156, the height of the retired canvas card. */
+export const cardHeight = (state: Pick<CardState, "legs" | "rows" | "hero">): number =>
+  300 + state.legs.length * 112 + (state.rows.length ? 140 : 0) + (state.hero ? 200 : 0) + 180;
 
 const toLeg = (l: LegInput): CardLeg => ({ label: l.group ? legLabel(l) : legLabel(l).toUpperCase(), title: l.title, isYes: l.isYes });
 const stakeRows = (premium: bigint, maxPayout: bigint): [string, string][] =>

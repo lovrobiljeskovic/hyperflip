@@ -55,7 +55,7 @@ const TONE = { accent: C.accent, yes: C.yes, no: C.no, dim: C.dim } as const;
  * Every multi-child element is display:flex, as satori requires. */
 export async function shareCard(state: CardState) {
   const [logo, fontList] = await Promise.all([logoDataUrl(), loadFonts()]);
-  const H = cardHeight(state.legs.length);
+  const H = cardHeight(state);
   const k = (size.height - 40) / H;
   const px = (n: number) => Math.round(n * k * 100) / 100;
   const display = "Bricolage Grotesque", sans = "Instrument Sans", mono = "Martian Mono";

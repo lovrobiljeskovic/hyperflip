@@ -4,8 +4,6 @@ import Link from "next/link";
 import { HyperflipLogo } from "@/app/brand";
 import { formatUsdc, multiplier } from "@/lib/format";
 import { slipShareText, slipUrl, xIntentUrl } from "@/lib/share";
-import { renderSlipPng } from "@/lib/slip-image";
-import { useImageShare } from "@/lib/use-image-share";
 import { legLabel } from "@/lib/ticket";
 import type { MintedSlip } from "./use-ticket";
 import { Button } from "@/components/ui/button";
@@ -16,15 +14,11 @@ const shareClass = "mono flex h-11 items-center justify-center gap-2 rounded-[8p
 const xIcon = "M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z";
 
 export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; onClose: () => void }) {
-  // The link rebuilds this slip in the reader's builder (while its markets last).
-  const text = slip ? slipShareText(slip.legs.length) : "";
-  const link = slip ? slipUrl(location.origin, slip.legs) : "";
-  const { copied, imageError, canShareFiles, copyImage, shareNative } = useImageShare(
-    () => renderSlipPng({ legs: slip!.legs, premium: slip!.premium, maxPayout: slip!.maxPayout }), text, link, "hyperflip-slip.png");
-
   if (!slip) return null;
   const { legs, premium, maxPayout } = slip;
-  const share = xIntentUrl(text, link);
+  // The link rebuilds this slip in the reader's builder (while its markets last), and its link
+  // preview is this same card, so the X post carries the image without a clipboard step.
+  const share = xIntentUrl(slipShareText(legs.length), slipUrl(location.origin, legs));
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -70,26 +64,15 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
         <div className="minted-tear" />
         <div className="px-6 pb-6">
           <div className="grid grid-cols-2 gap-2">
-            {canShareFiles ? (
-              <button type="button" onClick={() => void shareNative()} className={shareClass}>
-                <svg viewBox="0 0 24 24" className="size-3.5 fill-current" aria-hidden="true"><path d={xIcon} /></svg>
-                Share on X
-              </button>
-            ) : (
-              <a href={share} target="_blank" rel="noreferrer" className={shareClass}>
-                <svg viewBox="0 0 24 24" className="size-3.5 fill-current" aria-hidden="true"><path d={xIcon} /></svg>
-                Share on X
-              </a>
-            )}
+            <a href={share} target="_blank" rel="noreferrer" className={shareClass}>
+              <svg viewBox="0 0 24 24" className="size-3.5 fill-current" aria-hidden="true"><path d={xIcon} /></svg>
+              Share on X
+            </a>
             <Button asChild className="mono h-11 text-[12px] uppercase tracking-[0.1em]"><Link href="/positions">View positions</Link></Button>
           </div>
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            <Button variant="outline" onClick={() => void copyImage()} className="mono h-11 text-[12px] uppercase tracking-[0.1em]">
-              {copied ? "Copied" : "Copy image"}
-            </Button>
+          <div className="mt-2 grid">
             <CopySlipLink legs={legs} />
           </div>
-          {imageError && <p className="mono mt-2 text-center text-[11px] text-no">Could not render the image in this browser.</p>}
         </div>
       </div>
       </DialogContent>

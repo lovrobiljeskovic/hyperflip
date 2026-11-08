@@ -75,7 +75,8 @@ test("record card: W-L headline, chain subline, Win % and Settled rows, RANK her
   expect(s.hero).toEqual({ label: "RANK", value: "#3", tone: "accent" });
 });
 
-test("cardHeight follows the canvas card: 520 + legs × 112 + 300; record is 780", () => {
-  expect(cardHeight(3)).toBe(1156);
-  expect(cardHeight(0)).toBe(780);
+test("cardHeight counts only the blocks the card has: full 3-leg ticket 1156, record 820, link-only slip 704", () => {
+  expect(cardHeight(ticketCardState(row(STATUS.Open, ["hit", "pending", "pending"]), legs, { statusLabel: "1 of 3 settled" }))).toBe(1156);
+  expect(cardHeight(recordCardState({ wins: 7, losses: 2, rank: 3, winRate: 7 / 9 }, "HyperEVM Testnet"))).toBe(820);
+  expect(cardHeight(slipCardState(legs.slice(0, 2)))).toBe(704);
 });
