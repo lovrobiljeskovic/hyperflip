@@ -68,7 +68,8 @@ export function legVerdict(isYes: boolean, settled: boolean, fraction: bigint | 
   return "fractional";
 }
 
-export async function loadRow(client: PublicClient, { id, block }: ParlayRef): Promise<Row> {
+/** One ticket's chain state without its mint block: parlay, owner/burned, per-leg verdicts. */
+export async function readTicket(client: PublicClient, id: bigint): Promise<Omit<Row, "block" | "mintedAtMs">> {
   const parlay = (await client.readContract({
     address: PARLAY_VAULT,
     abi: parlayVaultAbi,
@@ -103,9 +104,13 @@ export async function loadRow(client: PublicClient, { id, block }: ParlayRef): P
     }),
   );
 
-  const { timestamp } = await client.getBlock({ blockNumber: block });
+  return { id, parlay, burned, owner, legVerdicts };
+}
 
-  return { id, parlay, burned, owner, legVerdicts, block, mintedAtMs: Number(timestamp) * 1000 };
+export async function loadRow(client: PublicClient, { id, block }: ParlayRef): Promise<Row> {
+  const ticket = await readTicket(client, id);
+  const { timestamp } = await client.getBlock({ blockNumber: block });
+  return { ...ticket, block, mintedAtMs: Number(timestamp) * 1000 };
 }
 
 type RowView = {

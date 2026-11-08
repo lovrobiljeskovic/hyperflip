@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { ContractFunctionRevertedError, encodeErrorResult } from "viem";
-import { chanceNeeded, chanceNow, deriveRow, legDone, loadPositions, loadRow, summarizePositions, type Row } from "./positions";
+import { chanceNeeded, chanceNow, deriveRow, legDone, loadPositions, loadRow, readTicket, summarizePositions, type Row } from "./positions";
 import { DEPLOY_BLOCK, parlayVaultAbi, STATUS } from "./contracts";
 import { fetchParlays } from "./writer";
 
@@ -28,6 +28,14 @@ test("position ownership RPC failures are not treated as burned tickets", async 
     data: encodeErrorResult({ abi: parlayVaultAbi, errorName: "ERC721NonexistentToken", args: [1n] }) });
   expect((await loadRow(client(burned) as never, row)).burned).toBe(true);
   expect((await loadRow(client() as never, row)).legVerdicts).toEqual(["hit"]);
+});
+
+test("readTicket returns the row without touching blocks", async () => {
+  const noBlocks = { ...client(), getBlock: async () => { throw new Error("getBlock must not be called"); } };
+  const t = await readTicket(noBlocks as never, 1n);
+  expect(t.parlay.premium).toBe(parlay.premium);
+  expect(t.legVerdicts).toEqual(["hit"]);
+  expect(t).not.toHaveProperty("block");
 });
 
 test("position statuses retain claim, resolve, lost and refunded behavior", () => {
