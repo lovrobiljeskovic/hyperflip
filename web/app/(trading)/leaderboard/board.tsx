@@ -45,7 +45,7 @@ export async function Board({ highlight }: { highlight?: `0x${string}` } = {}) {
     <div className="min-h-screen text-[13px] text-fg">
       <main className="mx-auto max-w-[1280px] px-4 py-8 sm:px-6 sm:py-10">
         <h1 className="display text-[32px] [font-variation-settings:'wght'_700] tracking-[-0.03em]">Leaderboard</h1>
-        <p className="mt-1 text-[15px] text-dim">Every trader who minted a slip on {appChain.name}. Ranked by wins, then fewer losses.</p>
+        <p className="mt-1 text-[15px] text-dim">Every trader who minted a slip on {appChain.name}. Ranked by win rate.</p>
 
         {/* No entries but unresolved reads is a degraded load, not an empty board. */}
         {!board || (board.entries.length === 0 && board.unknown > 0) ? (

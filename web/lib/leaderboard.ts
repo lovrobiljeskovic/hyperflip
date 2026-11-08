@@ -37,8 +37,9 @@ function outcome(row: Row): Outcome {
 
 const settledOf = (e: { wins: number; losses: number }) => e.wins + e.losses;
 
-/** Every taker on the lane. Ranked by wins, then fewer losses, nothing about money; wallets with
- * nothing settled yet follow, most open slips first, so a new minter is on the board from the first slip. */
+/** Every taker on the lane. Ranked by win rate alone (1-0 outranks 5-24), ties by more wins, nothing
+ * about money or volume; wallets with nothing settled yet follow, most open slips first, so a new
+ * minter is on the board from the first slip. */
 export function aggregate(rows: Row[], exclude: ReadonlySet<string> = HOUSE_WALLETS) {
   const byWallet = new Map<string, Omit<Entry, "rank" | "winRate">>();
   let settled = 0, unknown = 0, paidOut = 0n;
@@ -60,7 +61,7 @@ export function aggregate(rows: Row[], exclude: ReadonlySet<string> = HOUSE_WALL
   const entries: Entry[] = [...byWallet.values()]
     .map(e => ({ ...e, rank: 0, winRate: settledOf(e) ? e.wins / settledOf(e) : 0 }))
     .sort((x, y) => Number(settledOf(y) > 0) - Number(settledOf(x) > 0)
-      || y.wins - x.wins || x.losses - y.losses || y.open - x.open || x.wallet.localeCompare(y.wallet))
+      || y.winRate - x.winRate || y.wins - x.wins || y.open - x.open || x.wallet.localeCompare(y.wallet))
     .map((e, i) => ({ ...e, rank: i + 1 }));
   return { entries, settled, unknown, paidOut };
 }

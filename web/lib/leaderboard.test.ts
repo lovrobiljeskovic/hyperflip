@@ -30,20 +30,25 @@ test("classifies slips like the Positions page: claimed, claimable and dead coun
   expect(paidOut).toBe(6_000_000n);
 });
 
-test("ranks by wins, then fewer losses; wallets with nothing settled trail, most open slips first", () => {
+test("ranks by win rate alone, then wins; wallets with nothing settled trail, most open slips first", () => {
   const c = `0x${"c".repeat(40)}` as const, d = `0x${"d".repeat(40)}` as const, e = `0x${"e".repeat(40)}` as const, f = `0x${"f".repeat(40)}` as const;
   const rows = [
-    row(a, STATUS.Won, ["hit"]), row(a, STATUS.Dead, ["lost"]),          // a: 1-1
-    row(b, STATUS.Won, ["hit"]), row(b, STATUS.Dead, ["lost"], 9_000_000n, 90_000_000n), // b: 1-1, bigger stake → ties a, wallet order decides
-    row(f, STATUS.Won, ["hit"]),                                         // f: 1-0 → beats a and b on fewer losses
-    row(c, STATUS.Won, ["hit"]), row(c, STATUS.Won, ["hit"]), row(c, STATUS.Dead, ["lost"]), // c: 2-1 → most wins
+    row(a, STATUS.Won, ["hit"]), row(a, STATUS.Dead, ["lost"]),          // a: 1-1 → 50%
+    row(b, STATUS.Won, ["hit"]), row(b, STATUS.Won, ["hit"]), row(b, STATUS.Dead, ["lost"], 9_000_000n, 90_000_000n), // b: 2-1 → 67%
+    row(f, STATUS.Won, ["hit"]),                                         // f: 1-0 → 100%, one slip is enough
+    ...Array.from({ length: 5 }, () => row(c, STATUS.Won, ["hit"])), ...Array.from({ length: 24 }, () => row(c, STATUS.Dead, ["lost"])), // c: 5-24 → 17%, most wins, last
     row(e, STATUS.Open, ["pending"]),                                    // e: one open slip
     row(d, STATUS.Open, ["pending"]), row(d, STATUS.Void, ["fractional"]), // d: two undecided → ahead of e
   ];
   const { entries } = aggregate(rows, new Set());
-  expect(entries.map(x => [x.rank, x.wallet])).toEqual([[1, c], [2, f], [3, a], [4, b], [5, d], [6, e]]);
+  expect(entries.map(x => [x.rank, x.wallet])).toEqual([[1, f], [2, b], [3, a], [4, c], [5, d], [6, e]]);
   expect(entries[4]).toMatchObject({ wins: 0, losses: 0, winRate: 0, open: 2 });
   expect(entries[0]).not.toHaveProperty("profit");
+});
+
+test("equal win rates rank by more wins", () => {
+  const rows = [row(a, STATUS.Won, ["hit"]), row(a, STATUS.Dead, ["lost"]), row(b, STATUS.Won, ["hit"]), row(b, STATUS.Won, ["hit"]), row(b, STATUS.Dead, ["lost"]), row(b, STATUS.Dead, ["lost"])];
+  expect(aggregate(rows, new Set()).entries.map(x => x.wallet)).toEqual([b, a]);
 });
 
 test("house wallets are excluded by default and the share text carries record and rank", () => {
