@@ -65,10 +65,23 @@ export function loadDeployment(env: Record<string, string | undefined> = process
   };
 }
 
-export async function verifyDeploymentRpc(client: {
+interface RpcReader {
   getChainId(): Promise<number>;
   getCode(args: { address: `0x${string}`; blockNumber?: bigint }): Promise<`0x${string}` | undefined>;
-}, deployment: Deployment): Promise<void> {
+}
+
+/** Tries each endpoint in order and resolves on the first that proves the deployment. A non-archive
+ * endpoint answers historical reads with latest state instead of failing (2026-11-08: Goldsky served the
+ * vault's code at pre-deploy blocks), which a fallback transport never skips, so the loop lives here. */
+export async function verifyDeploymentRpc(clients: RpcReader | RpcReader[], deployment: Deployment): Promise<void> {
+  let error: unknown = new Error("No deployment RPC configured");
+  for (const client of Array.isArray(clients) ? clients : [clients]) {
+    try { return await verifyOne(client, deployment); } catch (e) { error = e; }
+  }
+  throw error;
+}
+
+async function verifyOne(client: RpcReader, deployment: Deployment): Promise<void> {
   let chainId;
   try { chainId = await client.getChainId(); }
   catch { throw new Error("Cannot verify deployment RPC chain"); }

@@ -61,4 +61,11 @@ test("RPC verification rejects chain, address, block and unavailable history bef
     await assert.rejects(verifyDeploymentRpc({ ...client, getCode: async () => code }, deployment), /address\/block/);
   }
   await assert.rejects(verifyDeploymentRpc({ ...client, getCode: async () => { throw new Error("private RPC URL"); } }, deployment), /archive-capable/);
+  // A list is tried in order: a wrong answer (non-archive endpoint serving latest code at every block)
+  // is not an error a fallback transport would skip, so the verifier itself must move on to the next endpoint.
+  const nonArchive = { ...client, getCode: async (): Promise<`0x${string}`> => "0x1234" };
+  const dead = { ...client, getCode: async (): Promise<`0x${string}`> => { throw new Error("down"); } };
+  await verifyDeploymentRpc([nonArchive, dead, client], deployment);
+  await assert.rejects(verifyDeploymentRpc([dead, nonArchive], deployment), /address\/block/);
+  await assert.rejects(verifyDeploymentRpc([], deployment), /No deployment RPC/);
 });
