@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { cardHeight, recordCardState, slipCardState, ticketCardState, ticketState } from "./share-card";
+import { cardHeight, recordCardState, shareableTicket, slipCardState, ticketCardState, ticketState } from "./share-card";
 import { STATUS } from "./contracts";
 import type { Row } from "./positions";
 
@@ -79,4 +79,9 @@ test("cardHeight counts only the blocks the card has: full 3-leg ticket 1156, re
   expect(cardHeight(ticketCardState(row(STATUS.Open, ["hit", "pending", "pending"]), legs, { statusLabel: "1 of 3 settled" }))).toBe(1156);
   expect(cardHeight(recordCardState({ wins: 7, losses: 2, rank: 3, winRate: 7 / 9 }, "HyperEVM Testnet"))).toBe(820);
   expect(cardHeight(slipCardState(legs.slice(0, 2)))).toBe(704);
+});
+
+test("shareableTicket hides tickets the viewer doesn't own or that are still updating", () => {
+  for (const statusLabel of ["Updating outcomes", "Transferred out", "Paid to later owner"]) expect(shareableTicket({ statusLabel })).toBe(false);
+  for (const statusLabel of ["1 of 3 settled", "Claimable", "Claimed", "Lost", "Voidable", "Voided - premium refunded"]) expect(shareableTicket({ statusLabel })).toBe(true);
 });

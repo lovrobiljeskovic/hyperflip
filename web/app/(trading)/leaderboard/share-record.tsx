@@ -4,13 +4,12 @@ import Link from "next/link";
 import { appChain } from "@/lib/chain";
 import { pct1, shortAddress } from "@/lib/format";
 import { recordShareText, type Entry } from "@/lib/leaderboard";
-import { xIntentUrl } from "@/lib/share";
+import { X_ICON_PATH, xIntentUrl } from "@/lib/share";
 import { appCanonical, appHref } from "@/lib/site";
 import { useLinkX, useWalletState } from "@/lib/wallet";
 import { Button } from "@/components/ui/button";
 
-const xIcon = "M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z";
-const XGlyph = () => <svg viewBox="0 0 24 24" className="size-3 fill-current" aria-hidden><path d={xIcon} /></svg>;
+const XGlyph = () => <svg viewBox="0 0 24 24" className="size-3 fill-current" aria-hidden><path d={X_ICON_PATH} /></svg>;
 
 /** The connected wallet's own card: who you are on the board, where you stand, one way to share
  * it. Linking X is the identity's own secondary line, not a competing action. Share opens the X

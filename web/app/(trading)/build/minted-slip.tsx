@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { HyperflipLogo } from "@/app/brand";
 import { formatUsdc, multiplier } from "@/lib/format";
-import { slipShareText, slipUrl, xIntentUrl } from "@/lib/share";
+import { slipShareText, slipUrl, X_ICON_PATH, xIntentUrl } from "@/lib/share";
 import { legLabel } from "@/lib/ticket";
 import type { MintedSlip } from "./use-ticket";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,6 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { CopySlipLink } from "./copy-slip-link";
 
 const shareClass = "mono flex h-11 items-center justify-center gap-2 rounded-[8px] border border-line text-[12px] uppercase tracking-[0.1em] text-fg transition-colors hover:border-dim";
-const xIcon = "M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z";
 
 export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; onClose: () => void }) {
   if (!slip) return null;
@@ -65,7 +64,7 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
         <div className="px-6 pb-6">
           <div className="grid grid-cols-2 gap-2">
             <a href={share} target="_blank" rel="noreferrer" className={shareClass}>
-              <svg viewBox="0 0 24 24" className="size-3.5 fill-current" aria-hidden="true"><path d={xIcon} /></svg>
+              <svg viewBox="0 0 24 24" className="size-3.5 fill-current" aria-hidden="true"><path d={X_ICON_PATH} /></svg>
               Share on X
             </a>
             <Button asChild className="mono h-11 text-[12px] uppercase tracking-[0.1em]"><Link href="/positions">View positions</Link></Button>

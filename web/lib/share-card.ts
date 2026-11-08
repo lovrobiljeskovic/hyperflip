@@ -67,3 +67,7 @@ export function recordCardState(e: { wins: number; losses: number; rank: number;
     hero: { label: "RANK", value: `#${e.rank}`, tone: "accent" },
   };
 }
+
+/** Rows the holder can brag about or own up to; not tickets that moved to another wallet or whose outcome is unknown. */
+const HIDDEN = new Set(["Updating outcomes", "Transferred out", "Paid to later owner"]);
+export const shareableTicket = (view: { statusLabel: string }): boolean => !HIDDEN.has(view.statusLabel);

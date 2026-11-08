@@ -6,8 +6,10 @@ import { useAccount, usePublicClient, useWriteContract } from "wagmi";
 import { usePositions } from "./use-positions";
 import { usePositionAction } from "./use-position-action";
 import { DotLegend, LegDots, LegTable, ago } from "./leg-table";
+import { ShareTicket } from "./share-ticket";
 import { SummaryStrip } from "./summary-strip";
 import { INDEXED_POSITIONS, chanceNeeded, chanceNow, deriveRow, type Row } from "@/lib/positions";
+import { shareableTicket } from "@/lib/share-card";
 import { formatUsdc, multiplier, pct1 } from "@/lib/format";
 import { fetchMarkets, type Market, withMarketVolumes } from "@/lib/writer";
 import { fetchMarketVolumes } from "@/lib/info";
@@ -236,20 +238,25 @@ function PositionsContent() {
                         </div>
                       )}
                     </button>
-                    {view.action && (
+                    {(view.action || shareableTicket(view)) && (
                       <div className="px-4 pb-3">
-                        <ActionButton
-                          kind={view.action.kind}
-                          label={view.action.label}
-                          isPending={isPending}
-                          disabled={pending !== null}
-                          onClick={() => void act(row, view.action!.kind)}
-                          className="mono w-full rounded-[4px] px-3 py-2 text-xs"
-                        />
+                        <div className={`grid gap-2 ${view.action && shareableTicket(view) ? "grid-cols-2" : "grid-cols-1"}`}>
+                          {view.action && (
+                            <ActionButton
+                              kind={view.action.kind}
+                              label={view.action.label}
+                              isPending={isPending}
+                              disabled={pending !== null}
+                              onClick={() => void act(row, view.action!.kind)}
+                              className="mono w-full rounded-[4px] px-3 py-2 text-xs"
+                            />
+                          )}
+                          <ShareTicket row={row} view={view} className="h-9 w-full" />
+                        </div>
                         {rowError && <p className="mt-2 text-[11px] text-no">{rowError}</p>}
                       </div>
                     )}
-                    {!view.action && rowError && (
+                    {!view.action && !shareableTicket(view) && rowError && (
                       <p className="px-4 pb-3 text-[11px] text-no">{rowError}</p>
                     )}
                     {isOpen && (
@@ -263,7 +270,7 @@ function PositionsContent() {
             </div>
 
             <div className="mt-4 hidden overflow-x-auto rounded-card border border-line bg-panel md:block">
-              <table className="w-full min-w-[980px] text-left text-sm">
+              <table className="w-full min-w-[1060px] text-left text-sm">
                 <thead className="mono text-[9px] uppercase tracking-[0.16em] text-dim">
                   <tr className="border-b border-line">
                     <th className="px-5 py-3 font-normal">Ticket</th>
@@ -274,6 +281,7 @@ function PositionsContent() {
                     <th className="px-5 py-3 font-normal">Chance</th>
                     <th className="px-5 py-3 font-normal">Status</th>
                     <th className="px-5 py-3 text-right font-normal">Action</th>
+                    <th className="px-5 py-3 text-right font-normal">Share</th>
                   </tr>
                 </thead>
                 <tbody className="mono text-[12px]">
@@ -331,10 +339,13 @@ function PositionsContent() {
                             )}
                             {rowError && <p className="mt-2 text-[11px] text-no">{rowError}</p>}
                           </td>
+                          <td className="px-5 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                            <ShareTicket row={row} view={view} className="h-7 px-2.5" />
+                          </td>
                         </tr>
                         {isOpen && (
                           <tr className={i < rows.length - 1 ? "border-b border-line" : ""}>
-                            <td colSpan={8} className="p-0">
+                            <td colSpan={9} className="p-0">
                               <LegTable row={row} markets={marketsByVault} mids={mids} />
                             </td>
                           </tr>
