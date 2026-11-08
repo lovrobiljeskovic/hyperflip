@@ -53,11 +53,23 @@ const nextConfig: NextConfig = {
     ];
   },
   async rewrites() {
+    // A shared slip link (?leg=…) renders through /s, which sets the slip card as the link preview;
+    // without the query the builder stays static. Redirects run first, so on the app host
+    // /build?leg=… has already become /?leg=… by the time these match.
+    const slipLink = { type: "query" as const, key: "leg" };
     return {
       beforeFiles: [{
         source: "/",
+        has: [{ type: "host" as const, value: appHost }, slipLink],
+        destination: "/s",
+      }, {
+        source: "/",
         has: [{ type: "host" as const, value: appHost }],
         destination: "/build",
+      }, {
+        source: "/build",
+        has: [slipLink],
+        destination: "/s",
       }],
       afterFiles: [],
       fallback: [],

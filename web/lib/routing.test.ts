@@ -7,8 +7,10 @@ afterEach(() => vi.unstubAllEnvs());
 
 test("production hosts separate trading, retain legacy deep links, and leave assets alone", async () => {
   const respond = (url: string) => unstable_getResponseFromNextConfig({ url, nextConfig });
+  // A shared slip link renders through /s (its card is the link preview); the bare builder stays /build.
   const app = await respond("https://app.hyperflip.xyz/?leg=0x123");
-  expect(getRewrittenUrl(app)).toBe("https://app.hyperflip.xyz/build?leg=0x123");
+  expect(getRewrittenUrl(app)).toBe("https://app.hyperflip.xyz/s?leg=0x123");
+  expect(getRewrittenUrl(await respond("https://app.hyperflip.xyz/"))).toBe("https://app.hyperflip.xyz/build");
   for (const host of ["hyperflip.xyz", "www.hyperflip.xyz", "overround.xyz", "www.overround.xyz"]) {
     for (const path of ["build", "positions", "pricing"]) {
       const response = await respond(`https://${host}/${path}?leg=0x123`);
