@@ -24,31 +24,31 @@ test("classifies slips like the Positions page: claimed, claimable and dead coun
   ];
   const { entries, settled, unknown, paidOut } = aggregate(rows, new Set());
   expect(entries).toHaveLength(1);
-  expect(entries[0]).toMatchObject({ rank: 1, wallet: a, wins: 2, losses: 2, winRate: 0.5, staked: 4_000_000n, open: 3 });
-  // profit = 2 × (3 − 1) − 2 × 1 = 2 USDC
-  expect(entries[0].profit).toBe(2_000_000n);
+  expect(entries[0]).toMatchObject({ rank: 1, wallet: a, wins: 2, losses: 2, winRate: 0.5, open: 3 });
   expect(settled).toBe(4);
   expect(unknown).toBe(1);
   expect(paidOut).toBe(6_000_000n);
 });
 
-test("ranks by wins, then win rate, then profit; wallets with nothing settled trail, most open slips first", () => {
-  const c = `0x${"c".repeat(40)}` as const, d = `0x${"d".repeat(40)}` as const, e = `0x${"e".repeat(40)}` as const;
+test("ranks by wins, then fewer losses; wallets with nothing settled trail, most open slips first", () => {
+  const c = `0x${"c".repeat(40)}` as const, d = `0x${"d".repeat(40)}` as const, e = `0x${"e".repeat(40)}` as const, f = `0x${"f".repeat(40)}` as const;
   const rows = [
     row(a, STATUS.Won, ["hit"]), row(a, STATUS.Dead, ["lost"]),          // a: 1-1
-    row(b, STATUS.Won, ["hit"]),                                         // b: 1-0 → beats a on win rate
+    row(b, STATUS.Won, ["hit"]), row(b, STATUS.Dead, ["lost"], 9_000_000n, 90_000_000n), // b: 1-1, bigger stake → ties a, wallet order decides
+    row(f, STATUS.Won, ["hit"]),                                         // f: 1-0 → beats a and b on fewer losses
     row(c, STATUS.Won, ["hit"]), row(c, STATUS.Won, ["hit"]), row(c, STATUS.Dead, ["lost"]), // c: 2-1 → most wins
     row(e, STATUS.Open, ["pending"]),                                    // e: one open slip
     row(d, STATUS.Open, ["pending"]), row(d, STATUS.Void, ["fractional"]), // d: two undecided → ahead of e
   ];
   const { entries } = aggregate(rows, new Set());
-  expect(entries.map(x => [x.rank, x.wallet])).toEqual([[1, c], [2, b], [3, a], [4, d], [5, e]]);
-  expect(entries[3]).toMatchObject({ wins: 0, losses: 0, winRate: 0, open: 2, profit: 0n, staked: 0n });
+  expect(entries.map(x => [x.rank, x.wallet])).toEqual([[1, c], [2, f], [3, a], [4, b], [5, d], [6, e]]);
+  expect(entries[4]).toMatchObject({ wins: 0, losses: 0, winRate: 0, open: 2 });
+  expect(entries[0]).not.toHaveProperty("profit");
 });
 
 test("house wallets are excluded by default and the share text carries record and rank", () => {
   const house = [...HOUSE_WALLETS][0] as `0x${string}`;
   const { entries } = aggregate([row(house, STATUS.Won, ["hit"]), row(a, STATUS.Won, ["hit"])]);
   expect(entries.map(e => e.wallet)).toEqual([a]);
-  expect(recordShareText(entries[0], "HyperEVM Testnet")).toBe("1-0 on @hyperflip_xyz (#1 on HyperEVM Testnet)");
+  expect(recordShareText(entries[0], "HyperEVM Testnet")).toBe("1-0 on @hyperflip_xyz, #1 on HyperEVM Testnet");
 });

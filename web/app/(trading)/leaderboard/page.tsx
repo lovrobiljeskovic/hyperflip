@@ -5,7 +5,7 @@ import { loadLeaderboardRows } from "@/lib/leaderboard-source";
 import { loadIdentities, type Identities, type Identity } from "@/lib/identities";
 import { formatUsdc, pct1, shortAddress } from "@/lib/format";
 import { appHref, appPageMetadata } from "@/lib/site";
-import { ShareRecord, type WireEntry } from "./share-record";
+import { ShareRecord } from "./share-record";
 
 // ISR: the scan and reads run at most once a minute, never per view. Nested metadata replaces the
 // trading layout's noindex: this page is the one app page meant to be found and linked.
@@ -17,8 +17,6 @@ export const metadata = {
 
 const cell = "px-5 py-4";
 const head = "px-5 py-3 font-normal";
-const signed = (v: bigint) => `${v < 0n ? "−" : "+"}${formatUsdc(v < 0n ? -v : v)}`;
-const profitClass = (v: bigint) => v > 0n ? "text-yes" : v < 0n ? "text-no" : "text-dim";
 
 /** A linked X account shows as avatar + handle with the address one glyph away; otherwise the
  * short address linking to the explorer. Plain <img>: X serves `_normal` 48 px avatars. */
@@ -39,7 +37,6 @@ function Wallet({ wallet, identity }: { wallet: string; identity?: Identity }) {
 
 const settledOf = (e: Entry) => e.wins + e.losses > 0;
 const winPct = (e: Entry) => settledOf(e) ? pct1(e.winRate) : "—";
-const profitOf = (e: Entry) => settledOf(e) ? signed(e.profit) : "—";
 
 export default async function LeaderboardPage() {
   let board: ReturnType<typeof aggregate> | null = null;
@@ -54,7 +51,7 @@ export default async function LeaderboardPage() {
     <div className="min-h-screen text-[13px] text-fg">
       <main className="mx-auto max-w-[1280px] px-4 py-8 sm:px-6 sm:py-10">
         <h1 className="display text-[32px] [font-variation-settings:'wght'_700] tracking-[-0.03em]">Leaderboard</h1>
-        <p className="mt-1 text-[15px] text-dim">Every trader who minted a slip on {appChain.name}. Ranked by wins, then win rate.</p>
+        <p className="mt-1 text-[15px] text-dim">Every trader who minted a slip on {appChain.name}. Ranked by wins, then fewer losses.</p>
 
         {/* No entries but unresolved reads is a degraded load, not an empty board. */}
         {!board || (board.entries.length === 0 && board.unknown > 0) ? (
@@ -79,7 +76,7 @@ export default async function LeaderboardPage() {
               ))}
             </div>
 
-            <ShareRecord entries={board.entries.map(wire)} />
+            <ShareRecord entries={board.entries} />
 
             {/* Mobile: one card per wallet. */}
             <div className="mt-4 flex flex-col gap-3 md:hidden">
@@ -89,13 +86,9 @@ export default async function LeaderboardPage() {
                     <span><span className={e.rank <= 3 ? "text-accent" : "text-dim"}>#{e.rank}</span> <Wallet wallet={e.wallet} identity={identities[e.wallet]} /></span>
                     <span>{e.wins}-{e.losses}</span>
                   </div>
-                  <div className="mt-3 grid grid-cols-3 gap-2">
-                    {([["Win %", winPct(e), ""], ["Net profit", profitOf(e), profitClass(e.profit)], ["Staked", formatUsdc(e.staked), ""]] as const).map(([label, value, cls]) => (
-                      <div key={label}>
-                        <p className="text-[9px] uppercase tracking-[0.16em] text-dim">{label}</p>
-                        <p className={`mt-0.5 ${cls}`}>{value}</p>
-                      </div>
-                    ))}
+                  <div className="mt-3">
+                    <p className="text-[9px] uppercase tracking-[0.16em] text-dim">Win %</p>
+                    <p className="mt-0.5">{winPct(e)}</p>
                   </div>
                 </div>
               ))}
@@ -109,8 +102,6 @@ export default async function LeaderboardPage() {
                     <th className={head}>Trader</th>
                     <th className={`${head} text-right`}>W-L</th>
                     <th className={`${head} text-right`}>Win %</th>
-                    <th className={`${head} text-right`}>Net profit</th>
-                    <th className={`${head} text-right`}>Staked</th>
                   </tr>
                 </thead>
                 <tbody className="mono text-[12px]">
@@ -120,8 +111,6 @@ export default async function LeaderboardPage() {
                       <td className={cell}><Wallet wallet={e.wallet} identity={identities[e.wallet]} /></td>
                       <td className={`${cell} text-right`}>{e.wins}-{e.losses}</td>
                       <td className={`${cell} text-right`}>{winPct(e)}</td>
-                      <td className={`${cell} text-right ${profitClass(e.profit)}`}>{profitOf(e)}</td>
-                      <td className={`${cell} text-right text-dim`}>{formatUsdc(e.staked)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -129,7 +118,7 @@ export default async function LeaderboardPage() {
             </div>
 
             <p className="mt-4 text-xs text-dim">
-              Record belongs to the wallet that minted the slip. Open and voided slips don&apos;t count. USDC. Updates every minute.
+              Record belongs to the wallet that minted the slip. Open and voided slips don&apos;t count. Updates every minute.
               {board.unknown > 0 && ` ${board.unknown} ${board.unknown === 1 ? "slip is" : "slips are"} still updating.`}
             </p>
           </>
@@ -137,8 +126,4 @@ export default async function LeaderboardPage() {
       </main>
     </div>
   );
-}
-
-function wire(e: Entry): WireEntry {
-  return { ...e, profit: String(e.profit), staked: String(e.staked) };
 }
