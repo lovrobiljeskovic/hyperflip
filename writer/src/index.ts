@@ -19,7 +19,8 @@ import { newMetrics, startServer, type Metrics, type QuoteDeps } from "./server.
 import { readLegStates } from "./settlement.js";
 import { RateLimiter, sendInviteEmail, Waitlist } from "./waitlist.js";
 import { GoogleSheetsWaitlist } from "./googleSheets.js";
-import { privyAuthenticator } from "./auth.js";
+import { privyAuthenticator, privyClient } from "./auth.js";
+import { identityDirectory } from "./identities.js";
 
 const RECEIPT_TIMEOUT_MS = 60_000;
 
@@ -40,6 +41,7 @@ async function main(): Promise<void> {
   const feed = priceFeed(cfg, publicClient);
 
   let seeded = false;
+  const privy = cfg.privyAppId && cfg.privyAppSecret ? privyClient(cfg.privyAppId, cfg.privyAppSecret) : undefined;
   const deps: QuoteDeps = {
     cfg,
     exposure,
@@ -65,7 +67,8 @@ async function main(): Promise<void> {
       : undefined,
     signupLimiter: new RateLimiter(5, 60 * 60 * 1000),
     badInviteLimiter: new RateLimiter(20, 60 * 60 * 1000),
-    authenticate: cfg.privyAppId && cfg.privyAppSecret ? privyAuthenticator(cfg.privyAppId, cfg.privyAppSecret) : undefined,
+    authenticate: privy ? privyAuthenticator(privy) : undefined,
+    identities: privy ? identityDirectory(privy) : undefined,
     quoteLimiter: new RateLimiter(300, 60 * 60 * 1000),
     parlaysOf: (taker) => poker.parlaysOf(taker),
     livePriorYes: feed.livePriorYes,

@@ -239,6 +239,14 @@ test("HTTP smoke: /quote, /health, /metrics, bad-json, unknown route", async () 
     const notFound = await fetch(`${base}/nope`);
     assert.equal(notFound.status, 404);
 
+    const noPrivy = await fetch(`${base}/identities`);
+    assert.equal(noPrivy.status, 200);
+    assert.deepEqual(await noPrivy.json(), {}); // no Privy configured: empty map, still 200
+    d.identities = async () => ({ [TAKER.toLowerCase()]: { username: "taker_x", name: null, avatar: null } });
+    const ids = await fetch(`${base}/identities`);
+    assert.equal(ids.headers.get("access-control-allow-origin"), "*");
+    assert.deepEqual(await ids.json(), { [TAKER.toLowerCase()]: { username: "taker_x", name: null, avatar: null } });
+
     d.parlaysOf = (taker) => (taker.toLowerCase() === TAKER.toLowerCase() ? [{ id: 7n, block: 120n }] : []);
     const parlays = await fetch(`${base}/parlays?taker=${TAKER}`);
     assert.equal(parlays.status, 200);

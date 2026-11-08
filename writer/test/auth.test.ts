@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { test } from "node:test";
-import { privyAuthenticator } from "../src/auth.js";
+import { privyAuthenticator, privyClient } from "../src/auth.js";
 
 test("Privy verifies signatures, app, expiry and current verified links before admission", async t => {
   const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
@@ -28,7 +28,7 @@ test("Privy verifies signatures, app, expiry and current verified links before a
     if (fail) return Response.json({ error: "unavailable" }, { status: 503 });
     return Response.json({ id: userId, is_guest: isGuest, created_at: now, linked_accounts });
   });
-  const authenticate = privyAuthenticator("test-app", "test-secret");
+  const authenticate = privyAuthenticator(privyClient("test-app", "test-secret"));
   assert.deepEqual(await authenticate(token()), { userId, emails: ["approved@example.com"], wallets: [wallet] });
   linked_accounts = [];
   assert.deepEqual(await authenticate(token()), { userId, emails: [], wallets: [] });

@@ -10,6 +10,7 @@ import { quoteDigest, type ParlayQuote, type QuoteLeg, type QuoteRecord } from "
 import type { LegPriceObservation } from "./infoApi.js";
 import { isValidEmail, validCohort, type RateLimiter, type Waitlist } from "./waitlist.js";
 import type { AuthenticatedAccount } from "./auth.js";
+import type { IdentityMap } from "./identities.js";
 
 export interface Metrics {
   quoted: number;
@@ -42,6 +43,8 @@ export interface QuoteDeps {
   waitlist: Waitlist;
   sendInvite?(email: string): Promise<void>;
   authenticate?(token: string): Promise<AuthenticatedAccount | null>;
+  /** Wallet → linked X account for the leaderboard (GET /identities); absent without Privy. */
+  identities?(): Promise<IdentityMap>;
   signupLimiter: RateLimiter;
   syncWaitlist?(): Promise<void>;
   badInviteLimiter: RateLimiter;
@@ -453,6 +456,7 @@ export function startServer(deps: QuoteDeps, port: number, health: () => unknown
       return { status: 200, json: deps.parlaysOf(taker).map((p) => ({ id: p.id.toString(), block: p.block.toString() })) };
     },
     "GET /markets": () => ({ status: 200, json: marketsJson(deps), headers: { "Access-Control-Allow-Origin": "*" } }),
+    "GET /identities": async () => ({ status: 200, json: (await deps.identities?.()) ?? {}, headers: { "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=60" } }),
     "GET /limits": () => {
       // Caps are on house risk (maxPayout - premium). bankroll is the cached
       // allowance/balance room from the last quote, null before the first one;

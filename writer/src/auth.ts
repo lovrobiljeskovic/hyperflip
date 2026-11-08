@@ -7,8 +7,11 @@ export interface AuthenticatedAccount {
   wallets: string[];
 }
 
-export function privyAuthenticator(appId: string, appSecret: string) {
-  const client = new PrivyClient({ appId, appSecret, timeout: 5_000, maxRetries: 0 });
+export function privyClient(appId: string, appSecret: string): PrivyClient {
+  return new PrivyClient({ appId, appSecret, timeout: 5_000, maxRetries: 0 });
+}
+
+export function privyAuthenticator(client: PrivyClient) {
   return async (token: string): Promise<AuthenticatedAccount | null> => {
     let claims;
     try { claims = await client.utils().auth().verifyAccessToken(token); }
