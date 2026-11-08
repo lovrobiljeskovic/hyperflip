@@ -20,6 +20,8 @@ export type Entry = {
   wins: number;
   losses: number;
   winRate: number;
+  profit: bigint; // Σ(maxPayout − premium) over wins − Σ premium over losses
+  staked: bigint; // Σ premium over settled (won + lost) slips
   open: number;   // slips not yet decided (open, void or still updating)
 };
 
@@ -37,8 +39,8 @@ function outcome(row: Row): Outcome {
 
 const settledOf = (e: { wins: number; losses: number }) => e.wins + e.losses;
 
-/** Every taker on the lane. Ranked by win rate alone (1-0 outranks 5-24), ties by more wins, nothing
- * about money or volume; wallets with nothing settled yet follow, most open slips first, so a new
+/** Every taker on the lane. Ranked by win rate alone (1-0 outranks 5-24), ties by more wins; money is shown but
+ * never ranks; wallets with nothing settled yet follow, most open slips first, so a new
  * minter is on the board from the first slip. */
 export function aggregate(rows: Row[], exclude: ReadonlySet<string> = HOUSE_WALLETS) {
   const byWallet = new Map<string, Omit<Entry, "rank" | "winRate">>();
@@ -46,7 +48,7 @@ export function aggregate(rows: Row[], exclude: ReadonlySet<string> = HOUSE_WALL
   for (const row of rows) {
     const wallet = row.taker?.toLowerCase();
     if (!wallet || exclude.has(wallet)) continue;
-    const e = byWallet.get(wallet) ?? { wallet: wallet as `0x${string}`, wins: 0, losses: 0, open: 0 };
+    const e = byWallet.get(wallet) ?? { wallet: wallet as `0x${string}`, wins: 0, losses: 0, profit: 0n, staked: 0n, open: 0 };
     byWallet.set(wallet, e);
     const result = outcome(row);
     if (result === null || result === "unknown") {
@@ -54,9 +56,11 @@ export function aggregate(rows: Row[], exclude: ReadonlySet<string> = HOUSE_WALL
       e.open++;
       continue;
     }
+    const { premium, maxPayout } = row.parlay;
     settled++;
-    if (result === "won") { e.wins++; paidOut += row.parlay.maxPayout; }
-    else e.losses++;
+    e.staked += premium;
+    if (result === "won") { e.wins++; e.profit += maxPayout - premium; paidOut += maxPayout; }
+    else { e.losses++; e.profit -= premium; }
   }
   const entries: Entry[] = [...byWallet.values()]
     .map(e => ({ ...e, rank: 0, winRate: settledOf(e) ? e.wins / settledOf(e) : 0 }))

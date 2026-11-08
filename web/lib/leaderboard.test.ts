@@ -24,7 +24,9 @@ test("classifies slips like the Positions page: claimed, claimable and dead coun
   ];
   const { entries, settled, unknown, paidOut } = aggregate(rows, new Set());
   expect(entries).toHaveLength(1);
-  expect(entries[0]).toMatchObject({ rank: 1, wallet: a, wins: 2, losses: 2, winRate: 0.5, open: 3 });
+  expect(entries[0]).toMatchObject({ rank: 1, wallet: a, wins: 2, losses: 2, winRate: 0.5, staked: 4_000_000n, open: 3 });
+  // profit = 2 × (3 − 1) − 2 × 1 = 2 USDC
+  expect(entries[0].profit).toBe(2_000_000n);
   expect(settled).toBe(4);
   expect(unknown).toBe(1);
   expect(paidOut).toBe(6_000_000n);
@@ -42,8 +44,7 @@ test("ranks by win rate alone, then wins; wallets with nothing settled trail, mo
   ];
   const { entries } = aggregate(rows, new Set());
   expect(entries.map(x => [x.rank, x.wallet])).toEqual([[1, f], [2, b], [3, a], [4, c], [5, d], [6, e]]);
-  expect(entries[4]).toMatchObject({ wins: 0, losses: 0, winRate: 0, open: 2 });
-  expect(entries[0]).not.toHaveProperty("profit");
+  expect(entries[4]).toMatchObject({ wins: 0, losses: 0, winRate: 0, open: 2, profit: 0n, staked: 0n });
 });
 
 test("equal win rates rank by more wins", () => {
