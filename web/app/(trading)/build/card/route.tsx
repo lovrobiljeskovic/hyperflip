@@ -9,5 +9,5 @@ export const runtime = "nodejs";
 export async function GET(request: Request) {
   const card = await loadSlipCard(new URL(request.url).search);
   const image = card ? await shareCard(card) : await ogCard(`Build a slip on ${appChain.name}.`, `Combos on HIP-4 markets · ${appHost}`);
-  return new Response(image.body, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=300, s-maxage=300" } });
+  return new Response(image.body, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=60, s-maxage=600, stale-while-revalidate=86400" } });
 }

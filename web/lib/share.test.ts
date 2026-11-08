@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { slipShareText, slipUrl, ticketShareText, ticketUrl, xIntentUrl } from "./share";
+import { slipShareText, slipUrl, ticketCardUrl, ticketShareText, ticketUrl, xIntentUrl } from "./share";
 
 test("share text names the leg count and the intent carries text and link", () => {
   const text = slipShareText(3);
@@ -23,4 +23,6 @@ test("ticketShareText per state and ticketUrl carries the state as a cache-buste
   expect(ticketShareText("lost", 2)).toBe("Lost a 2-leg slip on @hyperflip_xyz");
   expect(ticketShareText("void", 4)).toBe("4-leg slip voided on @hyperflip_xyz");
   expect(ticketUrl("https://hyperflip.xyz", 7n, "won")).toBe("https://hyperflip.xyz/t/7?v=won");
+  // The card URL the page advertises as og:image, so a warm-up fetch hits the same cache key.
+  expect(ticketCardUrl("https://hyperflip.xyz", 7n, "won")).toBe("https://hyperflip.xyz/t/7/card?v=won");
 });

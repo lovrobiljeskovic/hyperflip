@@ -33,3 +33,12 @@ export function ticketShareText(state: TicketState, legCount: number, wonAmount?
 
 /** The ticket's page; `v` makes X refetch the preview when the state changes. */
 export const ticketUrl = (origin: string, id: bigint, state: TicketState): string => `${origin}/t/${id}?v=${state}`;
+
+/** The ticket card as the page advertises it (og:image), so a warm-up fetch and X hit one cache key. */
+export const ticketCardUrl = (origin: string, id: bigint, state: TicketState): string => `${origin}/t/${id}/card?v=${state}`;
+
+/** Fire-and-forget fetch of a card before the composer opens: the first render is a cold start
+ * (~3 s) that X's crawler may not wait for; warming it leaves the PNG in the CDN cache. */
+export function warmCard(url: string): void {
+  try { void fetch(url, { mode: "no-cors" }).catch(() => {}); } catch { /* no fetch (SSR) */ }
+}

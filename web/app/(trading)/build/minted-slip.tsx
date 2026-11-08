@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { HyperflipLogo } from "@/app/brand";
 import { formatUsdc, multiplier } from "@/lib/format";
-import { slipShareText, slipUrl, X_ICON_PATH, xIntentUrl } from "@/lib/share";
+import { slipShareText, slipUrl, warmCard, X_ICON_PATH, xIntentUrl } from "@/lib/share";
 import { legLabel } from "@/lib/ticket";
 import type { MintedSlip } from "./use-ticket";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,9 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
   const { legs, premium, maxPayout } = slip;
   // The link rebuilds this slip in the reader's builder (while its markets last), and its link
   // preview is this same card, so the X post carries the image without a clipboard step.
-  const share = xIntentUrl(slipShareText(legs.length), slipUrl(location.origin, legs));
+  const link = slipUrl(location.origin, legs);
+  const share = xIntentUrl(slipShareText(legs.length), link);
+  const cardUrl = link.replace("/build?", "/build/card?");
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -63,7 +65,7 @@ export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; o
         <div className="minted-tear" />
         <div className="px-6 pb-6">
           <div className="grid grid-cols-2 gap-2">
-            <a href={share} target="_blank" rel="noreferrer" className={shareClass}>
+            <a href={share} target="_blank" rel="noreferrer" onClick={() => warmCard(cardUrl)} className={shareClass}>
               <svg viewBox="0 0 24 24" className="size-3.5 fill-current" aria-hidden="true"><path d={X_ICON_PATH} /></svg>
               Share on X
             </a>

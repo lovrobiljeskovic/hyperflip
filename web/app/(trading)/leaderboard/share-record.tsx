@@ -4,7 +4,7 @@ import Link from "next/link";
 import { appChain } from "@/lib/chain";
 import { pct1, shortAddress } from "@/lib/format";
 import { recordShareText, type Entry } from "@/lib/leaderboard";
-import { X_ICON_PATH, xIntentUrl } from "@/lib/share";
+import { warmCard, X_ICON_PATH, xIntentUrl } from "@/lib/share";
 import { appCanonical, appHref } from "@/lib/site";
 import { useLinkX, useWalletState } from "@/lib/wallet";
 import { Button } from "@/components/ui/button";
@@ -50,7 +50,9 @@ export function ShareRecord({ entries }: { entries: Entry[] }) {
     ["Win %", pct1(entry.winRate), ""],
   ];
   const text = recordShareText(entry, appChain.name);
-  const recordUrl = appCanonical(`/leaderboard/${address.toLowerCase()}?v=${entry.wins}-${entry.losses}`);
+  const record = `${entry.wins}-${entry.losses}`;
+  const recordUrl = appCanonical(`/leaderboard/${address.toLowerCase()}?v=${record}`);
+  const cardUrl = appCanonical(`/leaderboard/${address.toLowerCase()}/card?v=${record}`);
   const shareClass = "mono h-9 px-4 text-[11px] uppercase tracking-[0.1em]";
 
   return (
@@ -67,7 +69,7 @@ export function ShareRecord({ entries }: { entries: Entry[] }) {
         </dl>
         <div className="ml-auto flex w-full sm:w-auto">
           <Button asChild className={`${shareClass} w-full sm:w-auto`}>
-            <a href={xIntentUrl(text, recordUrl)} target="_blank" rel="noreferrer"><XGlyph />Share record</a>
+            <a href={xIntentUrl(text, recordUrl)} target="_blank" rel="noreferrer" onClick={() => warmCard(cardUrl)}><XGlyph />Share record</a>
           </Button>
         </div>
       </div>

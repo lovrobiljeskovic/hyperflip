@@ -9,5 +9,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ wal
   const found = wallet && await loadRecordCard(wallet);
   if (!found) return new Response("Not found", { status: 404 });
   const image = await shareCard(found.card);
-  return new Response(image.body, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=60, s-maxage=60" } });
+  return new Response(image.body, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=60, s-maxage=600, stale-while-revalidate=86400" } });
 }

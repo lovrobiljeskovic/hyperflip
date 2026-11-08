@@ -10,5 +10,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const card = id === null ? null : await loadTicketCard(id);
   if (!card) return new Response("Not found", { status: 404 });
   const image = await shareCard(card);
-  return new Response(image.body, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=60, s-maxage=60" } });
+  return new Response(image.body, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=60, s-maxage=600, stale-while-revalidate=86400" } });
 }
