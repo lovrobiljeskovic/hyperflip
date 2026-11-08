@@ -2,23 +2,30 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { appChain } from "@/lib/chain";
+import { CARD_SIZE } from "@/lib/og";
 import { appCanonical, appHref, appPageMetadata } from "@/lib/site";
 import { parseTicketId } from "@/lib/ticket-card";
 
 export const revalidate = 60;
 
-export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ v?: string | string[] }> };
+
+export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
   const { id } = await params;
   const base = appPageMetadata(`Slip #${id}`, `A slip on ${appChain.name}.`, `/t/${id}`);
+  // X re-hosts preview images keyed by their URL, so the share link's `v` (ticket state) rides onto
+  // the card URL too; otherwise a slip shared open and again won could keep the old picture.
+  const v = String((await searchParams).v ?? "");
+  const bust = /^[a-z0-9-]{1,24}$/.test(v) ? `?v=${v}` : "";
   // Absolute on purpose: a metadataBase with a path (local /build) would otherwise prefix it.
-  const image = { url: appCanonical(`/t/${id}/card`), width: 1200, height: 630, alt: `Slip #${id}` };
+  const image = { url: appCanonical(`/t/${id}/card${bust}`), ...CARD_SIZE, alt: `Slip #${id}` };
   return { ...base, openGraph: { ...base.openGraph, images: [image] }, twitter: { ...base.twitter, images: [image] } };
 }
 
 /** The link exists for its preview card (card/route.tsx beside this file). The page itself must
  * answer 200 with HTML, not redirect: crawlers follow redirects and would read the target's tags
  * instead. So it shows the same card and points at the app. */
-export default async function TicketPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function TicketPage({ params }: Props) {
   const { id } = await params;
   if (parseTicketId(id) === null) notFound();
   return (

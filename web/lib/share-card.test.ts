@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { cardHeight, recordCardState, shareableTicket, slipCardState, ticketCardState, ticketState } from "./share-card";
+import { recordCardState, shareableTicket, slipCardState, ticketCardState, ticketState } from "./share-card";
 import { STATUS } from "./contracts";
 import type { Row } from "./positions";
 
@@ -73,12 +73,6 @@ test("record card: W-L headline, chain subline, Win % and Settled rows, RANK her
   expect(s.legs).toEqual([]);
   expect(s.rows).toEqual([["Win %", "77.8%"], ["Settled", "9"]]);
   expect(s.hero).toEqual({ label: "RANK", value: "#3", tone: "accent" });
-});
-
-test("cardHeight counts only the blocks the card has: full 3-leg ticket 1156, record 820, link-only slip 704", () => {
-  expect(cardHeight(ticketCardState(row(STATUS.Open, ["hit", "pending", "pending"]), legs, { statusLabel: "1 of 3 settled" }))).toBe(1156);
-  expect(cardHeight(recordCardState({ wins: 7, losses: 2, rank: 3, winRate: 7 / 9 }, "HyperEVM Testnet"))).toBe(820);
-  expect(cardHeight(slipCardState(legs.slice(0, 2)))).toBe(704);
 });
 
 test("shareableTicket hides tickets the viewer doesn't own or that are still updating", () => {

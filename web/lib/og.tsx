@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ImageResponse } from "next/og";
-import { cardHeight, type CardState } from "./share-card";
+import type { CardState } from "./share-card";
 
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
@@ -23,7 +23,8 @@ const FONT_FILES: [string, string, Font["weight"]][] = [
  * all, so the files ship with the app instead of being fetched. Read once per process. */
 let fonts: Promise<Font[]> | undefined;
 const loadFonts = () => (fonts ??= Promise.all(FONT_FILES.map(async ([name, file, weight]) =>
-  ({ name, weight, style: "normal" as const, data: await readFile(join(process.cwd(), "assets/fonts", file)) }))));
+  ({ name, weight, style: "normal" as const, data: await readFile(join(process.cwd(), "assets/fonts", file)) })))
+  .catch((e) => { fonts = undefined; throw e; }));
 
 /** Static page cards: landing, build, leaderboard. */
 export async function ogCard(headline: string, subtitle: string) {
@@ -45,70 +46,93 @@ export async function ogCard(headline: string, subtitle: string) {
 }
 
 const C = { ink: "#0d0f0c", panel: "#151912", line: "#30362b", fg: "#f1f4eb", dim: "#9ca592", accent: "#c8f36a", yes: "#44d17a", no: "#ff5d6c" } as const;
-const W = 1000; // natural card width; the canvas card was 1080 with 40px ink margins
-const PAD = 72;
 const TONE = { accent: C.accent, yes: C.yes, no: C.no, dim: C.dim } as const;
+/** Share cards render at 2× the Open Graph frame so text stays crisp on high-density screens. */
+export const CARD_SIZE = { width: size.width * 2, height: size.height * 2 };
+const MAX_LEG_ROWS = 6;
 
-/** The one share card (slip, ticket, record): the portrait card designed at W×cardHeight, drawn
- * into the 1200×630 Open Graph frame with every length multiplied by one scale factor. Satori
- * applies `transform: scale` to descendants twice, so the scaling is done in the numbers instead.
- * Every multi-child element is display:flex, as satori requires. */
+/** The one share card (slip, ticket, record) as a landscape ticket: the stub on the left carries
+ * the headline, stake rows and hero; the legs fill the right pane. Designed in 1200×630 units and
+ * drawn at 2×. Every multi-child element is display:flex, as satori requires. */
 export async function shareCard(state: CardState) {
   const [logo, fontList] = await Promise.all([logoDataUrl(), loadFonts()]);
-  const H = cardHeight(state);
-  const k = (size.height - 40) / H;
-  const px = (n: number) => Math.round(n * k * 100) / 100;
+  const px = (n: number) => n * 2;
   const display = "Bricolage Grotesque", sans = "Instrument Sans", mono = "Martian Mono";
-  const inner = px(W - PAD * 2);
+  const stubW = 420, cardW = 1200 - 48, cardH = 630 - 48, paneW = cardW - stubW, padX = 40;
+  // A leg's colour is its outcome once it has one; a fresh slip colours by side, as the builder does.
+  const legColor = (leg: CardState["legs"][number]) =>
+    leg.dot ? (leg.dot === "hit" ? C.yes : leg.dot === "lost" ? C.no : C.dim) : leg.isYes ? C.yes : C.no;
+  const shown = state.legs.length > MAX_LEG_ROWS ? state.legs.slice(0, MAX_LEG_ROWS - 1) : state.legs;
+  const hidden = state.legs.length - shown.length;
+  const rowH = Math.min(96, cardH / (shown.length + (hidden ? 1 : 0) || 1));
+  const tiles = state.legs.length === 0;
+
   return new ImageResponse(
-    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: C.ink }}>
-      <div style={{ display: "flex", flexDirection: "column", width: px(W), height: px(H), background: C.panel,
-        border: `2px solid ${C.line}`, borderRadius: px(28), color: C.fg, fontFamily: sans, overflow: "hidden" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: px(14), padding: `${px(PAD)}px ${px(PAD)}px 0` }}>
-          <img src={logo} width={px(48)} height={px(48)} />
-          <span style={{ fontFamily: display, fontSize: px(34), fontWeight: 700 }}>hyperflip</span>
+    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: C.ink, fontFamily: sans }}>
+      <div style={{ display: "flex", width: px(cardW), height: px(cardH), background: C.panel, border: `${px(2)}px solid ${C.line}`, borderRadius: px(24), color: C.fg, overflow: "hidden" }}>
+        {/* stub */}
+        <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", width: px(stubW), padding: `${px(44)}px ${px(44)}px ${px(36)}px` }}>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: px(10) }}>
+              <img src={logo} width={px(34)} height={px(34)} />
+              <span style={{ fontFamily: display, fontSize: px(24), fontWeight: 700 }}>hyperflip</span>
+            </div>
+            <span style={{ fontFamily: display, fontSize: px(60), fontWeight: 700, letterSpacing: px(-1.5), lineHeight: 1, marginTop: px(40) }}>{state.headline}</span>
+            <span style={{ fontSize: px(22), color: C.dim, marginTop: px(12) }}>{state.subline}</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {!tiles && state.rows.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", fontFamily: mono, fontSize: px(19), marginBottom: px(18) }}>
+                {state.rows.map(([key, value]) => (
+                  <div key={key} style={{ display: "flex", justifyContent: "space-between", marginBottom: px(8) }}>
+                    <span style={{ color: C.dim }}>{key}</span><span>{value}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {state.hero && (
+              <div style={{ display: "flex", flexDirection: "column", paddingTop: px(18), borderTop: `${px(2)}px solid ${C.line}` }}>
+                <span style={{ fontFamily: mono, fontSize: px(14), fontWeight: 500, letterSpacing: px(2.5), color: C.dim }}>{state.hero.label}</span>
+                <span style={{ fontFamily: mono, fontSize: px(64), fontWeight: 500, color: TONE[state.hero.tone], lineHeight: 1, marginTop: px(8) }}>{state.hero.value}</span>
+              </div>
+            )}
+            <span style={{ fontFamily: mono, fontSize: px(14), fontWeight: 500, letterSpacing: px(2), color: C.dim, marginTop: px(24) }}>hyperflip.xyz</span>
+          </div>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", padding: `${px(60)}px ${px(PAD)}px 0` }}>
-          <span style={{ fontFamily: display, fontSize: px(76), fontWeight: 700, letterSpacing: px(-2) }}>{state.headline}</span>
-          <span style={{ fontSize: px(28), color: C.dim, marginTop: px(10) }}>{state.subline}</span>
+        {/* tear line with notches */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 0, height: "100%", borderLeft: `${px(2)}px dashed ${C.line}`, position: "relative" }}>
+          <div style={{ display: "flex", position: "absolute", top: px(-14), left: px(-14), width: px(28), height: px(28), borderRadius: px(14), background: C.ink, border: `${px(2)}px solid ${C.line}` }} />
+          <div style={{ display: "flex", position: "absolute", bottom: px(-14), left: px(-14), width: px(28), height: px(28), borderRadius: px(14), background: C.ink, border: `${px(2)}px solid ${C.line}` }} />
         </div>
-        {state.legs.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", width: px(W), marginTop: px(40), borderTop: `2px solid ${C.line}` }}>
-            {state.legs.map((leg, i) => (
-              <div key={i} style={{ display: "flex", flexDirection: "column", width: px(W), height: px(112), padding: `0 ${px(PAD)}px`,
-                justifyContent: "center", background: C.ink, borderBottom: `2px solid ${C.line}` }}>
-                <div style={{ display: "flex", alignItems: "center", gap: px(12) }}>
-                  {leg.dot && <div style={{ display: "flex", width: px(12), height: px(12), borderRadius: px(6),
-                    background: leg.dot === "hit" ? C.yes : leg.dot === "lost" ? C.no : C.dim, opacity: leg.dot === "pending" ? .5 : 1 }} />}
-                  <span style={{ fontFamily: mono, fontSize: px(24), fontWeight: 500, color: leg.isYes ? C.yes : C.no }}>{leg.label}</span>
+        {/* pane */}
+        <div style={{ display: "flex", flexDirection: "column", width: px(paneW), height: "100%", background: C.ink }}>
+          {tiles ? (
+            <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", padding: `0 ${px(56)}px` }}>
+              {state.rows.map(([key, value], i) => (
+                <div key={key} style={{ display: "flex", flexDirection: "column", padding: `${px(28)}px 0`, borderTop: i ? `${px(2)}px solid ${C.line}` : "none" }}>
+                  <span style={{ fontFamily: mono, fontSize: px(14), fontWeight: 500, letterSpacing: px(2.5), color: C.dim }}>{key.toUpperCase()}</span>
+                  <span style={{ fontFamily: mono, fontSize: px(64), fontWeight: 500, lineHeight: 1, marginTop: px(10) }}>{value}</span>
                 </div>
-                <div style={{ display: "flex", width: inner, fontSize: px(28), color: C.dim, marginTop: px(8), whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{leg.title}</div>
-              </div>
-            ))}
-          </div>
-        )}
-        {state.rows.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", width: px(W), padding: `${px(48)}px ${px(PAD)}px 0`, fontFamily: mono, fontSize: px(26) }}>
-            {state.rows.map(([key, value]) => (
-              <div key={key} style={{ display: "flex", width: inner, justifyContent: "space-between", marginBottom: px(18) }}>
-                <span style={{ color: C.dim }}>{key}</span><span>{value}</span>
-              </div>
-            ))}
-          </div>
-        )}
-        {state.hero && (
-          <div style={{ display: "flex", width: inner, alignItems: "flex-end", justifyContent: "space-between", margin: `${px(16)}px ${px(PAD)}px 0`,
-            paddingTop: px(36), borderTop: `2px solid ${C.line}` }}>
-            <span style={{ fontFamily: mono, fontSize: px(20), fontWeight: 500, letterSpacing: px(3), color: C.dim }}>{state.hero.label}</span>
-            <span style={{ fontFamily: mono, fontSize: px(82), fontWeight: 500, color: TONE[state.hero.tone], lineHeight: 1 }}>{state.hero.value}</span>
-          </div>
-        )}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: px(W), marginTop: "auto", paddingBottom: px(56) }}>
-          <div style={{ display: "flex", width: px(W), borderTop: `2px dashed ${C.line}` }} />
-          <span style={{ fontFamily: mono, fontSize: px(22), fontWeight: 500, letterSpacing: px(2), color: C.dim, marginTop: px(40) }}>hyperflip.xyz</span>
+              ))}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%" }}>
+              {shown.map((leg, i) => (
+                <div key={i} style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: px(rowH), padding: `0 ${px(padX)}px`, borderTop: i ? `${px(2)}px solid ${C.line}` : "none" }}>
+                  <span style={{ fontFamily: mono, fontSize: px(rowH >= 80 ? 20 : 16), fontWeight: 500, color: legColor(leg) }}>{leg.label}</span>
+                  <div style={{ display: "flex", width: px(paneW - padX * 2), fontSize: px(rowH >= 80 ? 24 : 19), color: C.fg, marginTop: px(rowH >= 80 ? 6 : 2), whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{leg.title}</div>
+                </div>
+              ))}
+              {hidden > 0 && (
+                <div style={{ display: "flex", alignItems: "center", height: px(rowH), padding: `0 ${px(padX)}px`, borderTop: `${px(2)}px solid ${C.line}`, fontFamily: mono, fontSize: px(16), color: C.dim }}>
+                  +{hidden} more {hidden === 1 ? "leg" : "legs"}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>,
-    { ...size, fonts: fontList },
+    { ...CARD_SIZE, fonts: fontList },
   );
 }

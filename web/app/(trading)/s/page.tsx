@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { appChain } from "@/lib/chain";
+import { CARD_SIZE } from "@/lib/og";
 import { appCanonical, appPageMetadata } from "@/lib/site";
 import { BuildPage } from "../build/build-page";
 
@@ -16,7 +17,7 @@ export async function generateMetadata({ searchParams }: { searchParams: Search 
   const query = `?${params}`;
   const base = appPageMetadata(`A slip on ${appChain.name}`, "Open it in the builder and mint your own.", `/build${query}`);
   // Absolute on purpose: a metadataBase with a path (local /build) would otherwise prefix it.
-  const image = { url: appCanonical(`/build/card${query}`), width: 1200, height: 630, alt: `A slip on ${appChain.name}` };
+  const image = { url: appCanonical(`/build/card${query}`), ...CARD_SIZE, alt: `A slip on ${appChain.name}` };
   return { ...base, openGraph: { ...base.openGraph, images: [image] }, twitter: { ...base.twitter, images: [image] } };
 }
 
