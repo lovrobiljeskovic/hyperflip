@@ -1,6 +1,6 @@
 "use client";
 
-import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { useLinkAccount, usePrivy, useWallets } from "@privy-io/react-auth";
 import { useEffect, useState } from "react";
 import { erc20Abi } from "viem";
 import { useAccount, useDisconnect, useReadContract } from "wagmi";
@@ -71,6 +71,15 @@ export function useDisconnectAction(): () => void {
     disconnect();
     void logout().catch(() => {});
   };
+}
+
+/** The signed-in user's linked X account, and the Privy flow that links one (redirects to X).
+ * Only a Privy-authenticated user can link, so `canLink` is false for a merely connected wallet. */
+export function useLinkX(): { handle?: string; avatar?: string; canLink: boolean; link: () => void } {
+  if (!PRIVY_ENABLED) return { canLink: false, link: () => {} };
+  const { authenticated, user } = usePrivy();
+  const { linkTwitter } = useLinkAccount();
+  return { handle: user?.twitter?.username ?? undefined, avatar: user?.twitter?.profilePictureUrl ?? undefined, canLink: authenticated, link: linkTwitter };
 }
 
 export function useUsdc(): { address?: `0x${string}`; balance?: bigint; error: boolean } {

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { appChain, explorerAddress } from "@/lib/chain";
 import { aggregate, type Entry } from "@/lib/leaderboard";
 import { loadLeaderboardRows } from "@/lib/leaderboard-source";
+import { loadIdentities, type Identities, type Identity } from "@/lib/identities";
 import { formatUsdc, pct1, shortAddress } from "@/lib/format";
 import { appHref, appPageMetadata } from "@/lib/site";
 import { ShareRecord, type WireEntry } from "./share-record";
@@ -19,21 +20,41 @@ const head = "px-5 py-3 font-normal";
 const signed = (v: bigint) => `${v < 0n ? "−" : "+"}${formatUsdc(v < 0n ? -v : v)}`;
 const profitClass = (v: bigint) => v > 0n ? "text-yes" : v < 0n ? "text-no" : "text-dim";
 
-function Wallet({ wallet }: { wallet: string }) {
+/** A linked X account shows as avatar + handle with the address one glyph away; otherwise the
+ * short address linking to the explorer. Plain <img>: X serves `_normal` 48 px avatars. */
+function Wallet({ wallet, identity }: { wallet: string; identity?: Identity }) {
   const href = explorerAddress(wallet);
-  const label = shortAddress(wallet);
-  return href ? <a href={href} target="_blank" rel="noreferrer" className="underline-offset-4 hover:underline">{label}</a> : <>{label}</>;
+  if (!identity) {
+    const label = shortAddress(wallet);
+    return href ? <a href={href} target="_blank" rel="noreferrer" className="underline-offset-4 hover:underline">{label}</a> : <>{label}</>;
+  }
+  return (
+    <span className="inline-flex items-center gap-2">
+      {identity.avatar && <img src={identity.avatar} alt="" width={20} height={20} loading="lazy" referrerPolicy="no-referrer" className="size-5 rounded-full bg-line" />}
+      <a href={`https://x.com/${identity.username}`} target="_blank" rel="noreferrer" className="text-fg underline-offset-4 hover:underline">@{identity.username}</a>
+      {href && <a href={href} target="_blank" rel="noreferrer" title={wallet} className="text-dim hover:text-fg">↗</a>}
+    </span>
+  );
 }
+
+const settledOf = (e: Entry) => e.wins + e.losses > 0;
+const winPct = (e: Entry) => settledOf(e) ? pct1(e.winRate) : "—";
+const profitOf = (e: Entry) => settledOf(e) ? signed(e.profit) : "—";
 
 export default async function LeaderboardPage() {
   let board: ReturnType<typeof aggregate> | null = null;
-  try { board = aggregate((await loadLeaderboardRows()).rows); } catch { /* rendered below */ }
+  let identities: Identities = {};
+  try {
+    const [rows, ids] = await Promise.all([loadLeaderboardRows(), loadIdentities()]);
+    board = aggregate(rows.rows);
+    identities = ids;
+  } catch { /* rendered below */ }
 
   return (
     <div className="min-h-screen text-[13px] text-fg">
       <main className="mx-auto max-w-[1280px] px-4 py-8 sm:px-6 sm:py-10">
         <h1 className="display text-[32px] [font-variation-settings:'wght'_700] tracking-[-0.03em]">Leaderboard</h1>
-        <p className="mt-1 text-[15px] text-dim">Settled slips on {appChain.name}. Ranked by wins, then win rate.</p>
+        <p className="mt-1 text-[15px] text-dim">Every trader who minted a slip on {appChain.name}. Ranked by wins, then win rate.</p>
 
         {/* No entries but unresolved reads is a degraded load, not an empty board. */}
         {!board || (board.entries.length === 0 && board.unknown > 0) ? (
@@ -43,14 +64,14 @@ export default async function LeaderboardPage() {
         ) : board.entries.length === 0 ? (
           <div className="mt-10 rounded-card border border-line bg-panel p-6">
             <p className="text-dim">
-              No settled slips yet -{" "}
+              No slips minted yet -{" "}
               <Link href={appHref()} className="text-accent underline underline-offset-4">build one</Link>.
             </p>
           </div>
         ) : (
           <>
             <div className="mt-6 grid grid-cols-3 gap-px overflow-hidden rounded-card border border-line bg-line">
-              {([["Players", String(board.entries.length)], ["Slips settled", String(board.settled)], ["Paid out", `${formatUsdc(board.paidOut)} USDC`]] as const).map(([label, value]) => (
+              {([["Traders", String(board.entries.length)], ["Slips settled", String(board.settled)], ["Paid out", `${formatUsdc(board.paidOut)} USDC`]] as const).map(([label, value]) => (
                 <div key={label} className="bg-panel px-[18px] py-[14px]">
                   <p className="mono text-[10px] uppercase tracking-[0.16em] text-dim">{label}</p>
                   <p className="mono mt-1 text-[16px]">{value}</p>
@@ -65,11 +86,11 @@ export default async function LeaderboardPage() {
               {board.entries.map((e) => (
                 <div key={e.wallet} className="mono rounded-card border border-line bg-panel px-4 py-3 text-[12px]">
                   <div className="flex items-baseline justify-between gap-3">
-                    <span><span className={e.rank <= 3 ? "text-accent" : "text-dim"}>#{e.rank}</span> <Wallet wallet={e.wallet} /></span>
+                    <span><span className={e.rank <= 3 ? "text-accent" : "text-dim"}>#{e.rank}</span> <Wallet wallet={e.wallet} identity={identities[e.wallet]} /></span>
                     <span>{e.wins}-{e.losses}</span>
                   </div>
                   <div className="mt-3 grid grid-cols-3 gap-2">
-                    {([["Win %", pct1(e.winRate), ""], ["Net profit", signed(e.profit), profitClass(e.profit)], ["Staked", formatUsdc(e.staked), ""]] as const).map(([label, value, cls]) => (
+                    {([["Win %", winPct(e), ""], ["Net profit", profitOf(e), profitClass(e.profit)], ["Staked", formatUsdc(e.staked), ""]] as const).map(([label, value, cls]) => (
                       <div key={label}>
                         <p className="text-[9px] uppercase tracking-[0.16em] text-dim">{label}</p>
                         <p className={`mt-0.5 ${cls}`}>{value}</p>
@@ -85,7 +106,7 @@ export default async function LeaderboardPage() {
                 <thead className="mono text-[9px] uppercase tracking-[0.16em] text-dim">
                   <tr className="border-b border-line">
                     <th className={head}>Rank</th>
-                    <th className={head}>Wallet</th>
+                    <th className={head}>Trader</th>
                     <th className={`${head} text-right`}>W-L</th>
                     <th className={`${head} text-right`}>Win %</th>
                     <th className={`${head} text-right`}>Net profit</th>
@@ -96,10 +117,10 @@ export default async function LeaderboardPage() {
                   {board.entries.map((e, i) => (
                     <tr key={e.wallet} className={i < board!.entries.length - 1 ? "border-b border-line" : ""}>
                       <td className={`${cell} ${e.rank <= 3 ? "text-accent" : "text-dim"}`}>#{e.rank}</td>
-                      <td className={cell}><Wallet wallet={e.wallet} /></td>
+                      <td className={cell}><Wallet wallet={e.wallet} identity={identities[e.wallet]} /></td>
                       <td className={`${cell} text-right`}>{e.wins}-{e.losses}</td>
-                      <td className={`${cell} text-right`}>{pct1(e.winRate)}</td>
-                      <td className={`${cell} text-right ${profitClass(e.profit)}`}>{signed(e.profit)}</td>
+                      <td className={`${cell} text-right`}>{winPct(e)}</td>
+                      <td className={`${cell} text-right ${profitClass(e.profit)}`}>{profitOf(e)}</td>
                       <td className={`${cell} text-right text-dim`}>{formatUsdc(e.staked)}</td>
                     </tr>
                   ))}
@@ -108,7 +129,7 @@ export default async function LeaderboardPage() {
             </div>
 
             <p className="mt-4 text-xs text-dim">
-              Record belongs to the wallet that minted the slip. Voided slips don&apos;t count. USDC. Updates every minute.
+              Record belongs to the wallet that minted the slip. Open and voided slips don&apos;t count. USDC. Updates every minute.
               {board.unknown > 0 && ` ${board.unknown} ${board.unknown === 1 ? "slip is" : "slips are"} still updating.`}
             </p>
           </>

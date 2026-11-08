@@ -22,6 +22,7 @@ export type Entry = {
   winRate: number;
   profit: bigint; // Σ(maxPayout − premium) over wins − Σ premium over losses
   staked: bigint; // Σ premium over settled (won + lost) slips
+  open: number;   // slips not yet decided (open, void or still updating)
 };
 
 type Outcome = "won" | "lost" | "unknown" | null;
@@ -36,27 +37,35 @@ function outcome(row: Row): Outcome {
   return null;
 }
 
-/** Per-taker W/L record over settled slips, ranked by wins, then win rate, then profit. */
+const settledOf = (e: { wins: number; losses: number }) => e.wins + e.losses;
+
+/** Every taker on the lane. Ranked by wins, then win rate, then profit; wallets with nothing
+ * settled yet follow, most open slips first, so a new minter is on the board from the first slip. */
 export function aggregate(rows: Row[], exclude: ReadonlySet<string> = HOUSE_WALLETS) {
   const byWallet = new Map<string, Omit<Entry, "rank" | "winRate">>();
   let settled = 0, unknown = 0, paidOut = 0n;
   for (const row of rows) {
     const wallet = row.taker?.toLowerCase();
     if (!wallet || exclude.has(wallet)) continue;
+    const e = byWallet.get(wallet) ?? { wallet: wallet as `0x${string}`, wins: 0, losses: 0, profit: 0n, staked: 0n, open: 0 };
+    byWallet.set(wallet, e);
     const result = outcome(row);
-    if (result === null) continue;
-    if (result === "unknown") { unknown++; continue; }
-    const e = byWallet.get(wallet) ?? { wallet: wallet as `0x${string}`, wins: 0, losses: 0, profit: 0n, staked: 0n };
+    if (result === null || result === "unknown") {
+      if (result === "unknown") unknown++;
+      e.open++;
+      continue;
+    }
     const { premium, maxPayout } = row.parlay;
     settled++;
     e.staked += premium;
     if (result === "won") { e.wins++; e.profit += maxPayout - premium; paidOut += maxPayout; }
     else { e.losses++; e.profit -= premium; }
-    byWallet.set(wallet, e);
   }
   const entries: Entry[] = [...byWallet.values()]
-    .map(e => ({ ...e, rank: 0, winRate: e.wins / (e.wins + e.losses) }))
-    .sort((x, y) => y.wins - x.wins || y.winRate - x.winRate || (y.profit > x.profit ? 1 : y.profit < x.profit ? -1 : 0) || x.wallet.localeCompare(y.wallet))
+    .map(e => ({ ...e, rank: 0, winRate: settledOf(e) ? e.wins / settledOf(e) : 0 }))
+    .sort((x, y) => Number(settledOf(y) > 0) - Number(settledOf(x) > 0)
+      || y.wins - x.wins || y.winRate - x.winRate || (y.profit > x.profit ? 1 : y.profit < x.profit ? -1 : 0)
+      || y.open - x.open || x.wallet.localeCompare(y.wallet))
     .map((e, i) => ({ ...e, rank: i + 1 }));
   return { entries, settled, unknown, paidOut };
 }

@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
 import { HyperflipLogo } from "@/app/brand";
 import { formatUsdc, multiplier } from "@/lib/format";
 import { slipShareText, slipUrl, xIntentUrl } from "@/lib/share";
 import { renderSlipPng } from "@/lib/slip-image";
+import { useImageShare } from "@/lib/use-image-share";
 import { legLabel } from "@/lib/ticket";
 import type { MintedSlip } from "./use-ticket";
 import { Button } from "@/components/ui/button";
@@ -16,45 +16,15 @@ const shareClass = "mono flex h-11 items-center justify-center gap-2 rounded-[8p
 const xIcon = "M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z";
 
 export function MintedSlipDialog({ slip, onClose }: { slip: MintedSlip | null; onClose: () => void }) {
-  const [copied, setCopied] = useState(false);
-  const [imageError, setImageError] = useState(false);
-  const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  useEffect(() => () => clearTimeout(copiedTimer.current), []);
-  // Decided after mount so the server render has no share sheet to ask. Touch
-  // devices only: a desktop share sheet has no X target, the web intent does.
-  const [canShareFiles, setCanShareFiles] = useState(false);
-  useEffect(() => {
-    const probe = new File([new Uint8Array(1)], "p.png", { type: "image/png" });
-    setCanShareFiles(matchMedia("(pointer: coarse)").matches && typeof navigator.canShare === "function" && navigator.canShare({ files: [probe] }));
-  }, []);
+  // The link rebuilds this slip in the reader's builder (while its markets last).
+  const text = slip ? slipShareText(slip.legs.length) : "";
+  const link = slip ? slipUrl(location.origin, slip.legs) : "";
+  const { copied, imageError, canShareFiles, copyImage, shareNative } = useImageShare(
+    () => renderSlipPng({ legs: slip!.legs, premium: slip!.premium, maxPayout: slip!.maxPayout }), text, link, "hyperflip-slip.png");
 
   if (!slip) return null;
   const { legs, premium, maxPayout } = slip;
-  const png = () => renderSlipPng({ legs, premium, maxPayout });
-  async function copyImage() {
-    try {
-      // Promise form: Safari needs the write to start inside the click.
-      await navigator.clipboard.write([new ClipboardItem({ "image/png": png() })]);
-      setCopied(true);
-      clearTimeout(copiedTimer.current);
-      copiedTimer.current = setTimeout(() => setCopied(false), 2500);
-    } catch { setImageError(true); }
-  }
-  // X's web intent cannot attach an image, so on desktop the post carries the
-  // text and link and the card goes in by hand via copy image. Where the OS
-  // share sheet accepts files (phones), the image rides along with the text.
-  // The link rebuilds this slip in the reader's builder (while its markets last).
-  const text = slipShareText(legs.length);
-  const link = slipUrl(location.origin, legs);
   const share = xIntentUrl(text, link);
-  async function shareNative() {
-    try {
-      const file = new File([await png()], "hyperflip-slip.png", { type: "image/png" });
-      await navigator.share({ text: `${text}\n${link}`, files: [file] });
-    } catch (err) {
-      if ((err as Error)?.name !== "AbortError") setImageError(true);
-    }
-  }
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>

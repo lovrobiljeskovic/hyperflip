@@ -3,7 +3,7 @@
 import { useAccount, useSwitchChain } from "wagmi";
 import { appChain, explorerAddress } from "@/lib/chain";
 import { shortAddress } from "@/lib/format";
-import { useDisconnectAction, useWalletState } from "@/lib/wallet";
+import { useDisconnectAction, useLinkX, useWalletState } from "@/lib/wallet";
 import { RevokeAllowance } from "./revoke-allowance";
 import { OddsFormatToggle } from "./odds-format-toggle";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ export function WalletMenu() {
   const { chainId } = useAccount();
   const { switchChain } = useSwitchChain();
   const disconnect = useDisconnectAction();
+  const x = useLinkX();
   const wrongChain = chainId !== undefined && chainId !== appChain.id;
   const explorer = address ? explorerAddress(address) : null;
 
@@ -26,6 +27,13 @@ export function WalletMenu() {
           <div className={row}><span className="text-dim">Wallet</span>
             {explorer ? <a href={explorer} target="_blank" rel="noreferrer" className="mono text-fg">{shortAddress(address)} ↗</a> : <span className="mono">{shortAddress(address)}</span>}
           </div>
+          {(x.handle || x.canLink) && (
+            <div className={row}><span className="text-dim">X</span>
+              {x.handle
+                ? <a href={`https://x.com/${x.handle}`} target="_blank" rel="noreferrer" className="mono text-fg">@{x.handle} ↗</a>
+                : <button type="button" onClick={x.link} className="mono text-accent">Link X</button>}
+            </div>
+          )}
           <div className={row}><span className="text-dim">Network</span><span className={`mono ${wrongChain ? "text-no" : ""}`}>{wrongChain ? `chain ${chainId}` : appChain.name}</span></div>
           {wrongChain && <Button variant="ghost" onClick={() => switchChain({ chainId: appChain.id })} className={`${row} h-auto justify-start px-0 text-accent`}>Switch to {appChain.name}</Button>}
           <RevokeAllowance />

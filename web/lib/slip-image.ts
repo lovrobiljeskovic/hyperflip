@@ -1,4 +1,4 @@
-import { formatUsdc, multiplier } from "./format";
+import { formatUsdc, multiplier, shortAddress } from "./format";
 import { legLabel, type BuilderLeg } from "./ticket";
 
 type SlipImageInput = { legs: Pick<BuilderLeg, "isYes" | "title" | "label" | "group">[]; premium: bigint; maxPayout: bigint };
@@ -33,10 +33,11 @@ function ellipsis(ctx: CanvasRenderingContext2D, text: string, max: number): str
   return `${t}…`;
 }
 
-export async function renderSlipPng(slip: SlipImageInput): Promise<Blob> {
+/** The card every share image shares: ink background, panel, logo header. Returns the cursor
+ * just below the header. */
+async function beginCard(H: number) {
   await document.fonts.ready;
   const [logo, f] = await Promise.all([loadLogo(), families()]);
-  const H = 520 + slip.legs.length * ROW + 300;
   const canvas = document.createElement("canvas");
   canvas.width = W * SCALE;
   canvas.height = H * SCALE;
@@ -54,12 +55,49 @@ export async function renderSlipPng(slip: SlipImageInput): Promise<Blob> {
   ctx.strokeStyle = C.line;
   ctx.stroke();
 
-  let y = card.y + PAD;
+  const y = card.y + PAD;
   ctx.drawImage(logo, PAD, y, 48, 48);
   ctx.fillStyle = C.fg;
   ctx.font = `800 34px ${f.display}`;
   ctx.textBaseline = "middle";
   ctx.fillText("hyperflip", PAD + 62, y + 25);
+  return { canvas, ctx, f, card, y };
+}
+
+/** Dashed tear line with the site name under it, then the PNG. */
+function finishCard(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, f: { mono: string }, card: { x: number; w: number }, y: number): Promise<Blob> {
+  ctx.setLineDash([8, 10]);
+  ctx.strokeStyle = C.line;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(card.x, y);
+  ctx.lineTo(card.x + card.w, y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  for (const cx of [card.x, card.x + card.w]) {
+    ctx.beginPath();
+    ctx.arc(cx, y, 20, 0, Math.PI * 2);
+    ctx.fillStyle = C.ink;
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.fillStyle = C.dim;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.font = `500 22px ${f.mono}`;
+  ctx.letterSpacing = "2px";
+  ctx.fillText("hyperflip.xyz", W / 2, y + 62);
+  ctx.letterSpacing = "0px";
+
+  return new Promise((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/png"),
+  );
+}
+
+export async function renderSlipPng(slip: SlipImageInput): Promise<Blob> {
+  const H = 520 + slip.legs.length * ROW + 300;
+  const { canvas, ctx, f, card, y: top } = await beginCard(H);
+  let y = top;
 
   y += 130;
   ctx.font = `700 76px ${f.display}`;
@@ -118,28 +156,49 @@ export async function renderSlipPng(slip: SlipImageInput): Promise<Blob> {
   ctx.fillText(formatUsdc(slip.maxPayout), right + 4, y + 6);
 
   y += 60;
-  ctx.setLineDash([8, 10]);
-  ctx.strokeStyle = C.line;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(card.x, y);
-  ctx.lineTo(card.x + card.w, y);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  for (const cx of [card.x, card.x + card.w]) {
-    ctx.beginPath();
-    ctx.arc(cx, y, 20, 0, Math.PI * 2);
-    ctx.fillStyle = C.ink;
-    ctx.fill();
-    ctx.stroke();
-  }
-  ctx.fillStyle = C.dim;
-  ctx.textAlign = "center";
-  ctx.font = `500 22px ${f.mono}`;
-  ctx.letterSpacing = "2px";
-  ctx.fillText("hyperflip.xyz", W / 2, y + 62);
+  return finishCard(canvas, ctx, f, card, y);
+}
 
-  return new Promise((resolve, reject) =>
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/png"),
-  );
+type RecordImageInput = { rank: number; wins: number; losses: number; profit: bigint; wallet: string; handle?: string; chainName: string };
+
+/** The leaderboard record card: rank, W-L, net profit, who, which chain. */
+export async function renderRecordPng(r: RecordImageInput): Promise<Blob> {
+  const { canvas, ctx, f, card, y: top } = await beginCard(900);
+  let y = top + 150;
+  ctx.textBaseline = "alphabetic";
+  ctx.textAlign = "left";
+  ctx.fillStyle = C.dim;
+  ctx.font = `500 22px ${f.mono}`;
+  ctx.letterSpacing = "3px";
+  ctx.fillText(`LEADERBOARD · ${r.chainName.toUpperCase()}`, PAD, y);
+  ctx.letterSpacing = "0px";
+
+  y += 150;
+  ctx.fillStyle = C.accent;
+  ctx.font = `700 150px ${f.display}`;
+  ctx.fillText(`#${r.rank}`, PAD - 6, y);
+  ctx.fillStyle = C.fg;
+  ctx.font = `700 76px ${f.display}`;
+  ctx.fillText(r.handle ? `@${r.handle}` : shortAddress(r.wallet), PAD + ctx.measureText(`#${r.rank}  `).width * 2, y);
+
+  y += 120;
+  const right = W - PAD;
+  const row = (k: string, v: string, color = C.fg) => {
+    ctx.font = `400 28px ${f.mono}`;
+    ctx.fillStyle = C.dim;
+    ctx.textAlign = "left";
+    ctx.fillText(k, PAD, y);
+    ctx.fillStyle = color;
+    ctx.textAlign = "right";
+    ctx.font = `500 44px ${f.mono}`;
+    ctx.fillText(v, right, y);
+    y += 72;
+  };
+  const settled = r.wins + r.losses;
+  row("Record", `${r.wins}-${r.losses}`);
+  row("Win rate", settled ? `${((r.wins / settled) * 100).toFixed(1)}%` : "—");
+  row("Net profit", `${r.profit < 0n ? "−" : "+"}${formatUsdc(r.profit < 0n ? -r.profit : r.profit)} USDC`, r.profit > 0n ? C.yes : r.profit < 0n ? C.no : C.fg);
+
+  y += 30;
+  return finishCard(canvas, ctx, f, card, y);
 }

@@ -5,7 +5,7 @@ import { formatUnits } from "viem";
 import { useAccount, useBalance, useSwitchChain } from "wagmi";
 import { appChain, explorerAddress } from "@/lib/chain";
 import { formatUsdc, shortAddress } from "@/lib/format";
-import { useConnectAction, useDisconnectAction, useUsdc, useWalletState } from "@/lib/wallet";
+import { useConnectAction, useDisconnectAction, useLinkX, useUsdc, useWalletState } from "@/lib/wallet";
 import { HyperflipLogo } from "./brand";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -28,6 +28,7 @@ export function WalletButton() {
   const disconnect = useDisconnectAction();
   const { switchChain } = useSwitchChain();
   const { balance: usdc } = useUsdc();
+  const x = useLinkX();
   const { data: native } = useBalance({ address, query: { enabled: !!address } });
 
   const [open, setOpen] = useState(false);
@@ -99,6 +100,13 @@ export function WalletButton() {
                   {wrongChain ? `chain ${chainId}` : appChain.name}
                 </span>
               </Row>
+              {(x.handle || x.canLink) && (
+                <Row label="X">
+                  {x.handle
+                    ? <a href={`https://x.com/${x.handle}`} target="_blank" rel="noreferrer" className="text-fg">@{x.handle} ↗</a>
+                    : <button type="button" onClick={x.link} className="text-accent">Link X</button>}
+                </Row>
+              )}
             </div>
 
             {wrongChain && (
