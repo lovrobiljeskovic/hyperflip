@@ -12,6 +12,7 @@ export function AppHeader() {
     links={[
       { href: appHref(), label: "Trade", activePaths: ["/", "/build"] },
       { href: appHref("/positions"), label: "Positions", activePaths: ["/positions"] },
+      { href: appHref("/leaderboard"), label: "Leaderboard", activePaths: ["/leaderboard"] },
       { href: appHref("/pricing"), label: "Pricing", activePaths: ["/pricing"] },
       { href: websiteHref, label: "Website" },
       ...(altLane ? [{ href: altLane.href, label: `${altLane.label} ↗`, icon: altLane.icon }] : []),

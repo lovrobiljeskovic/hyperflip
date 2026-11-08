@@ -25,7 +25,7 @@ const nextConfig: NextConfig = {
     const aliases = ["www.hyperflip.xyz", "overround.xyz", "www.overround.xyz"];
     return [
       ...["hyperflip.xyz", ...aliases].flatMap((host) =>
-        ["build", "positions", "pricing"].map((path) => ({
+        ["build", "positions", "pricing", "leaderboard"].map((path) => ({
           source: `/${path}`,
           has: [{ type: "host" as const, value: host.replaceAll(".", "\\.") }],
           destination: `https://app.hyperflip.xyz${path === "build" ? "/" : `/${path}`}`,
